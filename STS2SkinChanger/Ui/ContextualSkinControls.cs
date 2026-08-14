@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
@@ -15,18 +16,29 @@ internal static partial class ContextualSkinControls
     private const string DropdownName = "SkinDropdown";
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
+    private static readonly Dictionary<ulong, Action> RefreshActions = [];
+    private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
+        AccessTools.Field(typeof(NBestiary), "_selectedEntry");
+    private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
+        AccessTools.Method(typeof(NBestiary), "SelectMonster", [typeof(NBestiaryEntry)]);
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
         var selector = EnsureCharacterSelector(screen);
-        Populate(selector, FindGroup(character.Id.Entry));
+        var group = FindGroup(character.Id.Entry);
+        RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character));
+        Populate(selector, group);
     }
 
     public static void ShowMonster(NBestiary screen, NBestiaryEntry entry)
     {
         var selector = EnsureMonsterSelector(screen);
         var monster = entry.IsDiscovered ? entry.Entry.monsterModel : null;
-        Populate(selector, monster == null ? null : FindGroup(monster.Id.Entry));
+        var group = monster == null ? null : FindGroup(monster.Id.Entry);
+        RegisterRefresh(
+            selector,
+            group == null || monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster));
+        Populate(selector, group);
     }
 
     private static HBoxContainer EnsureCharacterSelector(NCharacterSelectScreen screen)
@@ -96,6 +108,7 @@ internal static partial class ContextualSkinControls
         };
         dropdown.ItemSelected += index => ApplyDropdownSelection(selector, dropdown, checked((int)index));
         selector.AddChild(dropdown);
+        selector.TreeExited += () => RefreshActions.Remove(selector.GetInstanceId());
         return selector;
     }
 
@@ -138,14 +151,84 @@ internal static partial class ContextualSkinControls
 
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
-        if (!SkinService.ApplySelection(groupId, optionId))
+        if (!SkinService.ApplySelection(groupId, optionId, refreshExistingNodes: false))
         {
             ModLog.Error($"界面切换失败：{SkinService.LastError}");
             var current = SkinService.Config.GetSelection(groupId);
             var currentIndex = Enumerable.Range(0, dropdown.ItemCount)
                 .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString() == current);
             dropdown.Select(currentIndex);
+            return;
         }
+
+        if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
+        {
+            Callable.From(() => RunRefresh(refresh)).CallDeferred();
+        }
+    }
+
+    private static void RunRefresh(Action refresh)
+    {
+        try
+        {
+            refresh();
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("重建皮肤展示失败：" + exception);
+        }
+    }
+
+    private static void RegisterRefresh(HBoxContainer selector, Action? refresh)
+    {
+        var id = selector.GetInstanceId();
+        if (refresh == null)
+        {
+            RefreshActions.Remove(id);
+        }
+        else
+        {
+            RefreshActions[id] = refresh;
+        }
+    }
+
+    private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character)
+    {
+        ReloadScene(character.CharacterSelectBg);
+        var container = screen.GetNode<Control>("AnimatedBg");
+        foreach (var child in container.GetChildren())
+        {
+            container.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        var background = PreloadManager.Cache.GetScene(character.CharacterSelectBg)
+            .Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        background.Name = character.Id.Entry + "_bg";
+        container.AddChild(background);
+        ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    private static void RebuildMonsterDisplay(NBestiary screen, NBestiaryEntry entry, MonsterModel monster)
+    {
+        var visualsPath = monster.AssetPaths.FirstOrDefault(path =>
+            path.Contains("/creature_visuals/", StringComparison.OrdinalIgnoreCase) &&
+            path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(visualsPath))
+        {
+            ReloadScene(visualsPath);
+        }
+
+        BestiarySelectedEntryField.SetValue(screen, null);
+        BestiarySelectMonsterMethod.Invoke(screen, [entry]);
+        ModLog.Info($"已完整重建 {monster.Id.Entry} 的图鉴展示。");
+    }
+
+    private static void ReloadScene(string path)
+    {
+        var scene = ResourceLoader.Load<PackedScene>(path, null, ResourceLoader.CacheMode.Replace)
+            ?? throw new InvalidOperationException($"无法重新加载场景：{path}");
+        PreloadManager.Cache.SetAsset(path, scene);
     }
 
     private static SkinGroup? FindGroup(string modelId)
@@ -163,7 +246,9 @@ internal static partial class ContextualSkinControls
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
 internal static class CharacterSelectionSkinPatch
 {
-    private static void Postfix(NCharacterSelectScreen __instance, CharacterModel characterModel) =>
+    private static void Postfix(
+        NCharacterSelectScreen __instance,
+        CharacterModel characterModel) =>
         ContextualSkinControls.ShowCharacter(__instance, characterModel);
 }
 

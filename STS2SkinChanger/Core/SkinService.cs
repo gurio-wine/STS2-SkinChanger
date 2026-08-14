@@ -72,7 +72,7 @@ internal static class SkinService
         }
     }
 
-    public static bool ApplySelection(string groupId, string optionId)
+    public static bool ApplySelection(string groupId, string optionId, bool refreshExistingNodes = true)
     {
         lock (Sync)
         {
@@ -93,7 +93,9 @@ internal static class SkinService
             try
             {
                 Config.Selections[groupId] = optionId;
-                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+                MountOverlay(
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId },
+                    refreshExistingNodes);
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
@@ -155,7 +157,7 @@ internal static class SkinService
         }
     }
 
-    private static void MountOverlay(IReadOnlySet<string> groups)
+    private static void MountOverlay(IReadOnlySet<string> groups, bool refreshExistingNodes = true)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
         var files = catalog.BuildOverlay(Config.Selections, groups);
@@ -179,11 +181,14 @@ internal static class SkinService
 
         if (Engine.GetMainLoop() is SceneTree tree)
         {
-            RefreshRuntimeResources(tree, groups);
+            RefreshRuntimeResources(tree, groups, refreshExistingNodes);
         }
     }
 
-    private static void RefreshRuntimeResources(SceneTree tree, IReadOnlySet<string> groups)
+    private static void RefreshRuntimeResources(
+        SceneTree tree,
+        IReadOnlySet<string> groups,
+        bool refreshExistingNodes)
     {
         var catalog = Catalog!;
         var affectedPaths = groups
@@ -210,7 +215,10 @@ internal static class SkinService
             }
         }
 
-        LiveSkinRefresher.Refresh(tree.Root, freshResources, affectedPaths);
+        if (refreshExistingNodes)
+        {
+            LiveSkinRefresher.Refresh(tree.Root, freshResources, affectedPaths);
+        }
     }
 
     private static int ResourceLoadOrder(string path)
