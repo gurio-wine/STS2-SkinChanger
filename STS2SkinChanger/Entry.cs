@@ -16,56 +16,13 @@ public static class Entry
     {
         var harmony = new Harmony(ModId);
         harmony.PatchAll();
-        PatchAncientWaifusRuntime(harmony);
         ModLog.Info("代码补丁已加载。等待游戏资源初始化。");
     }
 
-    internal static void PatchAncientWaifusRuntime(Harmony harmony)
-    {
-        var prefix = new HarmonyMethod(AccessTools.Method(typeof(Entry), nameof(SkipConflictingSkinRuntime)));
-        var patched = 0;
-        foreach (var target in AppDomain.CurrentDomain.GetAssemblies()
-                     .SelectMany(GetLoadableTypes)
-                     .Where(type => type.FullName?.EndsWith(
-                         ".Core.GlobalTouchHook", StringComparison.Ordinal) == true)
-                     .Select(type => AccessTools.Method(type, "RegisterHook"))
-                     .Where(target => target != null)
-                     .Cast<MethodInfo>()
-                     .Distinct())
-        {
-            if (Harmony.GetPatchInfo(target)?.Prefixes.Any(patch => patch.owner == ModId) == true)
-            {
-                continue;
-            }
-
-            try
-            {
-                harmony.Patch(target, prefix: prefix);
-                patched++;
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn(
-                    $"无法停用冲突的皮肤运行时 {target.DeclaringType?.Assembly.GetName().Name}/" +
-                    $"{target.DeclaringType?.FullName}.{target.Name}：{exception.Message}");
-            }
-        }
-
-        if (patched > 0)
-        {
-            ModLog.Info($"已接管 {patched} 个皮肤运行时输入钩子，避免其再次覆盖已选外观。");
-        }
-    }
-
-    private static bool SkipConflictingSkinRuntime() => false;
-
     internal static void PatchCardPortraitProviders(Harmony harmony)
     {
-        var optionIds = SkinService.Catalog?.CardGroups
-            .SelectMany(group => group.Options)
-            .Select(option => option.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (optionIds == null || optionIds.Count == 0)
+        var providerRoots = SkinService.Catalog?.CardProviderRoots;
+        if (providerRoots == null || providerRoots.Count == 0)
         {
             return;
         }
@@ -83,7 +40,7 @@ public static class Entry
                 .Concat(patchInfo.Postfixes)
                 .Concat(patchInfo.Transpilers)
                 .Concat(patchInfo.Finalizers)
-                .Where(patch => PatchBelongsToCardProvider(patch, optionIds))
+                .Where(patch => PatchBelongsToCardProvider(patch, providerRoots))
                 .DistinctBy(patch => patch.PatchMethod)
                 .ToArray();
             foreach (var patch in providerPatches)
@@ -133,46 +90,28 @@ public static class Entry
 
     private static bool PatchBelongsToCardProvider(
         HarmonyLib.Patch patch,
-        IReadOnlySet<string> optionIds)
+        IReadOnlySet<string> providerRoots)
     {
-        var candidates = new[]
+        var location = patch.PatchMethod.Module.Assembly.Location;
+        if (string.IsNullOrWhiteSpace(location))
         {
-            patch.owner,
-            patch.PatchMethod.Module.Assembly.GetName().Name,
-            patch.PatchMethod.DeclaringType?.FullName
-        }.Select(NormalizeProviderIdentity)
-            .Where(value => value.Length >= 4)
-            .ToArray();
+            return false;
+        }
 
-        return optionIds
-            .Select(NormalizeProviderIdentity)
-            .Where(value => value.Length >= 4)
-            .Any(option => candidates.Any(candidate =>
-                candidate.Contains(option, StringComparison.Ordinal) ||
-                option.Contains(candidate, StringComparison.Ordinal)));
-    }
-
-    private static string NormalizeProviderIdentity(string? value) =>
-        string.IsNullOrWhiteSpace(value)
-            ? string.Empty
-            : new string(value
-                .Where(char.IsLetterOrDigit)
-                .Select(char.ToLowerInvariant)
-                .ToArray());
-
-    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
-    {
         try
         {
-            return assembly.GetTypes();
-        }
-        catch (ReflectionTypeLoadException exception)
-        {
-            return exception.Types.OfType<Type>();
+            var assemblyPath = Path.GetFullPath(location);
+            return providerRoots.Any(root =>
+            {
+                var providerPrefix = Path.GetFullPath(root)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                    Path.DirectorySeparatorChar;
+                return assemblyPath.StartsWith(providerPrefix, StringComparison.OrdinalIgnoreCase);
+            });
         }
         catch
         {
-            return [];
+            return false;
         }
     }
 }
@@ -182,7 +121,6 @@ internal static class EssentialInitializationPatch
 {
     private static void Prefix()
     {
-        Entry.PatchAncientWaifusRuntime(new Harmony(Entry.ModId));
         SkinService.InitializeBeforeAssets();
         Entry.PatchCardPortraitProviders(new Harmony(Entry.ModId));
     }

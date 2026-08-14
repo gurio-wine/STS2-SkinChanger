@@ -40,6 +40,12 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public IReadOnlyList<SkinGroup> Groups => _groups;
     public IReadOnlyList<CardSkinGroup> CardGroups => _cardGroups;
+    public IReadOnlySet<string> CardProviderRoots => _cardGroups
+        .SelectMany(group => group.Options)
+        .Select(option => option.ProviderRootPath)
+        .Where(path => !string.IsNullOrWhiteSpace(path))
+        .Cast<string>()
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods)
     {
@@ -688,7 +694,12 @@ internal sealed partial class SkinCatalog : IDisposable
 
                         var existingIndex = group.Options.FindIndex(option =>
                             option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
-                        var option = new CardSkinOption(index.Mod.Id, index.Mod.Name, normal, ancient);
+                        var option = new CardSkinOption(
+                            index.Mod.Id,
+                            index.Mod.Name,
+                            normal,
+                            ancient,
+                            ProviderRootPath: index.Mod.RootPath);
                         if (existingIndex >= 0)
                         {
                             group.Options[existingIndex] = group.Options[existingIndex].Merge(option);
@@ -729,7 +740,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
                 index.Assets.Values
                     .Where(asset => IsCardArtSourcePath(asset.SourcePath))
-                    .ToDictionary(asset => asset.SourcePath, asset => asset, StringComparer.OrdinalIgnoreCase)))
+                    .ToDictionary(asset => asset.SourcePath, asset => asset, StringComparer.OrdinalIgnoreCase),
+                index.Mod.RootPath))
             .Where(option => option.Assets.Count > 0)
             .ToArray();
     }
@@ -1368,7 +1380,8 @@ internal sealed record CardSkinOption(
     string Name,
     IReadOnlyDictionary<string, string> NormalPortraits,
     IReadOnlyDictionary<string, AncientCardPortrait> AncientPortraits,
-    IReadOnlyDictionary<string, ResourceAsset>? PckAssets = null)
+    IReadOnlyDictionary<string, ResourceAsset>? PckAssets = null,
+    string? ProviderRootPath = null)
 {
     public IReadOnlyDictionary<string, ResourceAsset> Assets { get; init; } =
         PckAssets ?? new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
@@ -1397,7 +1410,8 @@ internal sealed record CardSkinOption(
         {
             NormalPortraits = normal,
             AncientPortraits = ancient,
-            Assets = assets
+            Assets = assets,
+            ProviderRootPath = ProviderRootPath ?? other.ProviderRootPath
         };
     }
 
