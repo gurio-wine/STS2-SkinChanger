@@ -1,0 +1,8 @@
+/STS2SkinChanger/bin/
+/STS2SkinChanger/obj/
+/tools/PckInspect/bin/
+/tools/PckInspect/obj/
+/tools/CatalogInspect/bin/
+/tools/CatalogInspect/obj/
+*.user
+*.suo

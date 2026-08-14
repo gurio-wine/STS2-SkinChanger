@@ -1,0 +1,12 @@
+{
+  "id": "STS2SkinChanger",
+  "name": "STS2 皮肤切换器",
+  "author": "河童Guru",
+  "description": "在游戏运行时切换已安装的角色与怪物皮肤，无需重启游戏。",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false,
+  "min_game_version": "0.111.0"
+}
