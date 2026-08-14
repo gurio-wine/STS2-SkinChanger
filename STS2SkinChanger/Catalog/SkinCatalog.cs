@@ -186,11 +186,13 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var directFile = FindDirectFile(primary, sourcePath) ?? FindDirectFile(baseline, sourcePath);
-            var remapFile = FindRemapFile(primary, sourcePath) ?? FindRemapFile(baseline, sourcePath);
+            var directFile = FindDirectFile(primary, sourcePath);
+            var remapFile = FindRemapFile(primary, sourcePath);
             var payloadFiles = GetImportedPayloadFiles(primary, sourcePath);
-            if (payloadFiles.Length == 0 && baseline != null)
+            if (directFile == null && remapFile == null && baseline != null && !ReferenceEquals(primary, baseline))
             {
+                directFile = FindDirectFile(baseline, sourcePath);
+                remapFile = FindRemapFile(baseline, sourcePath);
                 payloadFiles = GetImportedPayloadFiles(baseline, sourcePath);
             }
 

@@ -15,45 +15,37 @@ namespace STS2SkinChanger.Ui;
 
 internal static class AncientCompendiumEntry
 {
-    private const string RailName = "STS2AncientCompendiumRail";
+    private const string ButtonName = "STS2AncientCompendiumButton";
     private const string ScreenName = "STS2AncientCompendium";
     private static readonly System.Reflection.FieldInfo StackField = AccessTools.Field(typeof(NSubmenu), "_stack");
 
     public static void Attach(NCompendiumSubmenu compendium)
     {
-        if (compendium.GetNodeOrNull<Control>(RailName) != null)
+        if (compendium.GetNodeOrNull<NCompendiumBottomButton>(
+                $"MarginContainer/VBoxContainer/BottomRow/{ButtonName}") != null)
         {
             return;
         }
 
-        var rail = new Control
-        {
-            Name = RailName,
-            AnchorLeft = 1,
-            AnchorTop = 0.5f,
-            AnchorRight = 1,
-            AnchorBottom = 0.5f,
-            OffsetLeft = -190,
-            OffsetTop = -300,
-            OffsetRight = 0,
-            OffsetBottom = -160,
-            MouseFilter = Control.MouseFilterEnum.Pass,
-            ZIndex = 5
-        };
-        compendium.AddChild(rail);
-
         var scenePath = SceneHelper.GetScenePath("screens/main_menu/compendium_bottom_button");
         var button = PreloadManager.Cache.GetScene(scenePath)
             .Instantiate<NCompendiumBottomButton>(PackedScene.GenEditState.Disabled);
-        button.Name = "AncientCompendiumButton";
-        button.Position = new Vector2(8, 4);
-        button.Scale = Vector2.One * 0.62f;
-        button.PivotOffset = Vector2.Zero;
+        button.Name = ButtonName;
         button.FocusMode = Control.FocusModeEnum.All;
-        rail.AddChild(button);
+
+        var bottomRow = compendium.GetNode<HBoxContainer>("MarginContainer/VBoxContainer/BottomRow");
+        bottomRow.AddChild(button);
+        var statistics = compendium.GetNode<NCompendiumBottomButton>("%StatisticsButton");
+        var runHistory = compendium.GetNode<NCompendiumBottomButton>("%RunHistoryButton");
+        bottomRow.MoveChild(button, statistics.GetIndex() + 1);
 
         button.GetNode<MegaLabel>("Label").SetTextAutoSize("远古图鉴");
         var icon = button.GetNode<TextureRect>("Icon");
+        icon.OffsetLeft = 70;
+        icon.OffsetTop = 22;
+        icon.OffsetRight = -70;
+        icon.OffsetBottom = -62;
+        icon.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
         var firstAncient = GetAncients().FirstOrDefault();
         if (firstAncient != null)
         {
@@ -62,14 +54,16 @@ internal static class AncientCompendiumEntry
 
         button.Connect(
             NClickableControl.SignalName.Released,
-            Callable.From<NButton>(_ => Open(compendium)));
+            Callable.From((Action<NButton>)(_ => Open(compendium))));
 
         var bestiary = compendium.GetNode<NShortSubmenuButton>("%BestiaryButton");
-        bestiary.FocusNeighborRight = button.GetPath();
-        button.FocusNeighborLeft = bestiary.GetPath();
-        button.FocusNeighborRight = button.GetPath();
-        button.FocusNeighborTop = button.GetPath();
+        statistics.FocusNeighborRight = button.GetPath();
+        button.FocusNeighborLeft = statistics.GetPath();
+        button.FocusNeighborRight = runHistory.GetPath();
+        button.FocusNeighborTop = bestiary.GetPath();
         button.FocusNeighborBottom = button.GetPath();
+        runHistory.FocusNeighborLeft = button.GetPath();
+        bestiary.FocusNeighborBottom = button.GetPath();
     }
 
     private static void Open(NCompendiumSubmenu compendium)
@@ -147,41 +141,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void BuildUi()
     {
-        var shade = new ColorRect
-        {
-            Color = new Color("101722e6"),
-            MouseFilter = MouseFilterEnum.Ignore
-        };
-        shade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        AddChild(shade);
-
-        var frame = new Panel
-        {
-            AnchorLeft = 0,
-            AnchorTop = 0,
-            AnchorRight = 0,
-            AnchorBottom = 0,
-            OffsetLeft = 108,
-            OffsetTop = 198,
-            OffsetRight = 1412,
-            OffsetBottom = 942,
-            MouseFilter = MouseFilterEnum.Ignore
-        };
-        frame.AddThemeStyleboxOverride(
-            "panel",
-            ContextualSkinControls.CreateStyleBox(new Color("172535"), new Color("7394ad"), 3));
-        AddChild(frame);
-
         var previewContainer = new SubViewportContainer
         {
             AnchorLeft = 0,
             AnchorTop = 0,
-            AnchorRight = 0,
-            AnchorBottom = 0,
-            OffsetLeft = 120,
-            OffsetTop = 210,
-            OffsetRight = 1400,
-            OffsetBottom = 930,
+            AnchorRight = 1,
+            AnchorBottom = 1,
+            OffsetLeft = 0,
+            OffsetTop = 0,
+            OffsetRight = 0,
+            OffsetBottom = 0,
             Stretch = true,
             MouseFilter = MouseFilterEnum.Ignore
         };
@@ -195,6 +164,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
             RenderTargetUpdateMode = SubViewport.UpdateMode.Always
         };
         previewContainer.AddChild(_previewViewport);
+
+        var shade = new ColorRect
+        {
+            Color = new Color("00000024"),
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        shade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        AddChild(shade);
 
         _nameLabel = BuildLabel(48, new Color("efc850"));
         _nameLabel.AnchorLeft = 0;
@@ -406,7 +383,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
             return;
         }
 
-        Callable.From(() => RebuildPreview(_selectedAncient)).CallDeferred();
+        var ancient = _selectedAncient;
+        Callable.From(() => RebuildPreview(ancient)).CallDeferred();
     }
 
     private void RebuildPreview(AncientEventModel ancient)
