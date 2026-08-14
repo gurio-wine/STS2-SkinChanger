@@ -17,6 +17,8 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly List<PckResourceIndex> _baselineIndexes;
     private readonly List<PckResourceIndex> _cosmeticIndexes;
     private readonly List<SkinGroup> _groups;
+    private readonly IReadOnlyList<CardSkinGroup> _configuredCardGroups;
+    private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
 
     private SkinCatalog(
@@ -24,12 +26,15 @@ internal sealed partial class SkinCatalog : IDisposable
         List<PckResourceIndex> baselineIndexes,
         List<PckResourceIndex> cosmeticIndexes,
         IReadOnlyList<SkinGroup> groups,
-        IReadOnlyList<CardSkinGroup> cardGroups)
+        IReadOnlyList<CardSkinGroup> cardGroups,
+        IReadOnlyList<CardSkinOption> pckCardOptions)
     {
         _gameArchive = gameArchive;
         _baselineIndexes = baselineIndexes;
         _cosmeticIndexes = cosmeticIndexes;
         _groups = groups.ToList();
+        _configuredCardGroups = cardGroups;
+        _pckCardOptions = pckCardOptions;
         _cardGroups = cardGroups.ToList();
     }
 
@@ -76,7 +81,14 @@ internal sealed partial class SkinCatalog : IDisposable
 
             var groups = BuildGroups(cosmeticIndexes);
             var cardGroups = BuildCardGroups(cosmeticIndexes);
-            var catalog = new SkinCatalog(gameArchive, baselineIndexes, cosmeticIndexes, groups, cardGroups);
+            var pckCardOptions = BuildPckCardOptions(cosmeticIndexes);
+            var catalog = new SkinCatalog(
+                gameArchive,
+                baselineIndexes,
+                cosmeticIndexes,
+                groups,
+                cardGroups,
+                pckCardOptions);
             catalog.AddImageRuntimeProviderOptions(modList);
             catalog.SortGroupsAndOptions();
             return catalog;
@@ -175,6 +187,124 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return files;
+    }
+
+    public Dictionary<string, ResourceFile> BuildCardOverlay(
+        IReadOnlyDictionary<string, string> selections,
+        IReadOnlySet<string>? onlyGroups = null)
+    {
+        var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in CardGroups)
+        {
+            if (onlyGroups != null && !onlyGroups.Contains(group.Id))
+            {
+                continue;
+            }
+
+            selections.TryGetValue("cards:" + group.Id, out var selectedId);
+            var selected = group.Options.FirstOrDefault(option =>
+                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+            var sourcePaths = group.Options
+                .SelectMany(option => option.Assets.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var sourcePath in sourcePaths)
+            {
+                var asset = selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
+                    ? selectedAsset
+                    : ResolveBaseline(sourcePath);
+                if (asset == null)
+                {
+                    continue;
+                }
+
+                foreach (var file in asset.Files)
+                {
+                    files[file.Path] = file;
+                    var takeoverPath = NormalizeTakeoverPath(file.Path);
+                    if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        files[takeoverPath] = file;
+                    }
+                }
+            }
+        }
+
+        return files;
+    }
+
+    public void FinalizeCardGroups(IEnumerable<CardCatalogEntry> cards)
+    {
+        var cardEntries = cards
+            .Where(card => !string.IsNullOrWhiteSpace(card.PortraitPath) &&
+                           !string.IsNullOrWhiteSpace(card.CatalogGroupId))
+            .ToArray();
+        var groups = new Dictionary<string, CardSkinGroup>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var configuredGroup in _configuredCardGroups)
+        {
+            foreach (var option in configuredGroup.Options)
+            {
+                AddCardOption(groups, configuredGroup.Id, option);
+            }
+        }
+
+        foreach (var option in _pckCardOptions)
+        {
+            foreach (var cardGroup in cardEntries.GroupBy(
+                         card => card.CatalogGroupId,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                var portraitIdentities = cardGroup
+                    .Select(card => CardPortraitIdentity(card.PortraitPath))
+                    .Where(identity => identity != null)
+                    .Cast<string>()
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var assets = option.Assets
+                    .Where(pair => portraitIdentities.Contains(
+                        CardPortraitIdentity(pair.Key) ?? string.Empty))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                if (assets.Count == 0)
+                {
+                    continue;
+                }
+
+                AddCardOption(groups, cardGroup.Key, option with { Assets = assets });
+            }
+        }
+
+        _cardGroups.Clear();
+        _cardGroups.AddRange(groups.Values
+            .Where(group => group.Options.Count > 0)
+            .OrderBy(group => GroupSortOrder(group.Id))
+            .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase));
+        foreach (var group in _cardGroups)
+        {
+            group.Options.Sort((left, right) =>
+                string.Compare(left.Name, right.Name, StringComparison.CurrentCultureIgnoreCase));
+        }
+    }
+
+    private static void AddCardOption(
+        IDictionary<string, CardSkinGroup> groups,
+        string groupId,
+        CardSkinOption option)
+    {
+        if (!groups.TryGetValue(groupId, out var group))
+        {
+            group = new CardSkinGroup(groupId, DisplayName(groupId));
+            groups.Add(groupId, group);
+        }
+
+        var existingIndex = group.Options.FindIndex(existing =>
+            existing.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
+        if (existingIndex >= 0)
+        {
+            group.Options[existingIndex] = group.Options[existingIndex].Merge(option);
+        }
+        else
+        {
+            group.Options.Add(option);
+        }
     }
 
     public IReadOnlySet<string> GetAffectedSourcePaths(string groupId)
@@ -388,6 +518,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var asset in index.Assets.Values)
             {
+                if (IsCardArtSourcePath(asset.SourcePath))
+                {
+                    continue;
+                }
+
                 var identity = TryGetPrimaryGroup(asset.SourcePath);
                 if (identity != null && assigned.TryGetValue(identity.Id, out var primaryAssets))
                 {
@@ -532,6 +667,22 @@ internal sealed partial class SkinCatalog : IDisposable
             .ToArray();
     }
 
+    private static IReadOnlyList<CardSkinOption> BuildPckCardOptions(
+        IEnumerable<PckResourceIndex> cosmeticIndexes)
+    {
+        return cosmeticIndexes
+            .Select(index => new CardSkinOption(
+                index.Mod.Id,
+                index.Mod.Name,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
+                index.Assets.Values
+                    .Where(asset => IsCardArtSourcePath(asset.SourcePath))
+                    .ToDictionary(asset => asset.SourcePath, asset => asset, StringComparer.OrdinalIgnoreCase)))
+            .Where(option => option.Assets.Count > 0)
+            .ToArray();
+    }
+
     private static string? TryGetCardPortraitGroup(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -541,6 +692,24 @@ internal sealed partial class SkinCatalog : IDisposable
 
         var match = CardPortraitGroupRegex().Match(path);
         return match.Success ? match.Groups[1].Value.ToLowerInvariant() : null;
+    }
+
+    private static bool IsCardArtSourcePath(string path) =>
+        CardArtPathRegex().IsMatch(path);
+
+    private static string? CardPortraitIdentity(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var match = CardArtIdentityRegex().Match(path);
+        var category = match.Success ? match.Groups[1].Value.ToLowerInvariant() : path.ToLowerInvariant();
+        var fileName = path[(path.LastIndexOf('/') + 1)..];
+        var extensionIndex = fileName.IndexOf('.');
+        var stem = (extensionIndex >= 0 ? fileName[..extensionIndex] : fileName).ToLowerInvariant();
+        return category + "/" + stem;
     }
 
     private static void AddPckRuntimeProviderOptions(
@@ -958,8 +1127,11 @@ internal sealed partial class SkinCatalog : IDisposable
         "necrobinder" => 3,
         "defect" => 4,
         "watcher" => 5,
-        "neow" => 6,
-        "merchant" => 7,
+        "colorless" => 6,
+        "ancients" => 7,
+        "misc" => 8,
+        "neow" => 9,
+        "merchant" => 10,
         _ => 100
     };
 
@@ -971,6 +1143,9 @@ internal sealed partial class SkinCatalog : IDisposable
         "necrobinder" => "亡灵契约师",
         "defect" => "故障机器人",
         "watcher" => "观者",
+        "colorless" => "无色",
+        "ancients" => "远古",
+        "misc" => "其他",
         "neow" => "涅奥",
         "merchant" => "商人",
         _ => id.Replace('_', ' ').Trim().CapitalizeWords()
@@ -993,6 +1168,12 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("(?:^|/)card_portraits/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardPortraitGroupRegex();
+
+    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites)/", RegexOptions.IgnoreCase)]
+    private static partial Regex CardArtPathRegex();
+
+    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites)/([^/]+)/", RegexOptions.IgnoreCase)]
+    private static partial Regex CardArtIdentityRegex();
 
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex MonsterPathRegex();
@@ -1103,8 +1284,12 @@ internal sealed record CardSkinOption(
     string Id,
     string Name,
     IReadOnlyDictionary<string, string> NormalPortraits,
-    IReadOnlyDictionary<string, AncientCardPortrait> AncientPortraits)
+    IReadOnlyDictionary<string, AncientCardPortrait> AncientPortraits,
+    IReadOnlyDictionary<string, ResourceAsset>? PckAssets = null)
 {
+    public IReadOnlyDictionary<string, ResourceAsset> Assets { get; init; } =
+        PckAssets ?? new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+
     public CardSkinOption Merge(CardSkinOption other)
     {
         var normal = new Dictionary<string, string>(NormalPortraits, StringComparer.OrdinalIgnoreCase);
@@ -1119,7 +1304,18 @@ internal sealed record CardSkinOption(
             ancient[pair.Key] = pair.Value;
         }
 
-        return this with { NormalPortraits = normal, AncientPortraits = ancient };
+        var assets = new Dictionary<string, ResourceAsset>(Assets, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in other.Assets)
+        {
+            assets[pair.Key] = pair.Value;
+        }
+
+        return this with
+        {
+            NormalPortraits = normal,
+            AncientPortraits = ancient,
+            Assets = assets
+        };
     }
 
     public string? GetPortraitPath(string cardType, bool useAncientStyle)
@@ -1136,6 +1332,12 @@ internal sealed record CardSkinOption(
         return NormalPortraits.GetValueOrDefault(cardType);
     }
 }
+
+internal sealed record CardCatalogEntry(
+    string TypeName,
+    string PortraitPath,
+    string PoolGroupId,
+    string CatalogGroupId);
 
 internal sealed record AncientCardPortrait(string? NormalPortrait, string? AncientPortrait);
 

@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
@@ -17,9 +18,22 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> MissingAncientStyleMethods =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> SharedCardPoolIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "event",
+        "token",
+        "status",
+        "curse",
+        "quest",
+        "deprived",
+        "deprecated",
+        "mock"
+    };
     private static int _overlayGeneration;
     private static string _sessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     private static bool _initialized;
+    private static bool _cardGroupsInitialized;
+    private static string? _cardCatalogSignature;
 
     public static SkinCatalog? Catalog { get; private set; }
     public static SkinConfig Config { get; private set; } = new();
@@ -73,6 +87,53 @@ internal static class SkinService
             {
                 LastError = exception.ToString();
                 ModLog.Error("初始化失败：" + exception);
+            }
+        }
+    }
+
+    public static void InitializeCardGroupsAfterModels()
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var cards = ModelDb.AllCards.ToArray();
+                var entries = cards.Select(card => new CardCatalogEntry(
+                        card.GetType().Name,
+                        card.PortraitPath,
+                        GetCardPoolGroupId(card),
+                        GetCardCatalogGroupId(card)))
+                    .ToArray();
+                var signature = string.Join('\n', entries
+                    .OrderBy(entry => entry.TypeName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(entry => entry.PortraitPath, StringComparer.OrdinalIgnoreCase)
+                    .Select(entry =>
+                        $"{entry.TypeName}|{entry.PortraitPath}|{entry.PoolGroupId}|{entry.CatalogGroupId}"));
+                if (_cardGroupsInitialized && signature == _cardCatalogSignature)
+                {
+                    return;
+                }
+
+                Catalog.FinalizeCardGroups(entries);
+                SanitizeCardSelections();
+                MountCardOverlay(Catalog.CardGroups
+                    .Select(group => group.Id)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase));
+                Config.Save(ConfigPath);
+                _cardGroupsInitialized = true;
+                _cardCatalogSignature = signature;
+                LastError = null;
+                ModLog.Info($"已按卡牌总览分类接入 {Catalog.CardGroups.Count} 个卡牌外观组。");
+            }
+            catch (Exception exception)
+            {
+                LastError = exception.ToString();
+                ModLog.Error("按卡牌总览分类卡牌皮肤失败：" + exception);
             }
         }
     }
@@ -137,6 +198,7 @@ internal static class SkinService
             {
                 Config.Selections[CardSelectionKey(groupId)] = optionId;
                 ClearCardPortraitCache(groupId);
+                MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
@@ -157,7 +219,7 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            var groupId = card.Pool.Title.ToLowerInvariant();
+            var groupId = GetEffectiveCardGroupId(card);
             var group = Catalog?.CardGroups.FirstOrDefault(group =>
                 group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
             if (group == null)
@@ -182,7 +244,7 @@ internal static class SkinService
                 return;
             }
 
-            var groupId = card.Pool.Title.ToLowerInvariant();
+            var groupId = GetEffectiveCardGroupId(card);
             var group = catalog.CardGroups.FirstOrDefault(group =>
                 group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
             if (group == null)
@@ -197,31 +259,166 @@ internal static class SkinService
             var path = option?.GetPortraitPath(
                 cardType,
                 IsAncientStyleEnabled(option, cardType));
-            if (string.IsNullOrWhiteSpace(path))
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                ReplaceConfiguredCardPortrait(groupId, selection, path, ref result);
+                return;
+            }
+
+            var originalPath = card.PortraitPath;
+            var portraitIdentity = CardPortraitIdentity(originalPath);
+            if (portraitIdentity == null || !group.Options
+                    .SelectMany(candidate => candidate.Assets.Keys)
+                    .Any(assetPath => CardPortraitIdentity(assetPath)?.Equals(
+                        portraitIdentity, StringComparison.OrdinalIgnoreCase) == true))
             {
                 return;
             }
 
-            var cacheKey = $"{groupId}\n{selection}\n{path}";
+            var cacheKey = $"{groupId}\n{selection}\npck\n{originalPath}";
             if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
                 !GodotObject.IsInstanceValid(portrait))
             {
-                var loaded = ResourceLoader.Load<Texture2D>(path, null, ResourceLoader.CacheMode.Reuse);
-                if (loaded == null)
+                portrait = ResourceLoader.Load<Texture2D>(
+                    originalPath,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep);
+                if (portrait == null)
                 {
                     return;
                 }
 
-                portrait = new AtlasTexture
-                {
-                    Atlas = loaded,
-                    Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
-                };
                 CardPortraitCache[cacheKey] = portrait;
             }
 
             result = portrait;
         }
+    }
+
+    public static bool CardBelongsToGroup(CardModel card, string groupId) =>
+        GetEffectiveCardGroupId(card).Equals(groupId, StringComparison.OrdinalIgnoreCase);
+
+    private static string GetEffectiveCardGroupId(CardModel card)
+    {
+        var cardType = card.GetType().Name;
+        var configuredGroup = Catalog?.CardGroups.FirstOrDefault(group =>
+            group.Options.Any(option =>
+                option.NormalPortraits.ContainsKey(cardType) ||
+                option.AncientPortraits.ContainsKey(cardType)));
+        if (configuredGroup != null)
+        {
+            return configuredGroup.Id;
+        }
+
+        var poolGroupId = GetCardPoolGroupId(card);
+        if (CardGroupAffectsCard(poolGroupId, card))
+        {
+            return poolGroupId;
+        }
+
+        var catalogGroupId = GetCardCatalogGroupId(card);
+        return CardGroupAffectsCard(catalogGroupId, card) ? catalogGroupId : poolGroupId;
+    }
+
+    private static bool CardGroupAffectsCard(string groupId, CardModel card)
+    {
+        var group = Catalog?.CardGroups.FirstOrDefault(group =>
+            group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+        if (group == null)
+        {
+            return false;
+        }
+
+        var cardType = card.GetType().Name;
+        var portraitIdentity = CardPortraitIdentity(card.PortraitPath);
+        return group.Options.Any(option =>
+            option.NormalPortraits.ContainsKey(cardType) ||
+            option.AncientPortraits.ContainsKey(cardType) ||
+            (portraitIdentity != null && option.Assets.Keys.Any(assetPath =>
+                CardPortraitIdentity(assetPath)?.Equals(
+                    portraitIdentity, StringComparison.OrdinalIgnoreCase) == true)));
+    }
+
+    private static string GetCardPoolGroupId(CardModel card) =>
+        card.Pool.Title.ToLowerInvariant();
+
+    private static string GetCardCatalogGroupId(CardModel card)
+    {
+        var poolGroupId = GetCardPoolGroupId(card);
+        if (!SharedCardPoolIds.Contains(poolGroupId))
+        {
+            return poolGroupId;
+        }
+
+        if (card.Rarity == CardRarity.Ancient)
+        {
+            return "ancients";
+        }
+
+        var rarity = (int)card.Rarity;
+        return rarity is >= (int)CardRarity.Event and <= (int)CardRarity.Quest
+            ? "misc"
+            : poolGroupId;
+    }
+
+    private static void ReplaceConfiguredCardPortrait(
+        string groupId,
+        string selection,
+        string path,
+        ref Texture2D result)
+    {
+        var cacheKey = $"{groupId}\n{selection}\nconfig\n{path}";
+        if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
+            !GodotObject.IsInstanceValid(portrait))
+        {
+            var loaded = ResourceLoader.Load<Texture2D>(path, null, ResourceLoader.CacheMode.Reuse);
+            if (loaded == null)
+            {
+                return;
+            }
+
+            portrait = new AtlasTexture
+            {
+                Atlas = loaded,
+                Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
+            };
+            CardPortraitCache[cacheKey] = portrait;
+        }
+
+        result = portrait;
+    }
+
+    private static string? CardPortraitIdentity(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var lowerPath = path.ToLowerInvariant();
+        var markerIndex = lowerPath.IndexOf("/card_portraits/", StringComparison.Ordinal);
+        var markerLength = "/card_portraits/".Length;
+        if (markerIndex < 0)
+        {
+            markerIndex = lowerPath.IndexOf("/card_atlas.sprites/", StringComparison.Ordinal);
+            markerLength = "/card_atlas.sprites/".Length;
+        }
+
+        var category = lowerPath;
+        if (markerIndex >= 0)
+        {
+            var categoryStart = markerIndex + markerLength;
+            var categoryEnd = lowerPath.IndexOf('/', categoryStart);
+            if (categoryEnd > categoryStart)
+            {
+                category = lowerPath[categoryStart..categoryEnd];
+            }
+        }
+
+        var fileName = lowerPath[(lowerPath.LastIndexOf('/') + 1)..];
+        var extensionIndex = fileName.IndexOf('.');
+        var stem = extensionIndex >= 0 ? fileName[..extensionIndex] : fileName;
+        return category + "/" + stem;
     }
 
     private static bool IsAncientStyleEnabled(CardSkinOption option, string cardType)
@@ -384,6 +581,29 @@ internal static class SkinService
         }
     }
 
+    private static void MountCardOverlay(IReadOnlySet<string> groups)
+    {
+        var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        var files = catalog.BuildCardOverlay(Config.Selections, groups);
+        if (files.Count == 0)
+        {
+            return;
+        }
+
+        var overlayPath = System.IO.Path.Combine(
+            OS.GetUserDataDir(),
+            $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}_cards.pck");
+        var sources = files.ToDictionary(
+            pair => pair.Key,
+            pair => (pair.Value.Archive, pair.Value.Path),
+            StringComparer.OrdinalIgnoreCase);
+        PckArchive.WriteFromArchives(overlayPath, sources);
+        if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+        {
+            throw new InvalidOperationException("Godot 拒绝加载生成的卡牌皮肤资源包。");
+        }
+    }
+
     private static void ClearRuntimeResourceCache(string groupId)
     {
         var prefix = groupId + "\n";
@@ -422,7 +642,12 @@ internal static class SkinService
             }
         }
 
-        foreach (var group in Catalog.CardGroups)
+        SanitizeCardSelections();
+    }
+
+    private static void SanitizeCardSelections()
+    {
+        foreach (var group in Catalog!.CardGroups)
         {
             var key = CardSelectionKey(group.Id);
             if (!Config.Selections.TryGetValue(key, out var selected) ||

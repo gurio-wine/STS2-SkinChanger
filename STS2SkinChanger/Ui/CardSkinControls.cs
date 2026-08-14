@@ -21,6 +21,8 @@ internal static class CardSkinControls
 
     public static void Attach(NCardLibrary screen)
     {
+        SkinService.InitializeCardGroupsAfterModels();
+        Entry.PatchCardPortraitProviders(new Harmony(Entry.ModId));
         var bottom = screen.GetNodeOrNull<VBoxContainer>("Sidebar/MarginContainer/BottomVBox");
         if (bottom == null || bottom.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
         {
@@ -187,7 +189,7 @@ internal static class CardSkinControls
             foreach (var card in Descendants(screen).OfType<NCard>())
             {
                 if (card.Model == null ||
-                    !card.Model.Pool.Title.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+                    !SkinService.CardBelongsToGroup(card.Model, groupId))
                 {
                     continue;
                 }

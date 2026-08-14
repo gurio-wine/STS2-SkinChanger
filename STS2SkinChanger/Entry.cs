@@ -99,4 +99,10 @@ internal static class EssentialInitializationPatch
         SkinService.InitializeBeforeAssets();
         Entry.PatchCardPortraitProviders(new Harmony(Entry.ModId));
     }
+
+    private static void Postfix()
+    {
+        SkinService.InitializeCardGroupsAfterModels();
+        Entry.PatchCardPortraitProviders(new Harmony(Entry.ModId));
+    }
 }
