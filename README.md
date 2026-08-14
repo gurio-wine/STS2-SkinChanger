@@ -34,5 +34,3 @@ dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release
 
 - `tools/PckInspect`：检查 PCK 目录或复制少量文件验证写入器。
 - `tools/CatalogInspect`：用实际游戏与 Mod PCK 构建皮肤目录，输出识别结果。
-
-设置环境变量 `STS2_SKIN_SWITCHER_SMOKE_TEST=1`，或在游戏用户目录创建一次性的 `sts2_skin_switcher_smoke_test` 文件后启动游戏，会自动切换一次首个可用皮肤并恢复原选择；结果只写入游戏日志，供开发验证使用。

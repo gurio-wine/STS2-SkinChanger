@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
@@ -151,7 +152,7 @@ internal static partial class ContextualSkinControls
 
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
-        if (!SkinService.ApplySelection(groupId, optionId, refreshExistingNodes: false))
+        if (!SkinService.ApplySelection(groupId, optionId))
         {
             ModLog.Error($"界面切换失败：{SkinService.LastError}");
             var current = SkinService.Config.GetSelection(groupId);
@@ -211,13 +212,8 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildMonsterDisplay(NBestiary screen, NBestiaryEntry entry, MonsterModel monster)
     {
-        var visualsPath = monster.AssetPaths.FirstOrDefault(path =>
-            path.Contains("/creature_visuals/", StringComparison.OrdinalIgnoreCase) &&
-            path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrEmpty(visualsPath))
-        {
-            ReloadScene(visualsPath);
-        }
+        var visualsPath = SceneHelper.GetScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant());
+        ReloadScene(visualsPath);
 
         BestiarySelectedEntryField.SetValue(screen, null);
         BestiarySelectMonsterMethod.Invoke(screen, [entry]);
@@ -226,7 +222,7 @@ internal static partial class ContextualSkinControls
 
     private static void ReloadScene(string path)
     {
-        var scene = ResourceLoader.Load<PackedScene>(path, null, ResourceLoader.CacheMode.Replace)
+        var scene = ResourceLoader.Load<PackedScene>(path, null, ResourceLoader.CacheMode.IgnoreDeep)
             ?? throw new InvalidOperationException($"无法重新加载场景：{path}");
         PreloadManager.Cache.SetAsset(path, scene);
     }
