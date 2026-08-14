@@ -93,6 +93,41 @@ internal static class SkinService
         }
     }
 
+    public static PackedScene LoadRuntimeScene(string groupId, string scenePath)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+            var generation = ++_overlayGeneration;
+            var aliasToken = $"{_sessionId}/{generation:D3}";
+            var overlay = catalog.BuildRuntimeSceneOverlay(
+                groupId,
+                Config.GetSelection(groupId),
+                scenePath,
+                aliasToken);
+            var overlayPath = System.IO.Path.Combine(
+                OS.GetUserDataDir(),
+                $"sts2_skin_overlay_{_sessionId}_{generation:D3}_runtime.pck");
+            PckArchive.Write(overlayPath, overlay.Files);
+            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException("Godot 拒绝加载独立皮肤场景资源包。");
+            }
+
+            var scene = ResourceLoader.Load<PackedScene>(
+                overlay.ScenePath,
+                null,
+                ResourceLoader.CacheMode.IgnoreDeep);
+            if (scene == null)
+            {
+                throw new InvalidOperationException($"无法加载独立皮肤场景：{overlay.ScenePath}");
+            }
+
+            ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集和贴图：{aliasToken}");
+            return scene;
+        }
+    }
+
     private static void MountOverlay(IReadOnlySet<string> groups)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
@@ -114,7 +149,6 @@ internal static class SkinService
         {
             throw new InvalidOperationException("Godot 拒绝加载生成的皮肤资源包。");
         }
-
     }
 
     private static void SanitizeSelections()

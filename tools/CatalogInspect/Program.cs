@@ -1,5 +1,6 @@
 using System.Text.Json;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Pck;
 
 if (args.Length < 2)
 {
@@ -7,8 +8,10 @@ if (args.Length < 2)
     return;
 }
 
+var runtimeIndex = Array.IndexOf(args, "--runtime-scene");
+var modRoots = runtimeIndex < 0 ? args.Skip(1) : args.Skip(1).Take(runtimeIndex - 1);
 var descriptors = new List<SkinModDescriptor>();
-foreach (var root in args.Skip(1))
+foreach (var root in modRoots)
 {
     foreach (var manifestPath in Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories))
     {
@@ -43,4 +46,20 @@ foreach (var group in catalog.Groups)
     {
         Console.WriteLine($"  {option.Id}\t{option.Name}\t{option.Assets.Count} assets");
     }
+}
+
+if (runtimeIndex >= 0)
+{
+    if (args.Length < runtimeIndex + 5)
+    {
+        throw new ArgumentException("--runtime-scene requires: <group> <selection> <scene> <output.pck>");
+    }
+
+    var overlay = catalog.BuildRuntimeSceneOverlay(
+        args[runtimeIndex + 1],
+        args[runtimeIndex + 2],
+        args[runtimeIndex + 3],
+        "inspect/001");
+    PckArchive.Write(args[runtimeIndex + 4], overlay.Files);
+    Console.WriteLine($"runtime scene: {overlay.ScenePath} ({overlay.Files.Count} files)");
 }

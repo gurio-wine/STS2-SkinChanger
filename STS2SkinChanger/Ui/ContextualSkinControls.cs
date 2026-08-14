@@ -27,7 +27,7 @@ internal static partial class ContextualSkinControls
     {
         var selector = EnsureCharacterSelector(screen);
         var group = FindGroup(character.Id.Entry);
-        RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character));
+        RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
     }
 
@@ -38,7 +38,7 @@ internal static partial class ContextualSkinControls
         var group = monster == null ? null : FindGroup(monster.Id.Entry);
         RegisterRefresh(
             selector,
-            group == null || monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster));
+            group == null || monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster, group.Id));
         Populate(selector, group);
     }
 
@@ -193,9 +193,10 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character)
+    private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
-        ReloadScene(character.CharacterSelectBg);
+        var scene = SkinService.LoadRuntimeScene(groupId, character.CharacterSelectBg);
+        PreloadManager.Cache.SetAsset(character.CharacterSelectBg, scene);
         var container = screen.GetNode<Control>("AnimatedBg");
         foreach (var child in container.GetChildren())
         {
@@ -203,28 +204,25 @@ internal static partial class ContextualSkinControls
             child.QueueFree();
         }
 
-        var background = PreloadManager.Cache.GetScene(character.CharacterSelectBg)
-            .Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         background.Name = character.Id.Entry + "_bg";
         container.AddChild(background);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
 
-    private static void RebuildMonsterDisplay(NBestiary screen, NBestiaryEntry entry, MonsterModel monster)
+    private static void RebuildMonsterDisplay(
+        NBestiary screen,
+        NBestiaryEntry entry,
+        MonsterModel monster,
+        string groupId)
     {
         var visualsPath = SceneHelper.GetScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant());
-        ReloadScene(visualsPath);
+        var scene = SkinService.LoadRuntimeScene(groupId, visualsPath);
+        PreloadManager.Cache.SetAsset(visualsPath, scene);
 
         BestiarySelectedEntryField.SetValue(screen, null);
         BestiarySelectMonsterMethod.Invoke(screen, [entry]);
         ModLog.Info($"已完整重建 {monster.Id.Entry} 的图鉴展示。");
-    }
-
-    private static void ReloadScene(string path)
-    {
-        var scene = ResourceLoader.Load<PackedScene>(path, null, ResourceLoader.CacheMode.IgnoreDeep)
-            ?? throw new InvalidOperationException($"无法重新加载场景：{path}");
-        PreloadManager.Cache.SetAsset(path, scene);
     }
 
     private static SkinGroup? FindGroup(string modelId)

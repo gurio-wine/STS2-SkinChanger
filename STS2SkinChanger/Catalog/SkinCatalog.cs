@@ -158,6 +158,107 @@ internal sealed partial class SkinCatalog : IDisposable
         return affected;
     }
 
+    public RuntimeSceneOverlay BuildRuntimeSceneOverlay(
+        string groupId,
+        string selectionId,
+        string scenePath,
+        string aliasToken)
+    {
+        var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+        var selected = group.Options.FirstOrDefault(option => option.Id == selectionId);
+        var sourcePaths = GetAffectedSourcePaths(groupId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        sourcePaths.Add(scenePath);
+
+        var resources = new List<RuntimeResource>();
+        foreach (var sourcePath in sourcePaths)
+        {
+            var baseline = ResolveBaseline(sourcePath);
+            var primary = selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
+                ? selectedAsset
+                : baseline;
+            if (primary == null)
+            {
+                continue;
+            }
+
+            var directFile = FindDirectFile(primary, sourcePath) ?? FindDirectFile(baseline, sourcePath);
+            var remapFile = FindRemapFile(primary, sourcePath) ?? FindRemapFile(baseline, sourcePath);
+            var importedFiles = primary.Files.Where(file => IsImportedPath(file.Path)).ToArray();
+            if (importedFiles.Length == 0 && baseline != null)
+            {
+                importedFiles = baseline.Files.Where(file => IsImportedPath(file.Path)).ToArray();
+            }
+
+            resources.Add(new RuntimeResource(sourcePath, directFile, remapFile, importedFiles));
+        }
+
+        var sourceAliases = resources.ToDictionary(
+            resource => resource.SourcePath,
+            resource => $"res://sts2_skin_runtime/{aliasToken}/{resource.SourcePath[6..]}",
+            StringComparer.OrdinalIgnoreCase);
+        var importedAliases = resources
+            .SelectMany(resource => resource.ImportedFiles)
+            .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                file => file.Path,
+                file => $"res://.godot/imported/sts2_skin_runtime/{aliasToken}/{file.Path[22..]}",
+                StringComparer.OrdinalIgnoreCase);
+
+        var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var resource in resources)
+        {
+            if (resource.DirectFile != null)
+            {
+                var bytes = resource.DirectFile.Archive.ReadFile(resource.DirectFile.Path);
+                files[sourceAliases[resource.SourcePath]] = RewriteTextResource(bytes, sourceAliases, importedAliases);
+            }
+
+            foreach (var importedFile in resource.ImportedFiles)
+            {
+                var bytes = importedFile.Archive.ReadFile(importedFile.Path);
+                files[importedAliases[importedFile.Path]] = importedFile.Path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase)
+                    ? RewriteTextResource(bytes, sourceAliases, importedAliases, stripUids: false)
+                    : bytes;
+            }
+
+            if (resource.RemapFile == null)
+            {
+                continue;
+            }
+
+            var remapText = Encoding.UTF8.GetString(resource.RemapFile.Archive.ReadFile(resource.RemapFile.Path));
+            var replacements = new Dictionary<string, string>(sourceAliases, StringComparer.OrdinalIgnoreCase);
+            foreach (Match match in ResourcePathRegex().Matches(remapText))
+            {
+                var originalPath = match.Groups[1].Value;
+                if (!originalPath.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) ||
+                    replacements.ContainsKey(originalPath))
+                {
+                    continue;
+                }
+
+                var importedFile = MatchImportedFile(originalPath, resource.ImportedFiles);
+                if (importedFile != null)
+                {
+                    replacements[originalPath] = importedAliases[importedFile.Path];
+                }
+            }
+
+            var remapSuffix = resource.RemapFile.Path.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
+                ? ".import"
+                : ".remap";
+            files[sourceAliases[resource.SourcePath] + remapSuffix] =
+                RewriteTextResource(Encoding.UTF8.GetBytes(remapText), replacements, null);
+        }
+
+        if (!sourceAliases.TryGetValue(scenePath, out var aliasedScenePath) || !files.ContainsKey(aliasedScenePath))
+        {
+            throw new InvalidOperationException($"无法为 {scenePath} 创建独立皮肤场景。");
+        }
+
+        return new RuntimeSceneOverlay(aliasedScenePath, files);
+    }
+
     public void Dispose()
     {
         foreach (var index in _baselineIndexes.Skip(1).Concat(_cosmeticIndexes))
@@ -280,6 +381,54 @@ internal sealed partial class SkinCatalog : IDisposable
                 path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static ResourceFile? FindDirectFile(ResourceAsset? asset, string sourcePath) =>
+        asset?.Files.FirstOrDefault(file => file.Path.Equals(sourcePath, StringComparison.OrdinalIgnoreCase));
+
+    private static ResourceFile? FindRemapFile(ResourceAsset? asset, string sourcePath) =>
+        asset?.Files.FirstOrDefault(file =>
+            file.Path.Equals(sourcePath + ".import", StringComparison.OrdinalIgnoreCase) ||
+            file.Path.Equals(sourcePath + ".remap", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsImportedPath(string path) =>
+        path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase);
+
+    private static ResourceFile? MatchImportedFile(string targetPath, IReadOnlyList<ResourceFile> files)
+    {
+        var exact = files.FirstOrDefault(file => file.Path.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
+        if (exact != null)
+        {
+            return exact;
+        }
+
+        var suffix = targetPath.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase) ? ".spatlas"
+            : targetPath.EndsWith(".spskel", StringComparison.OrdinalIgnoreCase) ? ".spskel"
+            : targetPath.EndsWith(".ctex", StringComparison.OrdinalIgnoreCase) ? ".ctex"
+            : System.IO.Path.GetExtension(targetPath);
+        var matches = files.Where(file => file.Path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static byte[] RewriteTextResource(
+        byte[] bytes,
+        IReadOnlyDictionary<string, string> replacements,
+        IReadOnlyDictionary<string, string>? extraReplacements,
+        bool stripUids = true)
+    {
+        var text = Encoding.UTF8.GetString(bytes);
+        foreach (var replacement in replacements.Concat(extraReplacements ?? new Dictionary<string, string>()))
+        {
+            text = text.Replace(replacement.Key, replacement.Value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (stripUids)
+        {
+            text = UidLineRegex().Replace(text, string.Empty);
+            text = UidAttributeRegex().Replace(text, string.Empty);
+        }
+
+        return Encoding.UTF8.GetBytes(text);
+    }
+
     private static int GroupSortOrder(string id) => id switch
     {
         "ironclad" => 0,
@@ -312,7 +461,21 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex MonsterPathRegex();
 
+    [GeneratedRegex("\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
+    private static partial Regex ResourcePathRegex();
+
+    [GeneratedRegex("^uid=\"uid://[^\"]+\"\\r?\\n", RegexOptions.IgnoreCase | RegexOptions.Multiline)]
+    private static partial Regex UidLineRegex();
+
+    [GeneratedRegex("\\s+uid=\"uid://[^\"]+\"", RegexOptions.IgnoreCase)]
+    private static partial Regex UidAttributeRegex();
+
     private sealed record GroupIdentity(string Id, string DisplayName);
+    private sealed record RuntimeResource(
+        string SourcePath,
+        ResourceFile? DirectFile,
+        ResourceFile? RemapFile,
+        IReadOnlyList<ResourceFile> ImportedFiles);
 }
 
 internal sealed record SkinModDescriptor(string Id, string Name, string PckPath, bool AffectsGameplay);
@@ -325,6 +488,8 @@ internal sealed class SkinGroup(string id, string displayName)
 }
 
 internal sealed record SkinOption(string Id, string Name, IReadOnlyDictionary<string, ResourceAsset> Assets);
+
+internal sealed record RuntimeSceneOverlay(string ScenePath, IReadOnlyDictionary<string, byte[]> Files);
 
 internal sealed class ResourceAsset(string sourcePath)
 {
