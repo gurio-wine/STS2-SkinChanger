@@ -97,7 +97,8 @@ internal sealed partial class SkinCatalog : IDisposable
                        TryGetCharacterSelectIconGroup(resourcePath) ??
                        TryGetCharacterUiTextureGroup(resourcePath) ??
                        TryGetCharacterMapMarkerGroup(resourcePath) ??
-                       TryGetCharacterIconSceneGroup(resourcePath);
+                       TryGetCharacterIconSceneGroup(resourcePath) ??
+                       TryGetAncientIconGroup(resourcePath);
         return identity != null && Groups.Any(group =>
             group.Id.Equals(identity.Id, StringComparison.OrdinalIgnoreCase))
             ? identity.Id
@@ -711,6 +712,26 @@ internal sealed partial class SkinCatalog : IDisposable
         return new GroupIdentity(id, DisplayName(id));
     }
 
+    private static GroupIdentity? TryGetAncientIconGroup(string sourcePath)
+    {
+        foreach (var regex in new[] { AncientMapIconRegex(), AncientRunHistoryIconRegex() })
+        {
+            var match = regex.Match(sourcePath);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var id = match.Groups[1].Value.ToLowerInvariant();
+            if (KnownAncientIds.Contains(id))
+            {
+                return new GroupIdentity(id, DisplayName(id));
+            }
+        }
+
+        return null;
+    }
+
     private static GroupIdentity? TryGetRuntimeProviderGroup(string sourcePath)
     {
         foreach (var regex in new[]
@@ -886,6 +907,12 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://images/packed/map/icons/map_marker_([^/.]+)\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterMapMarkerRegex();
+
+    [GeneratedRegex("^res://images/packed/map/ancients/ancient_node_([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+    private static partial Regex AncientMapIconRegex();
+
+    [GeneratedRegex("^res://images/ui/run_history/([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+    private static partial Regex AncientRunHistoryIconRegex();
 
     [GeneratedRegex("^res://custom/scenes/screens/char_select/char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex RuntimeCharacterSelectSceneRegex();

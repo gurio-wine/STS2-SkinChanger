@@ -123,6 +123,39 @@ internal static class AncientCompendiumEntry
         return catalog.Groups.FirstOrDefault(candidate => NormalizeToken(candidate.Id) == token);
     }
 
+    internal static void ReplaceAncientIcon(
+        AncientEventModel ancient,
+        string resourcePath,
+        ref Texture2D result)
+    {
+        var group = FindGroup(ancient.Id.Entry);
+        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as Texture2D ??
+                     throw new InvalidOperationException($"独立远古皮肤资源不是贴图：{resourcePath}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终接管远古头像 {resourcePath} 失败：{exception}");
+        }
+    }
+
+    internal static void RefreshCompendiumEntryIcon(Node context)
+    {
+        var button = context.GetTree().Root.FindChild(ButtonName, recursive: true, owned: false)
+            as NCompendiumBottomButton;
+        var firstAncient = GetAncients().FirstOrDefault();
+        if (button != null && firstAncient != null)
+        {
+            button.GetNode<TextureRect>("Icon").Texture = firstAncient.MapIcon;
+        }
+    }
+
     private static string NormalizeToken(string value) =>
         Regex.Replace(value, "[^a-zA-Z0-9]", string.Empty).ToLowerInvariant();
 }
@@ -387,6 +420,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             return;
         }
 
+        AncientCompendiumEntry.RefreshCompendiumEntryIcon(this);
         var ancient = _selectedAncient;
         Callable.From(() => RebuildPreview(ancient)).CallDeferred();
     }
@@ -527,5 +561,53 @@ internal static class AncientSceneResultPatch
         {
             ModLog.Error($"最终应用 {ancient.Id.Entry} 的远古皮肤失败：{exception}");
         }
+    }
+}
+
+[HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.MapIcon), MethodType.Getter)]
+internal static class AncientMapIconResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
+    {
+        var id = __instance.Id.Entry.ToLowerInvariant();
+        var path = ImageHelper.GetImagePath("packed/map/ancients/ancient_node_" + id + ".png");
+        AncientCompendiumEntry.ReplaceAncientIcon(__instance, path, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.MapIconOutline), MethodType.Getter)]
+internal static class AncientMapIconOutlineResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
+    {
+        var id = __instance.Id.Entry.ToLowerInvariant();
+        var path = ImageHelper.GetImagePath("packed/map/ancients/ancient_node_" + id + "_outline.png");
+        AncientCompendiumEntry.ReplaceAncientIcon(__instance, path, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.RunHistoryIcon), MethodType.Getter)]
+internal static class AncientRunHistoryIconResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
+    {
+        var id = __instance.Id.Entry.ToLowerInvariant();
+        var path = ImageHelper.GetImagePath("ui/run_history/" + id + ".png");
+        AncientCompendiumEntry.ReplaceAncientIcon(__instance, path, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.RunHistoryIconOutline), MethodType.Getter)]
+internal static class AncientRunHistoryIconOutlineResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
+    {
+        var id = __instance.Id.Entry.ToLowerInvariant();
+        var path = ImageHelper.GetImagePath("ui/run_history/" + id + "_outline.png");
+        AncientCompendiumEntry.ReplaceAncientIcon(__instance, path, ref __result);
     }
 }

@@ -95,8 +95,7 @@ internal static partial class ContextualSkinControls
         {
             Name = SelectorName,
             Visible = false,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-            ZIndex = 50
+            MouseFilter = Control.MouseFilterEnum.Stop
         };
         var dropdown = new OptionButton
         {
@@ -145,6 +144,15 @@ internal static partial class ContextualSkinControls
         if (font != null)
         {
             popup.AddThemeFontOverride("font", font);
+        }
+    }
+
+    internal static void HideCharacterSelector(NCharacterSelectScreen screen)
+    {
+        var selector = screen.GetNodeOrNull<Control>($"InfoPanel/{SelectorName}");
+        if (selector != null)
+        {
+            selector.Visible = false;
         }
     }
 
@@ -554,6 +562,20 @@ internal static class CharacterSelectionSkinPatch
         NCharacterSelectScreen __instance,
         CharacterModel characterModel) =>
         ContextualSkinControls.ShowCharacter(__instance, characterModel);
+}
+
+[HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewSingleplayerRun")]
+internal static class SingleplayerEmbarkSkinSelectorPatch
+{
+    private static void Prefix(NCharacterSelectScreen __instance) =>
+        ContextualSkinControls.HideCharacterSelector(__instance);
+}
+
+[HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewMultiplayerRun")]
+internal static class MultiplayerEmbarkSkinSelectorPatch
+{
+    private static void Prefix(NCharacterSelectScreen __instance) =>
+        ContextualSkinControls.HideCharacterSelector(__instance);
 }
 
 [HarmonyPatch(typeof(NBestiary), "SelectMonster")]
