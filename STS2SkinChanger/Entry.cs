@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using STS2SkinChanger.Core;
+using System.Reflection;
 
 namespace STS2SkinChanger;
 
@@ -22,20 +23,37 @@ public static class Entry
     internal static void PatchAncientWaifusRuntime(Harmony harmony)
     {
         var prefix = new HarmonyMethod(AccessTools.Method(typeof(Entry), nameof(SkipConflictingSkinRuntime)));
-        var target = AccessTools.Method("AncientWaifus.Core.GlobalTouchHook:RegisterHook");
-        if (target == null || Harmony.GetPatchInfo(target)?.Prefixes.Any(patch => patch.owner == ModId) == true)
+        var patched = 0;
+        foreach (var target in AppDomain.CurrentDomain.GetAssemblies()
+                     .SelectMany(GetLoadableTypes)
+                     .Where(type => type.FullName?.EndsWith(
+                         ".Core.GlobalTouchHook", StringComparison.Ordinal) == true)
+                     .Select(type => AccessTools.Method(type, "RegisterHook"))
+                     .Where(target => target != null)
+                     .Cast<MethodInfo>()
+                     .Distinct())
         {
-            return;
+            if (Harmony.GetPatchInfo(target)?.Prefixes.Any(patch => patch.owner == ModId) == true)
+            {
+                continue;
+            }
+
+            try
+            {
+                harmony.Patch(target, prefix: prefix);
+                patched++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"无法停用冲突的皮肤运行时 {target.DeclaringType?.Assembly.GetName().Name}/" +
+                    $"{target.DeclaringType?.FullName}.{target.Name}：{exception.Message}");
+            }
         }
 
-        try
+        if (patched > 0)
         {
-            harmony.Patch(target, prefix: prefix);
-            ModLog.Info("已接管 AncientWaifus 的路径切换并禁用其过期输入钩子。");
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"无法停用冲突的皮肤运行时 {target.DeclaringType?.FullName}.{target.Name}：{exception.Message}");
+            ModLog.Info($"已接管 {patched} 个皮肤运行时输入钩子，避免其再次覆盖已选外观。");
         }
     }
 
@@ -53,42 +71,7 @@ public static class Entry
         }
 
         var removed = 0;
-        foreach (var target in new[]
-                 {
-                     AccessTools.PropertyGetter(
-                         typeof(MegaCrit.Sts2.Core.Models.CardModel),
-                         nameof(MegaCrit.Sts2.Core.Models.CardModel.Portrait)),
-                     AccessTools.PropertyGetter(
-                         typeof(MegaCrit.Sts2.Core.Models.CardModel),
-                         nameof(MegaCrit.Sts2.Core.Models.CardModel.PortraitPath))
-                 })
-        {
-            var owners = Harmony.GetPatchInfo(target)?.Postfixes
-                .Select(patch => patch.owner)
-                .Where(optionIds.Contains)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray() ?? [];
-            foreach (var owner in owners)
-            {
-                try
-                {
-                    removed += Harmony.GetPatchInfo(target)?.Postfixes.Count(patch =>
-                        patch.owner.Equals(owner, StringComparison.OrdinalIgnoreCase)) ?? 0;
-                    harmony.Unpatch(target, HarmonyPatchType.Postfix, owner);
-                }
-                catch (Exception exception)
-                {
-                    ModLog.Warn(
-                        $"无法移除冲突的卡图运行时 {owner}/{target.Name}：{exception.Message}");
-                }
-            }
-        }
-
-        foreach (var target in new[]
-                 {
-                     AccessTools.Method(typeof(NCard), "Reload"),
-                     AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals))
-                 })
+        foreach (var target in Harmony.GetAllPatchedMethods().Where(IsCardArtTarget).ToArray())
         {
             var patchInfo = Harmony.GetPatchInfo(target);
             if (patchInfo == null)
@@ -96,12 +79,14 @@ public static class Entry
                 continue;
             }
 
-            var nodePatches = patchInfo.Prefixes
+            var providerPatches = patchInfo.Prefixes
                 .Concat(patchInfo.Postfixes)
-                .Where(patch => optionIds.Contains(patch.owner))
+                .Concat(patchInfo.Transpilers)
+                .Concat(patchInfo.Finalizers)
+                .Where(patch => PatchBelongsToCardProvider(patch, optionIds))
                 .DistinctBy(patch => patch.PatchMethod)
                 .ToArray();
-            foreach (var patch in nodePatches)
+            foreach (var patch in providerPatches)
             {
                 try
                 {
@@ -111,7 +96,7 @@ public static class Entry
                 catch (Exception exception)
                 {
                     ModLog.Warn(
-                        $"无法移除冲突的卡牌节点补丁 {patch.owner}/" +
+                        $"无法移除冲突的卡图补丁 {patch.owner}/" +
                         $"{patch.PatchMethod.DeclaringType?.FullName}.{patch.PatchMethod.Name}：" +
                         exception.Message);
                 }
@@ -121,6 +106,73 @@ public static class Entry
         if (removed > 0)
         {
             ModLog.Info($"已接管 {removed} 个卡图路径、贴图或节点补丁，改为按卡牌总览分类应用。");
+        }
+    }
+
+    private static bool IsCardArtTarget(MethodBase target)
+    {
+        var typeName = target.DeclaringType?.FullName;
+        if (typeName == typeof(MegaCrit.Sts2.Core.Models.CardModel).FullName)
+        {
+            return target.Name is "get_Portrait" or "get_PortraitPath";
+        }
+
+        if (typeName == typeof(NCard).FullName)
+        {
+            return target.Name is "Reload" or "UpdateVisuals" or "UpdatePortrait";
+        }
+
+        return typeName switch
+        {
+            "MegaCrit.Sts2.Core.Assets.AtlasManager" => target.Name == "GetSprite",
+            "MegaCrit.Sts2.Core.Assets.AssetCache" =>
+                target.Name is "GetAsset" or "GetScene" or "GetTexture2D",
+            _ => false
+        };
+    }
+
+    private static bool PatchBelongsToCardProvider(
+        HarmonyLib.Patch patch,
+        IReadOnlySet<string> optionIds)
+    {
+        var candidates = new[]
+        {
+            patch.owner,
+            patch.PatchMethod.Module.Assembly.GetName().Name,
+            patch.PatchMethod.DeclaringType?.FullName
+        }.Select(NormalizeProviderIdentity)
+            .Where(value => value.Length >= 4)
+            .ToArray();
+
+        return optionIds
+            .Select(NormalizeProviderIdentity)
+            .Where(value => value.Length >= 4)
+            .Any(option => candidates.Any(candidate =>
+                candidate.Contains(option, StringComparison.Ordinal) ||
+                option.Contains(candidate, StringComparison.Ordinal)));
+    }
+
+    private static string NormalizeProviderIdentity(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : new string(value
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            return exception.Types.OfType<Type>();
+        }
+        catch
+        {
+            return [];
         }
     }
 }

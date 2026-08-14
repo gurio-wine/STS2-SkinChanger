@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using System.Runtime.CompilerServices;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardLibrary;
@@ -118,6 +119,25 @@ internal static class CardSkinControls
         if (BaselineLayouts.TryGetValue(card, out var state))
         {
             state.Restore();
+        }
+    }
+
+    public static void ApplySelectedPortraitToNode(NCard card)
+    {
+        if (card.Model == null)
+        {
+            return;
+        }
+
+        var portrait = card.Model.Portrait;
+        SkinService.ReplaceCardPortrait(card.Model, ref portrait);
+        var targetPath = card.Model.Rarity == CardRarity.Ancient
+            ? "%AncientPortrait"
+            : "%Portrait";
+        var target = card.GetNodeOrNull<TextureRect>(targetPath);
+        if (target != null)
+        {
+            target.Texture = portrait;
         }
     }
 
@@ -338,6 +358,9 @@ internal static class CardLayoutFinalPatch
     }
 
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCard __instance) =>
+    private static void Postfix(NCard __instance)
+    {
         CardSkinControls.RestoreBaselineLayout(__instance);
+        CardSkinControls.ApplySelectedPortraitToNode(__instance);
+    }
 }
