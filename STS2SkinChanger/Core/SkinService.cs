@@ -95,6 +95,13 @@ internal static class SkinService
 
     public static PackedScene LoadRuntimeScene(string groupId, string scenePath)
     {
+        return LoadRuntimeScenes(groupId, [scenePath])[scenePath];
+    }
+
+    public static IReadOnlyDictionary<string, PackedScene> LoadRuntimeScenes(
+        string groupId,
+        IReadOnlyCollection<string> scenePaths)
+    {
         lock (Sync)
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
@@ -103,7 +110,7 @@ internal static class SkinService
             var overlay = catalog.BuildRuntimeSceneOverlay(
                 groupId,
                 Config.GetSelection(groupId),
-                scenePath,
+                scenePaths,
                 aliasToken);
             var overlayPath = System.IO.Path.Combine(
                 OS.GetUserDataDir(),
@@ -114,17 +121,23 @@ internal static class SkinService
                 throw new InvalidOperationException("Godot 拒绝加载独立皮肤场景资源包。");
             }
 
-            var scene = ResourceLoader.Load<PackedScene>(
-                overlay.ScenePath,
-                null,
-                ResourceLoader.CacheMode.IgnoreDeep);
-            if (scene == null)
+            var scenes = new Dictionary<string, PackedScene>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in overlay.ScenePaths)
             {
-                throw new InvalidOperationException($"无法加载独立皮肤场景：{overlay.ScenePath}");
+                var scene = ResourceLoader.Load<PackedScene>(
+                    pair.Value,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep);
+                if (scene == null)
+                {
+                    throw new InvalidOperationException($"无法加载独立皮肤场景：{pair.Value}");
+                }
+
+                scenes[pair.Key] = scene;
             }
 
-            ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集和贴图：{aliasToken}");
-            return scene;
+            ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {scenes.Count} 个场景：{aliasToken}");
+            return scenes;
         }
     }
 

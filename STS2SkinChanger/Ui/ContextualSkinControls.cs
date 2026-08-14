@@ -55,10 +55,10 @@ internal static partial class ContextualSkinControls
         selector.AnchorTop = 0.5f;
         selector.AnchorRight = 0.5f;
         selector.AnchorBottom = 0.5f;
-        selector.OffsetLeft = -677;
-        selector.OffsetTop = 250;
-        selector.OffsetRight = -115;
-        selector.OffsetBottom = 302;
+        selector.OffsetLeft = -556;
+        selector.OffsetTop = 214;
+        selector.OffsetRight = -246;
+        selector.OffsetBottom = 262;
         screen.AddChild(selector);
         return selector;
     }
@@ -74,10 +74,10 @@ internal static partial class ContextualSkinControls
         var selector = BuildSelector();
         selector.AnchorLeft = 0.5f;
         selector.AnchorRight = 0.5f;
-        selector.OffsetLeft = -285;
+        selector.OffsetLeft = -155;
         selector.OffsetTop = 168;
-        selector.OffsetRight = 285;
-        selector.OffsetBottom = 220;
+        selector.OffsetRight = 155;
+        selector.OffsetBottom = 216;
         screen.AddChild(selector);
         return selector;
     }
@@ -88,29 +88,93 @@ internal static partial class ContextualSkinControls
         {
             Name = SelectorName,
             Visible = false,
-            MouseFilter = Control.MouseFilterEnum.Stop
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 50
         };
-        selector.AddThemeConstantOverride("separation", 12);
+        selector.AddThemeConstantOverride("separation", 8);
 
-        selector.AddChild(new Label
+        var label = new Label
         {
             Text = "皮肤",
-            CustomMinimumSize = new Vector2(82, 48),
+            CustomMinimumSize = new Vector2(58, 44),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center
-        });
+        };
+        selector.AddChild(label);
 
         var dropdown = new OptionButton
         {
             Name = DropdownName,
-            CustomMinimumSize = new Vector2(390, 48),
+            CustomMinimumSize = new Vector2(244, 44),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            FitToLongestItem = false
+            FitToLongestItem = false,
+            ClipText = true,
+            Alignment = HorizontalAlignment.Center
         };
+        ApplyGameTheme(label, dropdown);
         dropdown.ItemSelected += index => ApplyDropdownSelection(selector, dropdown, checked((int)index));
         selector.AddChild(dropdown);
         selector.TreeExited += () => RefreshActions.Remove(selector.GetInstanceId());
         return selector;
+    }
+
+    private static void ApplyGameTheme(Label label, OptionButton dropdown)
+    {
+        var font = ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
+        var ivory = new Color("fff6e2");
+        var gold = new Color("efc850");
+        label.AddThemeColorOverride("font_color", gold);
+        label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.35f));
+        label.AddThemeConstantOverride("shadow_offset_x", 2);
+        label.AddThemeConstantOverride("shadow_offset_y", 2);
+        label.AddThemeFontSizeOverride("font_size", 23);
+        dropdown.AddThemeColorOverride("font_color", ivory);
+        dropdown.AddThemeColorOverride("font_hover_color", Colors.White);
+        dropdown.AddThemeColorOverride("font_pressed_color", gold);
+        dropdown.AddThemeColorOverride("font_focus_color", Colors.White);
+        dropdown.AddThemeFontSizeOverride("font_size", 23);
+        if (font != null)
+        {
+            label.AddThemeFontOverride("font", font);
+            dropdown.AddThemeFontOverride("font", font);
+        }
+
+        dropdown.AddThemeStyleboxOverride("normal", CreateStyleBox(new Color("3c5f82"), new Color("7394ad")));
+        dropdown.AddThemeStyleboxOverride("hover", CreateStyleBox(new Color("4b7392"), new Color("afcdde")));
+        dropdown.AddThemeStyleboxOverride("pressed", CreateStyleBox(new Color("45104e"), gold));
+        dropdown.AddThemeStyleboxOverride("focus", CreateStyleBox(new Color("3c5f82"), gold, 2));
+        dropdown.AddThemeStyleboxOverride("disabled", CreateStyleBox(new Color("293b4c"), new Color("50606b")));
+
+        var popup = dropdown.GetPopup();
+        popup.AddThemeColorOverride("font_color", ivory);
+        popup.AddThemeColorOverride("font_hover_color", Colors.White);
+        popup.AddThemeColorOverride("font_separator_color", gold);
+        popup.AddThemeFontSizeOverride("font_size", 22);
+        popup.AddThemeStyleboxOverride("panel", CreateStyleBox(new Color("45104e"), new Color("79547e"), 2));
+        popup.AddThemeStyleboxOverride("hover", CreateStyleBox(new Color("2c586f"), new Color("afcdde")));
+        if (font != null)
+        {
+            popup.AddThemeFontOverride("font", font);
+        }
+    }
+
+    private static StyleBoxFlat CreateStyleBox(Color background, Color border, int borderWidth = 1)
+    {
+        return new StyleBoxFlat
+        {
+            BgColor = background,
+            BorderColor = border,
+            BorderWidthLeft = borderWidth,
+            BorderWidthTop = borderWidth,
+            BorderWidthRight = borderWidth,
+            BorderWidthBottom = borderWidth,
+            CornerRadiusTopLeft = 12,
+            CornerRadiusTopRight = 12,
+            CornerRadiusBottomRight = 12,
+            CornerRadiusBottomLeft = 12,
+            ContentMarginLeft = 12,
+            ContentMarginRight = 12
+        };
     }
 
     private static void Populate(HBoxContainer selector, SkinGroup? group)
@@ -195,8 +259,20 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
-        var scene = SkinService.LoadRuntimeScene(groupId, character.CharacterSelectBg);
-        PreloadManager.Cache.SetAsset(character.CharacterSelectBg, scene);
+        var scenePaths = new[]
+        {
+            character.CharacterSelectBg,
+            SceneHelper.GetScenePath("creature_visuals/" + character.Id.Entry.ToLowerInvariant()),
+            character.RestSiteAnimPath,
+            character.MerchantAnimPath
+        };
+        var scenes = SkinService.LoadRuntimeScenes(groupId, scenePaths);
+        foreach (var pair in scenes)
+        {
+            PreloadManager.Cache.SetAsset(pair.Key, pair.Value);
+        }
+
+        var scene = scenes[character.CharacterSelectBg];
         var container = screen.GetNode<Control>("AnimatedBg");
         foreach (var child in container.GetChildren())
         {

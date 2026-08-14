@@ -52,7 +52,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     mod,
                     archive,
                     importedToSource,
-                    mod.AffectsGameplay ? IsAnimationRemap : null);
+                    remapFilter: null);
                 if (mod.AffectsGameplay)
                 {
                     baselineIndexes.Add(index);
@@ -161,13 +161,13 @@ internal sealed partial class SkinCatalog : IDisposable
     public RuntimeSceneOverlay BuildRuntimeSceneOverlay(
         string groupId,
         string selectionId,
-        string scenePath,
+        IReadOnlyCollection<string> scenePaths,
         string aliasToken)
     {
         var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         var selected = group.Options.FirstOrDefault(option => option.Id == selectionId);
         var sourcePaths = GetAffectedSourcePaths(groupId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        sourcePaths.Add(scenePath);
+        sourcePaths.UnionWith(scenePaths);
 
         var resources = new List<RuntimeResource>();
         foreach (var sourcePath in sourcePaths)
@@ -183,25 +183,25 @@ internal sealed partial class SkinCatalog : IDisposable
 
             var directFile = FindDirectFile(primary, sourcePath) ?? FindDirectFile(baseline, sourcePath);
             var remapFile = FindRemapFile(primary, sourcePath) ?? FindRemapFile(baseline, sourcePath);
-            var importedFiles = primary.Files.Where(file => IsImportedPath(file.Path)).ToArray();
-            if (importedFiles.Length == 0 && baseline != null)
+            var payloadFiles = GetImportedPayloadFiles(primary, sourcePath);
+            if (payloadFiles.Length == 0 && baseline != null)
             {
-                importedFiles = baseline.Files.Where(file => IsImportedPath(file.Path)).ToArray();
+                payloadFiles = GetImportedPayloadFiles(baseline, sourcePath);
             }
 
-            resources.Add(new RuntimeResource(sourcePath, directFile, remapFile, importedFiles));
+            resources.Add(new RuntimeResource(sourcePath, directFile, remapFile, payloadFiles));
         }
 
         var sourceAliases = resources.ToDictionary(
             resource => resource.SourcePath,
             resource => $"res://sts2_skin_runtime/{aliasToken}/{resource.SourcePath[6..]}",
             StringComparer.OrdinalIgnoreCase);
-        var importedAliases = resources
-            .SelectMany(resource => resource.ImportedFiles)
+        var payloadAliases = resources
+            .SelectMany(resource => resource.PayloadFiles)
             .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 file => file.Path,
-                file => $"res://.godot/imported/sts2_skin_runtime/{aliasToken}/{file.Path[22..]}",
+                file => $"res://sts2_skin_runtime/{aliasToken}/_payload/{file.Path[6..]}",
                 StringComparer.OrdinalIgnoreCase);
 
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -210,14 +210,14 @@ internal sealed partial class SkinCatalog : IDisposable
             if (resource.DirectFile != null)
             {
                 var bytes = resource.DirectFile.Archive.ReadFile(resource.DirectFile.Path);
-                files[sourceAliases[resource.SourcePath]] = RewriteTextResource(bytes, sourceAliases, importedAliases);
+                files[sourceAliases[resource.SourcePath]] = RewriteTextResource(bytes, sourceAliases, payloadAliases);
             }
 
-            foreach (var importedFile in resource.ImportedFiles)
+            foreach (var payloadFile in resource.PayloadFiles)
             {
-                var bytes = importedFile.Archive.ReadFile(importedFile.Path);
-                files[importedAliases[importedFile.Path]] = importedFile.Path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase)
-                    ? RewriteTextResource(bytes, sourceAliases, importedAliases, stripUids: false)
+                var bytes = payloadFile.Archive.ReadFile(payloadFile.Path);
+                files[payloadAliases[payloadFile.Path]] = payloadFile.Path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase)
+                    ? RewriteTextResource(bytes, sourceAliases, payloadAliases, stripUids: false)
                     : bytes;
             }
 
@@ -231,16 +231,15 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (Match match in ResourcePathRegex().Matches(remapText))
             {
                 var originalPath = match.Groups[1].Value;
-                if (!originalPath.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) ||
-                    replacements.ContainsKey(originalPath))
+                if (replacements.ContainsKey(originalPath))
                 {
                     continue;
                 }
 
-                var importedFile = MatchImportedFile(originalPath, resource.ImportedFiles);
-                if (importedFile != null)
+                var payloadFile = MatchImportedFile(originalPath, resource.PayloadFiles);
+                if (payloadFile != null)
                 {
-                    replacements[originalPath] = importedAliases[importedFile.Path];
+                    replacements[originalPath] = payloadAliases[payloadFile.Path];
                 }
             }
 
@@ -251,12 +250,18 @@ internal sealed partial class SkinCatalog : IDisposable
                 RewriteTextResource(Encoding.UTF8.GetBytes(remapText), replacements, null);
         }
 
-        if (!sourceAliases.TryGetValue(scenePath, out var aliasedScenePath) || !files.ContainsKey(aliasedScenePath))
+        var aliasedScenePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var scenePath in scenePaths)
         {
-            throw new InvalidOperationException($"无法为 {scenePath} 创建独立皮肤场景。");
+            if (!sourceAliases.TryGetValue(scenePath, out var aliasedScenePath) || !files.ContainsKey(aliasedScenePath))
+            {
+                throw new InvalidOperationException($"无法为 {scenePath} 创建独立皮肤场景。");
+            }
+
+            aliasedScenePaths[scenePath] = aliasedScenePath;
         }
 
-        return new RuntimeSceneOverlay(aliasedScenePath, files);
+        return new RuntimeSceneOverlay(aliasedScenePaths, files);
     }
 
     public void Dispose()
@@ -389,8 +394,18 @@ internal sealed partial class SkinCatalog : IDisposable
             file.Path.Equals(sourcePath + ".import", StringComparison.OrdinalIgnoreCase) ||
             file.Path.Equals(sourcePath + ".remap", StringComparison.OrdinalIgnoreCase));
 
-    private static bool IsImportedPath(string path) =>
-        path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase);
+    private static ResourceFile[] GetImportedPayloadFiles(ResourceAsset asset, string sourcePath) =>
+        asset.Files.Where(file =>
+                !file.Path.Equals(sourcePath, StringComparison.OrdinalIgnoreCase) &&
+                !file.Path.Equals(sourcePath + ".import", StringComparison.OrdinalIgnoreCase) &&
+                !file.Path.Equals(sourcePath + ".remap", StringComparison.OrdinalIgnoreCase) &&
+                IsImportedPayloadPath(file.Path))
+            .ToArray();
+
+    private static bool IsImportedPayloadPath(string path) =>
+        path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".spskel", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".ctex", StringComparison.OrdinalIgnoreCase);
 
     private static ResourceFile? MatchImportedFile(string targetPath, IReadOnlyList<ResourceFile> files)
     {
@@ -475,7 +490,7 @@ internal sealed partial class SkinCatalog : IDisposable
         string SourcePath,
         ResourceFile? DirectFile,
         ResourceFile? RemapFile,
-        IReadOnlyList<ResourceFile> ImportedFiles);
+        IReadOnlyList<ResourceFile> PayloadFiles);
 }
 
 internal sealed record SkinModDescriptor(string Id, string Name, string PckPath, bool AffectsGameplay);
@@ -489,7 +504,9 @@ internal sealed class SkinGroup(string id, string displayName)
 
 internal sealed record SkinOption(string Id, string Name, IReadOnlyDictionary<string, ResourceAsset> Assets);
 
-internal sealed record RuntimeSceneOverlay(string ScenePath, IReadOnlyDictionary<string, byte[]> Files);
+internal sealed record RuntimeSceneOverlay(
+    IReadOnlyDictionary<string, string> ScenePaths,
+    IReadOnlyDictionary<string, byte[]> Files);
 
 internal sealed class ResourceAsset(string sourcePath)
 {

@@ -55,11 +55,12 @@ if (runtimeIndex >= 0)
         throw new ArgumentException("--runtime-scene requires: <group> <selection> <scene> <output.pck>");
     }
 
+    var scenePaths = args[runtimeIndex + 3].Split(';', StringSplitOptions.RemoveEmptyEntries);
     var overlay = catalog.BuildRuntimeSceneOverlay(
         args[runtimeIndex + 1],
         args[runtimeIndex + 2],
-        args[runtimeIndex + 3],
+        scenePaths,
         "inspect/001");
     PckArchive.Write(args[runtimeIndex + 4], overlay.Files);
-    Console.WriteLine($"runtime scene: {overlay.ScenePath} ({overlay.Files.Count} files)");
+    Console.WriteLine($"runtime scenes: {string.Join(", ", overlay.ScenePaths.Values)} ({overlay.Files.Count} files)");
 }
