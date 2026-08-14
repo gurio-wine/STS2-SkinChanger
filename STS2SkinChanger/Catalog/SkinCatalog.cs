@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using STS2SkinChanger.Pck;
 
@@ -11,6 +12,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly PckArchive _gameArchive;
     private readonly List<PckResourceIndex> _baselineIndexes;
     private readonly List<PckResourceIndex> _cosmeticIndexes;
+    private readonly List<SkinGroup> _groups;
 
     private SkinCatalog(
         PckArchive gameArchive,
@@ -21,13 +23,14 @@ internal sealed partial class SkinCatalog : IDisposable
         _gameArchive = gameArchive;
         _baselineIndexes = baselineIndexes;
         _cosmeticIndexes = cosmeticIndexes;
-        Groups = groups;
+        _groups = groups.ToList();
     }
 
-    public IReadOnlyList<SkinGroup> Groups { get; }
+    public IReadOnlyList<SkinGroup> Groups => _groups;
 
     public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods)
     {
+        var modList = mods.ToArray();
         var gameArchive = PckArchive.Open(gamePckPath);
         var baselineIndexes = new List<PckResourceIndex>();
         var cosmeticIndexes = new List<PckResourceIndex>();
@@ -40,9 +43,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 importedToSource,
                 IsAnimationRemap));
 
-            foreach (var mod in mods)
+            foreach (var mod in modList)
             {
-                if (!File.Exists(mod.PckPath))
+                if (mod.PckPath == null || !File.Exists(mod.PckPath))
                 {
                     continue;
                 }
@@ -64,7 +67,10 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var groups = BuildGroups(cosmeticIndexes);
-            return new SkinCatalog(gameArchive, baselineIndexes, cosmeticIndexes, groups);
+            var catalog = new SkinCatalog(gameArchive, baselineIndexes, cosmeticIndexes, groups);
+            catalog.AddImageRuntimeProviderOptions(modList);
+            catalog.SortGroupsAndOptions();
+            return catalog;
         }
         catch
         {
@@ -76,6 +82,25 @@ internal sealed partial class SkinCatalog : IDisposable
             gameArchive.Dispose();
             throw;
         }
+    }
+
+    public bool IsRuntimeProviderOption(string groupId, string optionId)
+    {
+        return Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))?
+            .IsRuntimeProvider == true;
+    }
+
+    public string? FindGroupIdForResourcePath(string resourcePath)
+    {
+        var identity = TryGetPrimaryGroup(resourcePath) ??
+                       TryGetCharacterSelectIconGroup(resourcePath) ??
+                       TryGetCharacterUiTextureGroup(resourcePath) ??
+                       TryGetCharacterIconSceneGroup(resourcePath);
+        return identity != null && Groups.Any(group =>
+            group.Id.Equals(identity.Id, StringComparison.OrdinalIgnoreCase))
+            ? identity.Id
+            : null;
     }
 
     public ResourceAsset? ResolveBaseline(string sourcePath)
@@ -384,6 +409,7 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         MergeCharacterSelectIconPacks(indexes, groups);
+        AddPckRuntimeProviderOptions(indexes, groups);
 
         foreach (var group in groups.Values)
         {
@@ -394,6 +420,136 @@ internal sealed partial class SkinCatalog : IDisposable
             .OrderBy(group => GroupSortOrder(group.Id))
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
+
+    private static void AddPckRuntimeProviderOptions(
+        IReadOnlyCollection<PckResourceIndex> indexes,
+        IDictionary<string, SkinGroup> groups)
+    {
+        foreach (var index in indexes)
+        {
+            var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
+            var identities = index.Assets.Keys
+                .Select(TryGetRuntimeProviderGroup)
+                .Where(identity => identity != null)
+                .Cast<GroupIdentity>()
+                .Where(identity => enabledGroupIds == null || enabledGroupIds.Contains(identity.Id))
+                .DistinctBy(identity => identity.Id)
+                .ToArray();
+            foreach (var identity in identities)
+            {
+                if (!groups.TryGetValue(identity.Id, out var group))
+                {
+                    group = new SkinGroup(identity.Id, identity.DisplayName);
+                    groups.Add(identity.Id, group);
+                }
+
+                if (group.Options.Any(option => option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                group.Options.Add(new SkinOption(
+                    index.Mod.Id,
+                    index.Mod.Name,
+                    new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                    IsRuntimeProvider: true));
+            }
+        }
+    }
+
+    private static HashSet<string>? ReadEnabledRuntimeGroupIds(SkinModDescriptor mod)
+    {
+        if (mod.RootPath == null || !Directory.Exists(mod.RootPath))
+        {
+            return null;
+        }
+
+        foreach (var configPath in Directory.EnumerateFiles(mod.RootPath, "*_config.cfg", SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(configPath));
+                var replacements = document.RootElement.EnumerateObject()
+                    .FirstOrDefault(property =>
+                        property.Name.Equals("template_replacements", StringComparison.OrdinalIgnoreCase));
+                if (replacements.Value.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                return replacements.Value.EnumerateObject()
+                    .Where(property => property.Value.ValueKind == JsonValueKind.True)
+                    .Select(property => property.Name.ToLowerInvariant())
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Debug.WriteLine($"无法读取运行时皮肤配置 {configPath}: {exception.Message}");
+            }
+        }
+
+        return null;
+    }
+
+    private void AddImageRuntimeProviderOptions(IEnumerable<SkinModDescriptor> mods)
+    {
+        foreach (var mod in mods.Where(mod => mod.HasDll && !mod.AffectsGameplay && mod.RootPath != null))
+        {
+            var imageDirectory = System.IO.Path.Combine(mod.RootPath!, "images");
+            if (!Directory.Exists(imageDirectory))
+            {
+                continue;
+            }
+
+            var imageIds = Directory.EnumerateFiles(imageDirectory, "*", SearchOption.TopDirectoryOnly)
+                .Where(path => System.IO.Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase))
+                .Select(path => System.IO.Path.GetFileNameWithoutExtension(path)!)
+                .Where(id => KnownAncientIds.Contains(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var imageId in imageIds)
+            {
+                AddRuntimeProviderOption(imageId, mod.Id, mod.Name);
+            }
+        }
+    }
+
+    private void AddRuntimeProviderOption(string groupId, string optionId, string optionName)
+    {
+        var group = _groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+        if (group == null)
+        {
+            group = new SkinGroup(groupId, DisplayName(groupId));
+            _groups.Add(group);
+        }
+
+        if (group.Options.Any(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        group.Options.Add(new SkinOption(
+            optionId,
+            optionName,
+            new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+            IsRuntimeProvider: true));
+    }
+
+    private void SortGroupsAndOptions()
+    {
+        foreach (var group in _groups)
+        {
+            group.Options.Sort((left, right) =>
+                string.Compare(left.Name, right.Name, StringComparison.CurrentCultureIgnoreCase));
+        }
+
+        _groups.Sort((left, right) =>
+        {
+            var order = GroupSortOrder(left.Id).CompareTo(GroupSortOrder(right.Id));
+            return order != 0
+                ? order
+                : string.Compare(left.DisplayName, right.DisplayName, StringComparison.CurrentCultureIgnoreCase);
+        });
     }
 
     private static void MergeCharacterSelectIconPacks(
@@ -515,6 +671,55 @@ internal sealed partial class SkinCatalog : IDisposable
         return new GroupIdentity(id, DisplayName(id));
     }
 
+    private static GroupIdentity? TryGetCharacterUiTextureGroup(string sourcePath)
+    {
+        var match = CharacterUiTextureRegex().Match(sourcePath);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var id = match.Groups[1].Value.ToLowerInvariant();
+        return new GroupIdentity(id, DisplayName(id));
+    }
+
+    private static GroupIdentity? TryGetCharacterIconSceneGroup(string sourcePath)
+    {
+        var match = CharacterIconSceneRegex().Match(sourcePath);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var id = match.Groups[1].Value.ToLowerInvariant();
+        return new GroupIdentity(id, DisplayName(id));
+    }
+
+    private static GroupIdentity? TryGetRuntimeProviderGroup(string sourcePath)
+    {
+        foreach (var regex in new[]
+                 {
+                     RuntimeCharacterSelectSceneRegex(),
+                     RuntimeCharacterSelectIconRegex(),
+                     RuntimeCreatureTemplateRegex(),
+                     RuntimeMerchantTemplateRegex(),
+                     RuntimeRestSiteTemplateRegex(),
+                     RuntimeCharacterIconTemplateRegex()
+                 })
+        {
+            var match = regex.Match(sourcePath);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var id = match.Groups[1].Value.ToLowerInvariant();
+            return new GroupIdentity(id, DisplayName(id));
+        }
+
+        return null;
+    }
+
     private static bool ContainsGroupToken(string path, string groupId)
     {
         return Regex.IsMatch(path, $"(?:^|[/_.-]){Regex.Escape(groupId)}(?:[/_.-]|$)", RegexOptions.IgnoreCase);
@@ -618,7 +823,7 @@ internal sealed partial class SkinCatalog : IDisposable
         _ => id.Replace('_', ' ').Trim().CapitalizeWords()
     };
 
-    private static readonly HashSet<string> KnownAncientIds = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> KnownAncientIds = new(StringComparer.OrdinalIgnoreCase)
     {
         "darv",
         "neow",
@@ -657,6 +862,30 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("^res://images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterSelectIconRegex();
 
+    [GeneratedRegex("^res://images/ui/top_panel/character_icon_([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+    private static partial Regex CharacterUiTextureRegex();
+
+    [GeneratedRegex("^res://scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex CharacterIconSceneRegex();
+
+    [GeneratedRegex("^res://custom/scenes/screens/char_select/char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex RuntimeCharacterSelectSceneRegex();
+
+    [GeneratedRegex("^res://custom/images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+    private static partial Regex RuntimeCharacterSelectIconRegex();
+
+    [GeneratedRegex("^res://scenes/creature_visuals/templates/([^/.]+?)_template\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex RuntimeCreatureTemplateRegex();
+
+    [GeneratedRegex("^res://scenes/merchant/characters/templates/([^/.]+?)_merchant_template\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex RuntimeMerchantTemplateRegex();
+
+    [GeneratedRegex("^res://scenes/rest_site/characters/templates/([^/.]+?)_rest_site_template\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex RuntimeRestSiteTemplateRegex();
+
+    [GeneratedRegex("^res://custom/scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex RuntimeCharacterIconTemplateRegex();
+
     [GeneratedRegex("^res://waifu_assets/[^/]+/(.+)$", RegexOptions.IgnoreCase)]
     private static partial Regex WaifuAssetsPathRegex();
 
@@ -677,7 +906,13 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyList<ResourceFile> PayloadFiles);
 }
 
-internal sealed record SkinModDescriptor(string Id, string Name, string PckPath, bool AffectsGameplay);
+internal sealed record SkinModDescriptor(
+    string Id,
+    string Name,
+    string? PckPath,
+    bool AffectsGameplay,
+    string? RootPath = null,
+    bool HasDll = false);
 
 internal sealed class SkinGroup(string id, string displayName)
 {
@@ -686,7 +921,11 @@ internal sealed class SkinGroup(string id, string displayName)
     public List<SkinOption> Options { get; } = [];
 }
 
-internal sealed record SkinOption(string Id, string Name, IReadOnlyDictionary<string, ResourceAsset> Assets);
+internal sealed record SkinOption(
+    string Id,
+    string Name,
+    IReadOnlyDictionary<string, ResourceAsset> Assets,
+    bool IsRuntimeProvider = false);
 
 internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> ResourcePaths,

@@ -399,11 +399,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
             var scenePath = AncientCompendiumEntry.GetScenePath(ancient);
             var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
             PackedScene scene;
-            if (group != null)
+            if (group != null && SkinService.IsRuntimeProviderSelected(group.Id))
+            {
+                scene = ancient.CreateBackgroundScene();
+            }
+            else if (group != null)
             {
                 scene = SkinService.LoadRuntimeScene(group.Id, scenePath);
-                scene.TakeOverPath(scenePath);
-                PreloadManager.Cache.SetAsset(scenePath, scene);
             }
             else
             {
@@ -413,7 +415,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
             var preview = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
             preview.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-            _previewViewport.AddChild(preview);
+            var previewHost = new Control
+            {
+                Name = "PreviewHost",
+                MouseFilter = MouseFilterEnum.Pass
+            };
+            previewHost.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+            _previewViewport.AddChild(previewHost);
+            previewHost.AddChild(preview);
             ModLog.Info($"远古图鉴已展示 {ancient.Id.Entry}。");
         }
         catch (Exception exception)
@@ -503,7 +512,7 @@ internal static class AncientSceneResultPatch
         }
 
         var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
-        if (group == null)
+        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
         {
             return;
         }
@@ -512,8 +521,6 @@ internal static class AncientSceneResultPatch
         {
             var scenePath = AncientCompendiumEntry.GetScenePath(ancient);
             var scene = SkinService.GetOrLoadRuntimeScene(group.Id, scenePath);
-            scene.TakeOverPath(scenePath);
-            PreloadManager.Cache.SetAsset(scenePath, scene);
             __result = scene;
         }
         catch (Exception exception)

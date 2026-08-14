@@ -37,13 +37,17 @@ internal static class SkinService
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
                 var mods = ModManager.GetLoadedMods()
-                    .Where(mod => mod.manifest is { hasPck: true, id: not null })
+                    .Where(mod => mod.manifest is { id: not null })
                     .Where(mod => !mod.manifest!.id!.Equals(Entry.ModId, StringComparison.OrdinalIgnoreCase))
                     .Select(mod => new SkinModDescriptor(
                         mod.manifest!.id!,
                         mod.manifest.name ?? mod.manifest.id!,
-                        System.IO.Path.Combine(mod.path, mod.manifest.id + ".pck"),
-                        mod.manifest.affectsGameplay))
+                        mod.manifest.hasPck
+                            ? System.IO.Path.Combine(mod.path, mod.manifest.id + ".pck")
+                            : null,
+                        mod.manifest.affectsGameplay,
+                        mod.path,
+                        mod.manifest.hasDll))
                     .ToArray();
 
                 Catalog = SkinCatalog.Build(gamePckPath, mods);
@@ -104,15 +108,31 @@ internal static class SkinService
 
     public static PackedScene GetOrLoadRuntimeScene(string groupId, string scenePath)
     {
+        return GetOrLoadRuntimeResource(groupId, scenePath) as PackedScene ??
+               throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
+    }
+
+    public static Resource GetOrLoadRuntimeResource(string groupId, string resourcePath)
+    {
         lock (Sync)
         {
-            if (RuntimeResourceCache.TryGetValue(RuntimeResourceKey(groupId, scenePath), out var cached))
+            var cacheKey = RuntimeResourceKey(groupId, resourcePath);
+            if (RuntimeResourceCache.TryGetValue(cacheKey, out var cached) &&
+                GodotObject.IsInstanceValid(cached))
             {
-                return cached as PackedScene ??
-                       throw new InvalidOperationException($"缓存的独立皮肤资源不是场景：{scenePath}");
+                return cached;
             }
 
-            return LoadRuntimeScene(groupId, scenePath);
+            RuntimeResourceCache.Remove(cacheKey);
+            return LoadRuntimeResources(groupId, [resourcePath])[resourcePath];
+        }
+    }
+
+    public static bool IsRuntimeProviderSelected(string groupId)
+    {
+        lock (Sync)
+        {
+            return Catalog?.IsRuntimeProviderOption(groupId, Config.GetSelection(groupId)) == true;
         }
     }
 

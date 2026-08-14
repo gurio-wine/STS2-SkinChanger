@@ -255,29 +255,63 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
+        if (SkinService.IsRuntimeProviderSelected(groupId))
+        {
+            RebuildRuntimeProviderCharacterDisplay(screen, character);
+            return;
+        }
+
+        var characterId = character.Id.Entry.ToLowerInvariant();
+        var characterSelectPath = SceneHelper.GetScenePath("screens/char_select/char_select_bg_" + characterId);
         var scenePaths = new[]
         {
-            character.CharacterSelectBg,
-            SceneHelper.GetScenePath("creature_visuals/" + character.Id.Entry.ToLowerInvariant()),
-            character.RestSiteAnimPath,
-            character.MerchantAnimPath
+            characterSelectPath,
+            SceneHelper.GetScenePath("creature_visuals/" + characterId),
+            SceneHelper.GetScenePath("rest_site/characters/" + characterId + "_rest_site"),
+            SceneHelper.GetScenePath("merchant/characters/" + characterId + "_merchant")
         };
-        var characterSelectTextures = character.AssetPathsCharacterSelect
-            .Where(path => path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
+        var characterSelectTextures = new[]
+        {
+            ImageHelper.GetImagePath("packed/character_select/char_select_" + characterId + ".png"),
+            ImageHelper.GetImagePath("packed/character_select/char_select_" + characterId + "_locked.png")
+        };
         var resourcePaths = scenePaths
             .Concat(characterSelectTextures)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var resources = SkinService.LoadRuntimeResources(groupId, resourcePaths);
-        foreach (var pair in resources)
+
+        var scene = resources[characterSelectPath] as PackedScene ??
+                    throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
+        ReplaceCharacterBackground(screen, character, scene);
+        RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
+        ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    private static void RebuildRuntimeProviderCharacterDisplay(
+        NCharacterSelectScreen screen,
+        CharacterModel character)
+    {
+        var scenePath = character.CharacterSelectBg;
+        var scene = PreloadManager.Cache.GetScene(scenePath);
+        ReplaceCharacterBackground(screen, character, scene);
+
+        var button = FindCharacterButton(screen, character);
+        if (button != null)
         {
-            pair.Value.TakeOverPath(pair.Key);
-            PreloadManager.Cache.SetAsset(pair.Key, pair.Value);
+            button.GetNode<TextureRect>("%Icon").Texture = button.IsLocked
+                ? character.CharacterSelectLockedIcon
+                : character.CharacterSelectIcon;
         }
 
-        var scene = resources[character.CharacterSelectBg] as PackedScene ??
-                    throw new InvalidOperationException($"角色选角资源不是场景：{character.CharacterSelectBg}");
+        ModLog.Info($"已由 DLL 皮肤提供器重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    private static void ReplaceCharacterBackground(
+        NCharacterSelectScreen screen,
+        CharacterModel character,
+        PackedScene scene)
+    {
         var container = screen.GetNode<Control>("AnimatedBg");
         foreach (var child in container.GetChildren())
         {
@@ -288,8 +322,6 @@ internal static partial class ContextualSkinControls
         var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         background.Name = character.Id.Entry + "_bg";
         container.AddChild(background);
-        RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
-        ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
 
     private static void RefreshCharacterButtonIcon(
@@ -298,8 +330,7 @@ internal static partial class ContextualSkinControls
         IReadOnlyCollection<string> texturePaths,
         IReadOnlyDictionary<string, Resource> resources)
     {
-        var button = FindDescendant<NCharacterSelectButton>(screen, candidate =>
-            candidate.Character?.Id.Entry.Equals(character.Id.Entry, StringComparison.OrdinalIgnoreCase) == true);
+        var button = FindCharacterButton(screen, character);
         if (button == null)
         {
             return;
@@ -317,6 +348,12 @@ internal static partial class ContextualSkinControls
         button.GetNode<TextureRect>("%Icon").Texture = texture;
         ModLog.Info($"已刷新 {character.Id.Entry} 的角色列表头像。");
     }
+
+    private static NCharacterSelectButton? FindCharacterButton(
+        NCharacterSelectScreen screen,
+        CharacterModel character) =>
+        FindDescendant<NCharacterSelectButton>(screen, candidate =>
+            candidate.Character?.Id.Entry.Equals(character.Id.Entry, StringComparison.OrdinalIgnoreCase) == true);
 
     private static T? FindDescendant<T>(Node root, Func<T, bool> predicate) where T : Node
     {
@@ -369,7 +406,7 @@ internal static partial class ContextualSkinControls
         ref NCreatureVisuals result)
     {
         var group = FindGroup(modelId);
-        if (group == null)
+        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
         {
             return;
         }
@@ -377,8 +414,6 @@ internal static partial class ContextualSkinControls
         try
         {
             var scene = SkinService.GetOrLoadRuntimeScene(group.Id, visualsPath);
-            scene.TakeOverPath(visualsPath);
-            PreloadManager.Cache.SetAsset(visualsPath, scene);
             var replacement = scene.Instantiate<NCreatureVisuals>(PackedScene.GenEditState.Disabled);
             result?.QueueFree();
             result = replacement;
@@ -386,6 +421,68 @@ internal static partial class ContextualSkinControls
         catch (Exception exception)
         {
             ModLog.Error($"最终应用 {modelId} 的场景皮肤失败：{exception}");
+        }
+    }
+
+    internal static void ReplaceCachedScene(string resourcePath, ref PackedScene result)
+    {
+        var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
+        if (groupId == null || SkinService.IsRuntimeProviderSelected(groupId))
+        {
+            return;
+        }
+
+        try
+        {
+            result = SkinService.GetOrLoadRuntimeScene(groupId, resourcePath);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终接管场景 {resourcePath} 失败：{exception}");
+        }
+    }
+
+    internal static void ReplaceCachedTexture(string resourcePath, ref Texture2D result)
+    {
+        var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
+        if (groupId == null || SkinService.IsRuntimeProviderSelected(groupId))
+        {
+            return;
+        }
+
+        try
+        {
+            result = SkinService.GetOrLoadRuntimeResource(groupId, resourcePath) as Texture2D ??
+                     throw new InvalidOperationException($"独立皮肤资源不是贴图：{resourcePath}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终接管贴图 {resourcePath} 失败：{exception}");
+        }
+    }
+
+    internal static void ReplaceCharacterSelectTexture(
+        CharacterModel character,
+        bool locked,
+        ref CompressedTexture2D result)
+    {
+        var group = FindGroup(character.Id.Entry);
+        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        {
+            return;
+        }
+
+        var characterId = character.Id.Entry.ToLowerInvariant();
+        var resourcePath = ImageHelper.GetImagePath(
+            "packed/character_select/char_select_" + characterId + (locked ? "_locked.png" : ".png"));
+        try
+        {
+            result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as CompressedTexture2D ??
+                     throw new InvalidOperationException($"独立皮肤资源不是压缩贴图：{resourcePath}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终接管角色列表贴图 {resourcePath} 失败：{exception}");
         }
     }
 
@@ -427,6 +524,38 @@ internal static class MonsterVisualResultPatch
             __instance.Id.Entry,
             SceneHelper.GetScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
             ref __result);
+}
+
+[HarmonyPatch(typeof(AssetCache), nameof(AssetCache.GetScene))]
+internal static class CachedSceneResultPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(string path, ref PackedScene __result) =>
+        ContextualSkinControls.ReplaceCachedScene(path, ref __result);
+}
+
+[HarmonyPatch(typeof(AssetCache), nameof(AssetCache.GetTexture2D))]
+internal static class CachedTextureResultPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(string path, ref Texture2D __result) =>
+        ContextualSkinControls.ReplaceCachedTexture(path, ref __result);
+}
+
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CharacterSelectIcon), MethodType.Getter)]
+internal static class CharacterSelectIconResultPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
+        ContextualSkinControls.ReplaceCharacterSelectTexture(__instance, locked: false, ref __result);
+}
+
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CharacterSelectLockedIcon), MethodType.Getter)]
+internal static class CharacterSelectLockedIconResultPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
+        ContextualSkinControls.ReplaceCharacterSelectTexture(__instance, locked: true, ref __result);
 }
 
 [HarmonyPatch(typeof(NMuteInBackgroundHandler), nameof(NMuteInBackgroundHandler._Notification))]

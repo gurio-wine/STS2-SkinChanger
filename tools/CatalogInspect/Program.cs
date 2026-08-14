@@ -19,17 +19,15 @@ foreach (var root in modRoots)
         {
             using var document = JsonDocument.Parse(File.ReadAllText(manifestPath).TrimStart('\uFEFF'));
             var json = document.RootElement;
-            if (!json.TryGetProperty("has_pck", out var hasPck) || !hasPck.GetBoolean())
-            {
-                continue;
-            }
-
             var id = json.GetProperty("id").GetString()!;
             var name = json.TryGetProperty("name", out var nameValue) ? nameValue.GetString() ?? id : id;
             var pckName = json.TryGetProperty("pck_name", out var pckNameValue) ? pckNameValue.GetString() ?? id : id;
-            var pckPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(manifestPath)!, pckName + ".pck");
+            var rootPath = System.IO.Path.GetDirectoryName(manifestPath)!;
+            var hasPck = json.TryGetProperty("has_pck", out var hasPckValue) && hasPckValue.GetBoolean();
+            var hasDll = json.TryGetProperty("has_dll", out var hasDllValue) && hasDllValue.GetBoolean();
+            var pckPath = hasPck ? System.IO.Path.Combine(rootPath, pckName + ".pck") : null;
             var affectsGameplay = !json.TryGetProperty("affects_gameplay", out var gameplayValue) || gameplayValue.GetBoolean();
-            descriptors.Add(new SkinModDescriptor(id, name, pckPath, affectsGameplay));
+            descriptors.Add(new SkinModDescriptor(id, name, pckPath, affectsGameplay, rootPath, hasDll));
         }
         catch (Exception exception)
         {
