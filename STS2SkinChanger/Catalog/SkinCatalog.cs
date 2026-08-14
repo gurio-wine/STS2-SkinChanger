@@ -96,6 +96,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var identity = TryGetPrimaryGroup(resourcePath) ??
                        TryGetCharacterSelectIconGroup(resourcePath) ??
                        TryGetCharacterUiTextureGroup(resourcePath) ??
+                       TryGetCharacterMapMarkerGroup(resourcePath) ??
                        TryGetCharacterIconSceneGroup(resourcePath);
         return identity != null && Groups.Any(group =>
             group.Id.Equals(identity.Id, StringComparison.OrdinalIgnoreCase))
@@ -219,7 +220,10 @@ internal sealed partial class SkinCatalog : IDisposable
             {
                 directFile = FindDirectFile(baseline, sourcePath);
                 remapFile = FindRemapFile(baseline, sourcePath);
-                payloadFiles = GetImportedPayloadFiles(baseline, sourcePath);
+                if (payloadFiles.Length == 0)
+                {
+                    payloadFiles = GetImportedPayloadFiles(baseline, sourcePath);
+                }
             }
 
             resources.Add(new RuntimeResource(sourcePath, directFile, remapFile, payloadFiles));
@@ -695,6 +699,18 @@ internal sealed partial class SkinCatalog : IDisposable
         return new GroupIdentity(id, DisplayName(id));
     }
 
+    private static GroupIdentity? TryGetCharacterMapMarkerGroup(string sourcePath)
+    {
+        var match = CharacterMapMarkerRegex().Match(sourcePath);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var id = match.Groups[1].Value.ToLowerInvariant();
+        return new GroupIdentity(id, DisplayName(id));
+    }
+
     private static GroupIdentity? TryGetRuntimeProviderGroup(string sourcePath)
     {
         foreach (var regex in new[]
@@ -867,6 +883,9 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterIconSceneRegex();
+
+    [GeneratedRegex("^res://images/packed/map/icons/map_marker_([^/.]+)\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+    private static partial Regex CharacterMapMarkerRegex();
 
     [GeneratedRegex("^res://custom/scenes/screens/char_select/char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex RuntimeCharacterSelectSceneRegex();

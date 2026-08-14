@@ -486,6 +486,65 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static void ReplaceCharacterIcon(CharacterModel character, ref Control result)
+    {
+        var group = FindGroup(character.Id.Entry);
+        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        {
+            return;
+        }
+
+        var characterId = character.Id.Entry.ToLowerInvariant();
+        var resourcePath = SceneHelper.GetScenePath("ui/character_icons/" + characterId + "_icon");
+        try
+        {
+            var replacement = SkinService.GetOrLoadRuntimeScene(group.Id, resourcePath)
+                .Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            result?.QueueFree();
+            result = replacement;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终接管角色小头像 {resourcePath} 失败：{exception}");
+        }
+    }
+
+    internal static void ReplaceCharacterTexture(
+        CharacterModel character,
+        string resourcePath,
+        ref Texture2D result)
+    {
+        var group = FindGroup(character.Id.Entry);
+        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as Texture2D ??
+                     throw new InvalidOperationException($"独立皮肤资源不是贴图：{resourcePath}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终接管角色界面贴图 {resourcePath} 失败：{exception}");
+        }
+    }
+
+    internal static void ReplaceCharacterMapMarker(
+        CharacterModel character,
+        ref CompressedTexture2D result)
+    {
+        var characterId = character.Id.Entry.ToLowerInvariant();
+        var resourcePath = ImageHelper.GetImagePath("packed/map/icons/map_marker_" + characterId + ".png");
+        Texture2D texture = result;
+        ReplaceCharacterTexture(character, resourcePath, ref texture);
+        if (texture is CompressedTexture2D compressedTexture)
+        {
+            result = compressedTexture;
+        }
+    }
+
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
@@ -507,7 +566,7 @@ internal static class BestiarySelectionSkinPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]
 internal static class CharacterVisualResultPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result) =>
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
@@ -518,7 +577,7 @@ internal static class CharacterVisualResultPatch
 [HarmonyPatch(typeof(MonsterModel), nameof(MonsterModel.CreateVisuals))]
 internal static class MonsterVisualResultPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result) =>
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
@@ -529,7 +588,7 @@ internal static class MonsterVisualResultPatch
 [HarmonyPatch(typeof(AssetCache), nameof(AssetCache.GetScene))]
 internal static class CachedSceneResultPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(string path, ref PackedScene __result) =>
         ContextualSkinControls.ReplaceCachedScene(path, ref __result);
 }
@@ -537,7 +596,7 @@ internal static class CachedSceneResultPatch
 [HarmonyPatch(typeof(AssetCache), nameof(AssetCache.GetTexture2D))]
 internal static class CachedTextureResultPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(string path, ref Texture2D __result) =>
         ContextualSkinControls.ReplaceCachedTexture(path, ref __result);
 }
@@ -545,7 +604,7 @@ internal static class CachedTextureResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CharacterSelectIcon), MethodType.Getter)]
 internal static class CharacterSelectIconResultPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
         ContextualSkinControls.ReplaceCharacterSelectTexture(__instance, locked: false, ref __result);
 }
@@ -553,9 +612,49 @@ internal static class CharacterSelectIconResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CharacterSelectLockedIcon), MethodType.Getter)]
 internal static class CharacterSelectLockedIconResultPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
         ContextualSkinControls.ReplaceCharacterSelectTexture(__instance, locked: true, ref __result);
+}
+
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.Icon), MethodType.Getter)]
+internal static class CharacterIconResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(CharacterModel __instance, ref Control __result) =>
+        ContextualSkinControls.ReplaceCharacterIcon(__instance, ref __result);
+}
+
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.IconTexture), MethodType.Getter)]
+internal static class CharacterIconTextureResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(CharacterModel __instance, ref Texture2D __result)
+    {
+        var characterId = __instance.Id.Entry.ToLowerInvariant();
+        var path = ImageHelper.GetImagePath("ui/top_panel/character_icon_" + characterId + ".png");
+        ContextualSkinControls.ReplaceCharacterTexture(__instance, path, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.IconOutlineTexture), MethodType.Getter)]
+internal static class CharacterIconOutlineTextureResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(CharacterModel __instance, ref Texture2D __result)
+    {
+        var characterId = __instance.Id.Entry.ToLowerInvariant();
+        var path = ImageHelper.GetImagePath("ui/top_panel/character_icon_" + characterId + "_outline.png");
+        ContextualSkinControls.ReplaceCharacterTexture(__instance, path, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.MapMarker), MethodType.Getter)]
+internal static class CharacterMapMarkerResultPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
+        ContextualSkinControls.ReplaceCharacterMapMarker(__instance, ref __result);
 }
 
 [HarmonyPatch(typeof(NMuteInBackgroundHandler), nameof(NMuteInBackgroundHandler._Notification))]

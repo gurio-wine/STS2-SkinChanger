@@ -503,7 +503,7 @@ internal static class AncientCompendiumEntryPatch
 [HarmonyPatch(typeof(EventModel), nameof(EventModel.CreateBackgroundScene))]
 internal static class AncientSceneResultPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(EventModel __instance, ref PackedScene __result)
     {
         if (__instance is not AncientEventModel ancient)
