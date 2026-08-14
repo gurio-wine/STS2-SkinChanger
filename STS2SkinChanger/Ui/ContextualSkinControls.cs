@@ -20,6 +20,8 @@ internal static partial class ContextualSkinControls
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
+    private static readonly Dictionary<string, PackedScene> BaselineCharacterScenes =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
@@ -277,8 +279,8 @@ internal static partial class ContextualSkinControls
 
         var scene = resources[character.CharacterSelectBg] as PackedScene ??
                     throw new InvalidOperationException($"角色选角资源不是场景：{character.CharacterSelectBg}");
+        var baselineScene = GetBaselineCharacterScene(groupId, character.CharacterSelectBg);
         var container = screen.GetNode<Control>("AnimatedBg");
-        var oldSpineCenters = CaptureCanonicalSpineCenters(container);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChild(child);
@@ -288,82 +290,133 @@ internal static partial class ContextualSkinControls
         var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         background.Name = character.Id.Entry + "_bg";
         container.AddChild(background);
-        RestoreSpineCenters(background, oldSpineCenters, character.Id.Entry);
+        AlignCharacterPreviewToBaseline(container, background, baselineScene, character.Id.Entry);
         RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
 
-    private static Dictionary<string, Vector2> CaptureCanonicalSpineCenters(Node root)
+    private static PackedScene GetBaselineCharacterScene(string groupId, string scenePath)
     {
-        var result = new Dictionary<string, Vector2>(StringComparer.Ordinal);
-        foreach (var child in root.GetChildren())
+        if (BaselineCharacterScenes.TryGetValue(groupId, out var cached))
         {
-            foreach (var spineNode in FindSpineNodes(child))
-            {
-                var center = TryGetCanonicalSpineCenter(spineNode);
-                if (center.HasValue)
-                {
-                    result[child.GetPathTo(spineNode).ToString()] = center.Value;
-                }
-            }
+            return cached;
         }
 
-        return result;
+        var resources = SkinService.LoadRuntimeResources(groupId, SkinCatalog.BaseOptionId, [scenePath]);
+        var scene = resources[scenePath] as PackedScene ??
+                    throw new InvalidOperationException($"角色默认选角资源不是场景：{scenePath}");
+        BaselineCharacterScenes[groupId] = scene;
+        return scene;
     }
 
-    private static void RestoreSpineCenters(
-        Control background,
-        IReadOnlyDictionary<string, Vector2> oldCenters,
+    private static void AlignCharacterPreviewToBaseline(
+        Control container,
+        Control selectedBackground,
+        PackedScene baselineScene,
         string characterId)
     {
-        foreach (var spineNode in FindSpineNodes(background))
-        {
-            var path = background.GetPathTo(spineNode).ToString();
-            if (!oldCenters.TryGetValue(path, out var oldCenter))
-            {
-                continue;
-            }
+        var baselineBackground = baselineScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        baselineBackground.Name = "STS2Baseline_" + characterId;
+        baselineBackground.Visible = false;
+        container.AddChild(baselineBackground);
 
-            var sprite = new MegaSprite(spineNode);
-            background.RunWhenSpineReady(sprite, _ =>
+        var selectedSpines = FindSpineNodes(selectedBackground).ToArray();
+        var baselineSpines = FindSpineNodes(baselineBackground).ToArray();
+        var pairs = PairSpineNodes(selectedBackground, selectedSpines, baselineBackground, baselineSpines);
+        if (pairs.Count == 0)
+        {
+            baselineBackground.QueueFree();
+            return;
+        }
+
+        var remaining = pairs.Count;
+        foreach (var pair in pairs)
+        {
+            Vector2? selectedAnchor = null;
+            Vector2? baselineAnchor = null;
+            var applied = false;
+            void TryApplyAlignment()
             {
-                var newCenter = TryGetCanonicalSpineCenter(spineNode);
-                if (!newCenter.HasValue || !GodotObject.IsInstanceValid(spineNode))
+                if (applied || !selectedAnchor.HasValue || !baselineAnchor.HasValue)
                 {
                     return;
                 }
 
-                var correction = oldCenter - newCenter.Value;
+                applied = true;
+                if (!GodotObject.IsInstanceValid(pair.Selected) ||
+                    !GodotObject.IsInstanceValid(pair.Baseline))
+                {
+                    remaining--;
+                    if (remaining == 0 && GodotObject.IsInstanceValid(baselineBackground))
+                    {
+                        baselineBackground.QueueFree();
+                    }
+
+                    return;
+                }
+
+                var correction = baselineAnchor.Value - selectedAnchor.Value;
                 if (correction.LengthSquared() < 1f)
                 {
-                    return;
+                    correction = Vector2.Zero;
                 }
 
-                spineNode.GlobalPosition += correction;
-                ModLog.Info($"已补偿 {characterId}/{path} 的 Spine 预览位移：{correction}。");
+                pair.Selected.GlobalPosition += correction;
+                ModLog.Info($"已按默认皮肤基准定位 {characterId}/{pair.Path}：{correction}。");
+                remaining--;
+                if (remaining == 0 && GodotObject.IsInstanceValid(baselineBackground))
+                {
+                    baselineBackground.QueueFree();
+                }
+            }
+
+            selectedBackground.RunWhenSpineReady(new MegaSprite(pair.Selected), _ =>
+            {
+                selectedAnchor = TryGetSpineAnchor(pair.Selected);
+                TryApplyAlignment();
+            });
+            baselineBackground.RunWhenSpineReady(new MegaSprite(pair.Baseline), _ =>
+            {
+                baselineAnchor = TryGetSpineAnchor(pair.Baseline);
+                TryApplyAlignment();
             });
         }
     }
 
-    private static Vector2? TryGetCanonicalSpineCenter(Node2D spineNode)
+    private static IReadOnlyList<SpinePair> PairSpineNodes(
+        Control selectedBackground,
+        IReadOnlyList<Node2D> selectedSpines,
+        Control baselineBackground,
+        IReadOnlyList<Node2D> baselineSpines)
     {
-        var sprite = new MegaSprite(spineNode);
-        var skeleton = sprite.GetSkeleton();
+        if (selectedSpines.Count == baselineSpines.Count)
+        {
+            return selectedSpines.Select((selected, index) => new SpinePair(
+                selected,
+                baselineSpines[index],
+                selectedBackground.GetPathTo(selected).ToString())).ToArray();
+        }
+
+        var baselineByPath = baselineSpines.ToDictionary(
+            node => baselineBackground.GetPathTo(node).ToString(),
+            StringComparer.Ordinal);
+        return selectedSpines
+            .Select(selected => (Selected: selected, Path: selectedBackground.GetPathTo(selected).ToString()))
+            .Where(pair => baselineByPath.ContainsKey(pair.Path))
+            .Select(pair => new SpinePair(pair.Selected, baselineByPath[pair.Path], pair.Path))
+            .ToArray();
+    }
+
+    private static Vector2? TryGetSpineAnchor(Node2D spineNode)
+    {
+        var skeleton = new MegaSprite(spineNode).GetSkeleton();
         if (skeleton == null)
         {
             return null;
         }
 
-        var animationState = sprite.TryGetAnimationState();
-        var animationName = animationState?.GetCurrentAnimationName();
-        if (animationState != null && !string.IsNullOrEmpty(animationName))
-        {
-            animationState.SetAnimation(animationName);
-            animationState.Update(0f);
-            animationState.Apply(skeleton);
-        }
-
-        return spineNode.ToGlobal(skeleton.GetBounds().GetCenter());
+        var bounds = skeleton.GetBounds();
+        return spineNode.ToGlobal(new Vector2(bounds.GetCenter().X, bounds.End.Y));
     }
 
     private static IEnumerable<Node2D> FindSpineNodes(Node root)
@@ -452,6 +505,8 @@ internal static partial class ContextualSkinControls
 
     [GeneratedRegex("[^a-zA-Z0-9]")]
     private static partial Regex NonAlphanumericRegex();
+
+    private sealed record SpinePair(Node2D Selected, Node2D Baseline, string Path);
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]

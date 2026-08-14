@@ -113,6 +113,14 @@ internal static class SkinService
         string groupId,
         IReadOnlyCollection<string> resourcePaths)
     {
+        return LoadRuntimeResources(groupId, Config.GetSelection(groupId), resourcePaths);
+    }
+
+    public static IReadOnlyDictionary<string, Resource> LoadRuntimeResources(
+        string groupId,
+        string selectionId,
+        IReadOnlyCollection<string> resourcePaths)
+    {
         lock (Sync)
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
@@ -120,7 +128,7 @@ internal static class SkinService
             var aliasToken = $"{_sessionId}/{generation:D3}";
             var overlay = catalog.BuildRuntimeResourceOverlay(
                 groupId,
-                Config.GetSelection(groupId),
+                selectionId,
                 resourcePaths,
                 aliasToken);
             var overlayPath = System.IO.Path.Combine(
@@ -147,7 +155,7 @@ internal static class SkinService
                 resources[pair.Key] = resource;
             }
 
-            ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {resources.Count} 个资源：{aliasToken}");
+            ModLog.Info($"已从独立路径加载 {groupId}/{selectionId} 的骨骼、图集、贴图与 {resources.Count} 个资源：{aliasToken}");
             return resources;
         }
     }
