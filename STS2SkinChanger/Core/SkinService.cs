@@ -8,6 +8,8 @@ namespace STS2SkinChanger.Core;
 internal static class SkinService
 {
     private static readonly object Sync = new();
+    private static readonly Dictionary<string, Resource> RuntimeResourceCache =
+        new(StringComparer.OrdinalIgnoreCase);
     private static int _overlayGeneration;
     private static string _sessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     private static bool _initialized;
@@ -30,6 +32,7 @@ internal static class SkinService
             _initialized = true;
             try
             {
+                RuntimeResourceCache.Clear();
                 CleanupOldOverlays();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
@@ -79,6 +82,7 @@ internal static class SkinService
             try
             {
                 Config.Selections[groupId] = optionId;
+                ClearRuntimeResourceCache(groupId);
                 MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
                 Config.Save(ConfigPath);
                 LastError = null;
@@ -96,6 +100,20 @@ internal static class SkinService
     public static PackedScene LoadRuntimeScene(string groupId, string scenePath)
     {
         return LoadRuntimeScenes(groupId, [scenePath])[scenePath];
+    }
+
+    public static PackedScene GetOrLoadRuntimeScene(string groupId, string scenePath)
+    {
+        lock (Sync)
+        {
+            if (RuntimeResourceCache.TryGetValue(RuntimeResourceKey(groupId, scenePath), out var cached))
+            {
+                return cached as PackedScene ??
+                       throw new InvalidOperationException($"缓存的独立皮肤资源不是场景：{scenePath}");
+            }
+
+            return LoadRuntimeScene(groupId, scenePath);
+        }
     }
 
     public static IReadOnlyDictionary<string, PackedScene> LoadRuntimeScenes(
@@ -145,6 +163,7 @@ internal static class SkinService
                 }
 
                 resources[pair.Key] = resource;
+                RuntimeResourceCache[RuntimeResourceKey(groupId, pair.Key)] = resource;
             }
 
             ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {resources.Count} 个资源：{aliasToken}");
@@ -174,6 +193,20 @@ internal static class SkinService
             throw new InvalidOperationException("Godot 拒绝加载生成的皮肤资源包。");
         }
     }
+
+    private static void ClearRuntimeResourceCache(string groupId)
+    {
+        var prefix = groupId + "\n";
+        foreach (var key in RuntimeResourceCache.Keys
+                     .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
+        {
+            RuntimeResourceCache.Remove(key);
+        }
+    }
+
+    private static string RuntimeResourceKey(string groupId, string resourcePath) =>
+        groupId + "\n" + resourcePath;
 
     private static void SanitizeSelections()
     {

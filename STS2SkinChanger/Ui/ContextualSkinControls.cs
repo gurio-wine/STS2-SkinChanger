@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
@@ -271,6 +272,7 @@ internal static partial class ContextualSkinControls
         var resources = SkinService.LoadRuntimeResources(groupId, resourcePaths);
         foreach (var pair in resources)
         {
+            pair.Value.TakeOverPath(pair.Key);
             PreloadManager.Cache.SetAsset(pair.Key, pair.Value);
         }
 
@@ -361,6 +363,32 @@ internal static partial class ContextualSkinControls
     [GeneratedRegex("[^a-zA-Z0-9]")]
     private static partial Regex NonAlphanumericRegex();
 
+    internal static void ReplaceCreatedVisuals(
+        string modelId,
+        string visualsPath,
+        ref NCreatureVisuals result)
+    {
+        var group = FindGroup(modelId);
+        if (group == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var scene = SkinService.GetOrLoadRuntimeScene(group.Id, visualsPath);
+            scene.TakeOverPath(visualsPath);
+            PreloadManager.Cache.SetAsset(visualsPath, scene);
+            var replacement = scene.Instantiate<NCreatureVisuals>(PackedScene.GenEditState.Disabled);
+            result?.QueueFree();
+            result = replacement;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终应用 {modelId} 的场景皮肤失败：{exception}");
+        }
+    }
+
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
@@ -377,6 +405,28 @@ internal static class BestiarySelectionSkinPatch
 {
     private static void Postfix(NBestiary __instance, NBestiaryEntry entry) =>
         ContextualSkinControls.ShowMonster(__instance, entry);
+}
+
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]
+internal static class CharacterVisualResultPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result) =>
+        ContextualSkinControls.ReplaceCreatedVisuals(
+            __instance.Id.Entry,
+            SceneHelper.GetScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
+            ref __result);
+}
+
+[HarmonyPatch(typeof(MonsterModel), nameof(MonsterModel.CreateVisuals))]
+internal static class MonsterVisualResultPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result) =>
+        ContextualSkinControls.ReplaceCreatedVisuals(
+            __instance.Id.Entry,
+            SceneHelper.GetScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
+            ref __result);
 }
 
 [HarmonyPatch(typeof(NMuteInBackgroundHandler), nameof(NMuteInBackgroundHandler._Notification))]

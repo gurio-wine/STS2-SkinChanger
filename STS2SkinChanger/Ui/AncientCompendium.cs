@@ -111,54 +111,16 @@ internal static class AncientCompendiumEntry
         }
     }
 
-    internal static void ReassertConflictingScenePaths()
+    internal static SkinGroup? FindGroup(string modelId)
     {
         var catalog = SkinService.Catalog;
         if (catalog == null)
         {
-            return;
+            return null;
         }
 
-        var count = 0;
-        foreach (var ancient in GetAncients())
-        {
-            var token = NormalizeToken(ancient.Id.Entry);
-            var group = catalog.Groups.FirstOrDefault(candidate => NormalizeToken(candidate.Id) == token);
-            if (group == null ||
-                group.Options.All(option =>
-                    !option.Id.Equals("AncientWaifus", StringComparison.OrdinalIgnoreCase)) ||
-                SkinService.Config.GetSelection(group.Id)
-                    .Equals("AncientWaifus", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            try
-            {
-                var scenePath = GetScenePath(ancient);
-                var scene = ResourceLoader.Load<PackedScene>(
-                    scenePath,
-                    null,
-                    ResourceLoader.CacheMode.IgnoreDeep);
-                if (scene == null)
-                {
-                    throw new InvalidOperationException($"无法重新加载远古场景：{scenePath}");
-                }
-
-                scene.TakeOverPath(scenePath);
-                PreloadManager.Cache.SetAsset(scenePath, scene);
-                count++;
-            }
-            catch (Exception exception)
-            {
-                ModLog.Error($"重新接管 {ancient.Id.Entry} 的远古场景失败：{exception}");
-            }
-        }
-
-        if (count > 0)
-        {
-            ModLog.Info($"已在主菜单重新接管 {count} 个被 AncientWaifus 抢占的远古场景。");
-        }
+        var token = NormalizeToken(modelId);
+        return catalog.Groups.FirstOrDefault(candidate => NormalizeToken(candidate.Id) == token);
     }
 
     private static string NormalizeToken(string value) =>
@@ -223,9 +185,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _nameLabel.AnchorLeft = 0;
         _nameLabel.AnchorRight = 0;
         _nameLabel.OffsetLeft = 82;
-        _nameLabel.OffsetTop = 826;
+        _nameLabel.OffsetTop = 900;
         _nameLabel.OffsetRight = 750;
-        _nameLabel.OffsetBottom = 884;
+        _nameLabel.OffsetBottom = 958;
         AddChild(_nameLabel);
 
         _epithetLabel = BuildLabel(24, new Color("87ceeB"));
@@ -233,9 +195,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _epithetLabel.AnchorLeft = 0;
         _epithetLabel.AnchorRight = 0;
         _epithetLabel.OffsetLeft = 86;
-        _epithetLabel.OffsetTop = 882;
+        _epithetLabel.OffsetTop = 958;
         _epithetLabel.OffsetRight = 750;
-        _epithetLabel.OffsetBottom = 920;
+        _epithetLabel.OffsetBottom = 998;
         AddChild(_epithetLabel);
 
         _skinSelector = new HBoxContainer
@@ -245,9 +207,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             AnchorRight = 0,
             AnchorBottom = 0,
             OffsetLeft = 818,
-            OffsetTop = 986,
+            OffsetTop = 826,
             OffsetRight = 1102,
-            OffsetBottom = 1034,
+            OffsetBottom = 874,
             Visible = false,
             ZIndex = 10
         };
@@ -376,7 +338,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ApplyEntryTheme(pair.Value, pair.Key.Id == ancient.Id);
         }
 
-        PopulateSkinDropdown(FindGroup(ancient.Id.Entry));
+        PopulateSkinDropdown(AncientCompendiumEntry.FindGroup(ancient.Id.Entry));
         RebuildPreview(ancient);
     }
 
@@ -421,7 +383,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         if (!SkinService.ApplySelection(groupId, optionId))
         {
             ModLog.Error($"远古皮肤切换失败：{SkinService.LastError}");
-            PopulateSkinDropdown(FindGroup(_selectedAncient.Id.Entry));
+            PopulateSkinDropdown(AncientCompendiumEntry.FindGroup(_selectedAncient.Id.Entry));
             return;
         }
 
@@ -435,7 +397,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             ClearPreview();
             var scenePath = AncientCompendiumEntry.GetScenePath(ancient);
-            var group = FindGroup(ancient.Id.Entry);
+            var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
             PackedScene scene;
             if (group != null)
             {
@@ -468,15 +430,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
             child.QueueFree();
         }
     }
-
-    private static SkinGroup? FindGroup(string modelId)
-    {
-        var token = NormalizeToken(modelId);
-        return SkinService.Catalog?.Groups.FirstOrDefault(group => NormalizeToken(group.Id) == token);
-    }
-
-    private static string NormalizeToken(string value) =>
-        NonAlphanumericRegex().Replace(value, string.Empty).ToLowerInvariant();
 
     private static Label BuildLabel(int fontSize, Color color)
     {
@@ -530,8 +483,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ContextualSkinControls.CreateStyleBox(new Color("2a465faa"), gold, 3));
     }
 
-    [GeneratedRegex("[^a-zA-Z0-9]")]
-    private static partial Regex NonAlphanumericRegex();
 }
 
 [HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu._Ready))]
@@ -540,8 +491,34 @@ internal static class AncientCompendiumEntryPatch
     private static void Postfix(NCompendiumSubmenu __instance) => AncientCompendiumEntry.Attach(__instance);
 }
 
-[HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
-internal static class AncientSceneTakeoverPatch
+[HarmonyPatch(typeof(EventModel), nameof(EventModel.CreateBackgroundScene))]
+internal static class AncientSceneResultPatch
 {
-    private static void Postfix() => AncientCompendiumEntry.ReassertConflictingScenePaths();
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(EventModel __instance, ref PackedScene __result)
+    {
+        if (__instance is not AncientEventModel ancient)
+        {
+            return;
+        }
+
+        var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
+        if (group == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var scenePath = AncientCompendiumEntry.GetScenePath(ancient);
+            var scene = SkinService.GetOrLoadRuntimeScene(group.Id, scenePath);
+            scene.TakeOverPath(scenePath);
+            PreloadManager.Cache.SetAsset(scenePath, scene);
+            __result = scene;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"最终应用 {ancient.Id.Entry} 的远古皮肤失败：{exception}");
+        }
+    }
 }
