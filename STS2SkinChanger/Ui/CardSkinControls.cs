@@ -307,7 +307,7 @@ internal static class CardLibraryPoolSkinPatch
 [HarmonyPatch(typeof(CardModel), nameof(CardModel.Portrait), MethodType.Getter)]
 internal static class CardPortraitResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CardModel __instance, ref Texture2D __result) =>
         CardSkinControls.ReplacePortrait(__instance, ref __result);
 }
@@ -321,7 +321,7 @@ internal static class CardLayoutBaselinePatch
         yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
     }
 
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(NCard __instance) =>
         CardSkinControls.CaptureBaselineLayout(__instance);
 }
@@ -335,7 +335,7 @@ internal static class CardLayoutFinalPatch
         yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
     }
 
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCard __instance) =>
         CardSkinControls.RestoreBaselineLayout(__instance);
 }

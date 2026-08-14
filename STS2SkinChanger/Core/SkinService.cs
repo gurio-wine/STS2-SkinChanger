@@ -1,5 +1,4 @@
 using Godot;
-using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
@@ -195,19 +194,13 @@ internal static class SkinService
             var option = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
             var cardType = card.GetType().Name;
-            if (!group.Options.Any(option =>
-                    option.NormalPortraits.ContainsKey(cardType) ||
-                    option.AncientPortraits.ContainsKey(cardType)))
-            {
-                return;
-            }
-
             var path = option?.GetPortraitPath(
                 cardType,
                 IsAncientStyleEnabled(option, cardType));
-            var isCustomPortrait = !string.IsNullOrWhiteSpace(path);
-            path ??= ImageHelper.GetImagePath(
-                $"atlases/card_atlas.sprites/{card.Pool.Title.ToLowerInvariant()}/{card.Id.Entry.ToLowerInvariant()}.tres");
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
 
             var cacheKey = $"{groupId}\n{selection}\n{path}";
             if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
@@ -219,13 +212,11 @@ internal static class SkinService
                     return;
                 }
 
-                portrait = isCustomPortrait
-                    ? new AtlasTexture
-                    {
-                        Atlas = loaded,
-                        Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
-                    }
-                    : loaded;
+                portrait = new AtlasTexture
+                {
+                    Atlas = loaded,
+                    Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
+                };
                 CardPortraitCache[cacheKey] = portrait;
             }
 
