@@ -173,6 +173,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var selected = group.Options.FirstOrDefault(option => option.Id == selectionId);
         var sourcePaths = GetAffectedSourcePaths(groupId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         sourcePaths.UnionWith(resourcePaths);
+        IncludeAtlasTexturePages(selected, sourcePaths);
 
         var resources = new List<RuntimeResource>();
         foreach (var sourcePath in sourcePaths)
@@ -272,6 +273,44 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return new RuntimeResourceOverlay(aliasedResourcePaths, files);
+    }
+
+    private void IncludeAtlasTexturePages(SkinOption? selected, HashSet<string> sourcePaths)
+    {
+        var atlasDirectories = sourcePaths
+            .Where(path => path.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase))
+            .Select(path => path[..(path.LastIndexOf('/') + 1)])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (atlasDirectories.Length == 0)
+        {
+            return;
+        }
+
+        var candidates = _baselineIndexes
+            .SelectMany(index => index.Assets.Keys)
+            .Concat(selected?.Assets.Keys ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates)
+        {
+            if (!candidate.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
+                !candidate.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var directory in atlasDirectories)
+            {
+                if (!candidate.StartsWith(directory, StringComparison.OrdinalIgnoreCase) ||
+                    candidate[directory.Length..].Contains('/'))
+                {
+                    continue;
+                }
+
+                sourcePaths.Add(candidate);
+                break;
+            }
+        }
     }
 
     public void Dispose()

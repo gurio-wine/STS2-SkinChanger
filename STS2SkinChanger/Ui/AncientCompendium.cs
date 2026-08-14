@@ -110,6 +110,59 @@ internal static class AncientCompendiumEntry
             return ancient.Id.Entry.Replace('_', ' ').CapitalizeWords();
         }
     }
+
+    internal static void ReassertConflictingScenePaths()
+    {
+        var catalog = SkinService.Catalog;
+        if (catalog == null)
+        {
+            return;
+        }
+
+        var count = 0;
+        foreach (var ancient in GetAncients())
+        {
+            var token = NormalizeToken(ancient.Id.Entry);
+            var group = catalog.Groups.FirstOrDefault(candidate => NormalizeToken(candidate.Id) == token);
+            if (group == null ||
+                group.Options.All(option =>
+                    !option.Id.Equals("AncientWaifus", StringComparison.OrdinalIgnoreCase)) ||
+                SkinService.Config.GetSelection(group.Id)
+                    .Equals("AncientWaifus", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                var scenePath = GetScenePath(ancient);
+                var scene = ResourceLoader.Load<PackedScene>(
+                    scenePath,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep);
+                if (scene == null)
+                {
+                    throw new InvalidOperationException($"无法重新加载远古场景：{scenePath}");
+                }
+
+                scene.TakeOverPath(scenePath);
+                PreloadManager.Cache.SetAsset(scenePath, scene);
+                count++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Error($"重新接管 {ancient.Id.Entry} 的远古场景失败：{exception}");
+            }
+        }
+
+        if (count > 0)
+        {
+            ModLog.Info($"已在主菜单重新接管 {count} 个被 AncientWaifus 抢占的远古场景。");
+        }
+    }
+
+    private static string NormalizeToken(string value) =>
+        Regex.Replace(value, "[^a-zA-Z0-9]", string.Empty).ToLowerInvariant();
 }
 
 internal partial class AncientCompendiumScreen : NSubmenu
@@ -165,30 +218,24 @@ internal partial class AncientCompendiumScreen : NSubmenu
         };
         previewContainer.AddChild(_previewViewport);
 
-        var shade = new ColorRect
-        {
-            Color = new Color("00000024"),
-            MouseFilter = MouseFilterEnum.Ignore
-        };
-        shade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        AddChild(shade);
-
         _nameLabel = BuildLabel(48, new Color("efc850"));
+        _nameLabel.HorizontalAlignment = HorizontalAlignment.Left;
         _nameLabel.AnchorLeft = 0;
         _nameLabel.AnchorRight = 0;
-        _nameLabel.OffsetLeft = 120;
-        _nameLabel.OffsetTop = 64;
-        _nameLabel.OffsetRight = 1400;
-        _nameLabel.OffsetBottom = 122;
+        _nameLabel.OffsetLeft = 82;
+        _nameLabel.OffsetTop = 826;
+        _nameLabel.OffsetRight = 750;
+        _nameLabel.OffsetBottom = 884;
         AddChild(_nameLabel);
 
         _epithetLabel = BuildLabel(24, new Color("87ceeB"));
+        _epithetLabel.HorizontalAlignment = HorizontalAlignment.Left;
         _epithetLabel.AnchorLeft = 0;
         _epithetLabel.AnchorRight = 0;
-        _epithetLabel.OffsetLeft = 120;
-        _epithetLabel.OffsetTop = 124;
-        _epithetLabel.OffsetRight = 1400;
-        _epithetLabel.OffsetBottom = 158;
+        _epithetLabel.OffsetLeft = 86;
+        _epithetLabel.OffsetTop = 882;
+        _epithetLabel.OffsetRight = 750;
+        _epithetLabel.OffsetBottom = 920;
         AddChild(_epithetLabel);
 
         _skinSelector = new HBoxContainer
@@ -197,10 +244,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
             AnchorTop = 0,
             AnchorRight = 0,
             AnchorBottom = 0,
-            OffsetLeft = 638,
-            OffsetTop = 158,
-            OffsetRight = 882,
-            OffsetBottom = 202,
+            OffsetLeft = 818,
+            OffsetTop = 986,
+            OffsetRight = 1102,
+            OffsetBottom = 1034,
             Visible = false,
             ZIndex = 10
         };
@@ -208,7 +255,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         _skinDropdown = new OptionButton
         {
-            CustomMinimumSize = new Vector2(244, 44),
+            CustomMinimumSize = new Vector2(284, 48),
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             FitToLongestItem = false,
             ClipText = true,
@@ -218,32 +265,27 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _skinDropdown.ItemSelected += index => OnSkinSelected(checked((int)index));
         _skinSelector.AddChild(_skinDropdown);
 
-        var sidebar = new PanelContainer
+        var sidebar = new MarginContainer
         {
             AnchorLeft = 1,
             AnchorTop = 0,
             AnchorRight = 1,
             AnchorBottom = 1,
-            OffsetLeft = -400,
+            OffsetLeft = -380,
             OffsetTop = 0,
             OffsetRight = 0,
             OffsetBottom = 0
         };
-        sidebar.AddThemeStyleboxOverride(
-            "panel",
-            ContextualSkinControls.CreateStyleBox(new Color("182638e8"), new Color("3c5f82"), 2));
         AddChild(sidebar);
 
-        var sidebarMargin = new MarginContainer();
-        sidebarMargin.AddThemeConstantOverride("margin_left", 46);
-        sidebarMargin.AddThemeConstantOverride("margin_top", 58);
-        sidebarMargin.AddThemeConstantOverride("margin_right", 46);
-        sidebarMargin.AddThemeConstantOverride("margin_bottom", 90);
-        sidebar.AddChild(sidebarMargin);
+        sidebar.AddThemeConstantOverride("margin_left", 34);
+        sidebar.AddThemeConstantOverride("margin_top", 58);
+        sidebar.AddThemeConstantOverride("margin_right", 34);
+        sidebar.AddThemeConstantOverride("margin_bottom", 90);
 
         var sidebarContent = new VBoxContainer();
         sidebarContent.AddThemeConstantOverride("separation", 22);
-        sidebarMargin.AddChild(sidebarContent);
+        sidebar.AddChild(sidebarContent);
 
         var heading = BuildLabel(34, new Color("efc850"));
         heading.Text = "远古图鉴";
@@ -263,7 +305,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         _entryList = new VBoxContainer
         {
-            CustomMinimumSize = new Vector2(292, 0),
+            CustomMinimumSize = new Vector2(312, 0),
             SizeFlagsHorizontal = SizeFlags.ExpandFill
         };
         _entryList.AddThemeConstantOverride("separation", 10);
@@ -291,7 +333,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             var button = new Button
             {
                 Text = AncientCompendiumEntry.GetTitle(ancient),
-                CustomMinimumSize = new Vector2(292, 58),
+                CustomMinimumSize = new Vector2(312, 58),
                 FocusMode = FocusModeEnum.All,
                 Alignment = HorizontalAlignment.Center
             };
@@ -398,6 +440,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             if (group != null)
             {
                 scene = SkinService.LoadRuntimeScene(group.Id, scenePath);
+                scene.TakeOverPath(scenePath);
                 PreloadManager.Cache.SetAsset(scenePath, scene);
             }
             else
@@ -473,18 +516,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
         button.AddThemeStyleboxOverride(
             "normal",
             ContextualSkinControls.CreateStyleBox(
-                selected ? new Color("45104e") : new Color("2a465f"),
-                selected ? gold : new Color("507690"),
-                selected ? 3 : 1));
+                selected ? new Color("45104eb8") : new Color("00000000"),
+                selected ? gold : new Color("00000000"),
+                selected ? 3 : 0));
         button.AddThemeStyleboxOverride(
             "hover",
-            ContextualSkinControls.CreateStyleBox(new Color("3c627e"), new Color("afcdde"), 2));
+            ContextualSkinControls.CreateStyleBox(new Color("3c627eaa"), new Color("afcdde"), 2));
         button.AddThemeStyleboxOverride(
             "pressed",
             ContextualSkinControls.CreateStyleBox(new Color("45104e"), gold, 2));
         button.AddThemeStyleboxOverride(
             "focus",
-            ContextualSkinControls.CreateStyleBox(new Color("2a465f"), gold, 3));
+            ContextualSkinControls.CreateStyleBox(new Color("2a465faa"), gold, 3));
     }
 
     [GeneratedRegex("[^a-zA-Z0-9]")]
@@ -495,4 +538,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
 internal static class AncientCompendiumEntryPatch
 {
     private static void Postfix(NCompendiumSubmenu __instance) => AncientCompendiumEntry.Attach(__instance);
+}
+
+[HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
+internal static class AncientSceneTakeoverPatch
+{
+    private static void Postfix() => AncientCompendiumEntry.ReassertConflictingScenePaths();
 }
