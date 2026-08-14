@@ -48,7 +48,7 @@ internal static class SkinService
                 SanitizeSelections();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Config.Save(ConfigPath);
-                ModLog.Info($"发现 {Catalog.Groups.Count} 个可切换外观组。角色与怪物选项已接入对应界面。");
+                ModLog.Info($"发现 {Catalog.Groups.Count} 个可切换外观组。角色、怪物与远古者选项已接入对应界面。");
             }
             catch (Exception exception)
             {

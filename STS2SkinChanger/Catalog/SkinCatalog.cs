@@ -129,6 +129,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 foreach (var file in asset.Files)
                 {
                     files[file.Path] = file;
+                    var takeoverPath = NormalizeTakeoverPath(file.Path);
+                    if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        files[takeoverPath] = file;
+                    }
                 }
             }
         }
@@ -426,9 +431,26 @@ internal sealed partial class SkinCatalog : IDisposable
             return new GroupIdentity(id, DisplayName(id));
         }
 
-        if (sourcePath.StartsWith("res://animations/backgrounds/neow_room/", StringComparison.OrdinalIgnoreCase))
+        var ancientScene = AncientBackgroundSceneRegex().Match(sourcePath);
+        if (ancientScene.Success)
         {
-            return new GroupIdentity("neow", "涅奥");
+            var id = ancientScene.Groups[1].Value.ToLowerInvariant();
+            return new GroupIdentity(id, DisplayName(id));
+        }
+
+        var ancientAnimation = AncientBackgroundAnimationRegex().Match(sourcePath);
+        if (ancientAnimation.Success)
+        {
+            var id = ancientAnimation.Groups[1].Value.ToLowerInvariant();
+            if (id.EndsWith("_room", StringComparison.OrdinalIgnoreCase))
+            {
+                id = id[..^5];
+            }
+
+            if (KnownAncientIds.Contains(id))
+            {
+                return new GroupIdentity(id, DisplayName(id));
+            }
         }
 
         if (sourcePath.StartsWith("res://animations/backgrounds/merchant_room/", StringComparison.OrdinalIgnoreCase) ||
@@ -465,12 +487,13 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     private static ResourceFile? FindDirectFile(ResourceAsset? asset, string sourcePath) =>
-        asset?.Files.FirstOrDefault(file => file.Path.Equals(sourcePath, StringComparison.OrdinalIgnoreCase));
+        asset?.Files.FirstOrDefault(file =>
+            NormalizeTakeoverPath(file.Path).Equals(sourcePath, StringComparison.OrdinalIgnoreCase));
 
     private static ResourceFile? FindRemapFile(ResourceAsset? asset, string sourcePath) =>
         asset?.Files.FirstOrDefault(file =>
-            file.Path.Equals(sourcePath + ".import", StringComparison.OrdinalIgnoreCase) ||
-            file.Path.Equals(sourcePath + ".remap", StringComparison.OrdinalIgnoreCase));
+            NormalizeTakeoverPath(file.Path).Equals(sourcePath + ".import", StringComparison.OrdinalIgnoreCase) ||
+            NormalizeTakeoverPath(file.Path).Equals(sourcePath + ".remap", StringComparison.OrdinalIgnoreCase));
 
     private static ResourceFile[] GetImportedPayloadFiles(ResourceAsset asset, string sourcePath) =>
         asset.Files.Where(file =>
@@ -484,6 +507,12 @@ internal sealed partial class SkinCatalog : IDisposable
         path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".spskel", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".ctex", StringComparison.OrdinalIgnoreCase);
+
+    internal static string NormalizeTakeoverPath(string path)
+    {
+        var match = WaifuAssetsPathRegex().Match(path);
+        return match.Success ? "res://" + match.Groups[1].Value : path;
+    }
 
     private static ResourceFile? MatchImportedFile(string targetPath, IReadOnlyList<ResourceFile> files)
     {
@@ -548,6 +577,18 @@ internal sealed partial class SkinCatalog : IDisposable
         _ => id.Replace('_', ' ').Trim().CapitalizeWords()
     };
 
+    private static readonly HashSet<string> KnownAncientIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "darv",
+        "neow",
+        "nonupeipe",
+        "orobas",
+        "pael",
+        "tanx",
+        "tezcatara",
+        "vakuu"
+    };
+
     [GeneratedRegex("^res://animations/(?:characters|character_select|merchant|rest_site)/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterPathRegex();
 
@@ -566,8 +607,17 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("^res://scenes/rest_site/characters/([^/.]+)_rest_site\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex RestSiteCharacterSceneRegex();
 
+    [GeneratedRegex("^res://scenes/events/background_scenes/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex AncientBackgroundSceneRegex();
+
+    [GeneratedRegex("^res://animations/backgrounds/([^/]+)/", RegexOptions.IgnoreCase)]
+    private static partial Regex AncientBackgroundAnimationRegex();
+
     [GeneratedRegex("^res://images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterSelectIconRegex();
+
+    [GeneratedRegex("^res://waifu_assets/[^/]+/(.+)$", RegexOptions.IgnoreCase)]
+    private static partial Regex WaifuAssetsPathRegex();
 
     [GeneratedRegex("\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex ResourcePathRegex();
@@ -651,7 +701,8 @@ internal sealed partial class PckResourceIndex : IDisposable
 
         foreach (var path in archive.Paths.Where(IsDirectAnimationResource))
         {
-            index.GetAsset(path).AddFile(archive, path);
+            var sourcePath = SkinCatalog.NormalizeTakeoverPath(path);
+            index.GetAsset(sourcePath).AddFile(archive, path);
         }
 
         foreach (var importedPath in archive.Paths.Where(IsImportedPath))
@@ -699,6 +750,7 @@ internal sealed partial class PckResourceIndex : IDisposable
         var sourcePath = remapPath.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
             ? remapPath[..^7]
             : remapPath[..^6];
+        sourcePath = SkinCatalog.NormalizeTakeoverPath(sourcePath);
         var asset = GetAsset(sourcePath);
         asset.AddFile(Archive, remapPath);
 
@@ -733,8 +785,9 @@ internal sealed partial class PckResourceIndex : IDisposable
         path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsDirectAnimationResource(string path) =>
-        (path.StartsWith("res://animations/", StringComparison.OrdinalIgnoreCase) ||
-         path.StartsWith("res://scenes/", StringComparison.OrdinalIgnoreCase)) &&
+        (SkinCatalog.NormalizeTakeoverPath(path).StartsWith("res://animations/", StringComparison.OrdinalIgnoreCase) ||
+         SkinCatalog.NormalizeTakeoverPath(path).StartsWith("res://backgrounds/", StringComparison.OrdinalIgnoreCase) ||
+         SkinCatalog.NormalizeTakeoverPath(path).StartsWith("res://scenes/", StringComparison.OrdinalIgnoreCase)) &&
         (path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
          path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase));
 

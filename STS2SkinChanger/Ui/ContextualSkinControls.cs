@@ -113,7 +113,7 @@ internal static partial class ContextualSkinControls
         return selector;
     }
 
-    private static void ApplyGameTheme(OptionButton dropdown)
+    internal static void ApplyGameTheme(OptionButton dropdown)
     {
         var font = ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
         var ivory = new Color("fff6e2");
@@ -153,7 +153,7 @@ internal static partial class ContextualSkinControls
         return notification == ApplicationFocusOut && handler.GetWindow().HasFocus();
     }
 
-    private static StyleBoxFlat CreateStyleBox(Color background, Color border, int borderWidth = 1)
+    internal static StyleBoxFlat CreateStyleBox(Color background, Color border, int borderWidth = 1)
     {
         return new StyleBoxFlat
         {
