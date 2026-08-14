@@ -1,6 +1,7 @@
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Nodes.Cards;
 using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger;
@@ -83,9 +84,43 @@ public static class Entry
             }
         }
 
+        foreach (var target in new[]
+                 {
+                     AccessTools.Method(typeof(NCard), "Reload"),
+                     AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals))
+                 })
+        {
+            var patchInfo = Harmony.GetPatchInfo(target);
+            if (patchInfo == null)
+            {
+                continue;
+            }
+
+            var nodePatches = patchInfo.Prefixes
+                .Concat(patchInfo.Postfixes)
+                .Where(patch => optionIds.Contains(patch.owner))
+                .DistinctBy(patch => patch.PatchMethod)
+                .ToArray();
+            foreach (var patch in nodePatches)
+            {
+                try
+                {
+                    harmony.Unpatch(target, patch.PatchMethod);
+                    removed++;
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        $"无法移除冲突的卡牌节点补丁 {patch.owner}/" +
+                        $"{patch.PatchMethod.DeclaringType?.FullName}.{patch.PatchMethod.Name}：" +
+                        exception.Message);
+                }
+            }
+        }
+
         if (removed > 0)
         {
-            ModLog.Info($"已接管 {removed} 个卡图路径/贴图全局补丁，改为按所属卡池应用。");
+            ModLog.Info($"已接管 {removed} 个卡图路径、贴图或节点补丁，改为按卡牌总览分类应用。");
         }
     }
 }

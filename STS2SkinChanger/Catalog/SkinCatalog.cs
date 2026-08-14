@@ -236,8 +236,15 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         var cardEntries = cards
             .Where(card => !string.IsNullOrWhiteSpace(card.PortraitPath) &&
-                           !string.IsNullOrWhiteSpace(card.CatalogGroupId))
+                           !string.IsNullOrWhiteSpace(card.CatalogGroupId) &&
+                           !string.IsNullOrWhiteSpace(card.FilterGroupId))
             .ToArray();
+        var cardsByType = cardEntries
+            .GroupBy(card => card.TypeName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                entries => entries.Key,
+                entries => entries.First(),
+                StringComparer.OrdinalIgnoreCase);
         var groups = new Dictionary<string, CardSkinGroup>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var configuredGroup in _configuredCardGroups)
@@ -245,30 +252,74 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var option in configuredGroup.Options)
             {
                 AddCardOption(groups, configuredGroup.Id, option);
+
+                var specialGroupIds = option.NormalPortraits.Keys
+                    .Concat(option.AncientPortraits.Keys)
+                    .Select(cardType => cardsByType.GetValueOrDefault(cardType))
+                    .Where(card => card != null &&
+                                   !card.FilterGroupId.Equals(
+                                       configuredGroup.Id,
+                                       StringComparison.OrdinalIgnoreCase))
+                    .Select(card => card!.FilterGroupId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+                foreach (var specialGroupId in specialGroupIds)
+                {
+                    var normal = option.NormalPortraits
+                        .Where(pair => cardsByType.TryGetValue(pair.Key, out var card) &&
+                                       card.FilterGroupId.Equals(
+                                           specialGroupId,
+                                           StringComparison.OrdinalIgnoreCase))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                    var ancient = option.AncientPortraits
+                        .Where(pair => cardsByType.TryGetValue(pair.Key, out var card) &&
+                                       card.FilterGroupId.Equals(
+                                           specialGroupId,
+                                           StringComparison.OrdinalIgnoreCase))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                    AddCardOption(groups, specialGroupId, option with
+                    {
+                        NormalPortraits = normal,
+                        AncientPortraits = ancient,
+                        Assets = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase)
+                    });
+                }
             }
         }
 
         foreach (var option in _pckCardOptions)
         {
-            foreach (var cardGroup in cardEntries.GroupBy(
-                         card => card.CatalogGroupId,
-                         StringComparer.OrdinalIgnoreCase))
+            var assetsByGroup = new Dictionary<string, Dictionary<string, ResourceAsset>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var card in cardEntries)
             {
-                var portraitIdentities = cardGroup
-                    .Select(card => CardPortraitIdentity(card.PortraitPath))
-                    .Where(identity => identity != null)
-                    .Cast<string>()
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var assets = option.Assets
-                    .Where(pair => portraitIdentities.Contains(
-                        CardPortraitIdentity(pair.Key) ?? string.Empty))
-                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-                if (assets.Count == 0)
+                    .Where(pair => CardArtMatches(pair.Key, card))
+                    .ToArray();
+                if (assets.Length == 0)
                 {
                     continue;
                 }
 
-                AddCardOption(groups, cardGroup.Key, option with { Assets = assets });
+                var groupId = card.FilterGroupId.Equals(
+                    card.CatalogGroupId,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? card.CatalogGroupId
+                    : card.FilterGroupId;
+                if (!assetsByGroup.TryGetValue(groupId, out var groupAssets))
+                {
+                    groupAssets = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+                    assetsByGroup.Add(groupId, groupAssets);
+                }
+
+                foreach (var asset in assets)
+                {
+                    groupAssets[asset.Key] = asset.Value;
+                }
+            }
+
+            foreach (var pair in assetsByGroup)
+            {
+                AddCardOption(groups, pair.Key, option with { Assets = pair.Value });
             }
         }
 
@@ -697,7 +748,28 @@ internal sealed partial class SkinCatalog : IDisposable
     private static bool IsCardArtSourcePath(string path) =>
         CardArtPathRegex().IsMatch(path);
 
-    private static string? CardPortraitIdentity(string? path)
+    private static bool CardArtMatches(string assetPath, CardCatalogEntry card)
+    {
+        var asset = TryGetCardArtIdentity(assetPath);
+        var portrait = TryGetCardArtIdentity(card.PortraitPath);
+        if (asset == null || portrait == null)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(asset.Category) &&
+            !asset.Category.Equals(card.PoolGroupId, StringComparison.OrdinalIgnoreCase) &&
+            !asset.Category.Equals(portrait.Category, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var typeStem = NormalizeCardToken(card.TypeName);
+        return CardStemsMatch(asset.Stem, portrait.Stem) ||
+               CardStemsMatch(asset.Stem, typeStem);
+    }
+
+    private static CardArtIdentity? TryGetCardArtIdentity(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -705,12 +777,22 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var match = CardArtIdentityRegex().Match(path);
-        var category = match.Success ? match.Groups[1].Value.ToLowerInvariant() : path.ToLowerInvariant();
+        var category = match.Success ? match.Groups[1].Value.ToLowerInvariant() : string.Empty;
         var fileName = path[(path.LastIndexOf('/') + 1)..];
         var extensionIndex = fileName.IndexOf('.');
-        var stem = (extensionIndex >= 0 ? fileName[..extensionIndex] : fileName).ToLowerInvariant();
-        return category + "/" + stem;
+        var stem = NormalizeCardToken(extensionIndex >= 0 ? fileName[..extensionIndex] : fileName);
+        return new CardArtIdentity(category, stem);
     }
+
+    private static bool CardStemsMatch(string candidate, string expected) =>
+        candidate.Equals(expected, StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "ancient", StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "normal", StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "portrait", StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "art", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeCardToken(string value) =>
+        new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
     private static void AddPckRuntimeProviderOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
@@ -1169,10 +1251,10 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("(?:^|/)card_portraits/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardPortraitGroupRegex();
 
-    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites)/", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites|cards?|card_art|cardart)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardArtPathRegex();
 
-    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites)/([^/]+)/", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites|cards?|card_art|cardart)/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardArtIdentityRegex();
 
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
@@ -1245,6 +1327,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex UidAttributeRegex();
 
     private sealed record GroupIdentity(string Id, string DisplayName);
+    private sealed record CardArtIdentity(string Category, string Stem);
     private sealed record RuntimeResource(
         string SourcePath,
         ResourceFile? DirectFile,
@@ -1337,7 +1420,8 @@ internal sealed record CardCatalogEntry(
     string TypeName,
     string PortraitPath,
     string PoolGroupId,
-    string CatalogGroupId);
+    string CatalogGroupId,
+    string FilterGroupId);
 
 internal sealed record AncientCardPortrait(string? NormalPortrait, string? AncientPortrait);
 

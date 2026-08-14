@@ -107,13 +107,15 @@ internal static class SkinService
                         card.GetType().Name,
                         card.PortraitPath,
                         GetCardPoolGroupId(card),
-                        GetCardCatalogGroupId(card)))
+                        GetCardCatalogGroupId(card),
+                        GetCardFilterGroupId(card)))
                     .ToArray();
                 var signature = string.Join('\n', entries
                     .OrderBy(entry => entry.TypeName, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(entry => entry.PortraitPath, StringComparer.OrdinalIgnoreCase)
                     .Select(entry =>
-                        $"{entry.TypeName}|{entry.PortraitPath}|{entry.PoolGroupId}|{entry.CatalogGroupId}"));
+                        $"{entry.TypeName}|{entry.PortraitPath}|{entry.PoolGroupId}|" +
+                        $"{entry.CatalogGroupId}|{entry.FilterGroupId}"));
                 if (_cardGroupsInitialized && signature == _cardCatalogSignature)
                 {
                     return;
@@ -266,21 +268,24 @@ internal static class SkinService
             }
 
             var originalPath = card.PortraitPath;
-            var portraitIdentity = CardPortraitIdentity(originalPath);
-            if (portraitIdentity == null || !group.Options
+            var managed = group.Options
                     .SelectMany(candidate => candidate.Assets.Keys)
-                    .Any(assetPath => CardPortraitIdentity(assetPath)?.Equals(
-                        portraitIdentity, StringComparison.OrdinalIgnoreCase) == true))
+                    .Any(assetPath => CardArtMatches(assetPath, card));
+            if (!managed)
             {
                 return;
             }
 
-            var cacheKey = $"{groupId}\n{selection}\npck\n{originalPath}";
+            var selectedPath = option?.Assets.Keys
+                .Where(assetPath => CardArtMatches(assetPath, card))
+                .OrderByDescending(assetPath => HasSameResourceExtension(assetPath, originalPath))
+                .FirstOrDefault() ?? originalPath;
+            var cacheKey = $"{groupId}\n{selection}\npck\n{selectedPath}";
             if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
                 !GodotObject.IsInstanceValid(portrait))
             {
                 portrait = ResourceLoader.Load<Texture2D>(
-                    originalPath,
+                    selectedPath,
                     null,
                     ResourceLoader.CacheMode.IgnoreDeep);
                 if (portrait == null)
@@ -300,6 +305,14 @@ internal static class SkinService
 
     private static string GetEffectiveCardGroupId(CardModel card)
     {
+        var poolGroupId = GetCardPoolGroupId(card);
+        var filterGroupId = GetCardFilterGroupId(card);
+        if (!filterGroupId.Equals(poolGroupId, StringComparison.OrdinalIgnoreCase) &&
+            CardGroupAffectsCard(filterGroupId, card))
+        {
+            return filterGroupId;
+        }
+
         var cardType = card.GetType().Name;
         var configuredGroup = Catalog?.CardGroups.FirstOrDefault(group =>
             group.Options.Any(option =>
@@ -310,7 +323,6 @@ internal static class SkinService
             return configuredGroup.Id;
         }
 
-        var poolGroupId = GetCardPoolGroupId(card);
         if (CardGroupAffectsCard(poolGroupId, card))
         {
             return poolGroupId;
@@ -330,13 +342,10 @@ internal static class SkinService
         }
 
         var cardType = card.GetType().Name;
-        var portraitIdentity = CardPortraitIdentity(card.PortraitPath);
         return group.Options.Any(option =>
             option.NormalPortraits.ContainsKey(cardType) ||
             option.AncientPortraits.ContainsKey(cardType) ||
-            (portraitIdentity != null && option.Assets.Keys.Any(assetPath =>
-                CardPortraitIdentity(assetPath)?.Equals(
-                    portraitIdentity, StringComparison.OrdinalIgnoreCase) == true)));
+            option.Assets.Keys.Any(assetPath => CardArtMatches(assetPath, card)));
     }
 
     private static string GetCardPoolGroupId(CardModel card) =>
@@ -350,6 +359,11 @@ internal static class SkinService
             return poolGroupId;
         }
 
+        return GetCardFilterGroupId(card);
+    }
+
+    private static string GetCardFilterGroupId(CardModel card)
+    {
         if (card.Rarity == CardRarity.Ancient)
         {
             return "ancients";
@@ -358,7 +372,7 @@ internal static class SkinService
         var rarity = (int)card.Rarity;
         return rarity is >= (int)CardRarity.Event and <= (int)CardRarity.Quest
             ? "misc"
-            : poolGroupId;
+            : GetCardPoolGroupId(card);
     }
 
     private static void ReplaceConfiguredCardPortrait(
@@ -388,7 +402,30 @@ internal static class SkinService
         result = portrait;
     }
 
-    private static string? CardPortraitIdentity(string? path)
+    private static bool CardArtMatches(string assetPath, CardModel card)
+    {
+        var assetIdentity = CardPortraitIdentity(assetPath);
+        var portraitIdentity = CardPortraitIdentity(card.PortraitPath);
+        if (assetIdentity == null || portraitIdentity == null)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(assetIdentity.Value.Category) &&
+            !assetIdentity.Value.Category.Equals(
+                GetCardPoolGroupId(card), StringComparison.OrdinalIgnoreCase) &&
+            !assetIdentity.Value.Category.Equals(
+                portraitIdentity.Value.Category, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var typeStem = NormalizeCardToken(card.GetType().Name);
+        return CardStemsMatch(assetIdentity.Value.Stem, portraitIdentity.Value.Stem) ||
+               CardStemsMatch(assetIdentity.Value.Stem, typeStem);
+    }
+
+    private static (string Category, string Stem)? CardPortraitIdentity(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -396,15 +433,27 @@ internal static class SkinService
         }
 
         var lowerPath = path.ToLowerInvariant();
-        var markerIndex = lowerPath.IndexOf("/card_portraits/", StringComparison.Ordinal);
-        var markerLength = "/card_portraits/".Length;
-        if (markerIndex < 0)
+        var markerIndex = -1;
+        var markerLength = 0;
+        foreach (var marker in new[]
+                 {
+                     "/card_portraits/",
+                     "/card_atlas.sprites/",
+                     "/cards/",
+                     "/card/",
+                     "/card_art/",
+                     "/cardart/"
+                 })
         {
-            markerIndex = lowerPath.IndexOf("/card_atlas.sprites/", StringComparison.Ordinal);
-            markerLength = "/card_atlas.sprites/".Length;
+            markerIndex = lowerPath.IndexOf(marker, StringComparison.Ordinal);
+            if (markerIndex >= 0)
+            {
+                markerLength = marker.Length;
+                break;
+            }
         }
 
-        var category = lowerPath;
+        var category = string.Empty;
         if (markerIndex >= 0)
         {
             var categoryStart = markerIndex + markerLength;
@@ -417,8 +466,25 @@ internal static class SkinService
 
         var fileName = lowerPath[(lowerPath.LastIndexOf('/') + 1)..];
         var extensionIndex = fileName.IndexOf('.');
-        var stem = extensionIndex >= 0 ? fileName[..extensionIndex] : fileName;
-        return category + "/" + stem;
+        var stem = NormalizeCardToken(extensionIndex >= 0 ? fileName[..extensionIndex] : fileName);
+        return (category, stem);
+    }
+
+    private static bool CardStemsMatch(string candidate, string expected) =>
+        candidate.Equals(expected, StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "ancient", StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "normal", StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "portrait", StringComparison.OrdinalIgnoreCase) ||
+        candidate.Equals(expected + "art", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeCardToken(string value) =>
+        new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+    private static bool HasSameResourceExtension(string left, string right)
+    {
+        var leftExtension = System.IO.Path.GetExtension(left);
+        var rightExtension = System.IO.Path.GetExtension(right);
+        return leftExtension.Equals(rightExtension, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsAncientStyleEnabled(CardSkinOption option, string cardType)
