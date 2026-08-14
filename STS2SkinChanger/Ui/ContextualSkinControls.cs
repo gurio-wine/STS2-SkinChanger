@@ -278,7 +278,7 @@ internal static partial class ContextualSkinControls
         var scene = resources[character.CharacterSelectBg] as PackedScene ??
                     throw new InvalidOperationException($"角色选角资源不是场景：{character.CharacterSelectBg}");
         var container = screen.GetNode<Control>("AnimatedBg");
-        var oldSpineCenters = CaptureSpineCenters(container);
+        var oldSpineCenters = CaptureCanonicalSpineCenters(container);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChild(child);
@@ -293,14 +293,14 @@ internal static partial class ContextualSkinControls
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
 
-    private static Dictionary<string, Vector2> CaptureSpineCenters(Node root)
+    private static Dictionary<string, Vector2> CaptureCanonicalSpineCenters(Node root)
     {
         var result = new Dictionary<string, Vector2>(StringComparer.Ordinal);
         foreach (var child in root.GetChildren())
         {
             foreach (var spineNode in FindSpineNodes(child))
             {
-                var center = TryGetSpineCenter(spineNode);
+                var center = TryGetCanonicalSpineCenter(spineNode);
                 if (center.HasValue)
                 {
                     result[child.GetPathTo(spineNode).ToString()] = center.Value;
@@ -327,7 +327,7 @@ internal static partial class ContextualSkinControls
             var sprite = new MegaSprite(spineNode);
             background.RunWhenSpineReady(sprite, _ =>
             {
-                var newCenter = TryGetSpineCenter(spineNode);
+                var newCenter = TryGetCanonicalSpineCenter(spineNode);
                 if (!newCenter.HasValue || !GodotObject.IsInstanceValid(spineNode))
                 {
                     return;
@@ -345,10 +345,25 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static Vector2? TryGetSpineCenter(Node2D spineNode)
+    private static Vector2? TryGetCanonicalSpineCenter(Node2D spineNode)
     {
-        var skeleton = new MegaSprite(spineNode).GetSkeleton();
-        return skeleton == null ? null : spineNode.ToGlobal(skeleton.GetBounds().GetCenter());
+        var sprite = new MegaSprite(spineNode);
+        var skeleton = sprite.GetSkeleton();
+        if (skeleton == null)
+        {
+            return null;
+        }
+
+        var animationState = sprite.TryGetAnimationState();
+        var animationName = animationState?.GetCurrentAnimationName();
+        if (animationState != null && !string.IsNullOrEmpty(animationName))
+        {
+            animationState.SetAnimation(animationName);
+            animationState.Update(0f);
+            animationState.Apply(skeleton);
+        }
+
+        return spineNode.ToGlobal(skeleton.GetBounds().GetCenter());
     }
 
     private static IEnumerable<Node2D> FindSpineNodes(Node root)
