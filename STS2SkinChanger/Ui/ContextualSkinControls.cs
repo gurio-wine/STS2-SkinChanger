@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
@@ -44,7 +45,8 @@ internal static partial class ContextualSkinControls
 
     private static HBoxContainer EnsureCharacterSelector(NCharacterSelectScreen screen)
     {
-        var existing = screen.GetNodeOrNull<HBoxContainer>(SelectorName);
+        var infoPanel = screen.GetNode<Control>("InfoPanel");
+        var existing = infoPanel.GetNodeOrNull<HBoxContainer>(SelectorName);
         if (existing != null)
         {
             return existing;
@@ -52,14 +54,14 @@ internal static partial class ContextualSkinControls
 
         var selector = BuildSelector();
         selector.AnchorLeft = 0.5f;
-        selector.AnchorTop = 0.5f;
+        selector.AnchorTop = 0;
         selector.AnchorRight = 0.5f;
-        selector.AnchorBottom = 0.5f;
-        selector.OffsetLeft = -556;
-        selector.OffsetTop = 214;
-        selector.OffsetRight = -246;
-        selector.OffsetBottom = 262;
-        screen.AddChild(selector);
+        selector.AnchorBottom = 0;
+        selector.OffsetLeft = -122;
+        selector.OffsetTop = -56;
+        selector.OffsetRight = 122;
+        selector.OffsetBottom = -12;
+        infoPanel.AddChild(selector);
         return selector;
     }
 
@@ -74,10 +76,10 @@ internal static partial class ContextualSkinControls
         var selector = BuildSelector();
         selector.AnchorLeft = 0.5f;
         selector.AnchorRight = 0.5f;
-        selector.OffsetLeft = -155;
+        selector.OffsetLeft = -122;
         selector.OffsetTop = 168;
-        selector.OffsetRight = 155;
-        selector.OffsetBottom = 216;
+        selector.OffsetRight = 122;
+        selector.OffsetBottom = 212;
         screen.AddChild(selector);
         return selector;
     }
@@ -91,17 +93,6 @@ internal static partial class ContextualSkinControls
             MouseFilter = Control.MouseFilterEnum.Stop,
             ZIndex = 50
         };
-        selector.AddThemeConstantOverride("separation", 8);
-
-        var label = new Label
-        {
-            Text = "皮肤",
-            CustomMinimumSize = new Vector2(58, 44),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        selector.AddChild(label);
-
         var dropdown = new OptionButton
         {
             Name = DropdownName,
@@ -111,23 +102,18 @@ internal static partial class ContextualSkinControls
             ClipText = true,
             Alignment = HorizontalAlignment.Center
         };
-        ApplyGameTheme(label, dropdown);
+        ApplyGameTheme(dropdown);
         dropdown.ItemSelected += index => ApplyDropdownSelection(selector, dropdown, checked((int)index));
         selector.AddChild(dropdown);
         selector.TreeExited += () => RefreshActions.Remove(selector.GetInstanceId());
         return selector;
     }
 
-    private static void ApplyGameTheme(Label label, OptionButton dropdown)
+    private static void ApplyGameTheme(OptionButton dropdown)
     {
         var font = ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
         var ivory = new Color("fff6e2");
         var gold = new Color("efc850");
-        label.AddThemeColorOverride("font_color", gold);
-        label.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.35f));
-        label.AddThemeConstantOverride("shadow_offset_x", 2);
-        label.AddThemeConstantOverride("shadow_offset_y", 2);
-        label.AddThemeFontSizeOverride("font_size", 23);
         dropdown.AddThemeColorOverride("font_color", ivory);
         dropdown.AddThemeColorOverride("font_hover_color", Colors.White);
         dropdown.AddThemeColorOverride("font_pressed_color", gold);
@@ -135,7 +121,6 @@ internal static partial class ContextualSkinControls
         dropdown.AddThemeFontSizeOverride("font_size", 23);
         if (font != null)
         {
-            label.AddThemeFontOverride("font", font);
             dropdown.AddThemeFontOverride("font", font);
         }
 
@@ -266,14 +251,23 @@ internal static partial class ContextualSkinControls
             character.RestSiteAnimPath,
             character.MerchantAnimPath
         };
-        var scenes = SkinService.LoadRuntimeScenes(groupId, scenePaths);
-        foreach (var pair in scenes)
+        var characterSelectTextures = character.AssetPathsCharacterSelect
+            .Where(path => path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var resourcePaths = scenePaths
+            .Concat(characterSelectTextures)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var resources = SkinService.LoadRuntimeResources(groupId, resourcePaths);
+        foreach (var pair in resources)
         {
             PreloadManager.Cache.SetAsset(pair.Key, pair.Value);
         }
 
-        var scene = scenes[character.CharacterSelectBg];
+        var scene = resources[character.CharacterSelectBg] as PackedScene ??
+                    throw new InvalidOperationException($"角色选角资源不是场景：{character.CharacterSelectBg}");
         var container = screen.GetNode<Control>("AnimatedBg");
+        var oldSpineCenters = CaptureSpineCenters(container);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChild(child);
@@ -283,7 +277,128 @@ internal static partial class ContextualSkinControls
         var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         background.Name = character.Id.Entry + "_bg";
         container.AddChild(background);
+        RestoreSpineCenters(background, oldSpineCenters, character.Id.Entry);
+        RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    private static Dictionary<string, Vector2> CaptureSpineCenters(Node root)
+    {
+        var result = new Dictionary<string, Vector2>(StringComparer.Ordinal);
+        foreach (var child in root.GetChildren())
+        {
+            foreach (var spineNode in FindSpineNodes(child))
+            {
+                var center = TryGetSpineCenter(spineNode);
+                if (center.HasValue)
+                {
+                    result[child.GetPathTo(spineNode).ToString()] = center.Value;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static void RestoreSpineCenters(
+        Control background,
+        IReadOnlyDictionary<string, Vector2> oldCenters,
+        string characterId)
+    {
+        foreach (var spineNode in FindSpineNodes(background))
+        {
+            var path = background.GetPathTo(spineNode).ToString();
+            if (!oldCenters.TryGetValue(path, out var oldCenter))
+            {
+                continue;
+            }
+
+            var sprite = new MegaSprite(spineNode);
+            background.RunWhenSpineReady(sprite, _ =>
+            {
+                var newCenter = TryGetSpineCenter(spineNode);
+                if (!newCenter.HasValue || !GodotObject.IsInstanceValid(spineNode))
+                {
+                    return;
+                }
+
+                var correction = oldCenter - newCenter.Value;
+                if (correction.LengthSquared() < 1f)
+                {
+                    return;
+                }
+
+                spineNode.GlobalPosition += correction;
+                ModLog.Info($"已补偿 {characterId}/{path} 的 Spine 预览位移：{correction}。");
+            });
+        }
+    }
+
+    private static Vector2? TryGetSpineCenter(Node2D spineNode)
+    {
+        var skeleton = new MegaSprite(spineNode).GetSkeleton();
+        return skeleton == null ? null : spineNode.ToGlobal(skeleton.GetBounds().GetCenter());
+    }
+
+    private static IEnumerable<Node2D> FindSpineNodes(Node root)
+    {
+        if (root is Node2D node2D && node2D.IsClass("SpineSprite"))
+        {
+            yield return node2D;
+        }
+
+        foreach (var child in root.GetChildren())
+        {
+            foreach (var spineNode in FindSpineNodes(child))
+            {
+                yield return spineNode;
+            }
+        }
+    }
+
+    private static void RefreshCharacterButtonIcon(
+        NCharacterSelectScreen screen,
+        CharacterModel character,
+        IReadOnlyCollection<string> texturePaths,
+        IReadOnlyDictionary<string, Resource> resources)
+    {
+        var button = FindDescendant<NCharacterSelectButton>(screen, candidate =>
+            candidate.Character?.Id.Entry.Equals(character.Id.Entry, StringComparison.OrdinalIgnoreCase) == true);
+        if (button == null)
+        {
+            return;
+        }
+
+        var iconPath = texturePaths.FirstOrDefault(path =>
+            path.Contains("/packed/character_select/", StringComparison.OrdinalIgnoreCase) &&
+            path.EndsWith(button.IsLocked ? "_locked.png" : $"_{character.Id.Entry.ToLowerInvariant()}.png",
+                StringComparison.OrdinalIgnoreCase));
+        if (iconPath == null || !resources.TryGetValue(iconPath, out var resource) || resource is not Texture2D texture)
+        {
+            return;
+        }
+
+        button.GetNode<TextureRect>("%Icon").Texture = texture;
+        ModLog.Info($"已刷新 {character.Id.Entry} 的角色列表头像。");
+    }
+
+    private static T? FindDescendant<T>(Node root, Func<T, bool> predicate) where T : Node
+    {
+        foreach (var child in root.GetChildren())
+        {
+            if (child is T match && predicate(match))
+            {
+                return match;
+            }
+
+            var descendant = FindDescendant(child, predicate);
+            if (descendant != null)
+            {
+                return descendant;
+            }
+        }
+
+        return null;
     }
 
     private static void RebuildMonsterDisplay(

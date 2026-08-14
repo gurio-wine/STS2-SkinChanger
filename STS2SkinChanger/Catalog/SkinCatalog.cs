@@ -158,16 +158,16 @@ internal sealed partial class SkinCatalog : IDisposable
         return affected;
     }
 
-    public RuntimeSceneOverlay BuildRuntimeSceneOverlay(
+    public RuntimeResourceOverlay BuildRuntimeResourceOverlay(
         string groupId,
         string selectionId,
-        IReadOnlyCollection<string> scenePaths,
+        IReadOnlyCollection<string> resourcePaths,
         string aliasToken)
     {
         var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         var selected = group.Options.FirstOrDefault(option => option.Id == selectionId);
         var sourcePaths = GetAffectedSourcePaths(groupId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        sourcePaths.UnionWith(scenePaths);
+        sourcePaths.UnionWith(resourcePaths);
 
         var resources = new List<RuntimeResource>();
         foreach (var sourcePath in sourcePaths)
@@ -250,18 +250,21 @@ internal sealed partial class SkinCatalog : IDisposable
                 RewriteTextResource(Encoding.UTF8.GetBytes(remapText), replacements, null);
         }
 
-        var aliasedScenePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var scenePath in scenePaths)
+        var aliasedResourcePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var resourcePath in resourcePaths)
         {
-            if (!sourceAliases.TryGetValue(scenePath, out var aliasedScenePath) || !files.ContainsKey(aliasedScenePath))
+            if (!sourceAliases.TryGetValue(resourcePath, out var aliasedResourcePath) ||
+                (!files.ContainsKey(aliasedResourcePath) &&
+                 !files.ContainsKey(aliasedResourcePath + ".import") &&
+                 !files.ContainsKey(aliasedResourcePath + ".remap")))
             {
-                throw new InvalidOperationException($"无法为 {scenePath} 创建独立皮肤场景。");
+                throw new InvalidOperationException($"无法为 {resourcePath} 创建独立皮肤资源。");
             }
 
-            aliasedScenePaths[scenePath] = aliasedScenePath;
+            aliasedResourcePaths[resourcePath] = aliasedResourcePath;
         }
 
-        return new RuntimeSceneOverlay(aliasedScenePaths, files);
+        return new RuntimeResourceOverlay(aliasedResourcePaths, files);
     }
 
     public void Dispose()
@@ -504,8 +507,8 @@ internal sealed class SkinGroup(string id, string displayName)
 
 internal sealed record SkinOption(string Id, string Name, IReadOnlyDictionary<string, ResourceAsset> Assets);
 
-internal sealed record RuntimeSceneOverlay(
-    IReadOnlyDictionary<string, string> ScenePaths,
+internal sealed record RuntimeResourceOverlay(
+    IReadOnlyDictionary<string, string> ResourcePaths,
     IReadOnlyDictionary<string, byte[]> Files);
 
 internal sealed class ResourceAsset(string sourcePath)

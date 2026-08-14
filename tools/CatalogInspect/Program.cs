@@ -56,11 +56,11 @@ if (runtimeIndex >= 0)
     }
 
     var scenePaths = args[runtimeIndex + 3].Split(';', StringSplitOptions.RemoveEmptyEntries);
-    var overlay = catalog.BuildRuntimeSceneOverlay(
+    var overlay = catalog.BuildRuntimeResourceOverlay(
         args[runtimeIndex + 1],
         args[runtimeIndex + 2],
         scenePaths,
         "inspect/001");
     PckArchive.Write(args[runtimeIndex + 4], overlay.Files);
-    Console.WriteLine($"runtime scenes: {string.Join(", ", overlay.ScenePaths.Values)} ({overlay.Files.Count} files)");
+    Console.WriteLine($"runtime resources: {string.Join(", ", overlay.ResourcePaths.Values)} ({overlay.Files.Count} files)");
 }

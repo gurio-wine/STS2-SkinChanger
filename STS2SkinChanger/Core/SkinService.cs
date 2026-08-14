@@ -102,15 +102,26 @@ internal static class SkinService
         string groupId,
         IReadOnlyCollection<string> scenePaths)
     {
+        return LoadRuntimeResources(groupId, scenePaths).ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value as PackedScene ??
+                    throw new InvalidOperationException($"独立皮肤资源不是场景：{pair.Key}"),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static IReadOnlyDictionary<string, Resource> LoadRuntimeResources(
+        string groupId,
+        IReadOnlyCollection<string> resourcePaths)
+    {
         lock (Sync)
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
             var generation = ++_overlayGeneration;
             var aliasToken = $"{_sessionId}/{generation:D3}";
-            var overlay = catalog.BuildRuntimeSceneOverlay(
+            var overlay = catalog.BuildRuntimeResourceOverlay(
                 groupId,
                 Config.GetSelection(groupId),
-                scenePaths,
+                resourcePaths,
                 aliasToken);
             var overlayPath = System.IO.Path.Combine(
                 OS.GetUserDataDir(),
@@ -121,23 +132,23 @@ internal static class SkinService
                 throw new InvalidOperationException("Godot 拒绝加载独立皮肤场景资源包。");
             }
 
-            var scenes = new Dictionary<string, PackedScene>(StringComparer.OrdinalIgnoreCase);
-            foreach (var pair in overlay.ScenePaths)
+            var resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in overlay.ResourcePaths)
             {
-                var scene = ResourceLoader.Load<PackedScene>(
+                var resource = ResourceLoader.Load<Resource>(
                     pair.Value,
                     null,
                     ResourceLoader.CacheMode.IgnoreDeep);
-                if (scene == null)
+                if (resource == null)
                 {
-                    throw new InvalidOperationException($"无法加载独立皮肤场景：{pair.Value}");
+                    throw new InvalidOperationException($"无法加载独立皮肤资源：{pair.Value}");
                 }
 
-                scenes[pair.Key] = scene;
+                resources[pair.Key] = resource;
             }
 
-            ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {scenes.Count} 个场景：{aliasToken}");
-            return scenes;
+            ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {resources.Count} 个资源：{aliasToken}");
+            return resources;
         }
     }
 
