@@ -279,8 +279,9 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static IReadOnlyList<SkinGroup> BuildGroups(IEnumerable<PckResourceIndex> cosmeticIndexes)
     {
+        var indexes = cosmeticIndexes.ToArray();
         var groups = new Dictionary<string, SkinGroup>(StringComparer.OrdinalIgnoreCase);
-        foreach (var index in cosmeticIndexes)
+        foreach (var index in indexes)
         {
             var primaryGroups = index.Assets.Keys
                 .Select(TryGetPrimaryGroup)
@@ -336,6 +337,8 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        MergeCharacterSelectIconPacks(indexes, groups);
+
         foreach (var group in groups.Values)
         {
             group.Options.Sort((left, right) => string.Compare(left.Name, right.Name, StringComparison.CurrentCultureIgnoreCase));
@@ -345,6 +348,48 @@ internal sealed partial class SkinCatalog : IDisposable
             .OrderBy(group => GroupSortOrder(group.Id))
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
+
+    private static void MergeCharacterSelectIconPacks(
+        IReadOnlyCollection<PckResourceIndex> indexes,
+        IReadOnlyDictionary<string, SkinGroup> groups)
+    {
+        foreach (var index in indexes)
+        {
+            var hasPrimaryAppearance = index.Assets.Keys.Any(path => TryGetPrimaryGroup(path) != null);
+            if (hasPrimaryAppearance)
+            {
+                continue;
+            }
+
+            var iconGroups = index.Assets.Values
+                .Select(asset => (Asset: asset, Group: TryGetCharacterSelectIconGroup(asset.SourcePath)))
+                .Where(pair => pair.Group != null)
+                .GroupBy(pair => pair.Group!.Id, StringComparer.OrdinalIgnoreCase);
+            foreach (var iconGroup in iconGroups)
+            {
+                if (!groups.TryGetValue(iconGroup.Key, out var group))
+                {
+                    continue;
+                }
+
+                var iconAssets = iconGroup.ToDictionary(
+                    pair => pair.Asset.SourcePath,
+                    pair => pair.Asset,
+                    StringComparer.OrdinalIgnoreCase);
+                for (var i = 0; i < group.Options.Count; i++)
+                {
+                    var option = group.Options[i];
+                    var mergedAssets = new Dictionary<string, ResourceAsset>(option.Assets, StringComparer.OrdinalIgnoreCase);
+                    foreach (var iconAsset in iconAssets)
+                    {
+                        mergedAssets.TryAdd(iconAsset.Key, iconAsset.Value);
+                    }
+
+                    group.Options[i] = option with { Assets = mergedAssets };
+                }
+            }
+        }
     }
 
     private static GroupIdentity? TryGetPrimaryGroup(string sourcePath)
@@ -363,6 +408,24 @@ internal sealed partial class SkinCatalog : IDisposable
             return new GroupIdentity(id, DisplayName(id));
         }
 
+        foreach (var sceneRegex in new[]
+                 {
+                     CreatureVisualSceneRegex(),
+                     CharacterSelectSceneRegex(),
+                     MerchantCharacterSceneRegex(),
+                     RestSiteCharacterSceneRegex()
+                 })
+        {
+            var scene = sceneRegex.Match(sourcePath);
+            if (!scene.Success)
+            {
+                continue;
+            }
+
+            var id = scene.Groups[1].Value.ToLowerInvariant();
+            return new GroupIdentity(id, DisplayName(id));
+        }
+
         if (sourcePath.StartsWith("res://animations/backgrounds/neow_room/", StringComparison.OrdinalIgnoreCase))
         {
             return new GroupIdentity("neow", "涅奥");
@@ -375,6 +438,18 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return null;
+    }
+
+    private static GroupIdentity? TryGetCharacterSelectIconGroup(string sourcePath)
+    {
+        var icon = CharacterSelectIconRegex().Match(sourcePath);
+        if (!icon.Success)
+        {
+            return null;
+        }
+
+        var id = icon.Groups[1].Value.ToLowerInvariant();
+        return new GroupIdentity(id, DisplayName(id));
     }
 
     private static bool ContainsGroupToken(string path, string groupId)
@@ -478,6 +553,21 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex MonsterPathRegex();
+
+    [GeneratedRegex("^res://scenes/creature_visuals/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex CreatureVisualSceneRegex();
+
+    [GeneratedRegex("^res://scenes/screens/char_select/char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex CharacterSelectSceneRegex();
+
+    [GeneratedRegex("^res://scenes/merchant/characters/([^/.]+)_merchant\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex MerchantCharacterSceneRegex();
+
+    [GeneratedRegex("^res://scenes/rest_site/characters/([^/.]+)_rest_site\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex RestSiteCharacterSceneRegex();
+
+    [GeneratedRegex("^res://images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+    private static partial Regex CharacterSelectIconRegex();
 
     [GeneratedRegex("\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex ResourcePathRegex();

@@ -20,7 +20,6 @@ internal static partial class ContextualSkinControls
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
-    private static readonly HashSet<ulong> OpenSkinPopups = [];
     private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
@@ -32,6 +31,10 @@ internal static partial class ContextualSkinControls
         var group = FindGroup(character.Id.Entry);
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
+        if (group != null)
+        {
+            RunRefresh(() => RebuildCharacterDisplay(screen, character, group.Id));
+        }
     }
 
     public static void ShowMonster(NBestiary screen, NBestiaryEntry entry)
@@ -133,7 +136,6 @@ internal static partial class ContextualSkinControls
         dropdown.AddThemeStyleboxOverride("disabled", CreateStyleBox(new Color("293b4c"), new Color("50606b")));
 
         var popup = dropdown.GetPopup();
-        TrackSkinPopup(popup);
         popup.AddThemeColorOverride("font_color", ivory);
         popup.AddThemeColorOverride("font_hover_color", Colors.White);
         popup.AddThemeColorOverride("font_separator_color", gold);
@@ -149,24 +151,7 @@ internal static partial class ContextualSkinControls
     internal static bool ShouldIgnoreBackgroundMute(NMuteInBackgroundHandler handler, int notification)
     {
         const int ApplicationFocusOut = 1005;
-        return notification == ApplicationFocusOut && OpenSkinPopups.Count > 0 && handler.GetWindow().HasFocus();
-    }
-
-    private static void TrackSkinPopup(PopupMenu popup)
-    {
-        var id = popup.GetInstanceId();
-        popup.VisibilityChanged += () =>
-        {
-            if (popup.Visible)
-            {
-                OpenSkinPopups.Add(id);
-            }
-            else
-            {
-                OpenSkinPopups.Remove(id);
-            }
-        };
-        popup.TreeExited += () => OpenSkinPopups.Remove(id);
+        return notification == ApplicationFocusOut && handler.GetWindow().HasFocus();
     }
 
     private static StyleBoxFlat CreateStyleBox(Color background, Color border, int borderWidth = 1)
