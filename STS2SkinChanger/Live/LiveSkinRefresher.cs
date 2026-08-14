@@ -1,7 +1,6 @@
 using Godot;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using STS2SkinChanger.Core;
-using STS2SkinChanger.Ui;
 
 namespace STS2SkinChanger.Live;
 
@@ -12,6 +11,7 @@ internal static class LiveSkinRefresher
         IReadOnlyDictionary<string, Resource> freshResources,
         IReadOnlySet<string> affectedPaths)
     {
+        AnimationRestoreHost.EnsureInstalled(root.GetTree());
         var refreshedSpines = 0;
         var refreshedTextures = 0;
         Walk(root, node =>
@@ -42,7 +42,7 @@ internal static class LiveSkinRefresher
             node.Call("set_skeleton_data_res", replacement);
             if (!string.IsNullOrEmpty(animationName))
             {
-                SkinPanel.QueueAnimationRestore(node, animationName);
+                AnimationRestoreHost.Queue(node, animationName);
             }
 
             return 1;
@@ -97,6 +97,67 @@ internal static class LiveSkinRefresher
         foreach (var child in node.GetChildren())
         {
             Walk(child, visitor);
+        }
+    }
+}
+
+internal sealed partial class AnimationRestoreHost : Node
+{
+    private sealed record PendingAnimation(Node Node, string AnimationName, int Retries);
+
+    private static AnimationRestoreHost? _instance;
+    private readonly List<PendingAnimation> _pending = [];
+
+    public static void EnsureInstalled(SceneTree tree)
+    {
+        if (_instance != null && IsInstanceValid(_instance))
+        {
+            return;
+        }
+
+        _instance = new AnimationRestoreHost
+        {
+            Name = "STS2SkinAnimationRestoreHost",
+            ProcessMode = ProcessModeEnum.Always
+        };
+        tree.Root.AddChild(_instance);
+        _instance.SetProcess(true);
+    }
+
+    public static void Queue(Node node, string animationName)
+    {
+        EnsureInstalled(node.GetTree());
+        _instance!._pending.Add(new PendingAnimation(node, animationName, 30));
+    }
+
+    public override void _Process(double delta)
+    {
+        for (var i = _pending.Count - 1; i >= 0; i--)
+        {
+            var pending = _pending[i];
+            if (!IsInstanceValid(pending.Node) || pending.Retries <= 0)
+            {
+                _pending.RemoveAt(i);
+                continue;
+            }
+
+            try
+            {
+                var mega = new MegaSprite(Variant.From(pending.Node));
+                var state = mega.TryGetAnimationState();
+                if (state != null && mega.HasAnimation(pending.AnimationName))
+                {
+                    state.SetAnimation(pending.AnimationName);
+                    _pending.RemoveAt(i);
+                    continue;
+                }
+            }
+            catch
+            {
+                // Spine 在换资源后的几帧内可能尚未重建，继续重试。
+            }
+
+            _pending[i] = pending with { Retries = pending.Retries - 1 };
         }
     }
 }

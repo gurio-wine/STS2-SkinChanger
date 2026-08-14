@@ -4,7 +4,6 @@ using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Live;
 using STS2SkinChanger.Pck;
-using STS2SkinChanger.Ui;
 
 namespace STS2SkinChanger.Core;
 
@@ -51,7 +50,7 @@ internal static class SkinService
                 SanitizeSelections();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Config.Save(ConfigPath);
-                ModLog.Info($"发现 {Catalog.Groups.Count} 个可切换外观组。按 F8 打开皮肤面板。");
+                ModLog.Info($"发现 {Catalog.Groups.Count} 个可切换外观组。角色与怪物选项已接入对应界面。");
             }
             catch (Exception exception)
             {
@@ -67,8 +66,6 @@ internal static class SkinService
                         return;
                     }
 
-                    SkinPanel.EnsureInstalled(tree);
-                    SkinPanel.NotifyServiceReady();
                     RunSmokeTestIfRequested(tree);
                 }).CallDeferred();
             }
