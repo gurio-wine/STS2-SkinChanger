@@ -8,25 +8,33 @@ namespace STS2SkinChanger.Catalog;
 internal sealed partial class SkinCatalog : IDisposable
 {
     public const string BaseOptionId = "__base__";
+    private static readonly JsonSerializerOptions CardReplacementJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     private readonly PckArchive _gameArchive;
     private readonly List<PckResourceIndex> _baselineIndexes;
     private readonly List<PckResourceIndex> _cosmeticIndexes;
     private readonly List<SkinGroup> _groups;
+    private readonly List<CardSkinGroup> _cardGroups;
 
     private SkinCatalog(
         PckArchive gameArchive,
         List<PckResourceIndex> baselineIndexes,
         List<PckResourceIndex> cosmeticIndexes,
-        IReadOnlyList<SkinGroup> groups)
+        IReadOnlyList<SkinGroup> groups,
+        IReadOnlyList<CardSkinGroup> cardGroups)
     {
         _gameArchive = gameArchive;
         _baselineIndexes = baselineIndexes;
         _cosmeticIndexes = cosmeticIndexes;
         _groups = groups.ToList();
+        _cardGroups = cardGroups.ToList();
     }
 
     public IReadOnlyList<SkinGroup> Groups => _groups;
+    public IReadOnlyList<CardSkinGroup> CardGroups => _cardGroups;
 
     public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods)
     {
@@ -67,7 +75,8 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var groups = BuildGroups(cosmeticIndexes);
-            var catalog = new SkinCatalog(gameArchive, baselineIndexes, cosmeticIndexes, groups);
+            var cardGroups = BuildCardGroups(cosmeticIndexes);
+            var catalog = new SkinCatalog(gameArchive, baselineIndexes, cosmeticIndexes, groups, cardGroups);
             catalog.AddImageRuntimeProviderOptions(modList);
             catalog.SortGroupsAndOptions();
             return catalog;
@@ -425,6 +434,113 @@ internal sealed partial class SkinCatalog : IDisposable
             .OrderBy(group => GroupSortOrder(group.Id))
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
+
+    private static IReadOnlyList<CardSkinGroup> BuildCardGroups(IEnumerable<PckResourceIndex> cosmeticIndexes)
+    {
+        var groups = new Dictionary<string, CardSkinGroup>(StringComparer.OrdinalIgnoreCase);
+        foreach (var index in cosmeticIndexes)
+        {
+            foreach (var configPath in index.Archive.Paths.Where(path =>
+                         path.EndsWith("/card_replacements.json", StringComparison.OrdinalIgnoreCase)))
+            {
+                try
+                {
+                    var config = JsonSerializer.Deserialize<CardReplacementConfig>(
+                        index.Archive.ReadFile(configPath),
+                        CardReplacementJsonOptions);
+                    if (config == null)
+                    {
+                        continue;
+                    }
+
+                    var groupIds = config.NormalReplacements
+                        .Select(entry => TryGetCardPortraitGroup(entry.PortraitPath))
+                        .Concat(config.AncientReplacements.SelectMany(entry => new[]
+                        {
+                            TryGetCardPortraitGroup(entry.NormalPortrait),
+                            TryGetCardPortraitGroup(entry.AncientPortrait)
+                        }))
+                        .Where(id => id != null)
+                        .Cast<string>()
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+
+                    foreach (var groupId in groupIds)
+                    {
+                        var normal = config.NormalReplacements
+                            .Where(entry => TryGetCardPortraitGroup(entry.PortraitPath)?.Equals(
+                                groupId, StringComparison.OrdinalIgnoreCase) == true)
+                            .Where(entry => !string.IsNullOrWhiteSpace(entry.CardType) &&
+                                            !string.IsNullOrWhiteSpace(entry.PortraitPath))
+                            .GroupBy(entry => entry.CardType, StringComparer.OrdinalIgnoreCase)
+                            .ToDictionary(
+                                entries => entries.Key,
+                                entries => entries.Last().PortraitPath,
+                                StringComparer.OrdinalIgnoreCase);
+                        var ancient = config.AncientReplacements
+                            .Where(entry => TryGetCardPortraitGroup(entry.PathForGrouping)?.Equals(
+                                groupId, StringComparison.OrdinalIgnoreCase) == true)
+                            .Where(entry => !string.IsNullOrWhiteSpace(entry.CardType))
+                            .GroupBy(entry => entry.CardType, StringComparer.OrdinalIgnoreCase)
+                            .ToDictionary(
+                                entries => entries.Key,
+                                entries => new AncientCardPortrait(
+                                    entries.Last().NormalPortrait,
+                                    entries.Last().AncientPortrait),
+                                StringComparer.OrdinalIgnoreCase);
+                        if (normal.Count == 0 && ancient.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        if (!groups.TryGetValue(groupId, out var group))
+                        {
+                            group = new CardSkinGroup(groupId, DisplayName(groupId));
+                            groups.Add(groupId, group);
+                        }
+
+                        var existingIndex = group.Options.FindIndex(option =>
+                            option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
+                        var option = new CardSkinOption(index.Mod.Id, index.Mod.Name, normal, ancient);
+                        if (existingIndex >= 0)
+                        {
+                            group.Options[existingIndex] = group.Options[existingIndex].Merge(option);
+                        }
+                        else
+                        {
+                            group.Options.Add(option);
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    System.Diagnostics.Debug.WriteLine($"无法读取卡牌皮肤配置 {configPath}: {exception.Message}");
+                }
+            }
+        }
+
+        foreach (var group in groups.Values)
+        {
+            group.Options.Sort((left, right) =>
+                string.Compare(left.Name, right.Name, StringComparison.CurrentCultureIgnoreCase));
+        }
+
+        return groups.Values
+            .OrderBy(group => GroupSortOrder(group.Id))
+            .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+    }
+
+    private static string? TryGetCardPortraitGroup(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var match = CardPortraitGroupRegex().Match(path);
+        return match.Success ? match.Groups[1].Value.ToLowerInvariant() : null;
     }
 
     private static void AddPckRuntimeProviderOptions(
@@ -875,6 +991,9 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("^res://animations/(?:characters|character_select|merchant|rest_site)/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterPathRegex();
 
+    [GeneratedRegex("(?:^|/)card_portraits/([^/]+)/", RegexOptions.IgnoreCase)]
+    private static partial Regex CardPortraitGroupRegex();
+
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex MonsterPathRegex();
 
@@ -972,6 +1091,75 @@ internal sealed record SkinOption(
     string Name,
     IReadOnlyDictionary<string, ResourceAsset> Assets,
     bool IsRuntimeProvider = false);
+
+internal sealed class CardSkinGroup(string id, string displayName)
+{
+    public string Id { get; } = id;
+    public string DisplayName { get; } = displayName;
+    public List<CardSkinOption> Options { get; } = [];
+}
+
+internal sealed record CardSkinOption(
+    string Id,
+    string Name,
+    IReadOnlyDictionary<string, string> NormalPortraits,
+    IReadOnlyDictionary<string, AncientCardPortrait> AncientPortraits)
+{
+    public CardSkinOption Merge(CardSkinOption other)
+    {
+        var normal = new Dictionary<string, string>(NormalPortraits, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in other.NormalPortraits)
+        {
+            normal[pair.Key] = pair.Value;
+        }
+
+        var ancient = new Dictionary<string, AncientCardPortrait>(AncientPortraits, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in other.AncientPortraits)
+        {
+            ancient[pair.Key] = pair.Value;
+        }
+
+        return this with { NormalPortraits = normal, AncientPortraits = ancient };
+    }
+
+    public string? GetPortraitPath(string cardType, bool useAncientStyle)
+    {
+        if (AncientPortraits.TryGetValue(cardType, out var ancient))
+        {
+            var path = useAncientStyle ? ancient.AncientPortrait : ancient.NormalPortrait;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                return path;
+            }
+        }
+
+        return NormalPortraits.GetValueOrDefault(cardType);
+    }
+}
+
+internal sealed record AncientCardPortrait(string? NormalPortrait, string? AncientPortrait);
+
+internal sealed class CardReplacementConfig
+{
+    public List<NormalCardReplacement> NormalReplacements { get; set; } = [];
+    public List<AncientCardReplacement> AncientReplacements { get; set; } = [];
+}
+
+internal sealed class NormalCardReplacement
+{
+    public string CardType { get; set; } = string.Empty;
+    public string PortraitPath { get; set; } = string.Empty;
+}
+
+internal sealed class AncientCardReplacement
+{
+    public string CardType { get; set; } = string.Empty;
+    public string? NormalPortrait { get; set; }
+    public string? AncientPortrait { get; set; }
+    public string? ConfigKey { get; set; }
+    public string? PathForGrouping =>
+        !string.IsNullOrWhiteSpace(AncientPortrait) ? AncientPortrait : NormalPortrait;
+}
 
 internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> ResourcePaths,

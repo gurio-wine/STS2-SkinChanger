@@ -46,6 +46,17 @@ foreach (var group in catalog.Groups)
     }
 }
 
+foreach (var group in catalog.CardGroups)
+{
+    Console.WriteLine($"cards:{group.Id}\t{group.DisplayName}卡牌");
+    foreach (var option in group.Options)
+    {
+        Console.WriteLine(
+            $"  {option.Id}\t{option.Name}\t" +
+            $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient");
+    }
+}
+
 if (runtimeIndex >= 0)
 {
     if (args.Length < runtimeIndex + 5)

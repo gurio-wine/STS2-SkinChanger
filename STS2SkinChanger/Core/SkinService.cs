@@ -1,4 +1,6 @@
 using Godot;
+using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
@@ -9,6 +11,12 @@ internal static class SkinService
 {
     private static readonly object Sync = new();
     private static readonly Dictionary<string, Resource> RuntimeResourceCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Texture2D> CardPortraitCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, System.Reflection.MethodInfo> AncientStyleMethods =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> MissingAncientStyleMethods =
         new(StringComparer.OrdinalIgnoreCase);
     private static int _overlayGeneration;
     private static string _sessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -33,6 +41,9 @@ internal static class SkinService
             try
             {
                 RuntimeResourceCache.Clear();
+                CardPortraitCache.Clear();
+                AncientStyleMethods.Clear();
+                MissingAncientStyleMethods.Clear();
                 CleanupOldOverlays();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
@@ -55,7 +66,9 @@ internal static class SkinService
                 SanitizeSelections();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Config.Save(ConfigPath);
-                ModLog.Info($"发现 {Catalog.Groups.Count} 个可切换外观组。角色、怪物与远古者选项已接入对应界面。");
+                ModLog.Info(
+                    $"发现 {Catalog.Groups.Count} 个生物外观组和 {Catalog.CardGroups.Count} 个卡牌外观组。" +
+                    "角色、怪物、远古者与卡牌选项已接入对应界面。");
             }
             catch (Exception exception)
             {
@@ -98,6 +111,172 @@ internal static class SkinService
                 ModLog.Error($"切换 {groupId} 失败：{exception}");
                 return false;
             }
+        }
+    }
+
+    public static bool ApplyCardSelection(string groupId, string optionId)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                LastError = "皮肤目录尚未初始化。";
+                return false;
+            }
+
+            var group = Catalog.CardGroups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (group == null ||
+                (optionId != SkinCatalog.BaseOptionId &&
+                 group.Options.All(option => !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
+            {
+                LastError = $"未知的卡牌皮肤选择：{groupId}/{optionId}";
+                return false;
+            }
+
+            try
+            {
+                Config.Selections[CardSelectionKey(groupId)] = optionId;
+                ClearCardPortraitCache(groupId);
+                Config.Save(ConfigPath);
+                LastError = null;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                LastError = exception.Message;
+                ModLog.Error($"切换 {groupId} 卡牌皮肤失败：{exception}");
+                return false;
+            }
+        }
+    }
+
+    public static string GetCardSelection(string groupId) =>
+        Config.GetSelection(CardSelectionKey(groupId));
+
+    public static bool ShouldRestoreStandardCardLayout(CardModel card)
+    {
+        lock (Sync)
+        {
+            var groupId = card.Pool.Title.ToLowerInvariant();
+            var group = Catalog?.CardGroups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (group == null)
+            {
+                return false;
+            }
+
+            var selection = GetCardSelection(groupId);
+            var option = group.Options.FirstOrDefault(option =>
+                option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            return option == null || !IsAncientStyleEnabled(option, card.GetType().Name);
+        }
+    }
+
+    public static void ReplaceCardPortrait(CardModel card, ref Texture2D result)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null)
+            {
+                return;
+            }
+
+            var groupId = card.Pool.Title.ToLowerInvariant();
+            var group = catalog.CardGroups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (group == null)
+            {
+                return;
+            }
+
+            var selection = GetCardSelection(groupId);
+            var option = group.Options.FirstOrDefault(option =>
+                option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            var cardType = card.GetType().Name;
+            if (!group.Options.Any(option =>
+                    option.NormalPortraits.ContainsKey(cardType) ||
+                    option.AncientPortraits.ContainsKey(cardType)))
+            {
+                return;
+            }
+
+            var path = option?.GetPortraitPath(
+                cardType,
+                IsAncientStyleEnabled(option, cardType));
+            var isCustomPortrait = !string.IsNullOrWhiteSpace(path);
+            path ??= ImageHelper.GetImagePath(
+                $"atlases/card_atlas.sprites/{card.Pool.Title.ToLowerInvariant()}/{card.Id.Entry.ToLowerInvariant()}.tres");
+
+            var cacheKey = $"{groupId}\n{selection}\n{path}";
+            if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
+                !GodotObject.IsInstanceValid(portrait))
+            {
+                var loaded = ResourceLoader.Load<Texture2D>(path, null, ResourceLoader.CacheMode.Reuse);
+                if (loaded == null)
+                {
+                    return;
+                }
+
+                portrait = isCustomPortrait
+                    ? new AtlasTexture
+                    {
+                        Atlas = loaded,
+                        Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
+                    }
+                    : loaded;
+                CardPortraitCache[cacheKey] = portrait;
+            }
+
+            result = portrait;
+        }
+    }
+
+    private static bool IsAncientStyleEnabled(CardSkinOption option, string cardType)
+    {
+        if (!option.AncientPortraits.ContainsKey(cardType))
+        {
+            return false;
+        }
+
+        if (!AncientStyleMethods.TryGetValue(option.Id, out var method) &&
+            !MissingAncientStyleMethods.Contains(option.Id))
+        {
+            method = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(assembly => assembly.GetName().Name?.Equals(
+                    option.Id, StringComparison.OrdinalIgnoreCase) == true)
+                .Select(assembly => assembly.GetType("CardPortraitsCore.ConfigHelper", throwOnError: false))
+                .Where(type => type != null)
+                .Select(type => type!.GetMethod(
+                    "IsAncientStyleEnabled",
+                    System.Reflection.BindingFlags.Static |
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic))
+                .FirstOrDefault(candidate => candidate != null);
+            if (method == null)
+            {
+                MissingAncientStyleMethods.Add(option.Id);
+            }
+            else
+            {
+                AncientStyleMethods[option.Id] = method;
+            }
+        }
+
+        if (method == null)
+        {
+            return true;
+        }
+
+        try
+        {
+            return method.Invoke(null, [cardType]) as bool? ?? true;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"读取 {option.Id} 的远古卡图样式设置失败：{exception.Message}");
+            return true;
         }
     }
 
@@ -225,6 +404,19 @@ internal static class SkinService
         }
     }
 
+    private static void ClearCardPortraitCache(string groupId)
+    {
+        var prefix = groupId + "\n";
+        foreach (var key in CardPortraitCache.Keys
+                     .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
+        {
+            CardPortraitCache.Remove(key);
+        }
+    }
+
+    private static string CardSelectionKey(string groupId) => "cards:" + groupId;
+
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
         groupId + "\n" + resourcePath;
 
@@ -236,6 +428,17 @@ internal static class SkinService
                 (selected != SkinCatalog.BaseOptionId && group.Options.All(option => option.Id != selected)))
             {
                 Config.Selections[group.Id] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+            }
+        }
+
+        foreach (var group in Catalog.CardGroups)
+        {
+            var key = CardSelectionKey(group.Id);
+            if (!Config.Selections.TryGetValue(key, out var selected) ||
+                (selected != SkinCatalog.BaseOptionId &&
+                 group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
+            {
+                Config.Selections[key] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             }
         }
     }
