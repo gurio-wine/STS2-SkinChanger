@@ -179,10 +179,10 @@ internal static class SkinService
     {
         foreach (var group in Catalog!.Groups)
         {
-            var selected = Config.GetSelection(group.Id);
-            if (selected != SkinCatalog.BaseOptionId && group.Options.All(option => option.Id != selected))
+            if (!Config.Selections.TryGetValue(group.Id, out var selected) ||
+                (selected != SkinCatalog.BaseOptionId && group.Options.All(option => option.Id != selected)))
             {
-                Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
+                Config.Selections[group.Id] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             }
         }
     }

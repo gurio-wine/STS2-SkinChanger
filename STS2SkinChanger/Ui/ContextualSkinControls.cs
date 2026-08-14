@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
@@ -19,6 +20,7 @@ internal static partial class ContextualSkinControls
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
+    private static readonly HashSet<ulong> OpenSkinPopups = [];
     private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
@@ -58,9 +60,9 @@ internal static partial class ContextualSkinControls
         selector.AnchorRight = 0.5f;
         selector.AnchorBottom = 0;
         selector.OffsetLeft = -122;
-        selector.OffsetTop = -56;
+        selector.OffsetTop = -80;
         selector.OffsetRight = 122;
-        selector.OffsetBottom = -12;
+        selector.OffsetBottom = -36;
         infoPanel.AddChild(selector);
         return selector;
     }
@@ -131,6 +133,7 @@ internal static partial class ContextualSkinControls
         dropdown.AddThemeStyleboxOverride("disabled", CreateStyleBox(new Color("293b4c"), new Color("50606b")));
 
         var popup = dropdown.GetPopup();
+        TrackSkinPopup(popup);
         popup.AddThemeColorOverride("font_color", ivory);
         popup.AddThemeColorOverride("font_hover_color", Colors.White);
         popup.AddThemeColorOverride("font_separator_color", gold);
@@ -141,6 +144,29 @@ internal static partial class ContextualSkinControls
         {
             popup.AddThemeFontOverride("font", font);
         }
+    }
+
+    internal static bool ShouldIgnoreBackgroundMute(NMuteInBackgroundHandler handler, int notification)
+    {
+        const int ApplicationFocusOut = 1005;
+        return notification == ApplicationFocusOut && OpenSkinPopups.Count > 0 && handler.GetWindow().HasFocus();
+    }
+
+    private static void TrackSkinPopup(PopupMenu popup)
+    {
+        var id = popup.GetInstanceId();
+        popup.VisibilityChanged += () =>
+        {
+            if (popup.Visible)
+            {
+                OpenSkinPopups.Add(id);
+            }
+            else
+            {
+                OpenSkinPopups.Remove(id);
+            }
+        };
+        popup.TreeExited += () => OpenSkinPopups.Remove(id);
     }
 
     private static StyleBoxFlat CreateStyleBox(Color background, Color border, int borderWidth = 1)
@@ -442,4 +468,11 @@ internal static class BestiarySelectionSkinPatch
 {
     private static void Postfix(NBestiary __instance, NBestiaryEntry entry) =>
         ContextualSkinControls.ShowMonster(__instance, entry);
+}
+
+[HarmonyPatch(typeof(NMuteInBackgroundHandler), nameof(NMuteInBackgroundHandler._Notification))]
+internal static class SkinPopupBackgroundMutePatch
+{
+    private static bool Prefix(NMuteInBackgroundHandler __instance, int what) =>
+        !ContextualSkinControls.ShouldIgnoreBackgroundMute(__instance, what);
 }
