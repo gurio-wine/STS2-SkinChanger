@@ -66,7 +66,13 @@ internal static class LoadOrderWarningController
                 new LocString("main_menu_ui", "MOD_NOT_LOADED_POPUP.title"),
                 new LocString("main_menu_ui", "GENERIC_POPUP.cancel"),
                 new LocString("main_menu_ui", "GENERIC_POPUP.confirm"));
-            var verticalPopup = popup.GetNode<NVerticalPopup>("VerticalPopup");
+            var verticalPopup = popup.GetNodeOrNull<NVerticalPopup>("VerticalPopup");
+            if (verticalPopup == null)
+            {
+                ModLog.Error("加载顺序提示框缺少 VerticalPopup 节点，无法显示。");
+                return;
+            }
+
             verticalPopup.SetText(
                 "STS2 皮肤切换器加载顺序",
                 "本 Mod 当前不在 Mod 加载顺序第一位。排在它前面的皮肤 Mod 会先加载自己的 DLL/PCK，" +
