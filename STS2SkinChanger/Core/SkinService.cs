@@ -20,6 +20,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> MissingAncientStyleMethods =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> FailedAncientStyleMethods =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> SharedCardPoolIds = new(StringComparer.OrdinalIgnoreCase)
     {
         "event",
@@ -61,13 +63,13 @@ internal static class SkinService
                 return;
             }
 
-            _initialized = true;
             try
             {
                 RuntimeResourceCache.Clear();
                 CardPortraitCache.Clear();
                 AncientStyleMethods.Clear();
                 MissingAncientStyleMethods.Clear();
+                FailedAncientStyleMethods.Clear();
                 CleanupOldOverlays();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
@@ -90,6 +92,8 @@ internal static class SkinService
                 SanitizeSelections();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Config.Save(ConfigPath);
+                // 仅在完整成功后才标记已初始化，失败时允许后续调用重试而不是整个会话失效。
+                _initialized = true;
                 ModLog.Info(
                     $"发现 {Catalog.Groups.Count} 个生物外观组和 {Catalog.CardGroups.Count} 个卡牌外观组。" +
                     "角色、怪物、远古者与卡牌选项已接入对应界面。");
@@ -455,7 +459,7 @@ internal static class SkinService
     }
 
     private static string GetCardPoolGroupId(CardModel card) =>
-        card.Pool.Title.ToLowerInvariant();
+        (card.Pool?.Title ?? string.Empty).ToLowerInvariant();
 
     private static string GetCardCatalogGroupId(CardModel card)
     {
@@ -468,6 +472,15 @@ internal static class SkinService
         return GetCardFilterGroupId(card);
     }
 
+    private static readonly HashSet<CardRarity> MiscCardRarities =
+    [
+        CardRarity.Event,
+        CardRarity.Token,
+        CardRarity.Status,
+        CardRarity.Curse,
+        CardRarity.Quest
+    ];
+
     private static string GetCardFilterGroupId(CardModel card)
     {
         if (card.Rarity == CardRarity.Ancient)
@@ -475,8 +488,7 @@ internal static class SkinService
             return "ancients";
         }
 
-        var rarity = (int)card.Rarity;
-        return rarity is >= (int)CardRarity.Event and <= (int)CardRarity.Quest
+        return MiscCardRarities.Contains(card.Rarity)
             ? "misc"
             : GetCardPoolGroupId(card);
     }
@@ -671,7 +683,12 @@ internal static class SkinService
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"读取 {option.Id} 的远古卡图样式设置失败：{exception.Message}");
+            // 反射调用失败时每次渲染都会重复触发，只警告一次避免刷日志。
+            if (FailedAncientStyleMethods.Add(option.Id))
+            {
+                ModLog.Warn($"读取 {option.Id} 的远古卡图样式设置失败：{exception.Message}");
+            }
+
             return true;
         }
     }
@@ -954,7 +971,7 @@ internal static class SkinService
         {
             var selected = Config.Selections[key];
             if (!cards.TryGetValue(key, out var card) ||
-                (selected != SkinCatalog.BaseOptionId &&
+                (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  !GetCardOptions(card).Any(option =>
                      option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
             {

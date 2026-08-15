@@ -37,48 +37,63 @@ internal static class LoadOrderWarningController
         }
 
         _pending = false;
-        _shownThisSession = true;
         TaskHelper.RunSafely(ShowWarning(container));
     }
 
     private static async Task ShowWarning(NModalContainer container)
     {
-        var popup = NGenericPopup.Create();
-        if (popup == null)
+        try
         {
-            ModLog.Warn("游戏未能创建加载顺序提示框。");
-            return;
+            var popup = NGenericPopup.Create();
+            if (popup == null)
+            {
+                ModLog.Warn("游戏未能创建加载顺序提示框。");
+                _pending = true; // 在下一个钩子重试
+                return;
+            }
+
+            container.Add(popup);
+            // 弹窗真正挂上之后才标记已显示，避免创建失败被误记为已提示。
+            _shownThisSession = true;
+            var confirmation = popup.WaitForConfirmation(
+                new LocString("main_menu_ui", "MOD_NOT_LOADED_POPUP.description"),
+                new LocString("main_menu_ui", "MOD_NOT_LOADED_POPUP.title"),
+                new LocString("main_menu_ui", "GENERIC_POPUP.cancel"),
+                new LocString("main_menu_ui", "GENERIC_POPUP.confirm"));
+            var verticalPopup = popup.GetNode<NVerticalPopup>("VerticalPopup");
+            verticalPopup.SetText(
+                "STS2 皮肤切换器加载顺序",
+                "本 Mod 当前不在 Mod 加载顺序第一位。排在它前面的皮肤 Mod 会先加载自己的 DLL/PCK，" +
+                "因此无法被完整接管。请在 Mod 管理界面把“STS2 皮肤切换器”移到第一位，然后重启游戏。");
+            verticalPopup.YesButton.SetText("知道了");
+            verticalPopup.NoButton.SetText("不再提示");
+            ModLog.Info("已显示加载顺序提示框。");
+
+            var acknowledged = await confirmation;
+            if (!acknowledged)
+            {
+                try
+                {
+                    SkinService.SuppressLoadOrderWarning();
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn("保存加载顺序提示设置失败：" + exception.Message);
+                }
+            }
         }
-
-        container.Add(popup);
-        var confirmation = popup.WaitForConfirmation(
-            new LocString("main_menu_ui", "MOD_NOT_LOADED_POPUP.description"),
-            new LocString("main_menu_ui", "MOD_NOT_LOADED_POPUP.title"),
-            new LocString("main_menu_ui", "GENERIC_POPUP.cancel"),
-            new LocString("main_menu_ui", "GENERIC_POPUP.confirm"));
-        var verticalPopup = popup.GetNode<NVerticalPopup>("VerticalPopup");
-        verticalPopup.SetText(
-            "STS2 皮肤切换器加载顺序",
-            "本 Mod 当前不在 Mod 加载顺序第一位。排在它前面的皮肤 Mod 会先加载自己的 DLL/PCK，" +
-            "因此无法被完整接管。请在 Mod 管理界面把“STS2 皮肤切换器”移到第一位，然后重启游戏。");
-        verticalPopup.YesButton.SetText("知道了");
-        verticalPopup.NoButton.SetText("不再提示");
-        ModLog.Info("已显示加载顺序提示框。");
-
-        var acknowledged = await confirmation;
-        if (!acknowledged)
+        catch (Exception exception)
         {
-            try
-            {
-                SkinService.SuppressLoadOrderWarning();
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn("保存加载顺序提示设置失败：" + exception.Message);
-            }
+            ModLog.Error("显示加载顺序提示框失败：" + exception.GetBaseException().Message);
+            _pending = true; // 允许之后重试
         }
-
     }
+}
+
+[HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer._Ready))]
+internal static class LoadOrderWarningModalReadyPatch
+{
+    private static void Postfix() => LoadOrderWarningController.TryShow();
 }
 
 [HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]

@@ -69,6 +69,12 @@ internal sealed class PckArchive : IDisposable
             }
 
             var fileCount = reader.ReadUInt32();
+            const uint MaxFileCount = 2_000_000; // 防御性上限，正常导出远小于此值。
+            if (fileCount > MaxFileCount)
+            {
+                throw new InvalidDataException($"{path} 的 PCK 文件数量异常：{fileCount}。");
+            }
+
             var entries = new Dictionary<string, PckEntry>(checked((int)fileCount), StringComparer.OrdinalIgnoreCase);
             for (var i = 0U; i < fileCount; i++)
             {
@@ -79,14 +85,24 @@ internal sealed class PckArchive : IDisposable
                 }
 
                 var rawPath = reader.ReadBytes(checked((int)pathLength));
+                if (rawPath.Length != (int)pathLength)
+                {
+                    throw new InvalidDataException($"{path} 的 PCK 目录在读取路径时被截断。");
+                }
+
                 var resourcePath = Encoding.UTF8.GetString(rawPath).TrimEnd('\0');
                 var offset = reader.ReadUInt64();
                 var size = reader.ReadUInt64();
                 var md5 = reader.ReadBytes(16);
+                if (md5.Length != 16)
+                {
+                    throw new InvalidDataException($"{path} 的 PCK 目录在读取 {resourcePath} 校验和时被截断。");
+                }
+
                 var fileFlags = reader.ReadUInt32();
                 if ((fileFlags & FileRemoval) != 0)
                 {
-                    entries.Remove(resourcePath);
+                    entries.Remove(NormalizePath(resourcePath));
                     continue;
                 }
 
@@ -96,7 +112,8 @@ internal sealed class PckArchive : IDisposable
                 }
 
                 var absoluteOffset = checked(fileBase + offset);
-                if (absoluteOffset + size > (ulong)stream.Length)
+                var fileEnd = checked(absoluteOffset + size);
+                if (fileEnd > (ulong)stream.Length)
                 {
                     throw new InvalidDataException($"{path} 中的资源 {resourcePath} 超出文件范围。");
                 }
@@ -241,9 +258,18 @@ internal sealed class PckArchive : IDisposable
     private static string NormalizePath(string path)
     {
         var normalized = path.Replace('\\', '/').TrimStart('/');
-        return normalized.StartsWith("res://", StringComparison.OrdinalIgnoreCase)
-            ? "res://" + normalized[6..]
-            : "res://" + normalized;
+        if (normalized.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[6..];
+        }
+
+        // 折叠多余斜杠（res:////a 视作 res://a），与 Godot 的路径简化行为保持一致。
+        while (normalized.Contains("//", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("//", "/", StringComparison.Ordinal);
+        }
+
+        return "res://" + normalized.Trim('/');
     }
 
     private static int Align4(int value) => (value + 3) & ~3;

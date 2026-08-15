@@ -70,18 +70,27 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 var archive = PckArchive.Open(mod.PckPath);
-                var index = PckResourceIndex.Build(
-                    mod,
-                    archive,
-                    importedToSource,
-                    remapFilter: null);
-                if (mod.AffectsGameplay)
+                try
                 {
-                    baselineIndexes.Add(index);
+                    var index = PckResourceIndex.Build(
+                        mod,
+                        archive,
+                        importedToSource,
+                        remapFilter: null);
+                    if (mod.AffectsGameplay)
+                    {
+                        baselineIndexes.Add(index);
+                    }
+                    else
+                    {
+                        cosmeticIndexes.Add(index);
+                    }
                 }
-                else
+                catch
                 {
-                    cosmeticIndexes.Add(index);
+                    // 索引构建失败时释放未登记到任何列表的档案句柄。
+                    archive.Dispose();
+                    throw;
                 }
             }
 
@@ -330,9 +339,12 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 foreach (var file in asset.Files)
                 {
-                    files[file.Path] = file;
-                    var takeoverPath = NormalizeTakeoverPath(file.Path);
-                    if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
+                    // 与 BuildOverlay 一致：把文件映射到请求的源路径名下，保证基线回退时
+                    // 文件仍出现在游戏实际加载的路径上。
+                    var targetPath = MapAssetFilePath(sourcePath, asset.SourcePath, file.Path);
+                    files[targetPath] = file;
+                    var takeoverPath = NormalizeTakeoverPath(targetPath);
+                    if (!takeoverPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
                     {
                         files[takeoverPath] = file;
                     }
@@ -1580,7 +1592,10 @@ internal sealed partial class SkinCatalog : IDisposable
         bool stripUids = true)
     {
         var text = Encoding.UTF8.GetString(bytes);
-        foreach (var replacement in replacements.Concat(extraReplacements ?? new Dictionary<string, string>()))
+        // 按 key 长度降序替换，避免短 key 是长 key 前缀时破坏后者。
+        foreach (var replacement in replacements
+                     .Concat(extraReplacements ?? new Dictionary<string, string>())
+                     .OrderByDescending(pair => pair.Key.Length))
         {
             text = text.Replace(replacement.Key, replacement.Value, StringComparison.OrdinalIgnoreCase);
         }
@@ -1979,6 +1994,22 @@ internal sealed partial class PckResourceIndex : IDisposable
                 asset.AddFile(Archive, targetPath);
             }
         }
+
+        // Godot 4 .import 的 [deps] dest_files 数组可能包含多个导入产物（音频/字体/3D 等），
+        // 逐一登记，避免这些 payload 在覆盖包生成时丢失。
+        var destFiles = DestFilesArrayRegex().Match(text);
+        if (destFiles.Success)
+        {
+            foreach (Match pathMatch in QuotedPathRegex().Matches(destFiles.Value))
+            {
+                var targetPath = pathMatch.Groups[1].Value;
+                _importedToSource[targetPath] = sourcePath;
+                if (Archive.Contains(targetPath))
+                {
+                    asset.AddFile(Archive, targetPath);
+                }
+            }
+        }
     }
 
     private ResourceAsset GetAsset(string sourcePath)
@@ -2008,6 +2039,12 @@ internal sealed partial class PckResourceIndex : IDisposable
 
     [GeneratedRegex("path(?:\\.[a-z0-9_]+)?\\s*=\\s*\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex RemapTargetRegex();
+
+    [GeneratedRegex("dest_files\\s*=\\s*\\[[^\\]]*\\]", RegexOptions.IgnoreCase)]
+    private static partial Regex DestFilesArrayRegex();
+
+    [GeneratedRegex("\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
+    private static partial Regex QuotedPathRegex();
 }
 
 internal static class DisplayTextExtensions

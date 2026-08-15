@@ -223,7 +223,9 @@ internal static class ManagedSkinModLoader
             var selectedPaths = archive.Paths
                 .Where(path => IsProviderNamespacePath(path, idToken))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var path in selectedPaths.ToArray())
+            // 迭代扫描资源引用的闭包（.tres→.tres 链），而不是只解析一层。
+            var queue = new Queue<string>(selectedPaths);
+            while (queue.TryDequeue(out var path))
             {
                 if (!MayContainResourceReferences(path))
                 {
@@ -233,9 +235,9 @@ internal static class ManagedSkinModLoader
                 var text = Encoding.UTF8.GetString(archive.ReadFile(path));
                 foreach (Match match in ImportedResourceRegex.Matches(text))
                 {
-                    if (archive.Contains(match.Value))
+                    if (archive.Contains(match.Value) && selectedPaths.Add(match.Value))
                     {
-                        selectedPaths.Add(match.Value);
+                        queue.Enqueue(match.Value);
                     }
                 }
             }
