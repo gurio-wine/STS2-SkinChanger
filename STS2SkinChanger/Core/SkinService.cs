@@ -163,7 +163,8 @@ internal static class SkinService
 
             var group = Catalog.Groups.FirstOrDefault(group => group.Id == groupId);
             if (group == null ||
-                (optionId != SkinCatalog.BaseOptionId && group.Options.All(option => option.Id != optionId)))
+                (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                 group.Options.All(option => !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
             {
                 LastError = $"未知的皮肤选择：{groupId}/{optionId}";
                 return false;
@@ -200,7 +201,7 @@ internal static class SkinService
             var group = Catalog.CardGroups.FirstOrDefault(group =>
                 group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
             if (group == null ||
-                (optionId != SkinCatalog.BaseOptionId &&
+                (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  group.Options.All(option => !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
             {
                 LastError = $"未知的卡牌皮肤选择：{groupId}/{optionId}";
@@ -257,7 +258,7 @@ internal static class SkinService
         {
             var groupId = GetEffectiveCardGroupId(card);
             var individual = GetCardOverrideSelection(card);
-            if (individual == SkinCatalog.BaseOptionId ||
+            if (individual.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
                 GetCardOptions(card).Any(option =>
                     option.Id.Equals(individual, StringComparison.OrdinalIgnoreCase)))
             {
@@ -292,8 +293,8 @@ internal static class SkinService
                 return false;
             }
 
-            if (optionId != InheritCardSelectionId &&
-                optionId != SkinCatalog.BaseOptionId &&
+            if (!optionId.Equals(InheritCardSelectionId, StringComparison.OrdinalIgnoreCase) &&
+                !optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                 !group.Options.Any(option =>
                     option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase) &&
                     CardOptionAffectsCard(option, card)))
@@ -305,7 +306,7 @@ internal static class SkinService
             try
             {
                 var key = IndividualCardSelectionKey(card);
-                if (optionId == InheritCardSelectionId)
+                if (optionId.Equals(InheritCardSelectionId, StringComparison.OrdinalIgnoreCase))
                 {
                     Config.Selections.Remove(key);
                 }
@@ -768,6 +769,11 @@ internal static class SkinService
         lock (Sync)
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+            if (TryGetCachedRuntimeResources(groupId, resourcePaths, out var cached))
+            {
+                return cached;
+            }
+
             var generation = ++_overlayGeneration;
             var aliasToken = $"{_sessionId}/{generation:D3}";
             var overlay = catalog.BuildRuntimeResourceOverlay(
@@ -804,6 +810,29 @@ internal static class SkinService
             ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {resources.Count} 个资源：{aliasToken}");
             return resources;
         }
+    }
+
+    private static bool TryGetCachedRuntimeResources(
+        string groupId,
+        IReadOnlyCollection<string> resourcePaths,
+        out IReadOnlyDictionary<string, Resource> resources)
+    {
+        var loaded = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
+        foreach (var resourcePath in resourcePaths)
+        {
+            var cacheKey = RuntimeResourceKey(groupId, resourcePath);
+            if (!RuntimeResourceCache.TryGetValue(cacheKey, out var cached) ||
+                !GodotObject.IsInstanceValid(cached))
+            {
+                resources = null!;
+                return false;
+            }
+
+            loaded[resourcePath] = cached;
+        }
+
+        resources = loaded;
+        return true;
     }
 
     private static void MountOverlay(IReadOnlySet<string> groups)
@@ -887,9 +916,11 @@ internal static class SkinService
         foreach (var group in Catalog!.Groups)
         {
             if (!Config.Selections.TryGetValue(group.Id, out var selected) ||
-                (selected != SkinCatalog.BaseOptionId && group.Options.All(option => option.Id != selected)))
+                (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                 group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
             {
-                Config.Selections[group.Id] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+                // 无效或缺失的选择回退到游戏原版，而不是自动启用第一个皮肤。
+                Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
             }
         }
 
@@ -902,10 +933,10 @@ internal static class SkinService
         {
             var key = CardSelectionKey(group.Id);
             if (!Config.Selections.TryGetValue(key, out var selected) ||
-                (selected != SkinCatalog.BaseOptionId &&
+                (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
             {
-                Config.Selections[key] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+                Config.Selections[key] = SkinCatalog.BaseOptionId;
             }
         }
 

@@ -256,7 +256,8 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             selections.TryGetValue(group.Id, out var selectedId);
-            var selected = group.Options.FirstOrDefault(option => option.Id == selectedId);
+            var selected = group.Options.FirstOrDefault(option =>
+                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
             if (selected?.IsRuntimeProvider == true)
             {
                 foreach (var index in _cosmeticIndexes.Where(index =>
@@ -470,7 +471,8 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public IReadOnlySet<string> GetAffectedSourcePaths(string groupId)
     {
-        var group = Groups.First(group => group.Id == groupId);
+        var group = Groups.First(group =>
+            group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         var affected = group.Options
             .SelectMany(option => option.Assets.Keys)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -498,7 +500,8 @@ internal sealed partial class SkinCatalog : IDisposable
         bool includeProviderDependencies = false)
     {
         var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-        var selected = group.Options.FirstOrDefault(option => option.Id == selectionId);
+        var selected = group.Options.FirstOrDefault(option =>
+            option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
         var sourcePaths = GetAffectedSourcePaths(groupId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         sourcePaths.UnionWith(resourcePaths);
         IncludeAtlasTexturePages(selected, sourcePaths);
@@ -1289,7 +1292,10 @@ internal sealed partial class SkinCatalog : IDisposable
         path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".res", StringComparison.OrdinalIgnoreCase);
+        path.EndsWith(".res", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gdshader", StringComparison.OrdinalIgnoreCase);
 
     private void SortGroupsAndOptions()
     {
@@ -1714,7 +1720,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex ResourcePathRegex();
 
     [GeneratedRegex(
-        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|tscn|tres|gdc|gd|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
+        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|tscn|tres|gdc|gd|gdshader|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
         RegexOptions.IgnoreCase)]
     private static partial Regex EmbeddedResourcePathRegex();
 

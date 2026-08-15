@@ -20,6 +20,8 @@ internal static partial class ContextualSkinControls
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
+    private static readonly Dictionary<string, string> DisplayedSelections =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
@@ -38,7 +40,15 @@ internal static partial class ContextualSkinControls
         var group = FindGroup(character.Id.Entry);
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
-        if (group != null)
+        if (group == null)
+        {
+            return;
+        }
+
+        // 仅在展示的选择与当前选择不一致时才重建，避免每次点击角色都写盘、重挂资源包并重启动画。
+        var current = SkinService.Config.GetSelection(group.Id);
+        if (!DisplayedSelections.TryGetValue(group.Id, out var displayed) ||
+            !displayed.Equals(current, StringComparison.OrdinalIgnoreCase))
         {
             ScheduleCharacterRefresh(screen, character, group.Id);
         }
@@ -76,7 +86,13 @@ internal static partial class ContextualSkinControls
 
     private static HBoxContainer EnsureCharacterSelector(NCharacterSelectScreen screen)
     {
-        var infoPanel = screen.GetNode<Control>("InfoPanel");
+        var infoPanel = screen.GetNodeOrNull<Control>("InfoPanel");
+        if (infoPanel == null)
+        {
+            ModLog.Error("选角界面缺少 InfoPanel 节点，无法挂载皮肤选择器。");
+            return new HBoxContainer();
+        }
+
         var existing = infoPanel.GetNodeOrNull<HBoxContainer>(SelectorName);
         if (existing != null)
         {
@@ -292,6 +308,7 @@ internal static partial class ContextualSkinControls
         if (SkinService.IsExternalRuntimeProviderSelected(groupId))
         {
             RebuildRuntimeProviderCharacterDisplay(screen, character);
+            DisplayedSelections[groupId] = SkinService.Config.GetSelection(groupId);
             return;
         }
 
@@ -313,12 +330,17 @@ internal static partial class ContextualSkinControls
             .Concat(characterSelectTextures)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var resources = SkinService.LoadRuntimeResources(groupId, resourcePaths);
+        // 需要包含提供者依赖：DLL 提供者的场景可能引用其 PCK 里的编译脚本(.gdc)、导出场景(.scn)等。
+        var resources = SkinService.LoadRuntimeResources(
+            groupId,
+            resourcePaths,
+            includeProviderDependencies: true);
 
         var scene = resources[characterSelectPath] as PackedScene ??
                     throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
         ReplaceCharacterBackground(screen, character, scene);
         RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
+        DisplayedSelections[groupId] = SkinService.Config.GetSelection(groupId);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
 
@@ -327,7 +349,21 @@ internal static partial class ContextualSkinControls
         CharacterModel character)
     {
         var scenePath = character.CharacterSelectBg;
-        var scene = PreloadManager.Cache.GetScene(scenePath);
+        // 提供者 PCK 未被全局挂载，游戏 AssetCache 可能已缓存过加载失败（"Asset previously
+        // failed to load"）。绕过它直接加载，成功后把结果写回缓存以治愈失效条目。
+        var scene = ResourceLoader.Load<PackedScene>(
+            scenePath,
+            null,
+            ResourceLoader.CacheMode.IgnoreDeep);
+        if (scene != null)
+        {
+            PreloadManager.Cache.SetAsset(scenePath, scene);
+        }
+        else
+        {
+            scene = PreloadManager.Cache.GetScene(scenePath);
+        }
+
         ReplaceCharacterBackground(screen, character, scene);
 
         var button = FindCharacterButton(screen, character);
@@ -346,7 +382,13 @@ internal static partial class ContextualSkinControls
         CharacterModel character,
         PackedScene scene)
     {
-        var container = screen.GetNode<Control>("AnimatedBg");
+        var container = screen.GetNodeOrNull<Control>("AnimatedBg");
+        if (container == null)
+        {
+            ModLog.Error("选角界面缺少 AnimatedBg 节点，无法替换角色背景。");
+            return;
+        }
+
         foreach (var child in container.GetChildren())
         {
             container.RemoveChild(child);
