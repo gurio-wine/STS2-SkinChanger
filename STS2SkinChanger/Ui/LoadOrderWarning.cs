@@ -1,4 +1,3 @@
-using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
@@ -9,41 +8,45 @@ using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui.LoadOrderWarning;
 
-internal partial class LoadOrderWarningController : Node
+internal static class LoadOrderWarningController
 {
-    private static bool _scheduledThisSession;
+    private static bool _pending;
+    private static bool _shownThisSession;
 
-    public static void Schedule(NMainMenu mainMenu)
+    public static void Schedule()
     {
-        if (_scheduledThisSession ||
+        if (_shownThisSession ||
             ManagedSkinModLoader.IsFirstInLoadOrder ||
             SkinService.Config.SuppressLoadOrderWarning)
         {
             return;
         }
 
-        _scheduledThisSession = true;
-        mainMenu.AddChild(new LoadOrderWarningController());
+        _pending = true;
+        ModLog.Info("检测到本 Mod 不在加载顺序第一位，准备显示顺序提示。");
+        TryShow();
     }
 
-    public override void _Process(double delta)
+    public static void TryShow()
     {
         var container = NModalContainer.Instance;
-        if (container == null || container.OpenModal != null)
+        if (!_pending || _shownThisSession ||
+            container == null || container.OpenModal != null)
         {
             return;
         }
 
-        SetProcess(false);
+        _pending = false;
+        _shownThisSession = true;
         TaskHelper.RunSafely(ShowWarning(container));
     }
 
-    private async Task ShowWarning(NModalContainer container)
+    private static async Task ShowWarning(NModalContainer container)
     {
         var popup = NGenericPopup.Create();
         if (popup == null)
         {
-            QueueFree();
+            ModLog.Warn("游戏未能创建加载顺序提示框。");
             return;
         }
 
@@ -60,6 +63,7 @@ internal partial class LoadOrderWarningController : Node
             "因此无法被完整接管。请在 Mod 管理界面把“STS2 皮肤切换器”移到第一位，然后重启游戏。");
         verticalPopup.YesButton.SetText("知道了");
         verticalPopup.NoButton.SetText("不再提示");
+        ModLog.Info("已显示加载顺序提示框。");
 
         var acknowledged = await confirmation;
         if (!acknowledged)
@@ -74,13 +78,17 @@ internal partial class LoadOrderWarningController : Node
             }
         }
 
-        QueueFree();
     }
 }
 
 [HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]
 internal static class MainMenuLoadOrderWarningPatch
 {
-    private static void Postfix(NMainMenu __instance) =>
-        LoadOrderWarningController.Schedule(__instance);
+    private static void Postfix() => LoadOrderWarningController.Schedule();
+}
+
+[HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer.Clear))]
+internal static class LoadOrderWarningModalClosedPatch
+{
+    private static void Postfix() => LoadOrderWarningController.TryShow();
 }
