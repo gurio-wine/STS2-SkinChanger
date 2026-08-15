@@ -28,8 +28,9 @@ internal sealed class PckArchive : IDisposable
 
     public static PckArchive Open(string path)
     {
-        // 保持源包在整个游戏会话中稳定，避免 Steam Workshop 更新在切换过程中替换 PCK。
-        var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        // 保持源包在整个游戏会话中稳定，避免 Steam Workshop 更新在切换过程中替换 PCK；
+        // 同时允许其它进程删除/替换文件（我们持有的句柄继续读取旧快照）。
+        var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         try
         {
             using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);

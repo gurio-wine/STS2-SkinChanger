@@ -55,6 +55,10 @@ internal sealed partial class SkinCatalog : IDisposable
         var cosmeticIndexes = new List<PckResourceIndex>();
         try
         {
+            // importedToSource 有意跨索引共享：皮肤 Mod 的 PCK 常常只携带
+            // .godot/imported/ 载荷而不带 .import/.remap，需要借助游戏 PCK
+            // 先登记的 remap 映射把载荷归到正确源路径。相同哈希的导入文件内容
+            // 必然一致，后注册覆盖先注册在视觉上没有差别。
             var importedToSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             baselineIndexes.Add(PckResourceIndex.Build(
                 new SkinModDescriptor("game", "游戏原版", gamePckPath, true),

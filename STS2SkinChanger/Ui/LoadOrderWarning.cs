@@ -16,8 +16,14 @@ internal static class LoadOrderWarningController
     public static void Schedule()
     {
         if (_shownThisSession ||
-            ManagedSkinModLoader.IsFirstInLoadOrder ||
-            SkinService.Config.SuppressLoadOrderWarning)
+            ManagedSkinModLoader.IsFirstInLoadOrder)
+        {
+            return;
+        }
+
+        // 目录可能尚未初始化，先确保配置已读取，否则会漏掉用户之前保存的"不再提示"。
+        SkinService.EnsureConfigLoaded();
+        if (SkinService.Config.SuppressLoadOrderWarning)
         {
             return;
         }

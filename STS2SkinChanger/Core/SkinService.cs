@@ -36,6 +36,7 @@ internal static class SkinService
     private static int _overlayGeneration;
     private static string _sessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     private static bool _initialized;
+    private static bool _configLoaded;
     private static bool _cardGroupsInitialized;
     private static string? _cardCatalogSignature;
 
@@ -57,8 +58,22 @@ internal static class SkinService
     {
         lock (Sync)
         {
+            // 目录可能尚未初始化：先读取现有配置，避免用默认实例覆盖用户已保存的选择。
+            EnsureConfigLoaded();
             Config.SuppressLoadOrderWarning = true;
             Config.Save(ConfigPath);
+        }
+    }
+
+    public static void EnsureConfigLoaded()
+    {
+        lock (Sync)
+        {
+            if (!_configLoaded)
+            {
+                Config = SkinConfig.Load(ConfigPath);
+                _configLoaded = true;
+            }
         }
     }
 
