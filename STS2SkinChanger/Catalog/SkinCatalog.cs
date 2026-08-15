@@ -503,8 +503,114 @@ internal sealed partial class SkinCatalog : IDisposable
             resources.Add(new RuntimeResource(sourcePath, directFile, remapFile, payloadFiles));
         }
 
-        return BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
+        var overlay = BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
+        if (selected == null)
+        {
+            return overlay;
+        }
+
+        var dependencyFiles = CollectSelectedProviderDependencies(selected, resources);
+        if (dependencyFiles.Count == 0)
+        {
+            return overlay;
+        }
+
+        var files = overlay.Files.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var dependency in dependencyFiles)
+        {
+            files[dependency.Key] = dependency.Value;
+        }
+
+        return new RuntimeResourceOverlay(overlay.ResourcePaths, files);
     }
+
+    private Dictionary<string, byte[]> CollectSelectedProviderDependencies(
+        SkinOption selected,
+        IReadOnlyCollection<RuntimeResource> resources)
+    {
+        var indexes = _cosmeticIndexes
+            .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (indexes.Length == 0)
+        {
+            return new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var result = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
+        var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in resources
+                     .SelectMany(resource => new[] { resource.DirectFile, resource.RemapFile }
+                         .Where(file => file != null)
+                         .Cast<ResourceFile>()
+                         .Concat(resource.PayloadFiles)))
+        {
+            var index = indexes.FirstOrDefault(candidate => ReferenceEquals(candidate.Archive, file.Archive));
+            if (index != null)
+            {
+                Enqueue(index, file);
+            }
+        }
+
+        while (queue.TryDequeue(out var pending))
+        {
+            if (!MayContainResourceReferences(pending.File.Path))
+            {
+                continue;
+            }
+
+            var bytes = pending.File.Archive.ReadFile(pending.File.Path);
+            var text = Encoding.UTF8.GetString(bytes);
+            foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
+            {
+                var sourcePath = match.Value;
+                var dependency = pending.Index.Assets.GetValueOrDefault(sourcePath) ??
+                                 pending.Index.TryBuildAsset(sourcePath);
+                if (dependency == null)
+                {
+                    continue;
+                }
+
+                foreach (var file in dependency.Files)
+                {
+                    var dependencyBytes = file.Archive.ReadFile(file.Path);
+                    result[file.Path] = dependencyBytes;
+                    var takeoverPath = NormalizeTakeoverPath(file.Path);
+                    if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result[takeoverPath] = dependencyBytes;
+                    }
+
+                    Enqueue(pending.Index, file);
+                }
+            }
+        }
+
+        return result;
+
+        void Enqueue(PckResourceIndex index, ResourceFile file)
+        {
+            var key = index.Mod.Id + "\n" + file.Path;
+            if (queued.Add(key))
+            {
+                queue.Enqueue((index, file));
+            }
+        }
+    }
+
+    private static bool MayContainResourceReferences(string path) =>
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".res", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
 
     public RuntimeResourceOverlay BuildIsolatedCardResource(
         string groupId,
@@ -1477,6 +1583,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex ResourcePathRegex();
+
+    [GeneratedRegex(
+        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|tscn|tres|gdc|gd|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex EmbeddedResourcePathRegex();
 
     [GeneratedRegex("^uid=\"uid://[^\"]+\"\\r?\\n", RegexOptions.IgnoreCase | RegexOptions.Multiline)]
     private static partial Regex UidLineRegex();

@@ -239,6 +239,8 @@ internal static class SkinService
         }
     }
 
+    public static bool HasCardSkin(CardModel card) => GetCardOptions(card).Count > 0;
+
     public static string GetCardOverrideSelection(CardModel card)
     {
         lock (Sync)

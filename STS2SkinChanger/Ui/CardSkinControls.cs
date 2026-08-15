@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardLibrary;
 using STS2SkinChanger.Catalog;
@@ -15,10 +16,14 @@ internal static class CardSkinControls
 {
     private const string SelectorName = "STS2CardSkinSelector";
     private const string DropdownName = "CardSkinDropdown";
+    private const string AvailabilityFilterName = "STS2SkinnedCardsOnly";
+    private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
     private const string GroupMeta = "sts2_card_skin_group";
     private const string UpdatingMeta = "sts2_card_skin_updating";
     private static readonly System.Reflection.MethodInfo ReloadCardMethod =
         AccessTools.Method(typeof(NCard), "Reload");
+    private static readonly System.Reflection.MethodInfo UpdateLibraryFilterMethod =
+        AccessTools.Method(typeof(NCardLibrary), "UpdateFilter", [typeof(bool)]);
     private static readonly ConditionalWeakTable<NCard, CardLayoutState> BaselineLayouts = new();
     private static readonly ConditionalWeakTable<NCard, CardPresentationState> PresentationLayouts = new();
 
@@ -59,6 +64,23 @@ internal static class CardSkinControls
         selector.AddChild(dropdown);
         bottom.AddChild(selector);
         bottom.MoveChild(selector, 0);
+
+        var filterScene = ResourceLoader.Load<PackedScene>(
+            "res://scenes/screens/card_library/card_library_tickbox.tscn");
+        if (filterScene != null)
+        {
+            var availabilityFilter = filterScene.Instantiate<NLibraryStatTickbox>(
+                PackedScene.GenEditState.Disabled);
+            availabilityFilter.Name = AvailabilityFilterName;
+            bottom.AddChild(availabilityFilter);
+            bottom.MoveChild(availabilityFilter, 1);
+            availabilityFilter.SetLabel("仅显示有皮肤的卡牌");
+            availabilityFilter.IsTicked = false;
+            availabilityFilter.Connect(
+                NTickbox.SignalName.Toggled,
+                Callable.From<NTickbox>(tickbox =>
+                    SetAvailabilityFilter(screen, tickbox.IsTicked)));
+        }
 
         ShowFirstAvailableGroup(selector);
     }
@@ -176,6 +198,50 @@ internal static class CardSkinControls
         }
     }
 
+    public static void ResetAvailabilityFilter(NCardLibrary screen)
+    {
+        screen.SetMeta(AvailabilityFilterMeta, false);
+        var filter = screen.GetNodeOrNull<NLibraryStatTickbox>(
+            $"Sidebar/MarginContainer/BottomVBox/{AvailabilityFilterName}");
+        if (filter != null)
+        {
+            filter.IsTicked = false;
+        }
+    }
+
+    public static void ApplyAvailabilityFilter(
+        NCardLibraryGrid grid,
+        ref Func<CardModel, bool> filter)
+    {
+        Node? current = grid;
+        while (current != null && current is not NCardLibrary)
+        {
+            current = current.GetParent();
+        }
+
+        if (current is not NCardLibrary library ||
+            !library.GetMeta(AvailabilityFilterMeta, false).AsBool())
+        {
+            return;
+        }
+
+        var original = filter;
+        filter = card => original(card) && SkinService.HasCardSkin(card);
+    }
+
+    private static void SetAvailabilityFilter(NCardLibrary screen, bool enabled)
+    {
+        screen.SetMeta(AvailabilityFilterMeta, enabled);
+        try
+        {
+            UpdateLibraryFilterMethod.Invoke(screen, [false]);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("刷新有皮肤卡牌筛选失败：" + exception);
+        }
+    }
+
     private static void ShowFirstAvailableGroup(HBoxContainer selector)
     {
         var preferred = FindGroup("ironclad") ?? SkinService.Catalog?.CardGroups.FirstOrDefault();
@@ -197,12 +263,12 @@ internal static class CardSkinControls
         selector.SetMeta(GroupMeta, group.Id);
         dropdown.Clear();
         dropdown.TooltipText = group.DisplayName + "卡牌皮肤";
-        dropdown.AddItem(group.DisplayName + " · 游戏默认");
+        dropdown.AddItem("游戏默认");
         dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
         foreach (var option in group.Options)
         {
             var index = dropdown.ItemCount;
-            dropdown.AddItem(group.DisplayName + " · " + option.Name);
+            dropdown.AddItem(option.Name);
             dropdown.SetItemMetadata(index, option.Id);
         }
 
@@ -591,8 +657,26 @@ internal static class CardInspectSkinDisplayPatch
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary.OnSubmenuOpened))]
 internal static class CardLibrarySkinOpenedPatch
 {
+    private static void Prefix(NCardLibrary __instance) =>
+        CardSkinControls.ResetAvailabilityFilter(__instance);
+
     private static void Postfix(NCardLibrary __instance) =>
         CardSkinControls.SyncToSelectedFilter(__instance);
+}
+
+[HarmonyPatch]
+internal static class CardLibraryAvailabilityFilterPatch
+{
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(
+            typeof(NCardLibraryGrid),
+            nameof(NCardLibraryGrid.FilterCards),
+            [typeof(Func<CardModel, bool>), typeof(List<SortingOrders>)]);
+
+    private static void Prefix(
+        NCardLibraryGrid __instance,
+        ref Func<CardModel, bool> filter) =>
+        CardSkinControls.ApplyAvailabilityFilter(__instance, ref filter);
 }
 
 [HarmonyPatch(typeof(NCardLibrary), "UpdateCardPoolFilter")]
