@@ -186,8 +186,8 @@ internal static class CardSkinControls
             return;
         }
 
+        // CardModel.Portrait 的 getter 已被 Priority.Last 的 Postfix 接管，这里拿到的已是换肤后的贴图。
         var portrait = card.Model.Portrait;
-        SkinService.ReplaceCardPortrait(card.Model, ref portrait);
         var targetPath = card.Model.Rarity == CardRarity.Ancient
             ? "%AncientPortrait"
             : "%Portrait";

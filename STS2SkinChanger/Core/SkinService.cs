@@ -41,7 +41,15 @@ internal static class SkinService
 
     public static SkinCatalog? Catalog { get; private set; }
     public static SkinConfig Config { get; private set; } = new();
-    public static string? LastError { get; private set; }
+
+    private static volatile string? _lastError;
+
+    // 用 volatile 保证异常路径下 UI 线程的可见性。
+    public static string? LastError
+    {
+        get => _lastError;
+        private set => _lastError = value;
+    }
 
     private static string ConfigPath => System.IO.Path.Combine(OS.GetUserDataDir(), "sts2_skin_switcher.json");
 
@@ -230,6 +238,8 @@ internal static class SkinService
         }
     }
 
+    // 以下读取不持锁：所有写操作都发生在 Godot 主线程，与 UI 读取同线程；
+    // LastError 用 volatile 保证异常路径下的可见性。
     public static string GetCardSelection(string groupId) =>
         Config.GetSelection(CardSelectionKey(groupId));
 

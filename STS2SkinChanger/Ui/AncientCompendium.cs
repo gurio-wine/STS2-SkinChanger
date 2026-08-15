@@ -18,6 +18,7 @@ internal static class AncientCompendiumEntry
     private const string ButtonName = "STS2AncientCompendiumButton";
     private const string ScreenName = "STS2AncientCompendium";
     private static readonly System.Reflection.FieldInfo StackField = AccessTools.Field(typeof(NSubmenu), "_stack");
+    private static NCompendiumBottomButton? _entryButton;
 
     public static void Attach(NCompendiumSubmenu compendium)
     {
@@ -57,6 +58,8 @@ internal static class AncientCompendiumEntry
         {
             icon.Texture = firstAncient.MapIcon;
         }
+
+        _entryButton = button;
 
         button.Connect(
             NClickableControl.SignalName.Released,
@@ -159,8 +162,15 @@ internal static class AncientCompendiumEntry
 
     internal static void RefreshCompendiumEntryIcon(Node context)
     {
-        var button = context.GetTree().Root.FindChild(ButtonName, recursive: true, owned: false)
-            as NCompendiumBottomButton;
+        // 优先用缓存的按钮引用，避免每次换肤都全树查找。
+        var button = _entryButton;
+        if (!GodotObject.IsInstanceValid(button))
+        {
+            button = context.GetTree().Root.FindChild(ButtonName, recursive: true, owned: false)
+                as NCompendiumBottomButton;
+            _entryButton = button;
+        }
+
         var firstAncient = GetAncients().FirstOrDefault();
         if (button != null && firstAncient != null)
         {
@@ -526,7 +536,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         label.AddThemeColorOverride("font_outline_color", new Color("332f27"));
         label.AddThemeConstantOverride("outline_size", fontSize >= 34 ? 10 : 5);
         label.AddThemeFontSizeOverride("font_size", fontSize);
-        var font = ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
+        var font = ContextualSkinControls.GameFont;
         if (font != null)
         {
             label.AddThemeFontOverride("font", font);
@@ -543,7 +553,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         button.AddThemeColorOverride("font_hover_color", Colors.White);
         button.AddThemeColorOverride("font_pressed_color", gold);
         button.AddThemeFontSizeOverride("font_size", 24);
-        var font = ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
+        var font = ContextualSkinControls.GameFont;
         if (font != null)
         {
             button.AddThemeFontOverride("font", font);

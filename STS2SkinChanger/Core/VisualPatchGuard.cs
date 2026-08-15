@@ -239,7 +239,7 @@ internal static class VisualPatchGuard
             }
             if (parameter.HasDefaultValue)
             {
-                invokeArguments[index] = parameter.DefaultValue;
+                invokeArguments[index] = parameter.DefaultValue is DBNull ? null : parameter.DefaultValue;
                 continue;
             }
 
@@ -371,12 +371,18 @@ internal static class VisualPatchGuard
         }
 
         var assemblyPath = NormalizeRoot(location);
-        return assemblyPath == null
-            ? null
-            : roots.FirstOrDefault(root =>
-                assemblyPath.StartsWith(
-                    root + Path.DirectorySeparatorChar,
-                    StringComparison.OrdinalIgnoreCase));
+        if (assemblyPath == null)
+        {
+            return null;
+        }
+
+        // 嵌套 Mod 目录下取最长匹配的根，避免把子目录 Mod 的补丁归属到父目录 Mod。
+        return roots
+            .Where(root => assemblyPath.StartsWith(
+                root + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(root => root.Length)
+            .FirstOrDefault();
     }
 
     private static string? NormalizeRoot(string path)

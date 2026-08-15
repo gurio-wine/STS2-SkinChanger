@@ -22,6 +22,10 @@ internal static partial class ContextualSkinControls
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static readonly Dictionary<string, string> DisplayedSelections =
         new(StringComparer.OrdinalIgnoreCase);
+    private static Font? _gameFont;
+
+    internal static Font? GameFont =>
+        _gameFont ??= ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
     private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
@@ -157,7 +161,7 @@ internal static partial class ContextualSkinControls
 
     internal static void ApplyGameTheme(OptionButton dropdown)
     {
-        var font = ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
+        var font = GameFont;
         var ivory = new Color("fff6e2");
         var gold = new Color("efc850");
         dropdown.AddThemeColorOverride("font_color", ivory);

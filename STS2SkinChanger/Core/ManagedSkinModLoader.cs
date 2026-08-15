@@ -205,13 +205,9 @@ internal static class ManagedSkinModLoader
         }
 
         var normalizedRoot = NormalizePath(mod.path);
-        if (!MountedProviderNamespaces.Add(normalizedRoot))
-        {
-            return 0;
-        }
-
         var pckPath = Path.Combine(mod.path, manifest.id + ".pck");
-        if (!File.Exists(pckPath))
+        if (!File.Exists(pckPath) ||
+            !MountedProviderNamespaces.Add(normalizedRoot))
         {
             return 0;
         }
@@ -244,6 +240,8 @@ internal static class ManagedSkinModLoader
 
             if (selectedPaths.Count == 0)
             {
+                // 没有可挂载的命名空间资源时回滚登记，保持缓存状态一致。
+                MountedProviderNamespaces.Remove(normalizedRoot);
                 return 0;
             }
 

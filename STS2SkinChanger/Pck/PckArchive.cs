@@ -8,6 +8,7 @@ internal sealed class PckArchive : IDisposable
     private const uint HeaderMagic = 0x43504447;
     private const uint DirectoryEncrypted = 1;
     private const uint RelativeFileBase = 2;
+    private const uint SparseBundle = 4;
     private const uint FileEncrypted = 1;
     private const uint FileRemoval = 2;
 
@@ -51,6 +52,10 @@ internal sealed class PckArchive : IDisposable
             if ((packFlags & DirectoryEncrypted) != 0)
             {
                 throw new InvalidDataException($"{path} 的 PCK 目录已加密，无法作为皮肤资源读取。");
+            }
+            if ((packFlags & SparseBundle) != 0)
+            {
+                throw new InvalidDataException($"{path} 使用了稀疏打包格式，暂不支持作为皮肤资源读取。");
             }
 
             var rawFileBase = reader.ReadUInt64();
