@@ -22,7 +22,10 @@ internal static partial class ContextualSkinControls
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static readonly Dictionary<string, string> DisplayedSelections =
         new(StringComparer.OrdinalIgnoreCase);
+    private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
+
+    internal static bool IsRefreshingMonsterDisplay => _refreshingMonsterDisplay;
 
     internal static Font? GameFont =>
         _gameFont ??= ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
@@ -464,8 +467,19 @@ internal static partial class ContextualSkinControls
         var scene = SkinService.LoadRuntimeScene(groupId, visualsPath);
         PreloadManager.Cache.SetAsset(visualsPath, scene);
 
-        BestiarySelectedEntryField.SetValue(screen, null);
-        BestiarySelectMonsterMethod.Invoke(screen, [entry]);
+        // 置空选中项绕过 SelectMonster 的同项短路；SelectMonster 的 Setup 阶段会重建生物，
+        // 走 MonsterModel.CreateVisuals 的接管补丁从而应用新皮肤。
+        try
+        {
+            _refreshingMonsterDisplay = true;
+            BestiarySelectedEntryField.SetValue(screen, null);
+            BestiarySelectMonsterMethod.Invoke(screen, [entry]);
+        }
+        finally
+        {
+            _refreshingMonsterDisplay = false;
+        }
+
         ModLog.Info($"已完整重建 {monster.Id.Entry} 的图鉴展示。");
     }
 
@@ -654,8 +668,14 @@ internal static class MultiplayerEmbarkSkinSelectorPatch
 [HarmonyPatch(typeof(NBestiary), "SelectMonster")]
 internal static class BestiarySelectionSkinPatch
 {
-    private static void Postfix(NBestiary __instance, NBestiaryEntry entry) =>
-        ContextualSkinControls.ShowMonster(__instance, entry);
+    private static void Postfix(NBestiary __instance, NBestiaryEntry entry)
+    {
+        // 皮肤切换触发的重建会再次进入 SelectMonster，跳过重入以避免重复刷新下拉框。
+        if (!ContextualSkinControls.IsRefreshingMonsterDisplay)
+        {
+            ContextualSkinControls.ShowMonster(__instance, entry);
+        }
+    }
 }
 
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]

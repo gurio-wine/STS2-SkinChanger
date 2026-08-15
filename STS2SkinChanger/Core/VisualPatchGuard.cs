@@ -327,6 +327,12 @@ internal static class VisualPatchGuard
         }
 
         var namespaceName = declaringType.Namespace ?? string.Empty;
+        // MegaSpine 绑定全部是骨骼/动画呈现 API，属于视觉接管范围。
+        if (namespaceName.StartsWith("MegaCrit.Sts2.Core.Bindings.MegaSpine", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         if (!namespaceName.StartsWith("MegaCrit.Sts2.Core.Nodes", StringComparison.Ordinal))
         {
             return false;

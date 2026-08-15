@@ -42,21 +42,27 @@ internal static class AncientCompendiumEntry
         }
 
         bottomRow.AddChild(button);
-        var statistics = compendium.GetNode<NCompendiumBottomButton>("%StatisticsButton");
-        var runHistory = compendium.GetNode<NCompendiumBottomButton>("%RunHistoryButton");
-        bottomRow.MoveChild(button, statistics.GetIndex() + 1);
-
-        button.GetNode<MegaLabel>("Label").SetTextAutoSize("远古图鉴");
-        var icon = button.GetNode<TextureRect>("Icon");
-        icon.OffsetLeft = 70;
-        icon.OffsetTop = 22;
-        icon.OffsetRight = -70;
-        icon.OffsetBottom = -62;
-        icon.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
-        var firstAncient = GetAncients().FirstOrDefault();
-        if (firstAncient != null)
+        var statistics = compendium.GetNodeOrNull<NCompendiumBottomButton>("%StatisticsButton");
+        var runHistory = compendium.GetNodeOrNull<NCompendiumBottomButton>("%RunHistoryButton");
+        if (statistics != null && runHistory != null)
         {
-            icon.Texture = firstAncient.MapIcon;
+            bottomRow.MoveChild(button, statistics.GetIndex() + 1);
+        }
+
+        button.GetNodeOrNull<MegaLabel>("Label")?.SetTextAutoSize("远古图鉴");
+        var icon = button.GetNodeOrNull<TextureRect>("Icon");
+        if (icon != null)
+        {
+            icon.OffsetLeft = 70;
+            icon.OffsetTop = 22;
+            icon.OffsetRight = -70;
+            icon.OffsetBottom = -62;
+            icon.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+            var firstAncient = GetAncients().FirstOrDefault();
+            if (firstAncient != null)
+            {
+                icon.Texture = firstAncient.MapIcon;
+            }
         }
 
         _entryButton = button;
@@ -65,14 +71,22 @@ internal static class AncientCompendiumEntry
             NClickableControl.SignalName.Released,
             Callable.From((Action<NButton>)(_ => Open(compendium))));
 
-        var bestiary = compendium.GetNode<NShortSubmenuButton>("%BestiaryButton");
+        if (statistics == null || runHistory == null)
+        {
+            return;
+        }
+
+        var bestiary = compendium.GetNodeOrNull<NShortSubmenuButton>("%BestiaryButton");
         statistics.FocusNeighborRight = button.GetPath();
         button.FocusNeighborLeft = statistics.GetPath();
         button.FocusNeighborRight = runHistory.GetPath();
-        button.FocusNeighborTop = bestiary.GetPath();
+        button.FocusNeighborTop = bestiary?.GetPath() ?? button.GetPath();
         button.FocusNeighborBottom = button.GetPath();
         runHistory.FocusNeighborLeft = button.GetPath();
-        bestiary.FocusNeighborBottom = button.GetPath();
+        if (bestiary != null)
+        {
+            bestiary.FocusNeighborBottom = button.GetPath();
+        }
     }
 
     private static void Open(NCompendiumSubmenu compendium)
