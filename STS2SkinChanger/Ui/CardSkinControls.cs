@@ -20,6 +20,7 @@ internal static class CardSkinControls
     private static readonly System.Reflection.MethodInfo ReloadCardMethod =
         AccessTools.Method(typeof(NCard), "Reload");
     private static readonly ConditionalWeakTable<NCard, CardLayoutState> BaselineLayouts = new();
+    private static readonly ConditionalWeakTable<NCard, CardPresentationState> PresentationLayouts = new();
 
     public static void Attach(NCardLibrary screen)
     {
@@ -112,14 +113,47 @@ internal static class CardSkinControls
 
     public static void RestoreBaselineLayout(NCard card)
     {
-        if (card.Model == null || !SkinService.ShouldRestoreStandardCardLayout(card.Model))
+        if (BaselineLayouts.TryGetValue(card, out var state))
+        {
+            state.Restore();
+        }
+    }
+
+    public static void ReplaySelectedPresentation(
+        NCard card,
+        System.Reflection.MethodBase originalMethod,
+        object[] originalArguments)
+    {
+        if (card.Model == null)
         {
             return;
         }
 
-        if (BaselineLayouts.TryGetValue(card, out var state))
+        var providerRoot = SkinService.GetCardPresentationProviderRoot(card.Model);
+        var replayed = VisualPatchGuard.ReplaySelectedCardPostfixes(
+            card,
+            originalMethod,
+            originalArguments,
+            providerRoot);
+        if (providerRoot == null)
         {
-            state.Restore();
+            PresentationLayouts.Remove(card);
+            return;
+        }
+
+        if (replayed > 0)
+        {
+            PresentationLayouts.Remove(card);
+            PresentationLayouts.Add(
+                card,
+                new CardPresentationState(providerRoot, CardLayoutState.Capture(card)));
+            return;
+        }
+
+        if (PresentationLayouts.TryGetValue(card, out var presentation) &&
+            presentation.ProviderRoot.Equals(providerRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            presentation.Layout.Restore();
         }
     }
 
@@ -255,6 +289,7 @@ internal static class CardSkinControls
         private static readonly string[] NodePaths =
         [
             "%Portrait",
+            "%PortraitShadow",
             "%PortraitBorder",
             "%Frame",
             "%TitleBanner",
@@ -276,7 +311,19 @@ internal static class CardSkinControls
                     item,
                     item.Visible,
                     item.Material,
-                    (item as TextureRect)?.Texture))
+                    item.Modulate,
+                    item.SelfModulate,
+                    item.ZIndex,
+                    (item as Control)?.Position,
+                    (item as Control)?.Size,
+                    (item as Control)?.Scale,
+                    (item as Control)?.Rotation,
+                    (item as Control)?.PivotOffset,
+                    (item as TextureRect)?.Texture,
+                    (item as TextureRect)?.ExpandMode,
+                    (item as TextureRect)?.StretchMode,
+                    (item as TextureRect)?.FlipH,
+                    (item as TextureRect)?.FlipV))
                 .ToArray();
             return new CardLayoutState(states);
         }
@@ -292,9 +339,41 @@ internal static class CardSkinControls
 
                 state.Item.Visible = state.Visible;
                 state.Item.Material = state.Material;
+                state.Item.Modulate = state.Modulate;
+                state.Item.SelfModulate = state.SelfModulate;
+                state.Item.ZIndex = state.ZIndex;
+                if (state.Item is Control control &&
+                    state.Position is { } position &&
+                    state.Size is { } size &&
+                    state.Scale is { } scale &&
+                    state.Rotation is { } rotation &&
+                    state.PivotOffset is { } pivotOffset)
+                {
+                    control.Position = position;
+                    control.Size = size;
+                    control.Scale = scale;
+                    control.Rotation = rotation;
+                    control.PivotOffset = pivotOffset;
+                }
                 if (state.Item is TextureRect textureRect)
                 {
                     textureRect.Texture = state.Texture;
+                    if (state.ExpandMode is { } expandMode)
+                    {
+                        textureRect.ExpandMode = expandMode;
+                    }
+                    if (state.StretchMode is { } stretchMode)
+                    {
+                        textureRect.StretchMode = stretchMode;
+                    }
+                    if (state.FlipH is { } flipH)
+                    {
+                        textureRect.FlipH = flipH;
+                    }
+                    if (state.FlipV is { } flipV)
+                    {
+                        textureRect.FlipV = flipV;
+                    }
                 }
             }
         }
@@ -304,7 +383,21 @@ internal static class CardSkinControls
         CanvasItem Item,
         bool Visible,
         Material? Material,
-        Texture2D? Texture);
+        Color Modulate,
+        Color SelfModulate,
+        int ZIndex,
+        Vector2? Position,
+        Vector2? Size,
+        Vector2? Scale,
+        float? Rotation,
+        Vector2? PivotOffset,
+        Texture2D? Texture,
+        TextureRect.ExpandModeEnum? ExpandMode,
+        TextureRect.StretchModeEnum? StretchMode,
+        bool? FlipH,
+        bool? FlipV);
+
+    private sealed record CardPresentationState(string ProviderRoot, CardLayoutState Layout);
 }
 
 internal static class CardInspectSkinControls
@@ -532,6 +625,20 @@ internal static class CardLayoutBaselinePatch
 }
 
 [HarmonyPatch]
+internal static class CardLayoutResetPatch
+{
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(NCard), "Reload");
+        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
+    }
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance) =>
+        CardSkinControls.RestoreBaselineLayout(__instance);
+}
+
+[HarmonyPatch]
 internal static class CardLayoutFinalPatch
 {
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
@@ -541,9 +648,13 @@ internal static class CardLayoutFinalPatch
     }
 
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCard __instance)
+    private static void Postfix(
+        NCard __instance,
+        System.Reflection.MethodBase __originalMethod,
+        object[] __args)
     {
         CardSkinControls.RestoreBaselineLayout(__instance);
+        CardSkinControls.ReplaySelectedPresentation(__instance, __originalMethod, __args);
         CardSkinControls.ApplySelectedPortraitToNode(__instance);
     }
 }

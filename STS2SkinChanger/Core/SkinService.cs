@@ -266,6 +266,19 @@ internal static class SkinService
         }
     }
 
+    public static string? GetCardPresentationProviderRoot(CardModel card)
+    {
+        lock (Sync)
+        {
+            var group = GetCardGroup(card);
+            var selection = GetEffectiveCardSelection(card);
+            return group?.Options.FirstOrDefault(option =>
+                       option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
+                       CardOptionAffectsCard(option, card))
+                   ?.ProviderRootPath;
+        }
+    }
+
     public static bool ApplyCardSelection(CardModel card, string optionId)
     {
         lock (Sync)
@@ -310,25 +323,6 @@ internal static class SkinService
                 ModLog.Error($"切换单卡 {card.Id} 皮肤失败：{exception}");
                 return false;
             }
-        }
-    }
-
-    public static bool ShouldRestoreStandardCardLayout(CardModel card)
-    {
-        lock (Sync)
-        {
-            var groupId = GetEffectiveCardGroupId(card);
-            var group = Catalog?.CardGroups.FirstOrDefault(group =>
-                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-            if (group == null)
-            {
-                return false;
-            }
-
-            var selection = GetEffectiveCardSelection(card);
-            var option = group.Options.FirstOrDefault(option =>
-                option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
-            return option == null || !IsAncientStyleEnabled(option, card.GetType().Name);
         }
     }
 

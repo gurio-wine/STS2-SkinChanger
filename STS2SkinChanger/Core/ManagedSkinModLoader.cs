@@ -1,9 +1,13 @@
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Pck;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace STS2SkinChanger.Core;
 
@@ -19,6 +23,13 @@ internal static class ManagedSkinModLoader
         AccessTools.Field(typeof(ModManager), "_circularDependencies");
     private static readonly Dictionary<string, SkinProviderProbe> ProvidersByRoot =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> MountedProviderNamespaces =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Regex ImportedResourceRegex = new(
+        "res://\\.godot/imported/[^\\\"'\\s]+",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly string NamespaceSessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+    private static int _namespaceGeneration;
     private static bool _initialized;
 
     public static bool IsFirstInLoadOrder { get; private set; } = true;
@@ -32,6 +43,7 @@ internal static class ManagedSkinModLoader
         }
 
         _initialized = true;
+        CleanupOldProviderNamespaces();
         var mods = ModManager.Mods.ToArray();
         var descriptors = mods
             .Where(mod => mod.state is ModLoadState.None or ModLoadState.Loaded)
@@ -92,6 +104,7 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
+            var namespaceFiles = MountProviderNamespace(mod);
             var removedPatches = LoadManagedAssembly(mod);
             mod.state = ModLoadState.Loaded;
             InvokeOnModDetectedMethod.Invoke(null, [mod]);
@@ -99,7 +112,7 @@ internal static class ManagedSkinModLoader
                 $"已托管皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
                 $"独立图片={provider.RuntimeImageCount}, 已移除呈现补丁={removedPatches}；" +
-                "原 PCK 未全局挂载，DLL 的非皮肤功能已保留。");
+                $"安全命名空间资源={namespaceFiles}；原 PCK 未全局挂载，DLL 的非皮肤功能已保留。");
             return true;
         }
         catch (Exception exception)
@@ -165,6 +178,121 @@ internal static class ManagedSkinModLoader
         }
 
         return VisualPatchGuard.RemoveProviderVisualPatches([mod.path]);
+    }
+
+    private static int MountProviderNamespace(Mod mod)
+    {
+        var manifest = mod.manifest!;
+        if (!manifest.hasPck || !manifest.hasDll || manifest.id == null)
+        {
+            return 0;
+        }
+
+        var normalizedRoot = NormalizePath(mod.path);
+        if (!MountedProviderNamespaces.Add(normalizedRoot))
+        {
+            return 0;
+        }
+
+        var pckPath = Path.Combine(mod.path, manifest.id + ".pck");
+        if (!File.Exists(pckPath))
+        {
+            return 0;
+        }
+
+        try
+        {
+            using var archive = PckArchive.Open(pckPath);
+            var idToken = NormalizeResourceToken(manifest.id);
+            var selectedPaths = archive.Paths
+                .Where(path => IsProviderNamespacePath(path, idToken))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in selectedPaths.ToArray())
+            {
+                if (!MayContainResourceReferences(path))
+                {
+                    continue;
+                }
+
+                var text = Encoding.UTF8.GetString(archive.ReadFile(path));
+                foreach (Match match in ImportedResourceRegex.Matches(text))
+                {
+                    if (archive.Contains(match.Value))
+                    {
+                        selectedPaths.Add(match.Value);
+                    }
+                }
+            }
+
+            if (selectedPaths.Count == 0)
+            {
+                return 0;
+            }
+
+            var files = selectedPaths.ToDictionary(
+                path => path,
+                path => (archive, path),
+                StringComparer.OrdinalIgnoreCase);
+            var safeId = new string(manifest.id.Where(char.IsLetterOrDigit).ToArray());
+            var overlayPath = Path.Combine(
+                OS.GetUserDataDir(),
+                $"sts2_skin_provider_namespace_{safeId}_{NamespaceSessionId}_" +
+                $"{++_namespaceGeneration:D3}.pck");
+            PckArchive.WriteFromArchives(overlayPath, files);
+            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: false))
+            {
+                throw new InvalidOperationException("Godot 拒绝加载提供者安全命名空间资源包。");
+            }
+
+            return selectedPaths.Count;
+        }
+        catch (Exception exception)
+        {
+            MountedProviderNamespaces.Remove(normalizedRoot);
+            ModLog.Warn($"挂载皮肤提供者 {manifest.id} 的安全命名空间失败：{exception.Message}");
+            return 0;
+        }
+    }
+
+    private static bool IsProviderNamespacePath(string path, string idToken)
+    {
+        if (idToken.Length == 0 || !path.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var relative = path[6..];
+        var separator = relative.IndexOf('/');
+        var topLevel = separator < 0 ? relative : relative[..separator];
+        var topLevelToken = NormalizeResourceToken(topLevel);
+        return topLevelToken.Equals(idToken, StringComparison.OrdinalIgnoreCase) ||
+               topLevelToken.StartsWith(idToken, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MayContainResourceReferences(string path) =>
+        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeResourceToken(string value) =>
+        new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+    private static void CleanupOldProviderNamespaces()
+    {
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(
+                         OS.GetUserDataDir(),
+                         "sts2_skin_provider_namespace_*.pck"))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("无法清理旧的提供者命名空间缓存：" + exception.Message);
+        }
     }
 
     private static bool CanBypassOriginalLoader(Mod mod)

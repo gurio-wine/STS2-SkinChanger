@@ -12,6 +12,9 @@ namespace STS2SkinChanger.Core;
 internal static class VisualPatchGuard
 {
     private static readonly Harmony Harmony = new(Entry.ModId);
+    private static readonly object CardPatchSync = new();
+    private static readonly List<RemovedCardPatch> RemovedCardPatches = [];
+    private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
     private static readonly string[] VisualNameTokens =
     [
         "Visual", "Scene", "Portrait", "Icon", "Texture", "Sprite", "Atlas",
@@ -37,6 +40,7 @@ internal static class VisualPatchGuard
         }
 
         var removed = 0;
+        var capturedCardPatches = 0;
         var affectedTargets = new HashSet<string>(StringComparer.Ordinal);
         foreach (var target in HarmonyLib.Harmony.GetAllPatchedMethods()
                      .Where(IsVisualTarget)
@@ -48,26 +52,33 @@ internal static class VisualPatchGuard
                 continue;
             }
 
-            var providerPatches = patchInfo.Prefixes
-                .Concat(patchInfo.Postfixes)
-                .Concat(patchInfo.Transpilers)
-                .Concat(patchInfo.Finalizers)
-                .Where(patch => PatchBelongsToProvider(patch, roots))
-                .DistinctBy(patch => patch.PatchMethod)
+            var providerPatches = EnumeratePatches(patchInfo)
+                .Select(entry => (entry.Patch, entry.Kind, Root: GetProviderRoot(entry.Patch, roots)))
+                .Where(entry => entry.Root != null)
+                .DistinctBy(entry => (entry.Patch.PatchMethod, entry.Kind))
                 .ToArray();
-            foreach (var patch in providerPatches)
+            foreach (var entry in providerPatches)
             {
                 try
                 {
-                    Harmony.Unpatch(target, patch.PatchMethod);
+                    if (typeof(NCard).IsAssignableFrom(target.DeclaringType) &&
+                        entry.Kind == ProviderPatchKind.Postfix)
+                    {
+                        if (RememberCardPatch(entry.Root!, target, entry.Patch.PatchMethod))
+                        {
+                            capturedCardPatches++;
+                        }
+                    }
+
+                    Harmony.Unpatch(target, entry.Patch.PatchMethod);
                     removed++;
                     affectedTargets.Add($"{target.DeclaringType?.Name}.{target.Name}");
                 }
                 catch (Exception exception)
                 {
                     ModLog.Warn(
-                        $"无法移除视觉补丁 {patch.owner}/" +
-                        $"{patch.PatchMethod.DeclaringType?.FullName}.{patch.PatchMethod.Name}：" +
+                        $"无法移除视觉补丁 {entry.Patch.owner}/" +
+                        $"{entry.Patch.PatchMethod.DeclaringType?.FullName}.{entry.Patch.PatchMethod.Name}：" +
                         exception.Message);
                 }
             }
@@ -77,10 +88,197 @@ internal static class VisualPatchGuard
         {
             ModLog.Info(
                 $"已移除 {removed} 个提供者皮肤呈现补丁，保留其余 DLL 功能；目标：" +
-                string.Join("、", affectedTargets.OrderBy(name => name)));
+                string.Join("、", affectedTargets.OrderBy(name => name)) +
+                $"；登记卡牌呈现重放={capturedCardPatches}");
         }
 
         return removed;
+    }
+
+    public static int ReplaySelectedCardPostfixes(
+        NCard card,
+        MethodBase originalMethod,
+        object[] originalArguments,
+        string? providerRoot)
+    {
+        var root = providerRoot == null ? null : NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return 0;
+        }
+
+        RemovedCardPatch[] patches;
+        lock (CardPatchSync)
+        {
+            patches = RemovedCardPatches
+                .Where(patch => patch.ProviderRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                                IsCardPresentationStage(patch.Target, originalMethod))
+                .ToArray();
+        }
+
+        var applied = 0;
+        foreach (var patch in patches)
+        {
+            try
+            {
+                if (!TryBuildPatchArguments(
+                        patch.PatchMethod,
+                        card,
+                        patch.Target,
+                        SameMethod(patch.Target, originalMethod) ? originalArguments : [],
+                        out var invokeArguments))
+                {
+                    WarnReplayOnce(
+                        patch,
+                        "参数包含无法在隔离呈现阶段还原的 Harmony 状态");
+                    continue;
+                }
+
+                patch.PatchMethod.Invoke(null, invokeArguments);
+                applied++;
+            }
+            catch (Exception exception)
+            {
+                WarnReplayOnce(patch, exception.GetBaseException().Message);
+            }
+        }
+
+        return applied;
+    }
+
+    private static IEnumerable<(HarmonyLib.Patch Patch, ProviderPatchKind Kind)> EnumeratePatches(
+        HarmonyLib.Patches patches)
+    {
+        foreach (var patch in patches.Prefixes)
+        {
+            yield return (patch, ProviderPatchKind.Prefix);
+        }
+        foreach (var patch in patches.Postfixes)
+        {
+            yield return (patch, ProviderPatchKind.Postfix);
+        }
+        foreach (var patch in patches.Transpilers)
+        {
+            yield return (patch, ProviderPatchKind.Transpiler);
+        }
+        foreach (var patch in patches.Finalizers)
+        {
+            yield return (patch, ProviderPatchKind.Finalizer);
+        }
+    }
+
+    private static bool RememberCardPatch(string providerRoot, MethodBase target, MethodInfo patchMethod)
+    {
+        lock (CardPatchSync)
+        {
+            if (RemovedCardPatches.Any(patch =>
+                    patch.ProviderRoot.Equals(providerRoot, StringComparison.OrdinalIgnoreCase) &&
+                    SameMethod(patch.Target, target) &&
+                    patch.PatchMethod == patchMethod))
+            {
+                return false;
+            }
+
+            RemovedCardPatches.Add(new RemovedCardPatch(providerRoot, target, patchMethod));
+            return true;
+        }
+    }
+
+    private static bool TryBuildPatchArguments(
+        MethodInfo patchMethod,
+        NCard card,
+        MethodBase originalMethod,
+        object[] originalArguments,
+        out object?[] invokeArguments)
+    {
+        var targetParameters = originalMethod.GetParameters();
+        invokeArguments = new object?[patchMethod.GetParameters().Length];
+        for (var index = 0; index < invokeArguments.Length; index++)
+        {
+            var parameter = patchMethod.GetParameters()[index];
+            var name = parameter.Name ?? string.Empty;
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            if (name == "__instance" || typeof(NCard).IsAssignableFrom(parameterType))
+            {
+                invokeArguments[index] = card;
+                continue;
+            }
+            if (name == "__originalMethod")
+            {
+                invokeArguments[index] = originalMethod;
+                continue;
+            }
+            if (name == "__args")
+            {
+                invokeArguments[index] = originalArguments;
+                continue;
+            }
+            if (name.StartsWith("___", StringComparison.Ordinal))
+            {
+                var field = AccessTools.Field(originalMethod.DeclaringType, name[3..]);
+                if (field == null)
+                {
+                    return false;
+                }
+                invokeArguments[index] = field.GetValue(card);
+                continue;
+            }
+            if (name.StartsWith("__", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var targetIndex = Array.FindIndex(targetParameters, target => target.Name == name);
+            if (targetIndex >= 0 && targetIndex < originalArguments.Length)
+            {
+                invokeArguments[index] = originalArguments[targetIndex];
+                continue;
+            }
+            if (parameter.HasDefaultValue)
+            {
+                invokeArguments[index] = parameter.DefaultValue;
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool SameMethod(MethodBase left, MethodBase right)
+    {
+        try
+        {
+            return left.Module == right.Module && left.MetadataToken == right.MetadataToken;
+        }
+        catch
+        {
+            return left == right;
+        }
+    }
+
+    private static bool IsCardPresentationStage(MethodBase patchTarget, MethodBase currentTarget) =>
+        SameMethod(patchTarget, currentTarget) ||
+        (currentTarget.Name == nameof(NCard.UpdateVisuals) && patchTarget.Name == "Reload" &&
+         typeof(NCard).IsAssignableFrom(patchTarget.DeclaringType));
+
+    private static void WarnReplayOnce(RemovedCardPatch patch, string reason)
+    {
+        var key = patch.PatchMethod.Module.ModuleVersionId + ":" + patch.PatchMethod.MetadataToken;
+        lock (CardPatchSync)
+        {
+            if (!ReplayWarnings.Add(key))
+            {
+                return;
+            }
+        }
+
+        ModLog.Warn(
+            $"无法隔离重放卡牌呈现补丁 {patch.PatchMethod.DeclaringType?.FullName}." +
+            $"{patch.PatchMethod.Name}：{reason}");
     }
 
     private static bool IsVisualTarget(MethodBase target)
@@ -163,17 +361,21 @@ internal static class VisualPatchGuard
                typeof(NCreatureVisuals).IsAssignableFrom(type);
     }
 
-    private static bool PatchBelongsToProvider(HarmonyLib.Patch patch, IReadOnlyList<string> roots)
+    private static string? GetProviderRoot(HarmonyLib.Patch patch, IReadOnlyList<string> roots)
     {
         var location = patch.PatchMethod.Module.Assembly.Location;
         if (string.IsNullOrWhiteSpace(location))
         {
-            return false;
+            return null;
         }
 
         var assemblyPath = NormalizeRoot(location);
-        return assemblyPath != null && roots.Any(root =>
-            assemblyPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        return assemblyPath == null
+            ? null
+            : roots.FirstOrDefault(root =>
+                assemblyPath.StartsWith(
+                    root + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? NormalizeRoot(string path)
@@ -188,4 +390,17 @@ internal static class VisualPatchGuard
             return null;
         }
     }
+
+    private enum ProviderPatchKind
+    {
+        Prefix,
+        Postfix,
+        Transpiler,
+        Finalizer
+    }
+
+    private sealed record RemovedCardPatch(
+        string ProviderRoot,
+        MethodBase Target,
+        MethodInfo PatchMethod);
 }
