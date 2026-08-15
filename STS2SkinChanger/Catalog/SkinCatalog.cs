@@ -1487,12 +1487,9 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
-        if (sourcePath.StartsWith("res://animations/backgrounds/merchant_room/", StringComparison.OrdinalIgnoreCase) ||
-            sourcePath.StartsWith("res://animations/backgrounds/fake_merchant_room/", StringComparison.OrdinalIgnoreCase))
-        {
-            return new GroupIdentity("merchant", "商人");
-        }
-
+        // 商人 NPC 不纳入本 Mod 的管理范围（无切换界面，其呈现依赖提供者
+        // 自身的代码补丁）。不识别 merchant 分组后，纯商人 Mod 不会被当作
+        // 皮肤提供者，走游戏原加载器，表现与未安装本 Mod 时一致。
         return null;
     }
 

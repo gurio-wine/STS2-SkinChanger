@@ -966,6 +966,16 @@ internal static class SkinService
             }
         }
 
+        // 清理已不存在的分组选择（例如被移出管理范围的 merchant），保持配置整洁。
+        foreach (var key in Config.Selections.Keys
+                     .Where(key => !key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
+                     .Where(key => Catalog.Groups.All(group =>
+                         !group.Id.Equals(key, StringComparison.OrdinalIgnoreCase)))
+                     .ToArray())
+        {
+            Config.Selections.Remove(key);
+        }
+
         SanitizeCardSelections();
     }
 
