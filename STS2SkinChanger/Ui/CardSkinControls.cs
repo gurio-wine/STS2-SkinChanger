@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardLibrary;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
@@ -306,10 +307,192 @@ internal static class CardSkinControls
         Texture2D? Texture);
 }
 
+internal static class CardInspectSkinControls
+{
+    private const string SelectorName = "STS2IndividualCardSkinSelector";
+    private const string DropdownName = "IndividualCardSkinDropdown";
+    private const string UpdatingMeta = "sts2_individual_card_skin_updating";
+    private static readonly System.Reflection.MethodInfo ReloadCardMethod =
+        AccessTools.Method(typeof(NCard), "Reload");
+
+    public static void Attach(NInspectCardScreen screen)
+    {
+        SkinService.InitializeCardGroupsAfterModels();
+        VisualPatchGuard.RemoveProviderVisualPatches(ManagedSkinModLoader.ProviderRoots);
+        if (screen.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
+        {
+            return;
+        }
+
+        var selector = new HBoxContainer
+        {
+            Name = SelectorName,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -154f,
+            OffsetTop = -526f,
+            OffsetRight = 154f,
+            OffsetBottom = -478f,
+            GrowHorizontal = Control.GrowDirection.Both,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 20,
+            Visible = false
+        };
+        var dropdown = new OptionButton
+        {
+            Name = DropdownName,
+            CustomMinimumSize = new Vector2(308, 48),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            FitToLongestItem = false,
+            ClipText = true,
+            Alignment = HorizontalAlignment.Center
+        };
+        ContextualSkinControls.ApplyGameTheme(dropdown);
+        dropdown.AddThemeFontSizeOverride("font_size", 20);
+        dropdown.GetPopup().AddThemeFontSizeOverride("font_size", 20);
+        dropdown.ItemSelected += index => ApplySelection(
+            screen,
+            selector,
+            dropdown,
+            checked((int)index));
+        selector.AddChild(dropdown);
+        screen.AddChild(selector);
+        Sync(screen);
+    }
+
+    public static void Sync(NInspectCardScreen screen)
+    {
+        var selector = screen.GetNodeOrNull<HBoxContainer>(SelectorName);
+        var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
+        if (selector == null || card == null)
+        {
+            return;
+        }
+
+        var dropdown = selector.GetNode<OptionButton>(DropdownName);
+        var options = SkinService.GetCardOptions(card);
+        if (options.Count == 0)
+        {
+            selector.Visible = false;
+            dropdown.Clear();
+            return;
+        }
+
+        selector.SetMeta(UpdatingMeta, true);
+        dropdown.Clear();
+        dropdown.TooltipText = "为这张卡单独选择卡图；跟随分类时使用卡牌总览中的设置";
+        dropdown.AddItem("跟随分类");
+        dropdown.SetItemMetadata(0, SkinService.InheritCardSelectionId);
+        dropdown.AddItem("游戏原版");
+        dropdown.SetItemMetadata(1, SkinCatalog.BaseOptionId);
+        foreach (var option in options)
+        {
+            var index = dropdown.ItemCount;
+            dropdown.AddItem(option.Name);
+            dropdown.SetItemMetadata(index, option.Id);
+        }
+
+        var selected = SkinService.GetCardOverrideSelection(card);
+        var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
+            .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
+                .Equals(selected, StringComparison.OrdinalIgnoreCase));
+        dropdown.Select(selectedIndex);
+        selector.SetMeta(UpdatingMeta, false);
+        selector.Visible = true;
+    }
+
+    private static void ApplySelection(
+        NInspectCardScreen screen,
+        HBoxContainer selector,
+        OptionButton dropdown,
+        int index)
+    {
+        if (selector.GetMeta(UpdatingMeta, false).AsBool())
+        {
+            return;
+        }
+
+        var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
+        if (card == null || index < 0 || index >= dropdown.ItemCount)
+        {
+            return;
+        }
+
+        var optionId = dropdown.GetItemMetadata(index).AsString();
+        if (!SkinService.ApplyCardSelection(card, optionId))
+        {
+            ModLog.Error($"单卡皮肤界面切换失败：{SkinService.LastError}");
+            Sync(screen);
+            return;
+        }
+
+        var cardId = card.Id.ToString();
+        Callable.From(() =>
+        {
+            RefreshMatchingCards(screen.GetTree()?.Root, cardId);
+            Sync(screen);
+        }).CallDeferred();
+    }
+
+    private static void RefreshMatchingCards(Node? root, string cardId)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var card in Descendants(root).OfType<NCard>())
+            {
+                if (card.Model?.Id.ToString().Equals(
+                        cardId,
+                        StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    ReloadCardMethod.Invoke(card, null);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("刷新单卡皮肤失败：" + exception);
+        }
+    }
+
+    private static IEnumerable<Node> Descendants(Node root)
+    {
+        foreach (var child in root.GetChildren())
+        {
+            yield return child;
+            foreach (var descendant in Descendants(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+}
+
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary._Ready))]
 internal static class CardLibrarySkinReadyPatch
 {
     private static void Postfix(NCardLibrary __instance) => CardSkinControls.Attach(__instance);
+}
+
+[HarmonyPatch(typeof(NInspectCardScreen), nameof(NInspectCardScreen._Ready))]
+internal static class CardInspectSkinReadyPatch
+{
+    private static void Postfix(NInspectCardScreen __instance) =>
+        CardInspectSkinControls.Attach(__instance);
+}
+
+[HarmonyPatch(typeof(NInspectCardScreen), "UpdateCardDisplay")]
+internal static class CardInspectSkinDisplayPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NInspectCardScreen __instance) =>
+        CardInspectSkinControls.Sync(__instance);
 }
 
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary.OnSubmenuOpened))]

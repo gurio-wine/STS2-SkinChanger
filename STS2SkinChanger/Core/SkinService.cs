@@ -9,6 +9,8 @@ namespace STS2SkinChanger.Core;
 
 internal static class SkinService
 {
+    public const string InheritCardSelectionId = "__inherit__";
+
     private static readonly object Sync = new();
     private static readonly Dictionary<string, Resource> RuntimeResourceCache =
         new(StringComparer.OrdinalIgnoreCase);
@@ -131,7 +133,7 @@ internal static class SkinService
                 }
 
                 Catalog.FinalizeCardGroups(entries);
-                SanitizeCardSelections();
+                SanitizeCardSelections(includeIndividualCards: true);
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -226,6 +228,91 @@ internal static class SkinService
     public static string GetCardSelection(string groupId) =>
         Config.GetSelection(CardSelectionKey(groupId));
 
+    public static IReadOnlyList<CardSkinOption> GetCardOptions(CardModel card)
+    {
+        lock (Sync)
+        {
+            var group = GetCardGroup(card);
+            return group?.Options
+                       .Where(option => CardOptionAffectsCard(option, card))
+                       .ToArray() ?? [];
+        }
+    }
+
+    public static string GetCardOverrideSelection(CardModel card)
+    {
+        lock (Sync)
+        {
+            return Config.Selections.GetValueOrDefault(
+                IndividualCardSelectionKey(card),
+                InheritCardSelectionId);
+        }
+    }
+
+    public static string GetEffectiveCardSelection(CardModel card)
+    {
+        lock (Sync)
+        {
+            var groupId = GetEffectiveCardGroupId(card);
+            var individual = GetCardOverrideSelection(card);
+            if (individual == SkinCatalog.BaseOptionId ||
+                GetCardOptions(card).Any(option =>
+                    option.Id.Equals(individual, StringComparison.OrdinalIgnoreCase)))
+            {
+                return individual;
+            }
+
+            return GetCardSelection(groupId);
+        }
+    }
+
+    public static bool ApplyCardSelection(CardModel card, string optionId)
+    {
+        lock (Sync)
+        {
+            var group = GetCardGroup(card);
+            if (group == null)
+            {
+                LastError = $"没有找到卡牌 {card.Id} 的皮肤分类。";
+                return false;
+            }
+
+            if (optionId != InheritCardSelectionId &&
+                optionId != SkinCatalog.BaseOptionId &&
+                !group.Options.Any(option =>
+                    option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase) &&
+                    CardOptionAffectsCard(option, card)))
+            {
+                LastError = $"未知的单卡皮肤选择：{card.Id}/{optionId}";
+                return false;
+            }
+
+            try
+            {
+                var key = IndividualCardSelectionKey(card);
+                if (optionId == InheritCardSelectionId)
+                {
+                    Config.Selections.Remove(key);
+                }
+                else
+                {
+                    Config.Selections[key] = optionId;
+                }
+
+                ClearCardPortraitCache(group.Id);
+                Config.Save(ConfigPath);
+                LastError = null;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                LastError = exception.Message;
+                ModLog.Error($"切换单卡 {card.Id} 皮肤失败：{exception}");
+                return false;
+            }
+        }
+    }
+
     public static bool ShouldRestoreStandardCardLayout(CardModel card)
     {
         lock (Sync)
@@ -238,7 +325,7 @@ internal static class SkinService
                 return false;
             }
 
-            var selection = GetCardSelection(groupId);
+            var selection = GetEffectiveCardSelection(card);
             var option = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
             return option == null || !IsAncientStyleEnabled(option, card.GetType().Name);
@@ -263,7 +350,7 @@ internal static class SkinService
                 return;
             }
 
-            var selection = GetCardSelection(groupId);
+            var selection = GetEffectiveCardSelection(card);
             var option = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
             var cardType = card.GetType().Name;
@@ -352,11 +439,22 @@ internal static class SkinService
             return false;
         }
 
+        return group.Options.Any(option => CardOptionAffectsCard(option, card));
+    }
+
+    private static CardSkinGroup? GetCardGroup(CardModel card)
+    {
+        var groupId = GetEffectiveCardGroupId(card);
+        return Catalog?.CardGroups.FirstOrDefault(group =>
+            group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool CardOptionAffectsCard(CardSkinOption option, CardModel card)
+    {
         var cardType = card.GetType().Name;
-        return group.Options.Any(option =>
-            option.NormalPortraits.ContainsKey(cardType) ||
-            option.AncientPortraits.ContainsKey(cardType) ||
-            option.Assets.Keys.Any(assetPath => CardArtMatches(assetPath, card)));
+        return option.NormalPortraits.ContainsKey(cardType) ||
+               option.AncientPortraits.ContainsKey(cardType) ||
+               option.Assets.Keys.Any(assetPath => CardArtMatches(assetPath, card));
     }
 
     private static string GetCardPoolGroupId(CardModel card) =>
@@ -741,6 +839,9 @@ internal static class SkinService
 
     private static string CardSelectionKey(string groupId) => "cards:" + groupId;
 
+    private static string IndividualCardSelectionKey(CardModel card) =>
+        "cards:item:" + card.Id.ToString().ToLowerInvariant();
+
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
         groupId + "\n" + resourcePath;
 
@@ -758,7 +859,7 @@ internal static class SkinService
         SanitizeCardSelections();
     }
 
-    private static void SanitizeCardSelections()
+    private static void SanitizeCardSelections(bool includeIndividualCards = false)
     {
         foreach (var group in Catalog!.CardGroups)
         {
@@ -768,6 +869,28 @@ internal static class SkinService
                  group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
             {
                 Config.Selections[key] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+            }
+        }
+
+        if (!includeIndividualCards)
+        {
+            return;
+        }
+
+        var cards = ModelDb.AllCards
+            .GroupBy(IndividualCardSelectionKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        foreach (var key in Config.Selections.Keys
+                     .Where(key => key.StartsWith("cards:item:", StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
+        {
+            var selected = Config.Selections[key];
+            if (!cards.TryGetValue(key, out var card) ||
+                (selected != SkinCatalog.BaseOptionId &&
+                 !GetCardOptions(card).Any(option =>
+                     option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
+            {
+                Config.Selections.Remove(key);
             }
         }
     }
