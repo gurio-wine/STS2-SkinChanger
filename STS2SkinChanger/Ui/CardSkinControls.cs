@@ -23,7 +23,7 @@ internal static class CardSkinControls
     public static void Attach(NCardLibrary screen)
     {
         SkinService.InitializeCardGroupsAfterModels();
-        Entry.PatchCardPortraitProviders(new Harmony(Entry.ModId));
+        VisualPatchGuard.RemoveProviderVisualPatches(ManagedSkinModLoader.ProviderRoots);
         var bottom = screen.GetNodeOrNull<VBoxContainer>("Sidebar/MarginContainer/BottomVBox");
         if (bottom == null || bottom.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
         {

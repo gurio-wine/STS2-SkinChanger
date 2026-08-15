@@ -537,7 +537,7 @@ internal static class AncientCompendiumEntryPatch
 [HarmonyPatch(typeof(EventModel), nameof(EventModel.CreateBackgroundScene))]
 internal static class AncientSceneResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(EventModel __instance, ref PackedScene __result)
     {
         if (__instance is not AncientEventModel ancient)
@@ -567,7 +567,7 @@ internal static class AncientSceneResultPatch
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.MapIcon), MethodType.Getter)]
 internal static class AncientMapIconResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
     {
         var id = __instance.Id.Entry.ToLowerInvariant();
@@ -579,7 +579,7 @@ internal static class AncientMapIconResultPatch
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.MapIconOutline), MethodType.Getter)]
 internal static class AncientMapIconOutlineResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
     {
         var id = __instance.Id.Entry.ToLowerInvariant();
@@ -591,7 +591,7 @@ internal static class AncientMapIconOutlineResultPatch
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.RunHistoryIcon), MethodType.Getter)]
 internal static class AncientRunHistoryIconResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
     {
         var id = __instance.Id.Entry.ToLowerInvariant();
@@ -603,7 +603,7 @@ internal static class AncientRunHistoryIconResultPatch
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.RunHistoryIconOutline), MethodType.Getter)]
 internal static class AncientRunHistoryIconOutlineResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(AncientEventModel __instance, ref Texture2D __result)
     {
         var id = __instance.Id.Entry.ToLowerInvariant();

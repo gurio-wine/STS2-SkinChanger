@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
+using System.Runtime.Loader;
 
 namespace STS2SkinChanger.Core;
 
@@ -10,6 +11,8 @@ internal static class ManagedSkinModLoader
 {
     private static readonly MethodInfo InvokeOnModDetectedMethod =
         AccessTools.Method(typeof(ModManager), "InvokeOnModDetected");
+    private static readonly MethodInfo CallModInitializerMethod =
+        AccessTools.Method(typeof(ModManager), "CallModInitializer");
     private static readonly FieldInfo GameVersionField =
         AccessTools.Field(typeof(ModManager), "_gameVersion");
     private static readonly FieldInfo CircularDependenciesField =
@@ -19,6 +22,7 @@ internal static class ManagedSkinModLoader
     private static bool _initialized;
 
     public static bool IsFirstInLoadOrder { get; private set; } = true;
+    public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
 
     public static void Initialize()
     {
@@ -63,8 +67,8 @@ internal static class ManagedSkinModLoader
         }
 
         ModLog.Info(
-            $"托管加载模式已识别 {ProvidersByRoot.Count} 个纯皮肤提供者；" +
-            "其 DLL 与 PCK 将由加载入口隔离，资源改由皮肤切换器读取。");
+            $"托管加载模式已识别 {ProvidersByRoot.Count} 个皮肤提供者；" +
+            "其 PCK 将被隔离读取，DLL 保留非皮肤功能，皮肤呈现补丁由皮肤切换器接管。");
     }
 
     public static bool TryManage(Mod mod)
@@ -88,12 +92,14 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
+            var removedPatches = LoadManagedAssembly(mod);
             mod.state = ModLoadState.Loaded;
             InvokeOnModDetectedMethod.Invoke(null, [mod]);
             ModLog.Info(
-                $"已托管纯皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
+                $"已托管皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
-                $"独立图片={provider.RuntimeImageCount}；未加载原 DLL/PCK。");
+                $"独立图片={provider.RuntimeImageCount}, 已移除呈现补丁={removedPatches}；" +
+                "原 PCK 未全局挂载，DLL 的非皮肤功能已保留。");
             return true;
         }
         catch (Exception exception)
@@ -104,6 +110,61 @@ internal static class ManagedSkinModLoader
                 exception.GetBaseException().Message);
             return false;
         }
+    }
+
+    private static int LoadManagedAssembly(Mod mod)
+    {
+        var manifest = mod.manifest!;
+        if (!manifest.hasDll)
+        {
+            return 0;
+        }
+
+        var assemblyPath = Path.Combine(mod.path, manifest.id + ".dll");
+        if (!File.Exists(assemblyPath))
+        {
+            ModLog.Warn($"皮肤提供者 {manifest.id} 声明了 DLL，但未找到 {assemblyPath}。");
+            return 0;
+        }
+
+        try
+        {
+            var loadContext = AssemblyLoadContext.GetLoadContext(typeof(Entry).Assembly) ??
+                              throw new InvalidOperationException("无法取得游戏程序集加载上下文。");
+            var assembly = loadContext.LoadFromAssemblyPath(assemblyPath);
+            if (!mod.assemblies.Contains(assembly))
+            {
+                mod.assemblies.Add(assembly);
+            }
+
+            var initializerTypes = assembly.GetTypes()
+                .Where(type => type.GetCustomAttribute<ModInitializerAttribute>() != null)
+                .ToArray();
+            if (initializerTypes.Length > 0)
+            {
+                foreach (var initializerType in initializerTypes)
+                {
+                    ModLog.Info($"正在初始化托管提供者 DLL：{initializerType.FullName}");
+                    if (CallModInitializerMethod.Invoke(null, [initializerType]) is not true)
+                    {
+                        ModLog.Warn($"托管提供者初始化器返回失败：{initializerType.FullName}");
+                    }
+                }
+            }
+            else
+            {
+                var owner = (manifest.author ?? "unknown") + "." + manifest.id;
+                new Harmony(owner).PatchAll(assembly);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                $"托管提供者 {manifest.id} 的 DLL 初始化失败；继续隔离其 PCK：" +
+                exception.GetBaseException().Message);
+        }
+
+        return VisualPatchGuard.RemoveProviderVisualPatches([mod.path]);
     }
 
     private static bool CanBypassOriginalLoader(Mod mod)

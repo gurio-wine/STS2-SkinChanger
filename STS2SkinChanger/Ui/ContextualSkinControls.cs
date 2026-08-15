@@ -588,7 +588,7 @@ internal static class BestiarySelectionSkinPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]
 internal static class CharacterVisualResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result) =>
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
@@ -599,7 +599,7 @@ internal static class CharacterVisualResultPatch
 [HarmonyPatch(typeof(MonsterModel), nameof(MonsterModel.CreateVisuals))]
 internal static class MonsterVisualResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result) =>
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
@@ -610,7 +610,7 @@ internal static class MonsterVisualResultPatch
 [HarmonyPatch(typeof(AssetCache), nameof(AssetCache.GetScene))]
 internal static class CachedSceneResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(string path, ref PackedScene __result) =>
         ContextualSkinControls.ReplaceCachedScene(path, ref __result);
 }
@@ -618,7 +618,7 @@ internal static class CachedSceneResultPatch
 [HarmonyPatch(typeof(AssetCache), nameof(AssetCache.GetTexture2D))]
 internal static class CachedTextureResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(string path, ref Texture2D __result) =>
         ContextualSkinControls.ReplaceCachedTexture(path, ref __result);
 }
@@ -626,7 +626,7 @@ internal static class CachedTextureResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CharacterSelectIcon), MethodType.Getter)]
 internal static class CharacterSelectIconResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
         ContextualSkinControls.ReplaceCharacterSelectTexture(__instance, locked: false, ref __result);
 }
@@ -634,7 +634,7 @@ internal static class CharacterSelectIconResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CharacterSelectLockedIcon), MethodType.Getter)]
 internal static class CharacterSelectLockedIconResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
         ContextualSkinControls.ReplaceCharacterSelectTexture(__instance, locked: true, ref __result);
 }
@@ -642,7 +642,7 @@ internal static class CharacterSelectLockedIconResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.Icon), MethodType.Getter)]
 internal static class CharacterIconResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref Control __result) =>
         ContextualSkinControls.ReplaceCharacterIcon(__instance, ref __result);
 }
@@ -650,7 +650,7 @@ internal static class CharacterIconResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.IconTexture), MethodType.Getter)]
 internal static class CharacterIconTextureResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref Texture2D __result)
     {
         var characterId = __instance.Id.Entry.ToLowerInvariant();
@@ -662,7 +662,7 @@ internal static class CharacterIconTextureResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.IconOutlineTexture), MethodType.Getter)]
 internal static class CharacterIconOutlineTextureResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref Texture2D __result)
     {
         var characterId = __instance.Id.Entry.ToLowerInvariant();
@@ -674,7 +674,7 @@ internal static class CharacterIconOutlineTextureResultPatch
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.MapMarker), MethodType.Getter)]
 internal static class CharacterMapMarkerResultPatch
 {
-    [HarmonyPriority(Priority.First)]
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
         ContextualSkinControls.ReplaceCharacterMapMarker(__instance, ref __result);
 }
