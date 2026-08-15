@@ -14,6 +14,7 @@ public static class Entry
 
     public static void Initialize()
     {
+        ManagedSkinModLoader.Initialize();
         var harmony = new Harmony(ModId);
         harmony.PatchAll();
         ModLog.Info("代码补丁已加载。等待游戏资源初始化。");

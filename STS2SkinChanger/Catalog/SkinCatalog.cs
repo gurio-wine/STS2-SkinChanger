@@ -111,6 +111,83 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
+    public static IReadOnlyList<SkinProviderProbe> ProbeSkinProviders(
+        IEnumerable<SkinModDescriptor> mods)
+    {
+        var providers = new List<SkinProviderProbe>();
+        foreach (var mod in mods.Where(mod => !mod.AffectsGameplay))
+        {
+            var visualGroups = 0;
+            var cardAssets = 0;
+            if (mod.PckPath != null && File.Exists(mod.PckPath))
+            {
+                PckArchive? archive = null;
+                PckResourceIndex? index = null;
+                try
+                {
+                    archive = PckArchive.Open(mod.PckPath);
+                    index = PckResourceIndex.Build(
+                        mod,
+                        archive,
+                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                        remapFilter: null);
+                    visualGroups = BuildGroups([index])
+                        .Count(group => group.Options.Count > 0);
+                    cardAssets = BuildCardGroups([index])
+                        .Sum(group => group.Options.Sum(option =>
+                            option.NormalPortraits.Count + option.AncientPortraits.Count));
+                    cardAssets += BuildPckCardOptions([index]).Sum(option => option.Assets.Count);
+                }
+                catch (Exception exception)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"无法探测皮肤提供者 {mod.Id}: {exception.Message}");
+                }
+                finally
+                {
+                    if (index != null)
+                    {
+                        index.Dispose();
+                    }
+                    else
+                    {
+                        archive?.Dispose();
+                    }
+                }
+            }
+
+            var runtimeImages = 0;
+            if (mod.HasDll && mod.RootPath != null)
+            {
+                var imageDirectory = System.IO.Path.Combine(mod.RootPath, "images");
+                if (Directory.Exists(imageDirectory))
+                {
+                    runtimeImages = Directory.EnumerateFiles(
+                            imageDirectory,
+                            "*",
+                            SearchOption.TopDirectoryOnly)
+                        .Count(path =>
+                            System.IO.Path.GetExtension(path).Equals(
+                                ".png", StringComparison.OrdinalIgnoreCase) &&
+                            KnownAncientIds.Contains(
+                                System.IO.Path.GetFileNameWithoutExtension(path)));
+                }
+            }
+
+            if (visualGroups > 0 || cardAssets > 0 || runtimeImages > 0)
+            {
+                providers.Add(new SkinProviderProbe(
+                    mod.Id,
+                    mod.RootPath,
+                    visualGroups,
+                    cardAssets,
+                    runtimeImages));
+            }
+        }
+
+        return providers;
+    }
+
     public bool IsRuntimeProviderOption(string groupId, string optionId)
     {
         return Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
@@ -1423,6 +1500,13 @@ internal sealed record SkinModDescriptor(
     bool AffectsGameplay,
     string? RootPath = null,
     bool HasDll = false);
+
+internal sealed record SkinProviderProbe(
+    string Id,
+    string? RootPath,
+    int VisualGroupCount,
+    int CardAssetCount,
+    int RuntimeImageCount);
 
 internal sealed class SkinGroup(string id, string displayName)
 {
