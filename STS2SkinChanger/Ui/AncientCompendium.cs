@@ -97,7 +97,7 @@ internal static class AncientCompendiumEntry
         .ToArray();
 
     internal static string GetScenePath(AncientEventModel ancient) =>
-        SceneHelper.GetScenePath("events/background_scenes/" + ancient.Id.Entry.ToLowerInvariant());
+        "res://scenes/events/background_scenes/" + ancient.Id.Entry.ToLowerInvariant() + ".tscn";
 
     internal static string GetTitle(AncientEventModel ancient)
     {
@@ -129,13 +129,19 @@ internal static class AncientCompendiumEntry
         ref Texture2D result)
     {
         var group = FindGroup(ancient.Id.Entry);
-        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        if (group == null)
         {
             return;
         }
 
         try
         {
+            if (SkinService.IsExternalRuntimeProviderSelected(group.Id))
+            {
+                result = SkinService.GetSelectedRuntimeImageTexture(group.Id);
+                return;
+            }
+
             result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as Texture2D ??
                      throw new InvalidOperationException($"独立远古皮肤资源不是贴图：{resourcePath}");
         }
@@ -433,9 +439,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             var scenePath = AncientCompendiumEntry.GetScenePath(ancient);
             var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
             PackedScene scene;
-            if (group != null && SkinService.IsRuntimeProviderSelected(group.Id))
+            if (group != null && SkinService.IsExternalRuntimeProviderSelected(group.Id))
             {
-                scene = ancient.CreateBackgroundScene();
+                scene = BuildSelectedRuntimeImageScene(group.Id);
             }
             else if (group != null)
             {
@@ -463,6 +469,33 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             ModLog.Error($"远古图鉴预览 {ancient.Id.Entry} 失败：{exception}");
         }
+    }
+
+    internal static PackedScene BuildSelectedRuntimeImageScene(string groupId)
+    {
+        var root = new Control { Name = "RuntimeAncientBackground" };
+        root.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        var image = new TextureRect
+        {
+            Name = "Image",
+            Texture = SkinService.GetSelectedRuntimeImageTexture(groupId),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        image.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        root.AddChild(image);
+        image.Owner = root;
+
+        var scene = new PackedScene();
+        var error = scene.Pack(root);
+        root.Free();
+        if (error != Error.Ok)
+        {
+            throw new InvalidOperationException($"无法创建远古图片场景：{error}");
+        }
+
+        return scene;
     }
 
     private void ClearPreview()
@@ -546,13 +579,19 @@ internal static class AncientSceneResultPatch
         }
 
         var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
-        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        if (group == null)
         {
             return;
         }
 
         try
         {
+            if (SkinService.IsExternalRuntimeProviderSelected(group.Id))
+            {
+                __result = AncientCompendiumScreen.BuildSelectedRuntimeImageScene(group.Id);
+                return;
+            }
+
             var scenePath = AncientCompendiumEntry.GetScenePath(ancient);
             var scene = SkinService.GetOrLoadRuntimeScene(group.Id, scenePath);
             __result = scene;

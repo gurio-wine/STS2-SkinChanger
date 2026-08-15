@@ -195,6 +195,20 @@ internal sealed partial class SkinCatalog : IDisposable
             .IsRuntimeProvider == true;
     }
 
+    public bool IsResourceBackedOption(string groupId, string optionId)
+    {
+        return Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))?
+            .Assets.Count > 0;
+    }
+
+    public string? GetRuntimeImagePath(string groupId, string optionId)
+    {
+        return Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))?
+            .RuntimeImagePath;
+    }
+
     public string? FindGroupIdForResourcePath(string resourcePath)
     {
         var identity = TryGetPrimaryGroup(resourcePath) ??
@@ -243,6 +257,18 @@ internal sealed partial class SkinCatalog : IDisposable
 
             selections.TryGetValue(group.Id, out var selectedId);
             var selected = group.Options.FirstOrDefault(option => option.Id == selectedId);
+            if (selected?.IsRuntimeProvider == true)
+            {
+                foreach (var index in _cosmeticIndexes.Where(index =>
+                             index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    foreach (var path in index.Archive.Paths.Where(IsMountableProviderResource))
+                    {
+                        files[path] = new ResourceFile(index.Archive, path);
+                    }
+                }
+            }
+
             var sourcePaths = group.Options
                 .SelectMany(option => option.Assets.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -259,9 +285,10 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 foreach (var file in asset.Files)
                 {
-                    files[file.Path] = file;
-                    var takeoverPath = NormalizeTakeoverPath(file.Path);
-                    if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
+                    var targetPath = MapAssetFilePath(sourcePath, asset.SourcePath, file.Path);
+                    files[targetPath] = file;
+                    var takeoverPath = NormalizeTakeoverPath(targetPath);
+                    if (!takeoverPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
                     {
                         files[takeoverPath] = file;
                     }
@@ -1066,10 +1093,13 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in indexes)
         {
             var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
-            var identities = index.Assets.Keys
-                .Select(TryGetRuntimeProviderGroup)
-                .Where(identity => identity != null)
-                .Cast<GroupIdentity>()
+            var runtimeAssets = index.Assets.Values
+                .Select(asset => (Asset: asset, Mapping: TryGetRuntimeProviderAsset(asset.SourcePath)))
+                .Where(pair => pair.Mapping != null)
+                .Select(pair => (pair.Asset, Mapping: pair.Mapping!))
+                .ToArray();
+            var identities = runtimeAssets
+                .Select(pair => pair.Mapping.Identity)
                 .Where(identity => enabledGroupIds == null || enabledGroupIds.Contains(identity.Id))
                 .DistinctBy(identity => identity.Id)
                 .ToArray();
@@ -1081,15 +1111,37 @@ internal sealed partial class SkinCatalog : IDisposable
                     groups.Add(identity.Id, group);
                 }
 
-                if (group.Options.Any(option => option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase)))
+                var mappedAssets = runtimeAssets
+                    .Where(pair => pair.Mapping.Identity.Id.Equals(identity.Id, StringComparison.OrdinalIgnoreCase))
+                    .GroupBy(pair => pair.Mapping.CanonicalPath, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        pairs => pairs.Key,
+                        pairs => pairs.Last().Asset,
+                        StringComparer.OrdinalIgnoreCase);
+                var existingIndex = group.Options.FindIndex(option =>
+                    option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
+                if (existingIndex >= 0)
                 {
+                    var existing = group.Options[existingIndex];
+                    var mergedAssets = new Dictionary<string, ResourceAsset>(
+                        existing.Assets, StringComparer.OrdinalIgnoreCase);
+                    foreach (var pair in mappedAssets)
+                    {
+                        mergedAssets[pair.Key] = pair.Value;
+                    }
+
+                    group.Options[existingIndex] = existing with
+                    {
+                        Assets = mergedAssets,
+                        IsRuntimeProvider = true
+                    };
                     continue;
                 }
 
                 group.Options.Add(new SkinOption(
                     index.Mod.Id,
                     index.Mod.Name,
-                    new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                    mappedAssets,
                     IsRuntimeProvider: true));
             }
         }
@@ -1139,19 +1191,23 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var imageIds = Directory.EnumerateFiles(imageDirectory, "*", SearchOption.TopDirectoryOnly)
+            var images = Directory.EnumerateFiles(imageDirectory, "*", SearchOption.TopDirectoryOnly)
                 .Where(path => System.IO.Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase))
-                .Select(path => System.IO.Path.GetFileNameWithoutExtension(path)!)
-                .Where(id => KnownAncientIds.Contains(id))
-                .Distinct(StringComparer.OrdinalIgnoreCase);
-            foreach (var imageId in imageIds)
+                .Select(path => (Path: path, Id: System.IO.Path.GetFileNameWithoutExtension(path)!))
+                .Where(image => KnownAncientIds.Contains(image.Id))
+                .DistinctBy(image => image.Id, StringComparer.OrdinalIgnoreCase);
+            foreach (var image in images)
             {
-                AddRuntimeProviderOption(imageId, mod.Id, mod.Name);
+                AddRuntimeProviderOption(image.Id, mod.Id, mod.Name, image.Path);
             }
         }
     }
 
-    private void AddRuntimeProviderOption(string groupId, string optionId, string optionName)
+    private void AddRuntimeProviderOption(
+        string groupId,
+        string optionId,
+        string optionName,
+        string runtimeImagePath)
     {
         var group = _groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         if (group == null)
@@ -1169,8 +1225,71 @@ internal sealed partial class SkinCatalog : IDisposable
             optionId,
             optionName,
             new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
-            IsRuntimeProvider: true));
+            IsRuntimeProvider: true,
+            RuntimeImagePath: runtimeImagePath));
     }
+
+    private static RuntimeProviderAsset? TryGetRuntimeProviderAsset(string sourcePath)
+    {
+        var canonicalPath = sourcePath.StartsWith("res://custom/", StringComparison.OrdinalIgnoreCase)
+            ? "res://" + sourcePath[13..]
+            : sourcePath;
+        var identity = TryGetRuntimeProviderGroup(sourcePath) ??
+                       TryGetCharacterSelectIconGroup(canonicalPath) ??
+                       TryGetCharacterUiTextureGroup(canonicalPath) ??
+                       TryGetCharacterMapMarkerGroup(canonicalPath) ??
+                       TryGetCharacterIconSceneGroup(canonicalPath) ??
+                       TryGetCharacterSupplementGroup(canonicalPath);
+        return identity == null ? null : new RuntimeProviderAsset(identity, canonicalPath);
+    }
+
+    private static GroupIdentity? TryGetCharacterSupplementGroup(string sourcePath)
+    {
+        foreach (var regex in new[] { CharacterIconTemplateRegex(), MultiplayerHandRegex() })
+        {
+            var match = regex.Match(sourcePath);
+            if (match.Success)
+            {
+                var id = match.Groups[1].Value.ToLowerInvariant();
+                return new GroupIdentity(id, DisplayName(id));
+            }
+        }
+
+        return null;
+    }
+
+    private static string MapAssetFilePath(string targetSourcePath, string assetSourcePath, string filePath)
+    {
+        if (targetSourcePath.Equals(assetSourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return filePath;
+        }
+
+        if (filePath.Equals(assetSourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return targetSourcePath;
+        }
+
+        foreach (var suffix in new[] { ".import", ".remap" })
+        {
+            if (filePath.Equals(assetSourcePath + suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return targetSourcePath + suffix;
+            }
+        }
+
+        return filePath;
+    }
+
+    private static bool IsMountableProviderResource(string path) =>
+        path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".res", StringComparison.OrdinalIgnoreCase);
 
     private void SortGroupsAndOptions()
     {
@@ -1403,12 +1522,15 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static ResourceFile? FindDirectFile(ResourceAsset? asset, string sourcePath) =>
         asset?.Files.FirstOrDefault(file =>
-            NormalizeTakeoverPath(file.Path).Equals(sourcePath, StringComparison.OrdinalIgnoreCase));
+            NormalizeTakeoverPath(file.Path).Equals(sourcePath, StringComparison.OrdinalIgnoreCase) ||
+            NormalizeTakeoverPath(file.Path).Equals(asset.SourcePath, StringComparison.OrdinalIgnoreCase));
 
     private static ResourceFile? FindRemapFile(ResourceAsset? asset, string sourcePath) =>
         asset?.Files.FirstOrDefault(file =>
             NormalizeTakeoverPath(file.Path).Equals(sourcePath + ".import", StringComparison.OrdinalIgnoreCase) ||
-            NormalizeTakeoverPath(file.Path).Equals(sourcePath + ".remap", StringComparison.OrdinalIgnoreCase));
+            NormalizeTakeoverPath(file.Path).Equals(sourcePath + ".remap", StringComparison.OrdinalIgnoreCase) ||
+            NormalizeTakeoverPath(file.Path).Equals(asset.SourcePath + ".import", StringComparison.OrdinalIgnoreCase) ||
+            NormalizeTakeoverPath(file.Path).Equals(asset.SourcePath + ".remap", StringComparison.OrdinalIgnoreCase));
 
     private static ResourceFile[] GetImportedPayloadFiles(ResourceAsset asset, string sourcePath) =>
         asset.Files.Where(file =>
@@ -1579,6 +1701,12 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("^res://custom/scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex RuntimeCharacterIconTemplateRegex();
 
+    [GeneratedRegex("^res://scenes/ui/character_icons/templates/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex CharacterIconTemplateRegex();
+
+    [GeneratedRegex("^res://images/ui/hands/multiplayer_hand_([^/.]+?)_(?:paper|point|rock|scissors)\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
+    private static partial Regex MultiplayerHandRegex();
+
     [GeneratedRegex("^res://waifu_assets/[^/]+/(.+)$", RegexOptions.IgnoreCase)]
     private static partial Regex WaifuAssetsPathRegex();
 
@@ -1597,6 +1725,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex UidAttributeRegex();
 
     private sealed record GroupIdentity(string Id, string DisplayName);
+    private sealed record RuntimeProviderAsset(GroupIdentity Identity, string CanonicalPath);
     private sealed record CardArtIdentity(string Category, string Stem);
     private sealed record RuntimeResource(
         string SourcePath,
@@ -1631,7 +1760,8 @@ internal sealed record SkinOption(
     string Id,
     string Name,
     IReadOnlyDictionary<string, ResourceAsset> Assets,
-    bool IsRuntimeProvider = false);
+    bool IsRuntimeProvider = false,
+    string? RuntimeImagePath = null);
 
 internal sealed class CardSkinGroup(string id, string displayName)
 {

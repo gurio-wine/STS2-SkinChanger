@@ -710,6 +710,45 @@ internal static class SkinService
         }
     }
 
+    public static bool IsExternalRuntimeProviderSelected(string groupId)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return false;
+            }
+
+            var selection = Config.GetSelection(groupId);
+            return Catalog.IsRuntimeProviderOption(groupId, selection) &&
+                   !Catalog.IsResourceBackedOption(groupId, selection) &&
+                   Catalog.GetRuntimeImagePath(groupId, selection) != null;
+        }
+    }
+
+    public static Texture2D GetSelectedRuntimeImageTexture(string groupId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+            var selection = Config.GetSelection(groupId);
+            var imagePath = catalog.GetRuntimeImagePath(groupId, selection) ??
+                            throw new InvalidOperationException($"{groupId}/{selection} 没有独立图片资源。");
+            var cacheKey = RuntimeResourceKey(groupId, "external-image:" + imagePath);
+            if (RuntimeResourceCache.TryGetValue(cacheKey, out var cached) &&
+                GodotObject.IsInstanceValid(cached) && cached is Texture2D cachedTexture)
+            {
+                return cachedTexture;
+            }
+
+            var image = Image.LoadFromFile(imagePath) ??
+                        throw new InvalidOperationException($"无法读取独立皮肤图片：{imagePath}");
+            var texture = ImageTexture.CreateFromImage(image);
+            RuntimeResourceCache[cacheKey] = texture;
+            return texture;
+        }
+    }
+
     public static IReadOnlyDictionary<string, PackedScene> LoadRuntimeScenes(
         string groupId,
         IReadOnlyCollection<string> scenePaths)

@@ -289,7 +289,7 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
-        if (SkinService.IsRuntimeProviderSelected(groupId))
+        if (SkinService.IsExternalRuntimeProviderSelected(groupId))
         {
             RebuildRuntimeProviderCharacterDisplay(screen, character);
             return;
@@ -440,7 +440,7 @@ internal static partial class ContextualSkinControls
         ref NCreatureVisuals result)
     {
         var group = FindGroup(modelId);
-        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
         {
             return;
         }
@@ -461,7 +461,7 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCachedScene(string resourcePath, ref PackedScene result)
     {
         var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-        if (groupId == null || SkinService.IsRuntimeProviderSelected(groupId))
+        if (groupId == null || SkinService.IsExternalRuntimeProviderSelected(groupId))
         {
             return;
         }
@@ -479,7 +479,7 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCachedTexture(string resourcePath, ref Texture2D result)
     {
         var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-        if (groupId == null || SkinService.IsRuntimeProviderSelected(groupId))
+        if (groupId == null || SkinService.IsExternalRuntimeProviderSelected(groupId))
         {
             return;
         }
@@ -501,7 +501,7 @@ internal static partial class ContextualSkinControls
         ref CompressedTexture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
         {
             return;
         }
@@ -523,7 +523,7 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCharacterIcon(CharacterModel character, ref Control result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
         {
             return;
         }
@@ -549,7 +549,7 @@ internal static partial class ContextualSkinControls
         ref Texture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsRuntimeProviderSelected(group.Id))
+        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
         {
             return;
         }
