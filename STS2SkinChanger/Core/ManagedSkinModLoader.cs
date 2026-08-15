@@ -33,6 +33,7 @@ internal static class ManagedSkinModLoader
     private static readonly string NamespaceSessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     private static int _namespaceGeneration;
     private static bool _initialized;
+    private static bool _reflectionTargetsReady;
 
     public static bool IsFirstInLoadOrder { get; private set; } = true;
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
@@ -45,6 +46,18 @@ internal static class ManagedSkinModLoader
         }
 
         _initialized = true;
+        // 在产生任何副作用前预检游戏内部反射目标，避免运行到一半因句柄缺失而进入"脏回退"。
+        _reflectionTargetsReady = InvokeOnModDetectedMethod != null &&
+                                  CallModInitializerMethod != null &&
+                                  GameVersionField != null &&
+                                  CircularDependenciesField != null;
+        if (!_reflectionTargetsReady)
+        {
+            ModLog.Error(
+                "无法解析游戏内部加载器接口，托管加载模式已禁用（游戏版本可能不兼容）。" +
+                "皮肤切换仍可工作，但 DLL 皮肤提供者的呈现补丁不会被接管。");
+        }
+
         CleanupOldProviderNamespaces();
         var mods = ModManager.Mods.ToArray();
         var descriptors = mods
@@ -87,7 +100,8 @@ internal static class ManagedSkinModLoader
 
     public static bool TryManage(Mod mod)
     {
-        if (mod.state != ModLoadState.None ||
+        if (!_reflectionTargetsReady ||
+            mod.state != ModLoadState.None ||
             !IsManagedProvider(mod, out var provider))
         {
             return false;

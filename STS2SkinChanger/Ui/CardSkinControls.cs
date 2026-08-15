@@ -590,6 +590,11 @@ internal static class CardInspectSkinControls
         var cardId = card.Id.ToString();
         Callable.From(() =>
         {
+            if (!GodotObject.IsInstanceValid(screen))
+            {
+                return;
+            }
+
             RefreshMatchingCards(screen.GetTree()?.Root, cardId);
             Sync(screen);
         }).CallDeferred();

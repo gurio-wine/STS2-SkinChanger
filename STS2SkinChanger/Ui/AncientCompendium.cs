@@ -33,7 +33,13 @@ internal static class AncientCompendiumEntry
         button.Name = ButtonName;
         button.FocusMode = Control.FocusModeEnum.All;
 
-        var bottomRow = compendium.GetNode<HBoxContainer>("MarginContainer/VBoxContainer/BottomRow");
+        var bottomRow = compendium.GetNodeOrNull<HBoxContainer>("MarginContainer/VBoxContainer/BottomRow");
+        if (bottomRow == null)
+        {
+            ModLog.Error("图鉴底部缺少按钮行节点，远古图鉴入口未添加。");
+            return;
+        }
+
         bottomRow.AddChild(button);
         var statistics = compendium.GetNode<NCompendiumBottomButton>("%StatisticsButton");
         var runHistory = compendium.GetNode<NCompendiumBottomButton>("%RunHistoryButton");
@@ -215,7 +221,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Size = new Vector2I(1920, 1080),
             TransparentBg = false,
             GuiDisableInput = true,
-            RenderTargetUpdateMode = SubViewport.UpdateMode.Always
+            // 屏幕被弹出后仍常驻场景树，改为可见时渲染避免整个会话持续渲染 1080p 离屏画面。
+            RenderTargetUpdateMode = SubViewport.UpdateMode.WhenVisible
         };
         previewContainer.AddChild(_previewViewport);
 

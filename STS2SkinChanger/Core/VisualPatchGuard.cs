@@ -89,7 +89,8 @@ internal static class VisualPatchGuard
             ModLog.Info(
                 $"已移除 {removed} 个提供者皮肤呈现补丁，保留其余 DLL 功能；目标：" +
                 string.Join("、", affectedTargets.OrderBy(name => name)) +
-                $"；登记卡牌呈现重放={capturedCardPatches}");
+                $"；登记卡牌呈现重放={capturedCardPatches}，" +
+                $"不参与重放={removed - capturedCardPatches}");
         }
 
         return removed;
