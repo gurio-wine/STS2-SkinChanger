@@ -308,6 +308,37 @@ internal sealed partial class SkinCatalog : IDisposable
                     }
                 }
             }
+
+            // 选中提供者时挂载其全部非卡图资源：部分覆盖资源（如 vfx 贴图、额外贴图）
+            // 不匹配任何分组正则，但属于皮肤的一部分，应随选择一起生效。
+            if (selected != null)
+            {
+                foreach (var providerAsset in _cosmeticIndexes
+                             .Where(index => index.Mod.Id.Equals(
+                                 selected.Id, StringComparison.OrdinalIgnoreCase))
+                             .SelectMany(index => index.Assets)
+                             .Where(pair => !IsCardArtSourcePath(pair.Key)))
+                {
+                    if (sourcePaths.Contains(providerAsset.Key))
+                    {
+                        continue;
+                    }
+
+                    foreach (var file in providerAsset.Value.Files)
+                    {
+                        var targetPath = MapAssetFilePath(
+                            providerAsset.Key,
+                            providerAsset.Value.SourcePath,
+                            file.Path);
+                        files[targetPath] = file;
+                        var takeoverPath = NormalizeTakeoverPath(targetPath);
+                        if (!takeoverPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            files[takeoverPath] = file;
+                        }
+                    }
+                }
+            }
         }
 
         return files;
@@ -556,7 +587,11 @@ internal sealed partial class SkinCatalog : IDisposable
             return overlay;
         }
 
-        var dependencyFiles = CollectSelectedProviderDependencies(selected, resources);
+        var dependencyFiles = CollectSelectedProviderDependencies(
+            selected,
+            resources,
+            overlay.SourceAliases,
+            overlay.PayloadAliases);
         if (dependencyFiles.Count == 0)
         {
             return overlay;
@@ -571,12 +606,18 @@ internal sealed partial class SkinCatalog : IDisposable
             files[dependency.Key] = dependency.Value;
         }
 
-        return new RuntimeResourceOverlay(overlay.ResourcePaths, files);
+        return new RuntimeResourceOverlay(
+            overlay.ResourcePaths,
+            files,
+            overlay.SourceAliases,
+            overlay.PayloadAliases);
     }
 
     private Dictionary<string, byte[]> CollectSelectedProviderDependencies(
         SkinOption selected,
-        IReadOnlyCollection<RuntimeResource> resources)
+        IReadOnlyCollection<RuntimeResource> resources,
+        IReadOnlyDictionary<string, string> sourceAliases,
+        IReadOnlyDictionary<string, string> payloadAliases)
     {
         var indexes = _cosmeticIndexes
             .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
@@ -609,6 +650,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
+            // 扫描始终用原始文本（提供者索引按原始路径登记），写入时才做别名重写。
             var bytes = pending.File.Archive.ReadFile(pending.File.Path);
             var text = Encoding.UTF8.GetString(bytes);
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
@@ -623,7 +665,16 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 foreach (var file in dependency.Files)
                 {
+                    // 挂在原始路径上的依赖副本同样重写文本引用：二进制资源
+                    // (.scn/.res) 内部无法重写，其回退引用会落到这些原始路径副本，
+                    // 重写后整条链都指向别名空间的新鲜副本，避免命中游戏缓存的
+                    // 原版贴图导致预览图混用资源。
                     var dependencyBytes = file.Archive.ReadFile(file.Path);
+                    if (IsRewritableTextResource(file.Path))
+                    {
+                        dependencyBytes = RewriteTextResource(dependencyBytes, sourceAliases, payloadAliases);
+                    }
+
                     result[file.Path] = dependencyBytes;
                     var takeoverPath = NormalizeTakeoverPath(file.Path);
                     if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
@@ -647,6 +698,14 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
     }
+
+    private static bool IsRewritableTextResource(string path) =>
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
 
     private static bool MayContainResourceReferences(string path) =>
         path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
@@ -797,7 +856,7 @@ internal sealed partial class SkinCatalog : IDisposable
             aliasedResourcePaths[resourcePath] = aliasedResourcePath;
         }
 
-        return new RuntimeResourceOverlay(aliasedResourcePaths, files);
+        return new RuntimeResourceOverlay(aliasedResourcePaths, files, sourceAliases, payloadAliases);
     }
 
     private void IncludeAtlasTexturePages(SkinOption? selected, HashSet<string> sourcePaths)
@@ -1883,7 +1942,9 @@ internal sealed class AncientCardReplacement
 
 internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> ResourcePaths,
-    IReadOnlyDictionary<string, byte[]> Files);
+    IReadOnlyDictionary<string, byte[]> Files,
+    IReadOnlyDictionary<string, string> SourceAliases,
+    IReadOnlyDictionary<string, string> PayloadAliases);
 
 internal sealed class ResourceAsset(string sourcePath)
 {
