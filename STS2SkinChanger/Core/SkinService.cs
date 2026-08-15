@@ -276,18 +276,20 @@ internal static class SkinService
                 return;
             }
 
-            var selectedPath = option?.Assets.Keys
+            var selectedProviderPath = option?.Assets.Keys
                 .Where(assetPath => CardArtMatches(assetPath, card))
                 .OrderByDescending(assetPath => HasSameResourceExtension(assetPath, originalPath))
-                .FirstOrDefault() ?? originalPath;
+                .FirstOrDefault();
+            var selectedPath = selectedProviderPath ?? originalPath;
             var cacheKey = $"{groupId}\n{selection}\npck\n{selectedPath}";
             if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
                 !GodotObject.IsInstanceValid(portrait))
             {
-                portrait = ResourceLoader.Load<Texture2D>(
+                portrait = LoadIsolatedCardPortrait(
+                    groupId,
+                    selection,
                     selectedPath,
-                    null,
-                    ResourceLoader.CacheMode.IgnoreDeep);
+                    selectedProviderPath != null);
                 if (portrait == null)
                 {
                     return;
@@ -385,13 +387,19 @@ internal static class SkinService
         if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
             !GodotObject.IsInstanceValid(portrait))
         {
-            var loaded = ResourceLoader.Load<Texture2D>(path, null, ResourceLoader.CacheMode.Reuse);
+            var loaded = LoadIsolatedCardPortrait(
+                groupId,
+                selection,
+                path,
+                useSelectedProvider: true);
             if (loaded == null)
             {
                 return;
             }
 
-            portrait = new AtlasTexture
+            portrait = loaded is AtlasTexture
+                ? loaded
+                : new AtlasTexture
             {
                 Atlas = loaded,
                 Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
@@ -400,6 +408,36 @@ internal static class SkinService
         }
 
         result = portrait;
+    }
+
+    private static Texture2D? LoadIsolatedCardPortrait(
+        string groupId,
+        string selection,
+        string resourcePath,
+        bool useSelectedProvider)
+    {
+        var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        var generation = ++_overlayGeneration;
+        var aliasToken = $"{_sessionId}/{generation:D3}_card";
+        var overlay = catalog.BuildIsolatedCardResource(
+            groupId,
+            selection,
+            resourcePath,
+            useSelectedProvider,
+            aliasToken);
+        var overlayPath = System.IO.Path.Combine(
+            OS.GetUserDataDir(),
+            $"sts2_skin_overlay_{_sessionId}_{generation:D3}_card_resource.pck");
+        PckArchive.Write(overlayPath, overlay.Files);
+        if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+        {
+            throw new InvalidOperationException("Godot 拒绝加载独立卡图资源包。");
+        }
+
+        return ResourceLoader.Load<Texture2D>(
+            overlay.ResourcePaths[resourcePath],
+            null,
+            ResourceLoader.CacheMode.IgnoreDeep);
     }
 
     private static bool CardArtMatches(string assetPath, CardModel card)

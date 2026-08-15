@@ -426,6 +426,75 @@ internal sealed partial class SkinCatalog : IDisposable
             resources.Add(new RuntimeResource(sourcePath, directFile, remapFile, payloadFiles));
         }
 
+        return BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
+    }
+
+    public RuntimeResourceOverlay BuildIsolatedCardResource(
+        string groupId,
+        string selectionId,
+        string resourcePath,
+        bool useSelectedProvider,
+        string aliasToken)
+    {
+        ResourceAsset? asset;
+        if (useSelectedProvider)
+        {
+            var option = CardGroups
+                .FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+                .Options.FirstOrDefault(option =>
+                    option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+            asset = option == null ? null : ResolveCardProviderAsset(option, resourcePath);
+        }
+        else
+        {
+            asset = ResolveBaseline(resourcePath);
+        }
+
+        if (asset == null)
+        {
+            throw new InvalidOperationException($"找不到独立卡图资源：{resourcePath}");
+        }
+        var resource = new RuntimeResource(
+            resourcePath,
+            FindDirectFile(asset, resourcePath),
+            FindRemapFile(asset, resourcePath),
+            GetImportedPayloadFiles(asset, resourcePath));
+        return BuildAliasedResourceOverlay([resource], [resourcePath], aliasToken);
+    }
+
+    private ResourceAsset? ResolveCardProviderAsset(CardSkinOption option, string resourcePath)
+    {
+        if (option.Assets.TryGetValue(resourcePath, out var configured))
+        {
+            return configured;
+        }
+
+        foreach (var index in _cosmeticIndexes.Where(index =>
+                     string.Equals(
+                         index.Mod.RootPath,
+                         option.ProviderRootPath,
+                         StringComparison.OrdinalIgnoreCase)))
+        {
+            if (index.Assets.TryGetValue(resourcePath, out var known))
+            {
+                return known;
+            }
+
+            var lazy = index.TryBuildAsset(resourcePath);
+            if (lazy != null)
+            {
+                return lazy;
+            }
+        }
+
+        return null;
+    }
+
+    private static RuntimeResourceOverlay BuildAliasedResourceOverlay(
+        IReadOnlyCollection<RuntimeResource> resources,
+        IReadOnlyCollection<string> resourcePaths,
+        string aliasToken)
+    {
         var sourceAliases = resources.ToDictionary(
             resource => resource.SourcePath,
             resource => $"res://sts2_skin_runtime/{aliasToken}/{resource.SourcePath[6..]}",
