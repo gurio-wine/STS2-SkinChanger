@@ -467,7 +467,8 @@ internal sealed partial class SkinCatalog : IDisposable
         string groupId,
         string selectionId,
         IReadOnlyCollection<string> resourcePaths,
-        string aliasToken)
+        string aliasToken,
+        bool includeProviderDependencies = false)
     {
         var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         var selected = group.Options.FirstOrDefault(option => option.Id == selectionId);
@@ -504,7 +505,7 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var overlay = BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
-        if (selected == null)
+        if (selected == null || !includeProviderDependencies)
         {
             return overlay;
         }

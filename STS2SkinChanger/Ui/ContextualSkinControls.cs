@@ -17,6 +17,7 @@ internal static partial class ContextualSkinControls
 {
     private const string SelectorName = "STS2SkinSelector";
     private const string DropdownName = "SkinDropdown";
+    private const string CharacterRefreshGenerationMeta = "sts2_skin_character_refresh_generation";
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
@@ -33,8 +34,27 @@ internal static partial class ContextualSkinControls
         Populate(selector, group);
         if (group != null)
         {
-            RunRefresh(() => RebuildCharacterDisplay(screen, character, group.Id));
+            ScheduleCharacterRefresh(screen, character, group.Id);
         }
+    }
+
+    private static void ScheduleCharacterRefresh(
+        NCharacterSelectScreen screen,
+        CharacterModel character,
+        string groupId)
+    {
+        var generation = screen.GetMeta(CharacterRefreshGenerationMeta, 0L).AsInt64() + 1L;
+        screen.SetMeta(CharacterRefreshGenerationMeta, generation);
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) ||
+                screen.GetMeta(CharacterRefreshGenerationMeta, 0L).AsInt64() != generation)
+            {
+                return;
+            }
+
+            RunRefresh(() => RebuildCharacterDisplay(screen, character, groupId));
+        }).CallDeferred();
     }
 
     public static void ShowMonster(NBestiary screen, NBestiaryEntry entry)
@@ -558,6 +578,7 @@ internal static partial class ContextualSkinControls
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
 internal static class CharacterSelectionSkinPatch
 {
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(
         NCharacterSelectScreen __instance,
         CharacterModel characterModel) =>

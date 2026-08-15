@@ -65,11 +65,15 @@ if (runtimeIndex >= 0)
     }
 
     var scenePaths = args[runtimeIndex + 3].Split(';', StringSplitOptions.RemoveEmptyEntries);
+    var includeProviderDependencies = !args
+        .Skip(runtimeIndex + 5)
+        .Contains("--no-provider-dependencies", StringComparer.OrdinalIgnoreCase);
     var overlay = catalog.BuildRuntimeResourceOverlay(
         args[runtimeIndex + 1],
         args[runtimeIndex + 2],
         scenePaths,
-        "inspect/001");
+        "inspect/001",
+        includeProviderDependencies);
     PckArchive.Write(args[runtimeIndex + 4], overlay.Files);
     Console.WriteLine($"runtime resources: {string.Join(", ", overlay.ResourcePaths.Values)} ({overlay.Files.Count} files)");
 }

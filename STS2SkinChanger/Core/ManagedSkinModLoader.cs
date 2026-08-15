@@ -23,6 +23,8 @@ internal static class ManagedSkinModLoader
         AccessTools.Field(typeof(ModManager), "_circularDependencies");
     private static readonly Dictionary<string, SkinProviderProbe> ProvidersByRoot =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> NegativeProviderRoots =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> MountedProviderNamespaces =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Regex ImportedResourceRegex = new(
@@ -365,7 +367,30 @@ internal static class ManagedSkinModLoader
     {
         try
         {
-            return ProvidersByRoot.TryGetValue(NormalizePath(mod.path), out provider!);
+            var root = NormalizePath(mod.path);
+            if (ProvidersByRoot.TryGetValue(root, out provider!))
+            {
+                return true;
+            }
+
+            if (!NegativeProviderRoots.Add(root))
+            {
+                provider = null!;
+                return false;
+            }
+
+            var detected = SkinCatalog.ProbeSkinProviders([ToDescriptor(mod)])
+                .FirstOrDefault(probe => probe.RootPath != null);
+            if (detected == null)
+            {
+                provider = null!;
+                return false;
+            }
+
+            ProvidersByRoot[root] = detected;
+            provider = detected;
+            ModLog.Info($"加载时补充识别皮肤提供者：{mod.manifest?.name ?? mod.manifest?.id}。");
+            return true;
         }
         catch
         {

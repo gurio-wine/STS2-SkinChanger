@@ -3,7 +3,7 @@
   "name": "STS2 皮肤切换器",
   "author": "Gurio",
   "description": "在选角界面、卡牌总览、单卡预览、怪物图鉴和远古图鉴中切换已安装的皮肤，无需重启游戏。",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

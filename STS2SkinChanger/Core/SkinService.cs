@@ -714,7 +714,7 @@ internal static class SkinService
         string groupId,
         IReadOnlyCollection<string> scenePaths)
     {
-        return LoadRuntimeResources(groupId, scenePaths).ToDictionary(
+        return LoadRuntimeResources(groupId, scenePaths, includeProviderDependencies: true).ToDictionary(
             pair => pair.Key,
             pair => pair.Value as PackedScene ??
                     throw new InvalidOperationException($"独立皮肤资源不是场景：{pair.Key}"),
@@ -723,7 +723,8 @@ internal static class SkinService
 
     public static IReadOnlyDictionary<string, Resource> LoadRuntimeResources(
         string groupId,
-        IReadOnlyCollection<string> resourcePaths)
+        IReadOnlyCollection<string> resourcePaths,
+        bool includeProviderDependencies = false)
     {
         lock (Sync)
         {
@@ -734,7 +735,8 @@ internal static class SkinService
                 groupId,
                 Config.GetSelection(groupId),
                 resourcePaths,
-                aliasToken);
+                aliasToken,
+                includeProviderDependencies);
             var overlayPath = System.IO.Path.Combine(
                 OS.GetUserDataDir(),
                 $"sts2_skin_overlay_{_sessionId}_{generation:D3}_runtime.pck");
