@@ -18,6 +18,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _initialized;
 
+    public static bool IsFirstInLoadOrder { get; private set; } = true;
+
     public static void Initialize()
     {
         if (_initialized)
@@ -26,8 +28,9 @@ internal static class ManagedSkinModLoader
         }
 
         _initialized = true;
-        var mods = ModManager.GetLoadedMods().ToArray();
+        var mods = ModManager.Mods.ToArray();
         var descriptors = mods
+            .Where(mod => mod.state is ModLoadState.None or ModLoadState.Loaded)
             .Where(mod => mod.manifest is { id: not null })
             .Where(mod => !mod.manifest!.id!.Equals(Entry.ModId, StringComparison.OrdinalIgnoreCase))
             .Select(ToDescriptor)
@@ -45,6 +48,7 @@ internal static class ManagedSkinModLoader
 
         var selfIndex = Array.FindIndex(mods, mod =>
             mod.manifest?.id?.Equals(Entry.ModId, StringComparison.OrdinalIgnoreCase) == true);
+        IsFirstInLoadOrder = selfIndex == 0;
         var alreadyLoaded = selfIndex <= 0
             ? []
             : mods.Take(selfIndex)
@@ -84,7 +88,6 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
-            mod.errors = null;
             mod.state = ModLoadState.Loaded;
             InvokeOnModDetectedMethod.Invoke(null, [mod]);
             ModLog.Info(
@@ -111,7 +114,7 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
-        var mods = ModManager.GetLoadedMods();
+        var mods = ModManager.Mods;
         if (mods.Any(other =>
                 !ReferenceEquals(other, mod) &&
                 other.manifest?.id == manifest.id &&

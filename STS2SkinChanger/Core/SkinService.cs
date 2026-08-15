@@ -41,6 +41,15 @@ internal static class SkinService
 
     private static string ConfigPath => System.IO.Path.Combine(OS.GetUserDataDir(), "sts2_skin_switcher.json");
 
+    public static void SuppressLoadOrderWarning()
+    {
+        lock (Sync)
+        {
+            Config.SuppressLoadOrderWarning = true;
+            Config.Save(ConfigPath);
+        }
+    }
+
     public static void InitializeBeforeAssets()
     {
         lock (Sync)

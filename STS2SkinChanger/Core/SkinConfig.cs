@@ -11,6 +11,8 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public bool SuppressLoadOrderWarning { get; set; }
+
     public static SkinConfig Load(string path)
     {
         try
