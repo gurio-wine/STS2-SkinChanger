@@ -1655,12 +1655,17 @@ internal sealed partial class SkinCatalog : IDisposable
         bool stripUids = true)
     {
         var text = Encoding.UTF8.GetString(bytes);
-        // 按 key 长度降序替换，避免短 key 是长 key 前缀时破坏后者。
+        // 按 key 长度降序替换，避免短 key 是长 key 前缀时破坏后者；
+        // 同时要求 key 后紧跟路径终止符，防止 ".gd" 误伤 ".gdc" 这类前缀引用。
         foreach (var replacement in replacements
                      .Concat(extraReplacements ?? new Dictionary<string, string>())
                      .OrderByDescending(pair => pair.Key.Length))
         {
-            text = text.Replace(replacement.Key, replacement.Value, StringComparison.OrdinalIgnoreCase);
+            text = Regex.Replace(
+                text,
+                Regex.Escape(replacement.Key) + "(?=[\\x00\\\"'\\s,\\]\\[]|$)",
+                replacement.Value.Replace("$", "$$"),
+                RegexOptions.IgnoreCase);
         }
 
         if (stripUids)
