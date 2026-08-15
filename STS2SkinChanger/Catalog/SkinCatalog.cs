@@ -1300,7 +1300,7 @@ internal sealed partial class SkinCatalog : IDisposable
         return filePath;
     }
 
-    private static bool IsMountableProviderResource(string path) =>
+    internal static bool IsMountableProviderResource(string path) =>
         path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||

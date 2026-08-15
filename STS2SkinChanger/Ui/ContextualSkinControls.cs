@@ -20,8 +20,6 @@ internal static partial class ContextualSkinControls
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
-    private static readonly Dictionary<string, string> DisplayedSelections =
-        new(StringComparer.OrdinalIgnoreCase);
     private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
 
@@ -47,16 +45,10 @@ internal static partial class ContextualSkinControls
         var group = FindGroup(character.Id.Entry);
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
-        if (group == null)
+        if (group != null)
         {
-            return;
-        }
-
-        // 仅在展示的选择与当前选择不一致时才重建，避免每次点击角色都写盘、重挂资源包并重启动画。
-        var current = SkinService.Config.GetSelection(group.Id);
-        if (!DisplayedSelections.TryGetValue(group.Id, out var displayed) ||
-            !displayed.Equals(current, StringComparison.OrdinalIgnoreCase))
-        {
+            // 游戏的 SelectCharacter 每次点击都会清空 AnimatedBg 并重新实例化原版背景，
+            // 所以这里必须每次重建；资源已缓存在 SkinService，重建不会再次写盘或加载。
             ScheduleCharacterRefresh(screen, character, group.Id);
         }
     }
@@ -315,7 +307,6 @@ internal static partial class ContextualSkinControls
         if (SkinService.IsExternalRuntimeProviderSelected(groupId))
         {
             RebuildRuntimeProviderCharacterDisplay(screen, character);
-            DisplayedSelections[groupId] = SkinService.Config.GetSelection(groupId);
             return;
         }
 
@@ -347,7 +338,6 @@ internal static partial class ContextualSkinControls
                     throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
         ReplaceCharacterBackground(screen, character, scene);
         RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
-        DisplayedSelections[groupId] = SkinService.Config.GetSelection(groupId);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
 

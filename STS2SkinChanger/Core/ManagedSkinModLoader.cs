@@ -34,6 +34,8 @@ internal static class ManagedSkinModLoader
     private static int _namespaceGeneration;
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
+    private static PckArchive? _gameArchive;
+    private static bool _gameArchiveUnavailable;
 
     public static bool IsFirstInLoadOrder { get; private set; } = true;
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
@@ -121,6 +123,7 @@ internal static class ManagedSkinModLoader
             }
 
             var namespaceFiles = MountProviderNamespace(mod);
+            var customFiles = MountProviderCustomResources(mod);
             var removedPatches = LoadManagedAssembly(mod);
             mod.state = ModLoadState.Loaded;
             InvokeOnModDetectedMethod.Invoke(null, [mod]);
@@ -128,7 +131,8 @@ internal static class ManagedSkinModLoader
                 $"已托管皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
                 $"独立图片={provider.RuntimeImageCount}, 已移除呈现补丁={removedPatches}；" +
-                $"安全命名空间资源={namespaceFiles}；原 PCK 未全局挂载，DLL 的非皮肤功能已保留。");
+                $"安全命名空间资源={namespaceFiles}, 自定义资源={customFiles}；" +
+                $"原 PCK 未全局挂载，DLL 的非皮肤功能已保留。");
             return true;
         }
         catch (Exception exception)
@@ -266,6 +270,86 @@ internal static class ManagedSkinModLoader
         {
             MountedProviderNamespaces.Remove(normalizedRoot);
             ModLog.Warn($"挂载皮肤提供者 {manifest.id} 的安全命名空间失败：{exception.Message}");
+            return 0;
+        }
+    }
+
+    private static PckArchive? GetGameArchive()
+    {
+        if (_gameArchiveUnavailable)
+        {
+            return null;
+        }
+
+        if (_gameArchive != null)
+        {
+            return _gameArchive;
+        }
+
+        try
+        {
+            var executableDirectory = Path.GetDirectoryName(OS.GetExecutablePath())!;
+            _gameArchive = PckArchive.Open(Path.Combine(executableDirectory, "SlayTheSpire2.pck"));
+        }
+        catch (Exception exception)
+        {
+            _gameArchiveUnavailable = true;
+            ModLog.Warn("无法打开游戏资源包以判定提供者自定义资源：" + exception.Message);
+        }
+
+        return _gameArchive;
+    }
+
+    private static int MountProviderCustomResources(Mod mod)
+    {
+        var manifest = mod.manifest!;
+        if (!manifest.hasPck || !manifest.hasDll || manifest.id == null)
+        {
+            return 0;
+        }
+
+        var gameArchive = GetGameArchive();
+        var pckPath = Path.Combine(mod.path, manifest.id + ".pck");
+        if (gameArchive == null || !File.Exists(pckPath))
+        {
+            return 0;
+        }
+
+        try
+        {
+            using var archive = PckArchive.Open(pckPath);
+            // 只挂载游戏里不存在的路径：DLL 提供者初始化期引用的自定义资源（自定义商人部件、
+            // 语音、res://custom/ 模板场景等）因此立即可用；而会覆盖游戏原版内容的路径仍然
+            // 保持隔离，避免皮肤在未选中时默认生效。
+            var customPaths = archive.Paths
+                .Where(SkinCatalog.IsMountableProviderResource)
+                .Where(path => !gameArchive.Contains(path))
+                .ToArray();
+            if (customPaths.Length == 0)
+            {
+                return 0;
+            }
+
+            var safeId = new string(manifest.id.Where(char.IsLetterOrDigit).ToArray());
+            var overlayPath = Path.Combine(
+                OS.GetUserDataDir(),
+                $"sts2_skin_provider_namespace_{safeId}_{NamespaceSessionId}_" +
+                $"{++_namespaceGeneration:D3}.pck");
+            var files = customPaths.ToDictionary(
+                path => path,
+                path => (archive, path),
+                StringComparer.OrdinalIgnoreCase);
+            PckArchive.WriteFromArchives(overlayPath, files);
+            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException("Godot 拒绝加载提供者自定义资源包。");
+            }
+
+            return customPaths.Length;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"挂载皮肤提供者 {manifest.id} 的自定义资源失败：{exception.Message}");
             return 0;
         }
     }
