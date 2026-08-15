@@ -2,7 +2,6 @@ using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
-using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
@@ -25,6 +24,13 @@ internal static partial class ContextualSkinControls
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
         AccessTools.Method(typeof(NBestiary), "SelectMonster", [typeof(NBestiaryEntry)]);
+
+    // These paths are inputs to our isolated overlay and must not pass through another Mod's Harmony redirect.
+    internal static string CanonicalScenePath(string innerPath) =>
+        "res://scenes/" + innerPath.TrimStart('/') + ".tscn";
+
+    internal static string CanonicalImagePath(string innerPath) =>
+        "res://images/" + innerPath.TrimStart('/');
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
@@ -290,18 +296,18 @@ internal static partial class ContextualSkinControls
         }
 
         var characterId = character.Id.Entry.ToLowerInvariant();
-        var characterSelectPath = SceneHelper.GetScenePath("screens/char_select/char_select_bg_" + characterId);
+        var characterSelectPath = CanonicalScenePath("screens/char_select/char_select_bg_" + characterId);
         var scenePaths = new[]
         {
             characterSelectPath,
-            SceneHelper.GetScenePath("creature_visuals/" + characterId),
-            SceneHelper.GetScenePath("rest_site/characters/" + characterId + "_rest_site"),
-            SceneHelper.GetScenePath("merchant/characters/" + characterId + "_merchant")
+            CanonicalScenePath("creature_visuals/" + characterId),
+            CanonicalScenePath("rest_site/characters/" + characterId + "_rest_site"),
+            CanonicalScenePath("merchant/characters/" + characterId + "_merchant")
         };
         var characterSelectTextures = new[]
         {
-            ImageHelper.GetImagePath("packed/character_select/char_select_" + characterId + ".png"),
-            ImageHelper.GetImagePath("packed/character_select/char_select_" + characterId + "_locked.png")
+            CanonicalImagePath("packed/character_select/char_select_" + characterId + ".png"),
+            CanonicalImagePath("packed/character_select/char_select_" + characterId + "_locked.png")
         };
         var resourcePaths = scenePaths
             .Concat(characterSelectTextures)
@@ -408,7 +414,7 @@ internal static partial class ContextualSkinControls
         MonsterModel monster,
         string groupId)
     {
-        var visualsPath = SceneHelper.GetScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant());
+        var visualsPath = CanonicalScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant());
         var scene = SkinService.LoadRuntimeScene(groupId, visualsPath);
         PreloadManager.Cache.SetAsset(visualsPath, scene);
 
@@ -501,7 +507,7 @@ internal static partial class ContextualSkinControls
         }
 
         var characterId = character.Id.Entry.ToLowerInvariant();
-        var resourcePath = ImageHelper.GetImagePath(
+        var resourcePath = CanonicalImagePath(
             "packed/character_select/char_select_" + characterId + (locked ? "_locked.png" : ".png"));
         try
         {
@@ -523,7 +529,7 @@ internal static partial class ContextualSkinControls
         }
 
         var characterId = character.Id.Entry.ToLowerInvariant();
-        var resourcePath = SceneHelper.GetScenePath("ui/character_icons/" + characterId + "_icon");
+        var resourcePath = CanonicalScenePath("ui/character_icons/" + characterId + "_icon");
         try
         {
             var replacement = SkinService.GetOrLoadRuntimeScene(group.Id, resourcePath)
@@ -564,7 +570,7 @@ internal static partial class ContextualSkinControls
         ref CompressedTexture2D result)
     {
         var characterId = character.Id.Entry.ToLowerInvariant();
-        var resourcePath = ImageHelper.GetImagePath("packed/map/icons/map_marker_" + characterId + ".png");
+        var resourcePath = CanonicalImagePath("packed/map/icons/map_marker_" + characterId + ".png");
         Texture2D texture = result;
         ReplaceCharacterTexture(character, resourcePath, ref texture);
         if (texture is CompressedTexture2D compressedTexture)
@@ -613,7 +619,7 @@ internal static class CharacterVisualResultPatch
     private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result) =>
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
-            SceneHelper.GetScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
+            ContextualSkinControls.CanonicalScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
             ref __result);
 }
 
@@ -624,7 +630,7 @@ internal static class MonsterVisualResultPatch
     private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result) =>
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
-            SceneHelper.GetScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
+            ContextualSkinControls.CanonicalScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
             ref __result);
 }
 
@@ -675,7 +681,7 @@ internal static class CharacterIconTextureResultPatch
     private static void Postfix(CharacterModel __instance, ref Texture2D __result)
     {
         var characterId = __instance.Id.Entry.ToLowerInvariant();
-        var path = ImageHelper.GetImagePath("ui/top_panel/character_icon_" + characterId + ".png");
+        var path = ContextualSkinControls.CanonicalImagePath("ui/top_panel/character_icon_" + characterId + ".png");
         ContextualSkinControls.ReplaceCharacterTexture(__instance, path, ref __result);
     }
 }
@@ -687,7 +693,7 @@ internal static class CharacterIconOutlineTextureResultPatch
     private static void Postfix(CharacterModel __instance, ref Texture2D __result)
     {
         var characterId = __instance.Id.Entry.ToLowerInvariant();
-        var path = ImageHelper.GetImagePath("ui/top_panel/character_icon_" + characterId + "_outline.png");
+        var path = ContextualSkinControls.CanonicalImagePath("ui/top_panel/character_icon_" + characterId + "_outline.png");
         ContextualSkinControls.ReplaceCharacterTexture(__instance, path, ref __result);
     }
 }
