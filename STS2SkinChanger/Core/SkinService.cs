@@ -65,6 +65,47 @@ internal static class SkinService
         }
     }
 
+    /// <summary>
+    /// 按当前选择同步"选中时重新挂载"的提供者补丁：语音、战斗动画等附加功能
+    /// 在其提供者被选中（任意分组/卡牌组/单卡覆盖）时生效，切走或切回原版时卸载。
+    /// </summary>
+    public static void SyncActiveProviderPatches()
+    {
+        var catalog = Catalog;
+        if (catalog == null)
+        {
+            return;
+        }
+
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in catalog.Groups)
+        {
+            selected.Add(Config.GetSelection(group.Id));
+        }
+
+        foreach (var group in catalog.CardGroups)
+        {
+            selected.Add(GetCardSelection(group.Id));
+        }
+
+        foreach (var pair in Config.Selections)
+        {
+            if (pair.Key.StartsWith("cards:item:", StringComparison.OrdinalIgnoreCase))
+            {
+                selected.Add(pair.Value);
+            }
+        }
+
+        var providerIds = catalog.Groups
+            .SelectMany(group => group.Options)
+            .Select(option => option.Id)
+            .Concat(catalog.CardGroups.SelectMany(group => group.Options).Select(option => option.Id))
+            .Where(selected.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        VisualPatchGuard.SetActiveProviderPatches(providerIds);
+    }
+
     public static void EnsureConfigLoaded()
     {
         lock (Sync)
@@ -113,6 +154,7 @@ internal static class SkinService
                 Catalog = SkinCatalog.Build(gamePckPath, mods);
                 Config = SkinConfig.Load(ConfigPath);
                 SanitizeSelections();
+                SyncActiveProviderPatches();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Config.Save(ConfigPath);
                 // 仅在完整成功后才标记已初始化，失败时允许后续调用重试而不是整个会话失效。
@@ -161,6 +203,7 @@ internal static class SkinService
 
                 Catalog.FinalizeCardGroups(entries);
                 SanitizeCardSelections(includeIndividualCards: true);
+                SyncActiveProviderPatches();
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -202,6 +245,7 @@ internal static class SkinService
                 Config.Selections[groupId] = optionId;
                 ClearRuntimeResourceCache(groupId);
                 MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+                SyncActiveProviderPatches();
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
@@ -240,6 +284,7 @@ internal static class SkinService
                 Config.Selections[CardSelectionKey(groupId)] = optionId;
                 ClearCardPortraitCache(groupId);
                 MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+                SyncActiveProviderPatches();
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
@@ -345,6 +390,7 @@ internal static class SkinService
                 }
 
                 ClearCardPortraitCache(group.Id);
+                SyncActiveProviderPatches();
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;

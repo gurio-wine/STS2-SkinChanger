@@ -40,6 +40,12 @@ internal static class ManagedSkinModLoader
     public static bool IsFirstInLoadOrder { get; private set; } = true;
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
 
+    public static string? GetProviderId(string providerRoot)
+    {
+        var normalized = NormalizePath(providerRoot);
+        return ProvidersByRoot.TryGetValue(normalized, out var probe) ? probe.Id : null;
+    }
+
     public static void Initialize()
     {
         if (_initialized)

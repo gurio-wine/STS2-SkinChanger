@@ -14,6 +14,9 @@ internal static class VisualPatchGuard
     private static readonly Harmony Harmony = new(Entry.ModId);
     private static readonly object CardPatchSync = new();
     private static readonly List<RemovedCardPatch> RemovedCardPatches = [];
+    private static readonly List<RemovedProviderPatch> RemovedProviderPatches = [];
+    private static readonly Dictionary<string, RemovedProviderPatch> AppliedProviderPatches =
+        new(StringComparer.Ordinal);
     private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
     private static readonly string[] VisualNameTokens =
     [
@@ -59,6 +62,15 @@ internal static class VisualPatchGuard
                 .ToArray();
             foreach (var entry in providerPatches)
             {
+                // 已重新挂载（选中生效）的补丁保持原状，不在重复扫描中被移除。
+                lock (CardPatchSync)
+                {
+                    if (AppliedProviderPatches.ContainsKey(ActivePatchKey(target, entry.Patch.PatchMethod)))
+                    {
+                        continue;
+                    }
+                }
+
                 try
                 {
                     if (typeof(NCard).IsAssignableFrom(target.DeclaringType) &&
@@ -73,6 +85,7 @@ internal static class VisualPatchGuard
                     Harmony.Unpatch(target, entry.Patch.PatchMethod);
                     removed++;
                     affectedTargets.Add($"{target.DeclaringType?.Name}.{target.Name}");
+                    RememberRemovedProviderPatch(entry.Root!, target, entry.Patch, entry.Kind);
                 }
                 catch (Exception exception)
                 {
@@ -86,15 +99,150 @@ internal static class VisualPatchGuard
 
         if (removed > 0)
         {
+            var reapplyable = RemovedProviderPatches.Count(CanReapply);
             ModLog.Info(
                 $"已移除 {removed} 个提供者皮肤呈现补丁，保留其余 DLL 功能；目标：" +
                 string.Join("、", affectedTargets.OrderBy(name => name)) +
                 $"；登记卡牌呈现重放={capturedCardPatches}，" +
-                $"不参与重放={removed - capturedCardPatches}");
+                $"选中时可重新挂载={reapplyable}");
         }
 
         return removed;
     }
+
+    /// <summary>按当前皮肤选择重新挂载/卸载提供者的附加功能补丁（语音、战斗动画等）。</summary>
+    public static void SetActiveProviderPatches(IEnumerable<string> providerIds)
+    {
+        var desired = providerIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        lock (CardPatchSync)
+        {
+            foreach (var key in AppliedProviderPatches.Keys
+                         .Where(key => !desired.Contains(AppliedProviderPatches[key].ProviderId))
+                         .ToArray())
+            {
+                var patch = AppliedProviderPatches[key];
+                try
+                {
+                    Harmony.Unpatch(patch.Target, patch.PatchMethod);
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        $"卸载提供者 {patch.ProviderId} 的呈现补丁失败：" +
+                        exception.GetBaseException().Message);
+                }
+
+                AppliedProviderPatches.Remove(key);
+            }
+
+            var activated = 0;
+            foreach (var patch in RemovedProviderPatches
+                         .Where(patch => desired.Contains(patch.ProviderId) && CanReapply(patch)))
+            {
+                var key = ActivePatchKey(patch.Target, patch.PatchMethod);
+                if (AppliedProviderPatches.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var method = new HarmonyMethod(patch.PatchMethod)
+                    {
+                        priority = patch.Priority,
+                        before = patch.Before,
+                        after = patch.After
+                    };
+                    if (patch.Kind == ProviderPatchKind.Prefix)
+                    {
+                        Harmony.Patch(patch.Target, prefix: method);
+                    }
+                    else
+                    {
+                        Harmony.Patch(patch.Target, postfix: method);
+                    }
+
+                    AppliedProviderPatches[key] = patch;
+                    activated++;
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        $"激活提供者 {patch.ProviderId} 的呈现补丁失败：" +
+                        exception.GetBaseException().Message);
+                }
+            }
+
+            if (activated > 0)
+            {
+                ModLog.Info($"已激活 {activated} 个提供者附加功能补丁（语音、战斗动画等随皮肤生效）。");
+            }
+        }
+    }
+
+    private static void RememberRemovedProviderPatch(
+        string providerRoot,
+        MethodBase target,
+        HarmonyLib.Patch patch,
+        ProviderPatchKind kind)
+    {
+        lock (CardPatchSync)
+        {
+            if (RemovedProviderPatches.Any(existing =>
+                    SameMethod(existing.Target, target) &&
+                    existing.PatchMethod == patch.PatchMethod))
+            {
+                return;
+            }
+
+            RemovedProviderPatches.Add(new RemovedProviderPatch(
+                providerRoot,
+                ManagedSkinModLoader.GetProviderId(providerRoot) ?? string.Empty,
+                target,
+                patch.PatchMethod,
+                kind,
+                patch.priority,
+                patch.before,
+                patch.after));
+        }
+    }
+
+    private static bool CanReapply(RemovedProviderPatch patch)
+    {
+        if (patch.ProviderId.Length == 0 ||
+            patch.Kind is ProviderPatchKind.Transpiler or ProviderPatchKind.Finalizer)
+        {
+            return false;
+        }
+
+        var declaringType = patch.Target.DeclaringType;
+        if (declaringType == null)
+        {
+            return false;
+        }
+
+        // 以下目标由本 Mod 的资源接管或卡牌重放机制覆盖，不重新挂载原始补丁。
+        if (typeof(NCard).IsAssignableFrom(declaringType) ||
+            declaringType == typeof(AssetCache) ||
+            declaringType == typeof(AtlasManager) ||
+            declaringType == typeof(PreloadManager) ||
+            typeof(CardModel).IsAssignableFrom(declaringType) ||
+            typeof(CharacterModel).IsAssignableFrom(declaringType) ||
+            typeof(MonsterModel).IsAssignableFrom(declaringType) ||
+            typeof(EventModel).IsAssignableFrom(declaringType))
+        {
+            return false;
+        }
+
+        var namespaceName = declaringType.Namespace ?? string.Empty;
+        return !namespaceName.StartsWith(
+            "MegaCrit.Sts2.Core.Bindings.MegaSpine",
+            StringComparison.Ordinal);
+    }
+
+    private static string ActivePatchKey(MethodBase target, MethodInfo patchMethod) =>
+        target.Module.ModuleVersionId + ":" + target.MetadataToken +
+        ">" + patchMethod.MetadataToken;
 
     public static int ReplaySelectedCardPostfixes(
         NCard card,
@@ -416,4 +564,14 @@ internal static class VisualPatchGuard
         string ProviderRoot,
         MethodBase Target,
         MethodInfo PatchMethod);
+
+    private sealed record RemovedProviderPatch(
+        string ProviderRoot,
+        string ProviderId,
+        MethodBase Target,
+        MethodInfo PatchMethod,
+        ProviderPatchKind Kind,
+        int Priority,
+        string[]? Before,
+        string[]? After);
 }
