@@ -310,6 +310,15 @@ internal static partial class ContextualSkinControls
             return;
         }
 
+        // 提供者的整套皮肤机制（如 sprite kit 的 2D 场景替换）已接管呈现时，
+        // 跳过本 Mod 的重建，否则会用基线衍生场景覆盖提供者的效果。
+        var selection = SkinService.Config.GetSelection(groupId);
+        if (!selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+            VisualPatchGuard.ProviderControlsCharacterPresentation(selection))
+        {
+            return;
+        }
+
         var characterId = character.Id.Entry.ToLowerInvariant();
         var characterSelectPath = CanonicalScenePath("screens/char_select/char_select_bg_" + characterId);
         var scenePaths = new[]

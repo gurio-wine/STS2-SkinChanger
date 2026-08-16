@@ -180,6 +180,35 @@ internal static class VisualPatchGuard
         }
     }
 
+    /// <summary>提供者当前是否有已激活（随选中生效）的补丁。</summary>
+    public static bool IsProviderActive(string providerId)
+    {
+        lock (CardPatchSync)
+        {
+            return AppliedProviderPatches.Values.Any(patch =>
+                patch.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
+    /// 提供者的激活补丁是否接管角色呈现（模型 getter / AssetCache / CreateVisuals）。
+    /// 这类提供者（如 sprite kit 的整套 2D 场景替换）激活时，本 Mod 不应再重建
+    /// 选角展示，否则会用基线衍生场景覆盖提供者的呈现。
+    /// </summary>
+    public static bool ProviderControlsCharacterPresentation(string providerId)
+    {
+        lock (CardPatchSync)
+        {
+            return AppliedProviderPatches.Values.Any(patch =>
+                patch.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
+                patch.Target.DeclaringType != null &&
+                (patch.Target.DeclaringType == typeof(AssetCache) ||
+                 patch.Target.DeclaringType == typeof(AtlasManager) ||
+                 typeof(CharacterModel).IsAssignableFrom(patch.Target.DeclaringType) ||
+                 typeof(MonsterModel).IsAssignableFrom(patch.Target.DeclaringType)));
+        }
+    }
+
     private static void RememberRemovedProviderPatch(
         string providerRoot,
         MethodBase target,
