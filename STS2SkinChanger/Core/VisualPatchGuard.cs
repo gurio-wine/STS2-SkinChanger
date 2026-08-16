@@ -221,15 +221,14 @@ internal static class VisualPatchGuard
             return false;
         }
 
-        // 以下目标由本 Mod 的资源接管或卡牌重放机制覆盖，不重新挂载原始补丁。
+        // 卡牌呈现由重放机制接管；卡牌贴图与远古背景由本 Mod 的资源机制接管，
+        // 不重挂原始补丁。其余目标（含模型 getter、AssetCache、CreateVisuals 等
+        // "整套皮肤机制"型前缀）在提供者被选中时整体恢复：前缀跳过原方法时，
+        // 本 Mod 的 Priority.Last 后置补丁同样被跳过，正好让位给提供者。
         if (typeof(NCard).IsAssignableFrom(declaringType) ||
-            declaringType == typeof(AssetCache) ||
-            declaringType == typeof(AtlasManager) ||
-            declaringType == typeof(PreloadManager) ||
             typeof(CardModel).IsAssignableFrom(declaringType) ||
-            typeof(CharacterModel).IsAssignableFrom(declaringType) ||
-            typeof(MonsterModel).IsAssignableFrom(declaringType) ||
-            typeof(EventModel).IsAssignableFrom(declaringType))
+            typeof(EventModel).IsAssignableFrom(declaringType) ||
+            declaringType == typeof(PreloadManager))
         {
             return false;
         }
