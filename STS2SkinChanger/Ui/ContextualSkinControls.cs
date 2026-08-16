@@ -27,6 +27,18 @@ internal static partial class ContextualSkinControls
 
     internal static Font? GameFont =>
         _gameFont ??= ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
+
+    /// <summary>
+    /// 选中提供者的整套机制（sprite kit 等）已接管呈现时，本 Mod 的接管补丁必须让位：
+    /// 提供者的前缀可能设置 __result 后仍放行原方法，此时本 Mod 的 Priority.Last
+    /// 后置补丁会把提供者的结果覆盖回基线衍生资源。
+    /// </summary>
+    internal static bool ShouldSkipTakeover(string groupId)
+    {
+        var selection = SkinService.Config.GetSelection(groupId);
+        return !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+               VisualPatchGuard.ProviderControlsCharacterPresentation(selection);
+    }
     private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
@@ -312,9 +324,7 @@ internal static partial class ContextualSkinControls
 
         // 提供者的整套皮肤机制（如 sprite kit 的 2D 场景替换）已接管呈现时，
         // 跳过本 Mod 的重建，否则会用基线衍生场景覆盖提供者的效果。
-        var selection = SkinService.Config.GetSelection(groupId);
-        if (!selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-            VisualPatchGuard.ProviderControlsCharacterPresentation(selection))
+        if (ShouldSkipTakeover(groupId))
         {
             return;
         }
@@ -499,7 +509,9 @@ internal static partial class ContextualSkinControls
         ref NCreatureVisuals result)
     {
         var group = FindGroup(modelId);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null ||
+            SkinService.IsExternalRuntimeProviderSelected(group.Id) ||
+            ShouldSkipTakeover(group.Id))
         {
             return;
         }
@@ -520,7 +532,9 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCachedScene(string resourcePath, ref PackedScene result)
     {
         var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-        if (groupId == null || SkinService.IsExternalRuntimeProviderSelected(groupId))
+        if (groupId == null ||
+            SkinService.IsExternalRuntimeProviderSelected(groupId) ||
+            ShouldSkipTakeover(groupId))
         {
             return;
         }
@@ -538,7 +552,9 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCachedTexture(string resourcePath, ref Texture2D result)
     {
         var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-        if (groupId == null || SkinService.IsExternalRuntimeProviderSelected(groupId))
+        if (groupId == null ||
+            SkinService.IsExternalRuntimeProviderSelected(groupId) ||
+            ShouldSkipTakeover(groupId))
         {
             return;
         }
@@ -560,7 +576,9 @@ internal static partial class ContextualSkinControls
         ref CompressedTexture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null ||
+            SkinService.IsExternalRuntimeProviderSelected(group.Id) ||
+            ShouldSkipTakeover(group.Id))
         {
             return;
         }
@@ -582,7 +600,9 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCharacterIcon(CharacterModel character, ref Control result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null ||
+            SkinService.IsExternalRuntimeProviderSelected(group.Id) ||
+            ShouldSkipTakeover(group.Id))
         {
             return;
         }
@@ -608,7 +628,9 @@ internal static partial class ContextualSkinControls
         ref Texture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null ||
+            SkinService.IsExternalRuntimeProviderSelected(group.Id) ||
+            ShouldSkipTakeover(group.Id))
         {
             return;
         }
