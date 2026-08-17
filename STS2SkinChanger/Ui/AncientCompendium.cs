@@ -220,7 +220,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
     public override void OnSubmenuOpened()
     {
         base.OnSubmenuOpened();
+        _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
         RefreshAncients();
+    }
+
+    public override void OnSubmenuClosed()
+    {
+        _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+        base.OnSubmenuClosed();
     }
 
     private void BuildUi()
@@ -245,8 +252,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Size = new Vector2I(1920, 1080),
             TransparentBg = false,
             GuiDisableInput = true,
-            // 屏幕被弹出后仍常驻场景树，改为可见时渲染避免整个会话持续渲染 1080p 离屏画面。
-            RenderTargetUpdateMode = SubViewport.UpdateMode.WhenVisible
+            // 子菜单打开时切为 Always 以持续播放 Spine/AnimationPlayer；关闭时禁用。
+            RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled
         };
         previewContainer.AddChild(_previewViewport);
 

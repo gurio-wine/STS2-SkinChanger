@@ -672,8 +672,27 @@ internal static class SkinService
         }
 
         var fileName = lowerPath[(lowerPath.LastIndexOf('/') + 1)..];
-        var extensionIndex = fileName.IndexOf('.');
-        var stem = NormalizeCardToken(extensionIndex >= 0 ? fileName[..extensionIndex] : fileName);
+        var extensionIndex = fileName.LastIndexOf('.');
+        var rawStem = extensionIndex >= 0 ? fileName[..extensionIndex] : fileName;
+        var typeSeparator = rawStem.LastIndexOf('.');
+        if (typeSeparator >= 0)
+        {
+            rawStem = rawStem[(typeSeparator + 1)..];
+        }
+
+        foreach (var suffix in new[]
+                 {
+                     "_card_art", "-card-art", " card art", "card_art", "cardart"
+                 })
+        {
+            if (rawStem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                rawStem = rawStem[..^suffix.Length];
+                break;
+            }
+        }
+
+        var stem = NormalizeCardToken(rawStem);
         return (category, stem);
     }
 

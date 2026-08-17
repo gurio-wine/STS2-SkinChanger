@@ -474,11 +474,12 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var text = Encoding.UTF8.GetString(index.Archive.ReadFile(path));
-            foreach (Match reference in EmbeddedResourcePathRegex().Matches(text))
+            foreach (Match reference in ResourcePathRegex().Matches(text))
             {
-                if (index.Archive.Contains(reference.Value) && paths.Add(reference.Value))
+                var referencedPath = reference.Groups[1].Value;
+                if (index.Archive.Contains(referencedPath) && paths.Add(referencedPath))
                 {
-                    queue.Enqueue(reference.Value);
+                    queue.Enqueue(referencedPath);
                 }
             }
         }
@@ -1223,7 +1224,8 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in cosmeticIndexes)
         {
             var allAssets = index.Assets.Values
-                .Where(asset => IsCardArtSourcePath(asset.SourcePath))
+                .Where(asset => IsCardArtSourcePath(asset.SourcePath) ||
+                                IsLooseProviderCardArtPath(index.Mod.Id, asset.SourcePath))
                 .ToArray();
             var changedAssets = baselineIndexes == null
                 ? allAssets
@@ -1378,6 +1380,21 @@ internal sealed partial class SkinCatalog : IDisposable
     private static bool IsCardArtSourcePath(string path) =>
         CardArtPathRegex().IsMatch(path);
 
+    private static bool IsLooseProviderCardArtPath(string providerId, string path)
+    {
+        var extension = System.IO.Path.GetExtension(path);
+        if (!extension.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".tres", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return IsProviderNamespacePath(path, NormalizeResourceToken(providerId));
+    }
+
     private static bool CardArtMatches(string assetPath, CardCatalogEntry card)
     {
         var asset = TryGetCardArtIdentity(assetPath);
@@ -1409,8 +1426,27 @@ internal sealed partial class SkinCatalog : IDisposable
         var match = CardArtIdentityRegex().Match(path);
         var category = match.Success ? match.Groups[1].Value.ToLowerInvariant() : string.Empty;
         var fileName = path[(path.LastIndexOf('/') + 1)..];
-        var extensionIndex = fileName.IndexOf('.');
-        var stem = NormalizeCardToken(extensionIndex >= 0 ? fileName[..extensionIndex] : fileName);
+        var extensionIndex = fileName.LastIndexOf('.');
+        var rawStem = extensionIndex >= 0 ? fileName[..extensionIndex] : fileName;
+        var typeSeparator = rawStem.LastIndexOf('.');
+        if (typeSeparator >= 0)
+        {
+            rawStem = rawStem[(typeSeparator + 1)..];
+        }
+
+        foreach (var suffix in new[]
+                 {
+                     "_card_art", "-card-art", " card art", "card_art", "cardart"
+                 })
+        {
+            if (rawStem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                rawStem = rawStem[..^suffix.Length];
+                break;
+            }
+        }
+
+        var stem = NormalizeCardToken(rawStem);
         return new CardArtIdentity(category, stem);
     }
 
@@ -2047,7 +2083,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex ResourcePathRegex();
 
     [GeneratedRegex(
-        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|tscn|tres|gdc|gd|gdshader|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
+        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|spskel|ctex|tscn|tres|gdc|gd|gdshader|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
         RegexOptions.IgnoreCase)]
     private static partial Regex EmbeddedResourcePathRegex();
 
