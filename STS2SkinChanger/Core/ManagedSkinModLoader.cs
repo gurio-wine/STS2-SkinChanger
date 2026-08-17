@@ -3,11 +3,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
-using STS2SkinChanger.Pck;
 using System.Reflection;
-using System.Runtime.Loader;
-using System.Text;
-using System.Text.RegularExpressions;
 
 namespace STS2SkinChanger.Core;
 
@@ -15,8 +11,6 @@ internal static class ManagedSkinModLoader
 {
     private static readonly MethodInfo InvokeOnModDetectedMethod =
         AccessTools.Method(typeof(ModManager), "InvokeOnModDetected");
-    private static readonly MethodInfo CallModInitializerMethod =
-        AccessTools.Method(typeof(ModManager), "CallModInitializer");
     private static readonly FieldInfo GameVersionField =
         AccessTools.Field(typeof(ModManager), "_gameVersion");
     private static readonly FieldInfo CircularDependenciesField =
@@ -25,26 +19,11 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderRoots =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> MountedProviderNamespaces =
-        new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Regex ImportedResourceRegex = new(
-        "res://\\.godot/imported/[^\\\"'\\s]+",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly string NamespaceSessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-    private static int _namespaceGeneration;
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
-    private static PckArchive? _gameArchive;
-    private static bool _gameArchiveUnavailable;
 
     public static bool IsFirstInLoadOrder { get; private set; } = true;
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
-
-    public static string? GetProviderId(string providerRoot)
-    {
-        var normalized = NormalizePath(providerRoot);
-        return ProvidersByRoot.TryGetValue(normalized, out var probe) ? probe.Id : null;
-    }
 
     public static void Initialize()
     {
@@ -56,7 +35,6 @@ internal static class ManagedSkinModLoader
         _initialized = true;
         // 在产生任何副作用前预检游戏内部反射目标，避免运行到一半因句柄缺失而进入"脏回退"。
         _reflectionTargetsReady = InvokeOnModDetectedMethod != null &&
-                                  CallModInitializerMethod != null &&
                                   GameVersionField != null &&
                                   CircularDependenciesField != null;
         if (!_reflectionTargetsReady)
@@ -103,7 +81,7 @@ internal static class ManagedSkinModLoader
 
         ModLog.Info(
             $"托管加载模式已识别 {ProvidersByRoot.Count} 个皮肤提供者；" +
-            "其 PCK 将被隔离读取，DLL 保留非皮肤功能，皮肤呈现补丁由皮肤切换器接管。");
+            "其 PCK 只会按当前选择隔离读取，DLL 不会加载或执行。");
     }
 
     public static bool TryManage(Mod mod)
@@ -128,17 +106,13 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
-            var namespaceFiles = MountProviderNamespace(mod);
-            var customFiles = MountProviderCustomResources(mod);
-            var removedPatches = LoadManagedAssembly(mod);
             mod.state = ModLoadState.Loaded;
             InvokeOnModDetectedMethod.Invoke(null, [mod]);
             ModLog.Info(
-                $"已托管皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
+                $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
-                $"独立图片={provider.RuntimeImageCount}, 已移除呈现补丁={removedPatches}；" +
-                $"安全命名空间资源={namespaceFiles}, 自定义资源={customFiles}；" +
-                $"原 PCK 未全局挂载，DLL 的非皮肤功能已保留。");
+                $"独立图片={provider.RuntimeImageCount}；" +
+                "原 PCK 未全局挂载，DLL 未加载，所有资源由皮肤切换器按选择接管。");
             return true;
         }
         catch (Exception exception)
@@ -150,239 +124,6 @@ internal static class ManagedSkinModLoader
             return false;
         }
     }
-
-    private static int LoadManagedAssembly(Mod mod)
-    {
-        var manifest = mod.manifest!;
-        if (!manifest.hasDll)
-        {
-            return 0;
-        }
-
-        var assemblyPath = Path.Combine(mod.path, manifest.id + ".dll");
-        if (!File.Exists(assemblyPath))
-        {
-            ModLog.Warn($"皮肤提供者 {manifest.id} 声明了 DLL，但未找到 {assemblyPath}。");
-            return 0;
-        }
-
-        try
-        {
-            var loadContext = AssemblyLoadContext.GetLoadContext(typeof(Entry).Assembly) ??
-                              throw new InvalidOperationException("无法取得游戏程序集加载上下文。");
-            var assembly = loadContext.LoadFromAssemblyPath(assemblyPath);
-            if (!mod.assemblies.Contains(assembly))
-            {
-                mod.assemblies.Add(assembly);
-            }
-
-            var initializerTypes = assembly.GetTypes()
-                .Where(type => type.GetCustomAttribute<ModInitializerAttribute>() != null)
-                .ToArray();
-            if (initializerTypes.Length > 0)
-            {
-                foreach (var initializerType in initializerTypes)
-                {
-                    ModLog.Info($"正在初始化托管提供者 DLL：{initializerType.FullName}");
-                    if (CallModInitializerMethod.Invoke(null, [initializerType]) is not true)
-                    {
-                        ModLog.Warn($"托管提供者初始化器返回失败：{initializerType.FullName}");
-                    }
-                }
-            }
-            else
-            {
-                var owner = (manifest.author ?? "unknown") + "." + manifest.id;
-                new Harmony(owner).PatchAll(assembly);
-            }
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn(
-                $"托管提供者 {manifest.id} 的 DLL 初始化失败；继续隔离其 PCK：" +
-                exception.GetBaseException().Message);
-        }
-
-        return VisualPatchGuard.RemoveProviderVisualPatches([mod.path]);
-    }
-
-    private static int MountProviderNamespace(Mod mod)
-    {
-        var manifest = mod.manifest!;
-        if (!manifest.hasPck || !manifest.hasDll || manifest.id == null)
-        {
-            return 0;
-        }
-
-        var normalizedRoot = NormalizePath(mod.path);
-        var pckPath = Path.Combine(mod.path, manifest.id + ".pck");
-        if (!File.Exists(pckPath) ||
-            !MountedProviderNamespaces.Add(normalizedRoot))
-        {
-            return 0;
-        }
-
-        try
-        {
-            using var archive = PckArchive.Open(pckPath);
-            var idToken = NormalizeResourceToken(manifest.id);
-            var selectedPaths = archive.Paths
-                .Where(path => IsProviderNamespacePath(path, idToken))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            // 迭代扫描资源引用的闭包（.tres→.tres 链），而不是只解析一层。
-            var queue = new Queue<string>(selectedPaths);
-            while (queue.TryDequeue(out var path))
-            {
-                if (!MayContainResourceReferences(path))
-                {
-                    continue;
-                }
-
-                var text = Encoding.UTF8.GetString(archive.ReadFile(path));
-                foreach (Match match in ImportedResourceRegex.Matches(text))
-                {
-                    if (archive.Contains(match.Value) && selectedPaths.Add(match.Value))
-                    {
-                        queue.Enqueue(match.Value);
-                    }
-                }
-            }
-
-            if (selectedPaths.Count == 0)
-            {
-                // 没有可挂载的命名空间资源时回滚登记，保持缓存状态一致。
-                MountedProviderNamespaces.Remove(normalizedRoot);
-                return 0;
-            }
-
-            var files = selectedPaths.ToDictionary(
-                path => path,
-                path => (archive, path),
-                StringComparer.OrdinalIgnoreCase);
-            var safeId = new string(manifest.id.Where(char.IsLetterOrDigit).ToArray());
-            var overlayPath = Path.Combine(
-                OS.GetUserDataDir(),
-                $"sts2_skin_provider_namespace_{safeId}_{NamespaceSessionId}_" +
-                $"{++_namespaceGeneration:D3}.pck");
-            PckArchive.WriteFromArchives(overlayPath, files);
-            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: false))
-            {
-                throw new InvalidOperationException("Godot 拒绝加载提供者安全命名空间资源包。");
-            }
-
-            return selectedPaths.Count;
-        }
-        catch (Exception exception)
-        {
-            MountedProviderNamespaces.Remove(normalizedRoot);
-            ModLog.Warn($"挂载皮肤提供者 {manifest.id} 的安全命名空间失败：{exception.Message}");
-            return 0;
-        }
-    }
-
-    private static PckArchive? GetGameArchive()
-    {
-        if (_gameArchiveUnavailable)
-        {
-            return null;
-        }
-
-        if (_gameArchive != null)
-        {
-            return _gameArchive;
-        }
-
-        try
-        {
-            var executableDirectory = Path.GetDirectoryName(OS.GetExecutablePath())!;
-            _gameArchive = PckArchive.Open(Path.Combine(executableDirectory, "SlayTheSpire2.pck"));
-        }
-        catch (Exception exception)
-        {
-            _gameArchiveUnavailable = true;
-            ModLog.Warn("无法打开游戏资源包以判定提供者自定义资源：" + exception.Message);
-        }
-
-        return _gameArchive;
-    }
-
-    private static int MountProviderCustomResources(Mod mod)
-    {
-        var manifest = mod.manifest!;
-        if (!manifest.hasPck || !manifest.hasDll || manifest.id == null)
-        {
-            return 0;
-        }
-
-        var gameArchive = GetGameArchive();
-        var pckPath = Path.Combine(mod.path, manifest.id + ".pck");
-        if (gameArchive == null || !File.Exists(pckPath))
-        {
-            return 0;
-        }
-
-        try
-        {
-            using var archive = PckArchive.Open(pckPath);
-            // 只挂载游戏里不存在的路径：DLL 提供者初始化期引用的自定义资源（自定义商人部件、
-            // 语音、res://custom/ 模板场景等）因此立即可用；而会覆盖游戏原版内容的路径仍然
-            // 保持隔离，避免皮肤在未选中时默认生效。
-            var customPaths = archive.Paths
-                .Where(SkinCatalog.IsMountableProviderResource)
-                .Where(path => !gameArchive.Contains(path))
-                .ToArray();
-            if (customPaths.Length == 0)
-            {
-                return 0;
-            }
-
-            var safeId = new string(manifest.id.Where(char.IsLetterOrDigit).ToArray());
-            var overlayPath = Path.Combine(
-                OS.GetUserDataDir(),
-                $"sts2_skin_provider_namespace_{safeId}_{NamespaceSessionId}_" +
-                $"{++_namespaceGeneration:D3}.pck");
-            var files = customPaths.ToDictionary(
-                path => path,
-                path => (archive, path),
-                StringComparer.OrdinalIgnoreCase);
-            PckArchive.WriteFromArchives(overlayPath, files);
-            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
-            {
-                throw new InvalidOperationException("Godot 拒绝加载提供者自定义资源包。");
-            }
-
-            return customPaths.Length;
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"挂载皮肤提供者 {manifest.id} 的自定义资源失败：{exception.Message}");
-            return 0;
-        }
-    }
-
-    private static bool IsProviderNamespacePath(string path, string idToken)
-    {
-        if (idToken.Length == 0 || !path.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var relative = path[6..];
-        var separator = relative.IndexOf('/');
-        var topLevel = separator < 0 ? relative : relative[..separator];
-        var topLevelToken = NormalizeResourceToken(topLevel);
-        return topLevelToken.Equals(idToken, StringComparison.OrdinalIgnoreCase) ||
-               topLevelToken.StartsWith(idToken, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool MayContainResourceReferences(string path) =>
-        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase);
-
-    private static string NormalizeResourceToken(string value) =>
-        new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
     private static void CleanupOldProviderNamespaces()
     {

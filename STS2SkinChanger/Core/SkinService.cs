@@ -65,47 +65,6 @@ internal static class SkinService
         }
     }
 
-    /// <summary>
-    /// 按当前选择同步"选中时重新挂载"的提供者补丁：语音、战斗动画等附加功能
-    /// 在其提供者被选中（任意分组/卡牌组/单卡覆盖）时生效，切走或切回原版时卸载。
-    /// </summary>
-    public static void SyncActiveProviderPatches()
-    {
-        var catalog = Catalog;
-        if (catalog == null)
-        {
-            return;
-        }
-
-        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in catalog.Groups)
-        {
-            selected.Add(Config.GetSelection(group.Id));
-        }
-
-        foreach (var group in catalog.CardGroups)
-        {
-            selected.Add(GetCardSelection(group.Id));
-        }
-
-        foreach (var pair in Config.Selections)
-        {
-            if (pair.Key.StartsWith("cards:item:", StringComparison.OrdinalIgnoreCase))
-            {
-                selected.Add(pair.Value);
-            }
-        }
-
-        var providerIds = catalog.Groups
-            .SelectMany(group => group.Options)
-            .Select(option => option.Id)
-            .Concat(catalog.CardGroups.SelectMany(group => group.Options).Select(option => option.Id))
-            .Where(selected.Contains)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        VisualPatchGuard.SetActiveProviderPatches(providerIds);
-    }
-
     public static void EnsureConfigLoaded()
     {
         lock (Sync)
@@ -129,6 +88,8 @@ internal static class SkinService
 
             try
             {
+                Catalog?.Dispose();
+                Catalog = null;
                 RuntimeResourceCache.Clear();
                 CardPortraitCache.Clear();
                 AncientStyleMethods.Clear();
@@ -153,8 +114,8 @@ internal static class SkinService
 
                 Catalog = SkinCatalog.Build(gamePckPath, mods);
                 Config = SkinConfig.Load(ConfigPath);
+                _configLoaded = true;
                 SanitizeSelections();
-                SyncActiveProviderPatches();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Config.Save(ConfigPath);
                 // 仅在完整成功后才标记已初始化，失败时允许后续调用重试而不是整个会话失效。
@@ -165,6 +126,8 @@ internal static class SkinService
             }
             catch (Exception exception)
             {
+                Catalog?.Dispose();
+                Catalog = null;
                 LastError = exception.ToString();
                 ModLog.Error("初始化失败：" + exception);
             }
@@ -203,7 +166,6 @@ internal static class SkinService
 
                 Catalog.FinalizeCardGroups(entries);
                 SanitizeCardSelections(includeIndividualCards: true);
-                SyncActiveProviderPatches();
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -231,7 +193,8 @@ internal static class SkinService
                 return false;
             }
 
-            var group = Catalog.Groups.FirstOrDefault(group => group.Id == groupId);
+            var group = Catalog.Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
             if (group == null ||
                 (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  group.Options.All(option => !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
@@ -240,18 +203,21 @@ internal static class SkinService
                 return false;
             }
 
+            var hadPrevious = Config.Selections.TryGetValue(groupId, out var previous);
             try
             {
                 Config.Selections[groupId] = optionId;
                 ClearRuntimeResourceCache(groupId);
                 MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
-                SyncActiveProviderPatches();
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
             }
             catch (Exception exception)
             {
+                RestoreSelection(groupId, previous, hadPrevious);
+                ClearRuntimeResourceCache(groupId);
+                TryRestoreOverlay(groupId, cardOverlay: false);
                 LastError = exception.Message;
                 ModLog.Error($"切换 {groupId} 失败：{exception}");
                 return false;
@@ -279,18 +245,22 @@ internal static class SkinService
                 return false;
             }
 
+            var selectionKey = CardSelectionKey(groupId);
+            var hadPrevious = Config.Selections.TryGetValue(selectionKey, out var previous);
             try
             {
-                Config.Selections[CardSelectionKey(groupId)] = optionId;
+                Config.Selections[selectionKey] = optionId;
                 ClearCardPortraitCache(groupId);
                 MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
-                SyncActiveProviderPatches();
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
             }
             catch (Exception exception)
             {
+                RestoreSelection(selectionKey, previous, hadPrevious);
+                ClearCardPortraitCache(groupId);
+                TryRestoreOverlay(groupId, cardOverlay: true);
                 LastError = exception.Message;
                 ModLog.Error($"切换 {groupId} 卡牌皮肤失败：{exception}");
                 return false;
@@ -377,9 +347,10 @@ internal static class SkinService
                 return false;
             }
 
+            var key = IndividualCardSelectionKey(card);
+            var hadPrevious = Config.Selections.TryGetValue(key, out var previous);
             try
             {
-                var key = IndividualCardSelectionKey(card);
                 if (optionId.Equals(InheritCardSelectionId, StringComparison.OrdinalIgnoreCase))
                 {
                     Config.Selections.Remove(key);
@@ -390,13 +361,14 @@ internal static class SkinService
                 }
 
                 ClearCardPortraitCache(group.Id);
-                SyncActiveProviderPatches();
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
             }
             catch (Exception exception)
             {
+                RestoreSelection(key, previous, hadPrevious);
+                ClearCardPortraitCache(group.Id);
                 LastError = exception.Message;
                 ModLog.Error($"切换单卡 {card.Id} 皮肤失败：{exception}");
                 return false;
@@ -880,19 +852,38 @@ internal static class SkinService
             }
 
             var resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
-            foreach (var pair in overlay.ResourcePaths)
+            var restoreGlobalSelections = includeProviderDependencies &&
+                                          catalog.IsResourceBackedOption(
+                                              groupId,
+                                              Config.GetSelection(groupId));
+            try
             {
-                var resource = ResourceLoader.Load<Resource>(
-                    pair.Value,
-                    null,
-                    ResourceLoader.CacheMode.IgnoreDeep);
-                if (resource == null)
+                foreach (var pair in overlay.ResourcePaths)
                 {
-                    throw new InvalidOperationException($"无法加载独立皮肤资源：{pair.Value}");
-                }
+                    var resource = ResourceLoader.Load<Resource>(
+                        pair.Value,
+                        null,
+                        ResourceLoader.CacheMode.IgnoreDeep);
+                    if (resource == null)
+                    {
+                        throw new InvalidOperationException($"无法加载独立皮肤资源：{pair.Value}");
+                    }
 
-                resources[pair.Key] = resource;
-                RuntimeResourceCache[RuntimeResourceKey(groupId, pair.Key)] = resource;
+                    resources[pair.Key] = resource;
+                    RuntimeResourceCache[RuntimeResourceKey(groupId, pair.Key)] = resource;
+                }
+            }
+            finally
+            {
+                if (restoreGlobalSelections)
+                {
+                    // 二进制场景无法改写其内部路径，加载时可能临时挂载同一提供者的
+                    // 其它分组依赖。资源对象创建后立即重新覆盖全部当前选择，避免这些
+                    // 临时依赖继续占用其它角色、怪物或远古的全局路径。
+                    MountOverlay(catalog.Groups
+                        .Select(group => group.Id)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase));
+                }
             }
 
             ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {resources.Count} 个资源：{aliasToken}");
@@ -921,6 +912,38 @@ internal static class SkinService
 
         resources = loaded;
         return true;
+    }
+
+    private static void RestoreSelection(string key, string? previous, bool hadPrevious)
+    {
+        if (hadPrevious && previous != null)
+        {
+            Config.Selections[key] = previous;
+        }
+        else
+        {
+            Config.Selections.Remove(key);
+        }
+    }
+
+    private static void TryRestoreOverlay(string groupId, bool cardOverlay)
+    {
+        try
+        {
+            var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId };
+            if (cardOverlay)
+            {
+                MountCardOverlay(groups);
+            }
+            else
+            {
+                MountOverlay(groups);
+            }
+        }
+        catch (Exception restoreException)
+        {
+            ModLog.Error($"回滚 {groupId} 的皮肤覆盖失败：{restoreException}");
+        }
     }
 
     private static void MountOverlay(IReadOnlySet<string> groups)
@@ -1007,8 +1030,7 @@ internal static class SkinService
                 (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
             {
-                // 无效或缺失的选择回退到游戏原版，而不是自动启用第一个皮肤。
-                Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
+                Config.Selections[group.Id] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             }
         }
 
@@ -1034,7 +1056,7 @@ internal static class SkinService
                 (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
             {
-                Config.Selections[key] = SkinCatalog.BaseOptionId;
+                Config.Selections[key] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             }
         }
 

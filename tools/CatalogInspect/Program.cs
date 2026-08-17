@@ -87,6 +87,14 @@ if (validateIndex >= 0)
 {
     var failures = new List<string>();
     var validated = 0;
+    var probes = SkinCatalog.ProbeSkinProviders(descriptors);
+    foreach (var probe in probes)
+    {
+        Console.WriteLine(
+            $"provider {probe.Id}: visual={probe.VisualGroupCount}, " +
+            $"cards={probe.CardAssetCount}, images={probe.RuntimeImageCount}");
+    }
+
     foreach (var group in catalog.Groups)
     {
         var groupSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id };
@@ -149,6 +157,23 @@ if (validateIndex >= 0)
                 }
             }
 
+            var ownPaths = group.Options
+                .SelectMany(candidate => candidate.Assets.Keys)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var foreignAsset in catalog.Groups
+                         .Where(otherGroup => !otherGroup.Id.Equals(group.Id, StringComparison.OrdinalIgnoreCase))
+                         .SelectMany(otherGroup => otherGroup.Options
+                             .Where(candidate => candidate.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase)))
+                         .SelectMany(candidate => candidate.Assets)
+                         .Where(asset => !ownPaths.Contains(asset.Key)))
+            {
+                if (ContainsAsset(selectedOverlay, foreignAsset.Key, foreignAsset.Value))
+                {
+                    failures.Add(
+                        $"{group.Id}/{option.Id}: global overlay leaked another group's asset {foreignAsset.Key}");
+                }
+            }
+
             if (option.RuntimeImagePath != null)
             {
                 if (!File.Exists(option.RuntimeImagePath))
@@ -208,4 +233,5 @@ if (validateIndex >= 0)
             : asset.Files.Any(file =>
                 files.ContainsKey(file.Path) ||
                 files.ContainsKey(SkinCatalog.NormalizeTakeoverPath(file.Path)));
+
 }

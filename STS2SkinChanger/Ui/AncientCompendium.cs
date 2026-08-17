@@ -152,9 +152,7 @@ internal static class AncientCompendiumEntry
         ref Texture2D result)
     {
         var group = FindGroup(ancient.Id.Entry);
-        if (group == null ||
-            SkinService.IsExternalRuntimeProviderSelected(group.Id) ||
-            ContextualSkinControls.ShouldSkipTakeover(group.Id))
+        if (group == null)
         {
             return;
         }

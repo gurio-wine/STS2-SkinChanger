@@ -404,7 +404,10 @@ internal static class CardSkinControls
                 }
 
                 state.Item.Visible = state.Visible;
-                state.Item.Material = state.Material;
+                if (state.Material == null || GodotObject.IsInstanceValid(state.Material))
+                {
+                    state.Item.Material = state.Material;
+                }
                 state.Item.Modulate = state.Modulate;
                 state.Item.SelfModulate = state.SelfModulate;
                 state.Item.ZIndex = state.ZIndex;
@@ -423,7 +426,10 @@ internal static class CardSkinControls
                 }
                 if (state.Item is TextureRect textureRect)
                 {
-                    textureRect.Texture = state.Texture;
+                    if (state.Texture == null || GodotObject.IsInstanceValid(state.Texture))
+                    {
+                        textureRect.Texture = state.Texture;
+                    }
                     if (state.ExpandMode is { } expandMode)
                     {
                         textureRect.ExpandMode = expandMode;
@@ -700,20 +706,6 @@ internal static class CardPortraitResultPatch
 }
 
 [HarmonyPatch]
-internal static class CardLayoutBaselinePatch
-{
-    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
-    {
-        yield return AccessTools.Method(typeof(NCard), "Reload");
-        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
-    }
-
-    [HarmonyPriority(Priority.First)]
-    private static void Postfix(NCard __instance) =>
-        CardSkinControls.CaptureBaselineLayout(__instance);
-}
-
-[HarmonyPatch]
 internal static class CardLayoutResetPatch
 {
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
@@ -742,7 +734,8 @@ internal static class CardLayoutFinalPatch
         System.Reflection.MethodBase __originalMethod,
         object[] __args)
     {
-        CardSkinControls.RestoreBaselineLayout(__instance);
+        // 原方法刚刚创建的资源才是本轮有效基线；先重新捕获，再应用所选呈现。
+        CardSkinControls.CaptureBaselineLayout(__instance);
         CardSkinControls.ReplaySelectedPresentation(__instance, __originalMethod, __args);
         CardSkinControls.ApplySelectedPortraitToNode(__instance);
     }

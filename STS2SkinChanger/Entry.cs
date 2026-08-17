@@ -13,17 +13,26 @@ public static class Entry
     public static void Initialize()
     {
         ManagedSkinModLoader.Initialize();
+        var harmony = new Harmony(ModId);
         try
         {
-            var harmony = new Harmony(ModId);
             harmony.PatchAll();
             ModLog.Info("代码补丁已加载。等待游戏资源初始化。");
         }
         catch (Exception exception)
         {
-            // 游戏更新导致补丁目标缺失时降级运行：皮肤切换继续可用，托管加载与界面注入失效。
+            // PatchAll 不是事务操作；失败时撤掉已安装的同 ID 补丁，避免半初始化状态。
+            try
+            {
+                harmony.UnpatchAll(ModId);
+            }
+            catch (Exception rollbackException)
+            {
+                ModLog.Error("回滚已安装补丁失败：" + rollbackException.GetBaseException().Message);
+            }
+
             ModLog.Error(
-                "安装代码补丁失败，本 Mod 将以受限模式运行：" +
+                "安装代码补丁失败，本 Mod 已停用本次会话的代码接管：" +
                 exception.GetBaseException().Message);
         }
     }

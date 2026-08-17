@@ -185,6 +185,13 @@ internal sealed partial class SkinCatalog : IDisposable
                             KnownAncientIds.Contains(
                                 System.IO.Path.GetFileNameWithoutExtension(path)));
                 }
+
+                if (visualGroups == 0 && cardAssets == 0 && LooksLikeDllSkinProvider(mod))
+                {
+                    // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
+                    // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。
+                    visualGroups = 1;
+                }
             }
 
             if (visualGroups > 0 || cardAssets > 0 || runtimeImages > 0)
@@ -199,6 +206,64 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return providers;
+    }
+
+    private static bool LooksLikeDllSkinProvider(SkinModDescriptor mod)
+    {
+        if (mod.RootPath == null)
+        {
+            return false;
+        }
+
+        var assemblyPath = System.IO.Path.Combine(mod.RootPath, mod.Id + ".dll");
+        try
+        {
+            var info = new FileInfo(assemblyPath);
+            if (!info.Exists || info.Length <= 0 || info.Length > 32 * 1024 * 1024)
+            {
+                return false;
+            }
+
+            var metadata = Encoding.Latin1.GetString(File.ReadAllBytes(assemblyPath));
+            var usesPatchMechanism = metadata.Contains("HarmonyLib", StringComparison.Ordinal) ||
+                                     metadata.Contains("HarmonyPatch", StringComparison.Ordinal) ||
+                                     metadata.Contains("PatchAll", StringComparison.Ordinal);
+            if (!usesPatchMechanism)
+            {
+                return false;
+            }
+
+            var hasSkinResourcePath = new[]
+            {
+                "scenes/creature_visuals",
+                "screens/char_select",
+                "packed/character_select",
+                "events/background_scenes",
+                "card_portraits",
+                "card_atlas.sprites",
+                "map_marker_",
+                "ui/run_history"
+            }.Any(path => metadata.Contains(path, StringComparison.OrdinalIgnoreCase));
+            if (!hasSkinResourcePath)
+            {
+                return false;
+            }
+
+            return HasTarget("CharacterModel", "CreateVisuals", "CharacterSelectIcon", "IconTexture") ||
+                   HasTarget("MonsterModel", "CreateVisuals") ||
+                   HasTarget("EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
+                   HasTarget("CardModel", "Portrait", "PortraitPath") ||
+                   HasTarget("AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
+                   HasTarget("AtlasManager", "GetSprite", "LoadAtlas");
+
+            bool HasTarget(string typeName, params string[] methodNames) =>
+                metadata.Contains(typeName, StringComparison.Ordinal) &&
+                methodNames.Any(methodName => metadata.Contains(methodName, StringComparison.Ordinal));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public bool IsRuntimeProviderOption(string groupId, string optionId)
@@ -271,18 +336,6 @@ internal sealed partial class SkinCatalog : IDisposable
             selections.TryGetValue(group.Id, out var selectedId);
             var selected = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
-            if (selected?.IsRuntimeProvider == true)
-            {
-                foreach (var index in _cosmeticIndexes.Where(index =>
-                             index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase)))
-                {
-                    foreach (var path in index.Archive.Paths.Where(IsMountableProviderResource))
-                    {
-                        files[path] = new ResourceFile(index.Archive, path);
-                    }
-                }
-            }
-
             var sourcePaths = group.Options
                 .SelectMany(option => option.Assets.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -309,36 +362,6 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
             }
 
-            // 选中提供者时挂载其全部非卡图资源：部分覆盖资源（如 vfx 贴图、额外贴图）
-            // 不匹配任何分组正则，但属于皮肤的一部分，应随选择一起生效。
-            if (selected != null)
-            {
-                foreach (var providerAsset in _cosmeticIndexes
-                             .Where(index => index.Mod.Id.Equals(
-                                 selected.Id, StringComparison.OrdinalIgnoreCase))
-                             .SelectMany(index => index.Assets)
-                             .Where(pair => !IsCardArtSourcePath(pair.Key)))
-                {
-                    if (sourcePaths.Contains(providerAsset.Key))
-                    {
-                        continue;
-                    }
-
-                    foreach (var file in providerAsset.Value.Files)
-                    {
-                        var targetPath = MapAssetFilePath(
-                            providerAsset.Key,
-                            providerAsset.Value.SourcePath,
-                            file.Path);
-                        files[targetPath] = file;
-                        var takeoverPath = NormalizeTakeoverPath(targetPath);
-                        if (!takeoverPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
-                        {
-                            files[takeoverPath] = file;
-                        }
-                    }
-                }
-            }
         }
 
         return files;
@@ -1358,19 +1381,6 @@ internal sealed partial class SkinCatalog : IDisposable
 
         return filePath;
     }
-
-    internal static bool IsMountableProviderResource(string path) =>
-        path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".res", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".gdshader", StringComparison.OrdinalIgnoreCase);
 
     private void SortGroupsAndOptions()
     {

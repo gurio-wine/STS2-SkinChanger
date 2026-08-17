@@ -59,8 +59,6 @@ internal static class LoadOrderWarningController
             }
 
             container.Add(popup);
-            // 弹窗真正挂上之后才标记已显示，避免创建失败被误记为已提示。
-            _shownThisSession = true;
             var confirmation = popup.WaitForConfirmation(
                 new LocString("main_menu_ui", "MOD_NOT_LOADED_POPUP.description"),
                 new LocString("main_menu_ui", "MOD_NOT_LOADED_POPUP.title"),
@@ -70,6 +68,8 @@ internal static class LoadOrderWarningController
             if (verticalPopup == null)
             {
                 ModLog.Error("加载顺序提示框缺少 VerticalPopup 节点，无法显示。");
+                popup.QueueFree();
+                _pending = true;
                 return;
             }
 
@@ -79,6 +79,7 @@ internal static class LoadOrderWarningController
                 "因此无法被完整接管。请在 Mod 管理界面把“STS2 皮肤切换器”移到第一位，然后重启游戏。");
             verticalPopup.YesButton.SetText("知道了");
             verticalPopup.NoButton.SetText("不再提示");
+            _shownThisSession = true;
             ModLog.Info("已显示加载顺序提示框。");
 
             var acknowledged = await confirmation;
@@ -97,7 +98,10 @@ internal static class LoadOrderWarningController
         catch (Exception exception)
         {
             ModLog.Error("显示加载顺序提示框失败：" + exception.GetBaseException().Message);
-            _pending = true; // 允许之后重试
+            if (!_shownThisSession)
+            {
+                _pending = true;
+            }
         }
     }
 }
