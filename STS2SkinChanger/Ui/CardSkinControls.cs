@@ -710,6 +710,7 @@ internal static class CardLayoutResetPatch
 {
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
     {
+        yield return AccessTools.Method(typeof(NCard), nameof(NCard._Ready));
         yield return AccessTools.Method(typeof(NCard), "Reload");
         yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
     }
@@ -724,6 +725,7 @@ internal static class CardLayoutFinalPatch
 {
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
     {
+        yield return AccessTools.Method(typeof(NCard), nameof(NCard._Ready));
         yield return AccessTools.Method(typeof(NCard), "Reload");
         yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
     }

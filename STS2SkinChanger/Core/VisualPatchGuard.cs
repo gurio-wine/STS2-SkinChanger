@@ -26,6 +26,150 @@ internal static class VisualPatchGuard
         "Creature", "Merchant", "Card", "Animation", "Audio", "Sound"
     ];
 
+    public static int DiscoverCardPresentationPatches(string providerRoot, Assembly assembly)
+    {
+        var registered = 0;
+        foreach (var type in GetLoadableTypes(assembly))
+        {
+            var postfixes = type.GetMethods(
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(method => method.Name == "Postfix" ||
+                                 method.GetCustomAttribute<HarmonyPostfix>() != null)
+                .Where(method => method.GetParameters().Any(parameter =>
+                {
+                    var parameterType = parameter.ParameterType.IsByRef
+                        ? parameter.ParameterType.GetElementType()!
+                        : parameter.ParameterType;
+                    return typeof(NCard).IsAssignableFrom(parameterType);
+                }))
+                .ToArray();
+            if (postfixes.Length == 0)
+            {
+                continue;
+            }
+
+            MethodBase[] dynamicTargets;
+            try
+            {
+                dynamicTargets = ResolveDynamicTargets(type);
+            }
+            catch
+            {
+                dynamicTargets = [];
+            }
+
+            var classAnnotations = type.GetCustomAttributes<HarmonyPatch>(inherit: true)
+                .Select(annotation => annotation.info)
+                .ToArray();
+            foreach (var postfix in postfixes)
+            {
+                MethodBase[] targets;
+                try
+                {
+                    var annotations = classAnnotations
+                        .Concat(postfix.GetCustomAttributes<HarmonyPatch>(inherit: true)
+                            .Select(annotation => annotation.info))
+                        .ToArray();
+                    targets = dynamicTargets.Length > 0
+                        ? dynamicTargets
+                        : ResolveAnnotatedTargets(annotations);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var target in targets.Where(target =>
+                             target.DeclaringType != null &&
+                             typeof(NCard).IsAssignableFrom(target.DeclaringType)))
+                {
+                    if (RememberCardPatch(providerRoot, target, postfix))
+                    {
+                        registered++;
+                    }
+                }
+            }
+        }
+
+        if (registered > 0)
+        {
+            ModLog.Info($"已登记 {registered} 个隔离卡牌呈现补丁：{assembly.GetName().Name}");
+        }
+
+        return registered;
+    }
+
+    private static MethodBase[] ResolveDynamicTargets(Type patchType)
+    {
+        var targetMethods = patchType.GetMethod(
+            "TargetMethods",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: Type.EmptyTypes,
+            modifiers: null);
+        if (targetMethods?.Invoke(null, null) is IEnumerable<MethodBase> many)
+        {
+            return many.Where(method => method != null).ToArray();
+        }
+
+        var targetMethod = patchType.GetMethod(
+            "TargetMethod",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: Type.EmptyTypes,
+            modifiers: null);
+        return targetMethod?.Invoke(null, null) is MethodBase one ? [one] : [];
+    }
+
+    private static MethodBase[] ResolveAnnotatedTargets(IReadOnlyCollection<HarmonyMethod> annotations)
+    {
+        if (annotations.Count == 0)
+        {
+            return [];
+        }
+
+        var target = HarmonyMethod.Merge(annotations.ToList());
+        if (target.method != null)
+        {
+            return [target.method];
+        }
+
+        if (target.declaringType == null)
+        {
+            return [];
+        }
+
+        MethodBase? resolved = target.methodType switch
+        {
+            MethodType.Getter => AccessTools.PropertyGetter(target.declaringType, target.methodName),
+            MethodType.Setter => AccessTools.PropertySetter(target.declaringType, target.methodName),
+            MethodType.Constructor => AccessTools.Constructor(target.declaringType, target.argumentTypes),
+            MethodType.StaticConstructor => target.declaringType.TypeInitializer,
+            _ when target.methodName != null =>
+                AccessTools.Method(target.declaringType, target.methodName, target.argumentTypes),
+            _ => null
+        };
+        return resolved == null ? [] : [resolved];
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            return exception.Types.Where(type => type != null).Cast<Type>();
+        }
+    }
+
+    /*
+     * Only the helper methods above execute during provider discovery. Provider initializers and
+     * Harmony patch installation remain disabled; registered postfixes run later for the selected
+     * card through ReplaySelectedCardPostfixes.
+     */
+
     public static int RemoveProviderVisualPatches(IEnumerable<string> providerRoots)
     {
         var roots = providerRoots

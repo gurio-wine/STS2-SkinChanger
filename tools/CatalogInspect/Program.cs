@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text;
+using System.Text.RegularExpressions;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
 
@@ -64,7 +66,11 @@ foreach (var group in catalog.CardGroups)
 
 foreach (var option in catalog.PckCardOptions)
 {
-    Console.WriteLine($"card-provider:{option.Id}\t{option.Name}\t{option.Assets.Count} assets");
+    var namespaceFiles = catalog.BuildCardProviderNamespaceOverlay(
+        [option.ProviderId ?? option.Id]);
+    Console.WriteLine(
+        $"card-provider:{option.Id}\t{option.Name}\t{option.Assets.Count} assets, " +
+        $"{namespaceFiles.Count} namespace files");
 }
 
 if (runtimeIndex >= 0)
@@ -214,6 +220,27 @@ if (validateIndex >= 0)
                     resourcePaths,
                     $"validate/{validated:D4}",
                     includeProviderDependencies: true);
+                var provider = descriptors.FirstOrDefault(descriptor =>
+                    descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
+                if (provider?.PckPath != null && File.Exists(provider.PckPath))
+                {
+                    using var providerArchive = PckArchive.Open(provider.PckPath);
+                    foreach (var file in overlay.Files.Where(pair => MayContainReferences(pair.Key)))
+                    {
+                        var textResource = Encoding.UTF8.GetString(file.Value);
+                        foreach (Match reference in ResourceReferenceRegex().Matches(textResource))
+                        {
+                            var referencedPath = reference.Value;
+                            if (providerArchive.Contains(referencedPath) &&
+                                !ContainsRuntimeResource(overlay, referencedPath))
+                            {
+                                failures.Add(
+                                    $"{group.Id}/{option.Id}: runtime overlay is missing referenced provider resource {referencedPath}");
+                            }
+                        }
+                    }
+                }
+
                 validated++;
                 Console.WriteLine($"validated {group.Id}/{option.Id}: {overlay.Files.Count} files");
             }
@@ -282,4 +309,34 @@ if (validateIndex >= 0)
             : lower[(categoryEnd + 1)..fileSeparator].Trim('/');
     }
 
+    static bool ContainsRuntimeResource(RuntimeResourceOverlay overlay, string path) =>
+        overlay.Files.ContainsKey(path) ||
+        overlay.Files.ContainsKey(path + ".import") ||
+        overlay.Files.ContainsKey(path + ".remap") ||
+        (overlay.SourceAliases.TryGetValue(path, out var sourceAlias) &&
+         (overlay.Files.ContainsKey(sourceAlias) ||
+          overlay.Files.ContainsKey(sourceAlias + ".import") ||
+          overlay.Files.ContainsKey(sourceAlias + ".remap"))) ||
+        (overlay.PayloadAliases.TryGetValue(path, out var payloadAlias) &&
+         overlay.Files.ContainsKey(payloadAlias));
+
+    static bool MayContainReferences(string path) =>
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".res", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
+
+}
+
+partial class Program
+{
+    [GeneratedRegex(
+        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|tscn|tres|gdc|gd|gdshader|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex ResourceReferenceRegex();
 }

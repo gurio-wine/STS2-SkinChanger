@@ -361,6 +361,7 @@ internal static class SkinService
                 }
 
                 ClearCardPortraitCache(group.Id);
+                MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id });
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
@@ -369,6 +370,7 @@ internal static class SkinService
             {
                 RestoreSelection(key, previous, hadPrevious);
                 ClearCardPortraitCache(group.Id);
+                TryRestoreOverlay(group.Id, cardOverlay: true);
                 LastError = exception.Message;
                 ModLog.Error($"切换单卡 {card.Id} 皮肤失败：{exception}");
                 return false;
@@ -704,7 +706,7 @@ internal static class SkinService
         {
             method = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(assembly => assembly.GetName().Name?.Equals(
-                    option.Id, StringComparison.OrdinalIgnoreCase) == true)
+                    option.ProviderId ?? option.Id, StringComparison.OrdinalIgnoreCase) == true)
                 .Select(assembly => assembly.GetType("CardPortraitsCore.ConfigHelper", throwOnError: false))
                 .Where(type => type != null)
                 .Select(type => type!.GetMethod(

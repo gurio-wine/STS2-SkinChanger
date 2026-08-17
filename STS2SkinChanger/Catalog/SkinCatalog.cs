@@ -373,6 +373,7 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlySet<string>? onlyGroups = null)
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        var selectedProviderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in CardGroups)
         {
             if (onlyGroups != null && !onlyGroups.Contains(group.Id))
@@ -383,6 +384,11 @@ internal sealed partial class SkinCatalog : IDisposable
             selections.TryGetValue("cards:" + group.Id, out var selectedId);
             var selected = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+            if (selected != null)
+            {
+                selectedProviderIds.Add(selected.ProviderId ?? selected.Id);
+            }
+
             var sourcePaths = group.Options
                 .SelectMany(option => option.Assets.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -411,8 +417,92 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        foreach (var selection in selections
+                     .Where(pair => pair.Key.StartsWith("cards:item:", StringComparison.OrdinalIgnoreCase))
+                     .Select(pair => pair.Value)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var option = CardGroups.SelectMany(group => group.Options)
+                .FirstOrDefault(candidate => candidate.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            if (option != null)
+            {
+                selectedProviderIds.Add(option.ProviderId ?? option.Id);
+            }
+        }
+
+        foreach (var file in BuildCardProviderNamespaceOverlay(selectedProviderIds))
+        {
+            files[file.Key] = file.Value;
+        }
+
         return files;
     }
+
+    public Dictionary<string, ResourceFile> BuildCardProviderNamespaceOverlay(
+        IEnumerable<string> providerIds)
+    {
+        var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in providerIds.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (var index in _cosmeticIndexes.Where(index =>
+                         index.Mod.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+            {
+                foreach (var file in CollectProviderNamespaceFiles(index, providerId))
+                {
+                    files[file.Path] = file;
+                }
+            }
+        }
+
+        return files;
+    }
+
+    private static IReadOnlyCollection<ResourceFile> CollectProviderNamespaceFiles(
+        PckResourceIndex index,
+        string providerId)
+    {
+        var idToken = NormalizeResourceToken(providerId);
+        var paths = index.Archive.Paths
+            .Where(path => IsProviderNamespacePath(path, idToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<string>(paths);
+        while (queue.TryDequeue(out var path))
+        {
+            if (!MayContainResourceReferences(path))
+            {
+                continue;
+            }
+
+            var text = Encoding.UTF8.GetString(index.Archive.ReadFile(path));
+            foreach (Match reference in EmbeddedResourcePathRegex().Matches(text))
+            {
+                if (index.Archive.Contains(reference.Value) && paths.Add(reference.Value))
+                {
+                    queue.Enqueue(reference.Value);
+                }
+            }
+        }
+
+        return paths.Select(path => new ResourceFile(index.Archive, path)).ToArray();
+    }
+
+    private static bool IsProviderNamespacePath(string path, string idToken)
+    {
+        if (idToken.Length == 0 || !path.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var relative = path[6..];
+        var separator = relative.IndexOf('/');
+        var topLevel = separator < 0 ? relative : relative[..separator];
+        var topLevelToken = NormalizeResourceToken(topLevel);
+        return topLevelToken.Equals(idToken, StringComparison.OrdinalIgnoreCase) ||
+               topLevelToken.StartsWith(idToken, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeResourceToken(string value) =>
+        new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
     public void FinalizeCardGroups(IEnumerable<CardCatalogEntry> cards)
     {
@@ -652,7 +742,7 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var result = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-        var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
+        var queue = new Queue<(PckResourceIndex? Index, ResourceFile File)>();
         var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in resources
                      .SelectMany(resource => new[] { resource.DirectFile, resource.RemapFile }
@@ -661,10 +751,9 @@ internal sealed partial class SkinCatalog : IDisposable
                          .Concat(resource.PayloadFiles)))
         {
             var index = indexes.FirstOrDefault(candidate => ReferenceEquals(candidate.Archive, file.Archive));
-            if (index != null)
-            {
-                Enqueue(index, file);
-            }
+            // 基线场景本身也必须参与扫描：它可能引用提供者中没有角色 ID 的
+            // 辅助贴图或脚本，而这些资源无法靠文件名归入皮肤分组。
+            Enqueue(index, file);
         }
 
         while (queue.TryDequeue(out var pending))
@@ -680,9 +769,23 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
                 var sourcePath = match.Value;
-                var dependency = pending.Index.Assets.GetValueOrDefault(sourcePath) ??
-                                 pending.Index.TryBuildAsset(sourcePath);
-                if (dependency == null)
+                PckResourceIndex? dependencyIndex = null;
+                ResourceAsset? dependency = null;
+                var candidates = pending.Index == null
+                    ? indexes
+                    : [pending.Index, .. indexes.Where(index => !ReferenceEquals(index, pending.Index))];
+                foreach (var candidate in candidates)
+                {
+                    dependency = candidate.Assets.GetValueOrDefault(sourcePath) ??
+                                 candidate.TryBuildAsset(sourcePath);
+                    if (dependency != null)
+                    {
+                        dependencyIndex = candidate;
+                        break;
+                    }
+                }
+
+                if (dependency == null || dependencyIndex == null)
                 {
                     continue;
                 }
@@ -706,16 +809,16 @@ internal sealed partial class SkinCatalog : IDisposable
                         result[takeoverPath] = dependencyBytes;
                     }
 
-                    Enqueue(pending.Index, file);
+                    Enqueue(dependencyIndex, file);
                 }
             }
         }
 
         return result;
 
-        void Enqueue(PckResourceIndex index, ResourceFile file)
+        void Enqueue(PckResourceIndex? index, ResourceFile file)
         {
-            var key = index.Mod.Id + "\n" + file.Path;
+            var key = (index?.Mod.Id ?? file.Archive.Path) + "\n" + file.Path;
             if (queued.Add(key))
             {
                 queue.Enqueue((index, file));
@@ -1081,7 +1184,8 @@ internal sealed partial class SkinCatalog : IDisposable
                             index.Mod.Name,
                             normal,
                             ancient,
-                            ProviderRootPath: index.Mod.RootPath);
+                            ProviderRootPath: index.Mod.RootPath,
+                            ProviderId: index.Mod.Id);
                         if (existingIndex >= 0)
                         {
                             group.Options[existingIndex] = group.Options[existingIndex].Merge(option);
@@ -1174,7 +1278,8 @@ internal sealed partial class SkinCatalog : IDisposable
                         asset => asset.SourcePath,
                         asset => asset,
                         StringComparer.OrdinalIgnoreCase),
-                    index.Mod.RootPath));
+                    index.Mod.RootPath,
+                    index.Mod.Id));
             }
         }
 
@@ -2005,7 +2110,8 @@ internal sealed record CardSkinOption(
     IReadOnlyDictionary<string, string> NormalPortraits,
     IReadOnlyDictionary<string, AncientCardPortrait> AncientPortraits,
     IReadOnlyDictionary<string, ResourceAsset>? PckAssets = null,
-    string? ProviderRootPath = null)
+    string? ProviderRootPath = null,
+    string? ProviderId = null)
 {
     public IReadOnlyDictionary<string, ResourceAsset> Assets { get; init; } =
         PckAssets ?? new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
@@ -2035,7 +2141,8 @@ internal sealed record CardSkinOption(
             NormalPortraits = normal,
             AncientPortraits = ancient,
             Assets = assets,
-            ProviderRootPath = ProviderRootPath ?? other.ProviderRootPath
+            ProviderRootPath = ProviderRootPath ?? other.ProviderRootPath,
+            ProviderId = ProviderId ?? other.ProviderId
         };
     }
 

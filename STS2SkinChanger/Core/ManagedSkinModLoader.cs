@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
+using System.Runtime.Loader;
 
 namespace STS2SkinChanger.Core;
 
@@ -81,7 +82,7 @@ internal static class ManagedSkinModLoader
 
         ModLog.Info(
             $"托管加载模式已识别 {ProvidersByRoot.Count} 个皮肤提供者；" +
-            "其 PCK 只会按当前选择隔离读取，DLL 不会加载或执行。");
+            "其 PCK 只会按当前选择隔离读取，DLL 初始化器和全局补丁不会执行。");
     }
 
     public static bool TryManage(Mod mod)
@@ -106,13 +107,14 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
+            var cardPresentationPatches = DiscoverCardPresentationPatches(mod, provider);
             mod.state = ModLoadState.Loaded;
             InvokeOnModDetectedMethod.Invoke(null, [mod]);
             ModLog.Info(
                 $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
-                $"独立图片={provider.RuntimeImageCount}；" +
-                "原 PCK 未全局挂载，DLL 未加载，所有资源由皮肤切换器按选择接管。");
+                $"独立图片={provider.RuntimeImageCount}, 卡牌呈现规则={cardPresentationPatches}；" +
+                "原 PCK 未全局挂载，DLL 初始化器未执行，所有资源与卡牌呈现均由皮肤切换器按选择接管。");
             return true;
         }
         catch (Exception exception)
@@ -122,6 +124,36 @@ internal static class ManagedSkinModLoader
                 $"托管 {mod.manifest?.name ?? mod.manifest?.id} 失败，将交回游戏原加载器：" +
                 exception.GetBaseException().Message);
             return false;
+        }
+    }
+
+    private static int DiscoverCardPresentationPatches(Mod mod, SkinProviderProbe provider)
+    {
+        var manifest = mod.manifest!;
+        if (provider.CardAssetCount == 0 || !manifest.hasDll || manifest.id == null)
+        {
+            return 0;
+        }
+
+        var assemblyPath = Path.Combine(mod.path, manifest.id + ".dll");
+        if (!File.Exists(assemblyPath))
+        {
+            return 0;
+        }
+
+        try
+        {
+            var loadContext = AssemblyLoadContext.GetLoadContext(typeof(Entry).Assembly) ??
+                              throw new InvalidOperationException("无法取得游戏程序集加载上下文。");
+            var assembly = loadContext.LoadFromAssemblyPath(assemblyPath);
+            return VisualPatchGuard.DiscoverCardPresentationPatches(mod.path, assembly);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                $"读取 {manifest.id} 的卡牌呈现补丁失败，将仅使用卡图资源：" +
+                exception.GetBaseException().Message);
+            return 0;
         }
     }
 
