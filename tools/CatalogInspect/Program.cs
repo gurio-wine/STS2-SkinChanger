@@ -62,6 +62,11 @@ foreach (var group in catalog.CardGroups)
     }
 }
 
+foreach (var option in catalog.PckCardOptions)
+{
+    Console.WriteLine($"card-provider:{option.Id}\t{option.Name}\t{option.Assets.Count} assets");
+}
+
 if (runtimeIndex >= 0)
 {
     if (args.Length < runtimeIndex + 5)
@@ -93,6 +98,19 @@ if (validateIndex >= 0)
         Console.WriteLine(
             $"provider {probe.Id}: visual={probe.VisualGroupCount}, " +
             $"cards={probe.CardAssetCount}, images={probe.RuntimeImageCount}");
+    }
+
+    foreach (var option in catalog.PckCardOptions)
+    {
+        var variants = option.Assets.Keys
+            .Select(GetCardVariantKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (variants.Length > 1)
+        {
+            failures.Add(
+                $"cards/{option.Id}: one option still mixes variants {string.Join(", ", variants)}");
+        }
     }
 
     foreach (var group in catalog.Groups)
@@ -233,5 +251,35 @@ if (validateIndex >= 0)
             : asset.Files.Any(file =>
                 files.ContainsKey(file.Path) ||
                 files.ContainsKey(SkinCatalog.NormalizeTakeoverPath(file.Path)));
+
+    static string GetCardVariantKey(string path)
+    {
+        var lower = path.ToLowerInvariant();
+        var markerEnd = -1;
+        foreach (var marker in new[]
+                 {
+                     "/card_portraits/", "/card_atlas.sprites/", "/cards/",
+                     "/card/", "/card_art/", "/cardart/"
+                 })
+        {
+            var markerIndex = lower.IndexOf(marker, StringComparison.Ordinal);
+            if (markerIndex >= 0)
+            {
+                markerEnd = markerIndex + marker.Length;
+                break;
+            }
+        }
+
+        if (markerEnd < 0)
+        {
+            return string.Empty;
+        }
+
+        var categoryEnd = lower.IndexOf('/', markerEnd);
+        var fileSeparator = lower.LastIndexOf('/');
+        return categoryEnd < 0 || fileSeparator <= categoryEnd
+            ? string.Empty
+            : lower[(categoryEnd + 1)..fileSeparator].Trim('/');
+    }
 
 }

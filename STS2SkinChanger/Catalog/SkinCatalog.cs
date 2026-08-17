@@ -40,6 +40,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public IReadOnlyList<SkinGroup> Groups => _groups;
     public IReadOnlyList<CardSkinGroup> CardGroups => _cardGroups;
+    public IReadOnlyList<CardSkinOption> PckCardOptions => _pckCardOptions;
     public IReadOnlySet<string> CardProviderRoots => _cardGroups
         .SelectMany(group => group.Options)
         .Select(option => option.ProviderRootPath)
@@ -100,7 +101,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             var groups = BuildGroups(cosmeticIndexes);
             var cardGroups = BuildCardGroups(cosmeticIndexes);
-            var pckCardOptions = BuildPckCardOptions(cosmeticIndexes);
+            var pckCardOptions = BuildPckCardOptions(cosmeticIndexes, baselineIndexes);
             var catalog = new SkinCatalog(
                 gameArchive,
                 baselineIndexes,
@@ -1111,20 +1112,151 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     private static IReadOnlyList<CardSkinOption> BuildPckCardOptions(
-        IEnumerable<PckResourceIndex> cosmeticIndexes)
+        IEnumerable<PckResourceIndex> cosmeticIndexes,
+        IReadOnlyList<PckResourceIndex>? baselineIndexes = null)
     {
-        return cosmeticIndexes
-            .Select(index => new CardSkinOption(
-                index.Mod.Id,
-                index.Mod.Name,
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
-                index.Assets.Values
-                    .Where(asset => IsCardArtSourcePath(asset.SourcePath))
-                    .ToDictionary(asset => asset.SourcePath, asset => asset, StringComparer.OrdinalIgnoreCase),
-                index.Mod.RootPath))
-            .Where(option => option.Assets.Count > 0)
-            .ToArray();
+        var options = new List<CardSkinOption>();
+        foreach (var index in cosmeticIndexes)
+        {
+            var allAssets = index.Assets.Values
+                .Where(asset => IsCardArtSourcePath(asset.SourcePath))
+                .ToArray();
+            var changedAssets = baselineIndexes == null
+                ? allAssets
+                : allAssets.Where(asset => AssetDiffersFromBaseline(asset, baselineIndexes)).ToArray();
+            if (changedAssets.Length == 0)
+            {
+                continue;
+            }
+
+            var originalVariantKeys = allAssets
+                .Select(asset => GetCardVariantKey(asset.SourcePath))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var variants = changedAssets
+                .GroupBy(asset => GetCardVariantKey(asset.SourcePath), StringComparer.OrdinalIgnoreCase)
+                .Select(group => new CardArtVariant(
+                    group.Key,
+                    group.ToArray(),
+                    group.Select(asset => TryGetCardArtIdentity(asset.SourcePath)?.Stem)
+                        .Where(stem => !string.IsNullOrEmpty(stem))
+                        .Cast<string>()
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase)))
+                .OrderBy(group => group.Key.Length == 0 ? 0 : 1)
+                .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
+            var splitVariants = variants.Length > 1 && VariantsOverlap(variants);
+            var optionVariants = splitVariants
+                ? variants
+                :
+                [
+                    new CardArtVariant(
+                        variants.Length == 1 ? variants[0].Key : string.Empty,
+                        changedAssets,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+                ];
+            var exposeVariants = splitVariants ||
+                                 (optionVariants[0].Key.Length > 0 && originalVariantKeys.Length > 1);
+            foreach (var variant in optionVariants)
+            {
+                var variantId = optionVariants.Length == 1 || variant.Key.Length == 0
+                    ? index.Mod.Id
+                    : index.Mod.Id + "::variant:" + variant.Key.ToLowerInvariant();
+                var variantName = exposeVariants
+                    ? index.Mod.Name + " · " + DisplayCardVariant(variant.Key)
+                    : index.Mod.Name;
+                options.Add(new CardSkinOption(
+                    variantId,
+                    variantName,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
+                    variant.Assets.ToDictionary(
+                        asset => asset.SourcePath,
+                        asset => asset,
+                        StringComparer.OrdinalIgnoreCase),
+                    index.Mod.RootPath));
+            }
+        }
+
+        return options;
+    }
+
+    private static bool VariantsOverlap(IReadOnlyList<CardArtVariant> variants)
+    {
+        for (var left = 0; left < variants.Count; left++)
+        {
+            for (var right = left + 1; right < variants.Count; right++)
+            {
+                if (variants[left].Stems.Overlaps(variants[right].Stems))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool AssetDiffersFromBaseline(
+        ResourceAsset asset,
+        IReadOnlyList<PckResourceIndex> baselineIndexes)
+    {
+        ResourceAsset? baseline = null;
+        for (var index = baselineIndexes.Count - 1; index >= 0 && baseline == null; index--)
+        {
+            baseline = baselineIndexes[index].Assets.GetValueOrDefault(asset.SourcePath) ??
+                       baselineIndexes[index].TryBuildAsset(asset.SourcePath);
+        }
+
+        if (baseline == null)
+        {
+            return true;
+        }
+
+        foreach (var file in asset.Files)
+        {
+            var path = NormalizeTakeoverPath(file.Path);
+            var baselineFile = baseline.Files.FirstOrDefault(candidate =>
+                NormalizeTakeoverPath(candidate.Path).Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (baselineFile == null ||
+                file.Archive.GetFileSize(file.Path) != baselineFile.Archive.GetFileSize(baselineFile.Path) ||
+                !file.Archive.GetFileMd5(file.Path)
+                    .SequenceEqual(baselineFile.Archive.GetFileMd5(baselineFile.Path)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string GetCardVariantKey(string path)
+    {
+        var match = CardArtIdentityRegex().Match(path);
+        if (!match.Success)
+        {
+            return string.Empty;
+        }
+
+        var fileSeparator = path.LastIndexOf('/');
+        var variantStart = match.Index + match.Length;
+        return fileSeparator <= variantStart
+            ? string.Empty
+            : path[variantStart..fileSeparator].Trim('/');
+    }
+
+    private static string DisplayCardVariant(string variant)
+    {
+        if (variant.Length == 0)
+        {
+            return "默认";
+        }
+
+        return variant
+            .Replace('/', ' ')
+            .Replace('_', ' ')
+            .Replace('-', ' ')
+            .CapitalizeWords();
     }
 
     private static string? TryGetCardPortraitGroup(string? path)
@@ -1823,6 +1955,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private sealed record GroupIdentity(string Id, string DisplayName);
     private sealed record RuntimeProviderAsset(GroupIdentity Identity, string CanonicalPath);
     private sealed record CardArtIdentity(string Category, string Stem);
+    private sealed record CardArtVariant(string Key, ResourceAsset[] Assets, HashSet<string> Stems);
     private sealed record RuntimeResource(
         string SourcePath,
         ResourceFile? DirectFile,

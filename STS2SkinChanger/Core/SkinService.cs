@@ -395,6 +395,11 @@ internal static class SkinService
             }
 
             var selection = GetEffectiveCardSelection(card);
+            if (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
             var option = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
             var cardType = card.GetType().Name;
@@ -407,29 +412,32 @@ internal static class SkinService
                 return;
             }
 
-            var originalPath = card.PortraitPath;
-            var managed = group.Options
-                    .SelectMany(candidate => candidate.Assets.Keys)
-                    .Any(assetPath => CardArtMatches(assetPath, card));
-            if (!managed)
+            if (option == null)
             {
                 return;
             }
 
-            var selectedProviderPath = option?.Assets.Keys
+            var originalPath = card.PortraitPath;
+            var selectedProviderPath = option.Assets.Keys
                 .Where(assetPath => CardArtMatches(assetPath, card))
                 .OrderByDescending(assetPath => HasSameResourceExtension(assetPath, originalPath))
+                .ThenBy(assetPath => assetPath, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
-            var selectedPath = selectedProviderPath ?? originalPath;
-            var cacheKey = $"{groupId}\n{selection}\npck\n{selectedPath}";
+            if (selectedProviderPath == null)
+            {
+                // 该变体没有覆盖此卡时保留玩法 Mod 已返回的卡图，包括它自己的设置。
+                return;
+            }
+
+            var cacheKey = $"{groupId}\n{selection}\npck\n{selectedProviderPath}";
             if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
                 !GodotObject.IsInstanceValid(portrait))
             {
                 portrait = LoadIsolatedCardPortrait(
                     groupId,
                     selection,
-                    selectedPath,
-                    selectedProviderPath != null);
+                    selectedProviderPath,
+                    useSelectedProvider: true);
                 if (portrait == null)
                 {
                     return;
