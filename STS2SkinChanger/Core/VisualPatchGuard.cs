@@ -34,6 +34,7 @@ internal static class VisualPatchGuard
             var postfixes = type.GetMethods(
                     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
                 .Where(method => method.Name == "Postfix" ||
+                                 method.Name.EndsWith("Postfix", StringComparison.Ordinal) ||
                                  method.GetCustomAttribute<HarmonyPostfix>() != null)
                 .Where(method => method.GetParameters().Any(parameter =>
                 {
@@ -41,7 +42,7 @@ internal static class VisualPatchGuard
                         ? parameter.ParameterType.GetElementType()!
                         : parameter.ParameterType;
                     return typeof(NCard).IsAssignableFrom(parameterType);
-                }))
+                }) || method.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             if (postfixes.Length == 0)
             {
@@ -73,6 +74,11 @@ internal static class VisualPatchGuard
                     targets = dynamicTargets.Length > 0
                         ? dynamicTargets
                         : ResolveAnnotatedTargets(annotations);
+                    if (targets.Length == 0 &&
+                        postfix.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
+                    {
+                        targets = [AccessTools.Method(typeof(NCard), "Reload")];
+                    }
                 }
                 catch
                 {
@@ -345,7 +351,10 @@ internal static class VisualPatchGuard
             var parameterType = parameter.ParameterType.IsByRef
                 ? parameter.ParameterType.GetElementType()!
                 : parameter.ParameterType;
-            if (name == "__instance" || typeof(NCard).IsAssignableFrom(parameterType))
+            if (name == "__instance" ||
+                typeof(NCard).IsAssignableFrom(parameterType) ||
+                parameterType == typeof(object) &&
+                patchMethod.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
             {
                 invokeArguments[index] = card;
                 continue;

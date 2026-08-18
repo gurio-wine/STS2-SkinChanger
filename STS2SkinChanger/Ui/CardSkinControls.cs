@@ -135,6 +135,22 @@ internal static class CardSkinControls
 
     public static void RestoreBaselineLayout(NCard card)
     {
+        if (PresentationLayouts.TryGetValue(card, out var presentation))
+        {
+            foreach (var addedNode in presentation.AddedNodes)
+            {
+                if (!GodotObject.IsInstanceValid(addedNode))
+                {
+                    continue;
+                }
+
+                addedNode.GetParent()?.RemoveChild(addedNode);
+                addedNode.QueueFree();
+            }
+
+            PresentationLayouts.Remove(card);
+        }
+
         if (BaselineLayouts.TryGetValue(card, out var state))
         {
             state.Restore();
@@ -165,18 +181,19 @@ internal static class CardSkinControls
 
         if (replayed > 0)
         {
+            if (!BaselineLayouts.TryGetValue(card, out var baseline))
+            {
+                baseline = CardLayoutState.Capture(card);
+            }
+
             PresentationLayouts.Remove(card);
             PresentationLayouts.Add(
                 card,
-                new CardPresentationState(providerRoot, CardLayoutState.Capture(card)));
+                new CardPresentationState(baseline.FindAddedNodes(card)));
             return;
         }
 
-        if (PresentationLayouts.TryGetValue(card, out var presentation) &&
-            presentation.ProviderRoot.Equals(providerRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            presentation.Layout.Restore();
-        }
+        PresentationLayouts.Remove(card);
     }
 
     public static void ApplySelectedPortraitToNode(NCard card)
@@ -350,7 +367,9 @@ internal static class CardSkinControls
         }
     }
 
-    private sealed class CardLayoutState(IReadOnlyList<CanvasItemState> items)
+    private sealed class CardLayoutState(
+        IReadOnlyList<CanvasItemState> items,
+        IReadOnlySet<ulong> baselineNodeIds)
     {
         private static readonly string[] NodePaths =
         [
@@ -391,8 +410,19 @@ internal static class CardSkinControls
                     (item as TextureRect)?.FlipH,
                     (item as TextureRect)?.FlipV))
                 .ToArray();
-            return new CardLayoutState(states);
+            var nodeIds = Descendants(card)
+                .Select(node => node.GetInstanceId())
+                .ToHashSet();
+            return new CardLayoutState(states, nodeIds);
         }
+
+        public IReadOnlyList<Node> FindAddedNodes(NCard card) =>
+            Descendants(card)
+                .Where(node => !baselineNodeIds.Contains(node.GetInstanceId()))
+                .Where(node => node.GetParent() == card ||
+                               (node.GetParent() is { } parent &&
+                                baselineNodeIds.Contains(parent.GetInstanceId())))
+                .ToArray();
 
         public void Restore()
         {
@@ -469,7 +499,8 @@ internal static class CardSkinControls
         bool? FlipH,
         bool? FlipV);
 
-    private sealed record CardPresentationState(string ProviderRoot, CardLayoutState Layout);
+    private sealed record CardPresentationState(
+        IReadOnlyList<Node> AddedNodes);
 }
 
 internal static class CardInspectSkinControls

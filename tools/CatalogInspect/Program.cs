@@ -304,9 +304,12 @@ if (validateIndex >= 0)
 
         var categoryEnd = lower.IndexOf('/', markerEnd);
         var fileSeparator = lower.LastIndexOf('/');
-        return categoryEnd < 0 || fileSeparator <= categoryEnd
+        var variant = categoryEnd < 0 || fileSeparator <= categoryEnd
             ? string.Empty
             : lower[(categoryEnd + 1)..fileSeparator].Trim('/');
+        return variant.Equals("beta", StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : variant;
     }
 
     static bool ContainsRuntimeResource(RuntimeResourceOverlay overlay, string path) =>

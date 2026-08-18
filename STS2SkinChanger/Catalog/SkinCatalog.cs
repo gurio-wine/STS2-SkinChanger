@@ -1382,9 +1382,12 @@ internal sealed partial class SkinCatalog : IDisposable
 
         var fileSeparator = path.LastIndexOf('/');
         var variantStart = match.Index + match.Length;
-        return fileSeparator <= variantStart
+        var variant = fileSeparator <= variantStart
             ? string.Empty
             : path[variantStart..fileSeparator].Trim('/');
+        return variant.Equals("beta", StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : variant;
     }
 
     private static string DisplayCardVariant(string variant)
@@ -1502,7 +1505,13 @@ internal sealed partial class SkinCatalog : IDisposable
         candidate.Equals(expected + "ancient", StringComparison.OrdinalIgnoreCase) ||
         candidate.Equals(expected + "normal", StringComparison.OrdinalIgnoreCase) ||
         candidate.Equals(expected + "portrait", StringComparison.OrdinalIgnoreCase) ||
-        candidate.Equals(expected + "art", StringComparison.OrdinalIgnoreCase);
+        candidate.Equals(expected + "art", StringComparison.OrdinalIgnoreCase) ||
+        IsNumberedCardVariant(candidate, expected);
+
+    private static bool IsNumberedCardVariant(string candidate, string expected) =>
+        candidate.StartsWith(expected, StringComparison.OrdinalIgnoreCase) &&
+        candidate.Length > expected.Length &&
+        candidate[expected.Length..].All(char.IsDigit);
 
     private static string NormalizeCardToken(string value) =>
         new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());

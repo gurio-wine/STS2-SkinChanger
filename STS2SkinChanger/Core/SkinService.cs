@@ -1,4 +1,5 @@
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
@@ -397,8 +398,18 @@ internal static class SkinService
             }
 
             var selection = GetEffectiveCardSelection(card);
+            var originalPath = card.PortraitPath;
             if (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
             {
+                var hasManagedSkin = group.Options.Any(option =>
+                    option.Assets.Keys.Any(assetPath => CardArtMatches(assetPath, card)) ||
+                    option.NormalPortraits.ContainsKey(card.GetType().Name) ||
+                    option.AncientPortraits.ContainsKey(card.GetType().Name));
+                if (hasManagedSkin)
+                {
+                    ReplaceBaselineCardPortrait(groupId, originalPath, ref result);
+                }
+
                 return;
             }
 
@@ -419,10 +430,9 @@ internal static class SkinService
                 return;
             }
 
-            var originalPath = card.PortraitPath;
             var selectedProviderPath = option.Assets.Keys
                 .Where(assetPath => CardArtMatches(assetPath, card))
-                .OrderByDescending(assetPath => HasSameResourceExtension(assetPath, originalPath))
+                .OrderByDescending(assetPath => CardArtSelectionScore(assetPath, card, originalPath))
                 .ThenBy(assetPath => assetPath, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
             if (selectedProviderPath == null)
@@ -450,6 +460,94 @@ internal static class SkinService
 
             result = portrait;
         }
+    }
+
+    private static void ReplaceBaselineCardPortrait(
+        string groupId,
+        string resourcePath,
+        ref Texture2D result)
+    {
+        var cacheKey = $"{groupId}\n{SkinCatalog.BaseOptionId}\npck\n{resourcePath}";
+        if (!CardPortraitCache.TryGetValue(cacheKey, out var portrait) ||
+            !GodotObject.IsInstanceValid(portrait))
+        {
+            portrait = LoadIsolatedCardPortrait(
+                groupId,
+                SkinCatalog.BaseOptionId,
+                resourcePath,
+                useSelectedProvider: false);
+            if (portrait == null)
+            {
+                return;
+            }
+
+            CardPortraitCache[cacheKey] = portrait;
+        }
+
+        result = portrait;
+    }
+
+    private static int CardArtSelectionScore(
+        string assetPath,
+        CardModel card,
+        string originalPath)
+    {
+        var score = HasSameResourceExtension(assetPath, originalPath) ? 20 : 0;
+        var assetUsesBeta = assetPath.Contains("/beta/", StringComparison.OrdinalIgnoreCase);
+        var originalUsesBeta = originalPath.Contains("/beta/", StringComparison.OrdinalIgnoreCase);
+        if (assetUsesBeta == originalUsesBeta)
+        {
+            score += 100;
+        }
+
+        var asset = CardPortraitIdentity(assetPath);
+        var original = CardPortraitIdentity(originalPath);
+        var typeStem = NormalizeCardToken(card.GetType().Name);
+        var expectedStem = original?.Stem ?? typeStem;
+        if (asset?.Stem.Equals(expectedStem, StringComparison.OrdinalIgnoreCase) == true ||
+            asset?.Stem.Equals(typeStem, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            score += 30;
+        }
+
+        var level = GetCardPresentationLevel(card);
+        foreach (var expected in new[] { expectedStem, typeStem }.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (asset == null ||
+                !asset.Value.Stem.StartsWith(expected, StringComparison.OrdinalIgnoreCase) ||
+                !int.TryParse(asset.Value.Stem[expected.Length..], out var variantNumber))
+            {
+                continue;
+            }
+
+            score += variantNumber == level + 1
+                ? 40
+                : Math.Max(0, 10 - Math.Abs(variantNumber - level - 1));
+            break;
+        }
+
+        return score;
+    }
+
+    private static int GetCardPresentationLevel(CardModel card)
+    {
+        foreach (var propertyName in new[] { "FakeUpgradeLevel", "CurrentUpgradeLevel" })
+        {
+            try
+            {
+                var property = AccessTools.Property(card.GetType(), propertyName);
+                if (property?.GetValue(card) is int level)
+                {
+                    return Math.Max(0, level);
+                }
+            }
+            catch
+            {
+                // Provider-specific levels are optional; fall back to the base presentation.
+            }
+        }
+
+        return 0;
     }
 
     public static bool CardBelongsToGroup(CardModel card, string groupId) =>
@@ -701,7 +799,13 @@ internal static class SkinService
         candidate.Equals(expected + "ancient", StringComparison.OrdinalIgnoreCase) ||
         candidate.Equals(expected + "normal", StringComparison.OrdinalIgnoreCase) ||
         candidate.Equals(expected + "portrait", StringComparison.OrdinalIgnoreCase) ||
-        candidate.Equals(expected + "art", StringComparison.OrdinalIgnoreCase);
+        candidate.Equals(expected + "art", StringComparison.OrdinalIgnoreCase) ||
+        IsNumberedCardVariant(candidate, expected);
+
+    private static bool IsNumberedCardVariant(string candidate, string expected) =>
+        candidate.StartsWith(expected, StringComparison.OrdinalIgnoreCase) &&
+        candidate.Length > expected.Length &&
+        candidate[expected.Length..].All(char.IsDigit);
 
     private static string NormalizeCardToken(string value) =>
         new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());

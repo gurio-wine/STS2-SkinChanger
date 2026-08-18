@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Text.Json;
 
 namespace STS2SkinChanger.Core;
 
@@ -135,7 +136,7 @@ internal static class ManagedSkinModLoader
             return 0;
         }
 
-        var assemblyPath = Path.Combine(mod.path, manifest.id + ".dll");
+        var assemblyPath = ResolvePresentationAssemblyPath(mod.path, manifest.id);
         if (!File.Exists(assemblyPath))
         {
             return 0;
@@ -155,6 +156,62 @@ internal static class ManagedSkinModLoader
                 exception.GetBaseException().Message);
             return 0;
         }
+    }
+
+    private static string ResolvePresentationAssemblyPath(string modPath, string modId)
+    {
+        var fallback = Path.Combine(modPath, modId + ".dll");
+        foreach (var manifestPath in Directory.EnumerateFiles(
+                     modPath,
+                     "*-variants.manifest",
+                     SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                var manifest = JsonSerializer.Deserialize<AssemblyVariantManifest>(
+                    File.ReadAllText(manifestPath),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (manifest?.Variants.Count is not > 0)
+                {
+                    continue;
+                }
+
+                var gameVersion = GameVersionField.GetValue(null) as SemanticVersion;
+                AssemblyVariantEntry? selected = null;
+                SemanticVersion? selectedVersion = null;
+                foreach (var variant in manifest.Variants)
+                {
+                    if (!SemanticVersion.TryFromString(variant.CompatTarget, out var compatibility) ||
+                        compatibility == null ||
+                        gameVersion != null && compatibility.CompareTo(gameVersion) > 0)
+                    {
+                        continue;
+                    }
+
+                    if (selectedVersion == null || compatibility.CompareTo(selectedVersion) > 0)
+                    {
+                        selected = variant;
+                        selectedVersion = compatibility;
+                    }
+                }
+
+                selected ??= manifest.Variants[0];
+                var candidate = Path.Combine(modPath, selected.Directory, selected.Assembly);
+                if (File.Exists(candidate))
+                {
+                    ModLog.Info(
+                        $"卡牌呈现使用兼容程序集 {Path.GetRelativePath(modPath, candidate)} " +
+                        $"(target={selected.CompatTarget})。");
+                    return candidate;
+                }
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn($"读取程序集变体清单 {manifestPath} 失败：{exception.Message}");
+            }
+        }
+
+        return fallback;
     }
 
     private static void CleanupOldProviderNamespaces()
@@ -293,6 +350,18 @@ internal static class ManagedSkinModLoader
     private static string NormalizePath(string path) =>
         Path.GetFullPath(path)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private sealed class AssemblyVariantManifest
+    {
+        public List<AssemblyVariantEntry> Variants { get; set; } = [];
+    }
+
+    private sealed class AssemblyVariantEntry
+    {
+        public string CompatTarget { get; set; } = string.Empty;
+        public string Directory { get; set; } = string.Empty;
+        public string Assembly { get; set; } = string.Empty;
+    }
 }
 
 [HarmonyPatch]
