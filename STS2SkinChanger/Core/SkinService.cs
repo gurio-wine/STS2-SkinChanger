@@ -23,6 +23,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedAncientStyleMethods =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> PreparedCardPresentationProviders =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> SharedCardPoolIds = new(StringComparer.OrdinalIgnoreCase)
     {
         "event",
@@ -96,6 +98,7 @@ internal static class SkinService
                 AncientStyleMethods.Clear();
                 MissingAncientStyleMethods.Clear();
                 FailedAncientStyleMethods.Clear();
+                PreparedCardPresentationProviders.Clear();
                 CleanupOldOverlays();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
@@ -324,6 +327,69 @@ internal static class SkinService
                        option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
                        CardOptionAffectsCard(option, card))
                    ?.ProviderRootPath;
+        }
+    }
+
+    public static bool PrepareCardPresentationProvider(string? providerRoot)
+    {
+        if (string.IsNullOrWhiteSpace(providerRoot))
+        {
+            return true;
+        }
+
+        lock (Sync)
+        {
+            var normalizedRoot = System.IO.Path.GetFullPath(providerRoot)
+                .TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+            if (PreparedCardPresentationProviders.Contains(normalizedRoot))
+            {
+                return true;
+            }
+
+            var catalog = Catalog;
+            if (catalog == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var resourcePaths = VisualPatchGuard.GetCardPresentationResourcePaths(normalizedRoot);
+                if (resourcePaths.Count > 0)
+                {
+                    var aliasToken = $"presentation/{++_overlayGeneration:D3}";
+                    var files = catalog.BuildCardPresentationSupportOverlay(
+                        normalizedRoot,
+                        resourcePaths,
+                        aliasToken);
+                    if (files.Count > 0)
+                    {
+                        var overlayPath = System.IO.Path.Combine(
+                            OS.GetUserDataDir(),
+                            $"sts2_skin_overlay_{_sessionId}_{_overlayGeneration:D3}_presentation.pck");
+                        PckArchive.Write(overlayPath, files);
+                        if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+                        {
+                            throw new InvalidOperationException("Godot 拒绝加载卡牌呈现依赖资源包。");
+                        }
+                    }
+                }
+
+                if (!VisualPatchGuard.InitializeCardPresentationProvider(normalizedRoot))
+                {
+                    return false;
+                }
+
+                PreparedCardPresentationProviders.Add(normalizedRoot);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"准备隔离卡牌呈现资源失败 {System.IO.Path.GetFileName(normalizedRoot)}：" +
+                    exception.GetBaseException().Message);
+                return false;
+            }
         }
     }
 

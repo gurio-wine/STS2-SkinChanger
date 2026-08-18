@@ -1,20 +1,27 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace STS2SkinChanger.Core;
 
-internal static class VisualPatchGuard
+internal static partial class VisualPatchGuard
 {
     private static readonly Harmony Harmony = new(Entry.ModId);
     private static readonly object CardPatchSync = new();
     private static readonly List<RemovedCardPatch> RemovedCardPatches = [];
+    private static readonly List<ScopedCardModelPatch> ScopedCardModelPatches = [];
+    private static readonly Dictionary<string, CardPresentationProvider> CardPresentationProviders =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
+    [ThreadStatic]
+    private static Stack<NCard>? _cardPresentationScopes;
     private static readonly string[] VisualNameTokens =
     [
         "Visual", "Scene", "Portrait", "Icon", "Texture", "Sprite", "Atlas",
@@ -29,6 +36,7 @@ internal static class VisualPatchGuard
     public static int DiscoverCardPresentationPatches(string providerRoot, Assembly assembly)
     {
         var registered = 0;
+        var registeredMethods = new HashSet<MethodInfo>();
         foreach (var type in GetLoadableTypes(assembly))
         {
             var postfixes = type.GetMethods(
@@ -36,13 +44,6 @@ internal static class VisualPatchGuard
                 .Where(method => method.Name == "Postfix" ||
                                  method.Name.EndsWith("Postfix", StringComparison.Ordinal) ||
                                  method.GetCustomAttribute<HarmonyPostfix>() != null)
-                .Where(method => method.GetParameters().Any(parameter =>
-                {
-                    var parameterType = parameter.ParameterType.IsByRef
-                        ? parameter.ParameterType.GetElementType()!
-                        : parameter.ParameterType;
-                    return typeof(NCard).IsAssignableFrom(parameterType);
-                }) || method.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             if (postfixes.Length == 0)
             {
@@ -85,13 +86,25 @@ internal static class VisualPatchGuard
                     continue;
                 }
 
-                foreach (var target in targets.Where(target =>
-                             target.DeclaringType != null &&
-                             typeof(NCard).IsAssignableFrom(target.DeclaringType)))
+                foreach (var target in targets.Where(target => target.DeclaringType != null))
                 {
-                    if (RememberCardPatch(providerRoot, target, postfix))
+                    if (typeof(NCard).IsAssignableFrom(target.DeclaringType))
+                    {
+                        if (IsOwnedPortraitPatch(postfix))
+                        {
+                            continue;
+                        }
+                        if (RememberCardPatch(providerRoot, target, postfix))
+                        {
+                            registered++;
+                            registeredMethods.Add(postfix);
+                        }
+                    }
+                    else if (IsScopedCardRarityPatch(target) &&
+                             RememberScopedCardModelPatch(providerRoot, target, postfix))
                     {
                         registered++;
+                        registeredMethods.Add(postfix);
                     }
                 }
             }
@@ -99,10 +112,261 @@ internal static class VisualPatchGuard
 
         if (registered > 0)
         {
+            RememberCardPresentationProvider(providerRoot, assembly, registeredMethods);
             ModLog.Info($"已登记 {registered} 个隔离卡牌呈现补丁：{assembly.GetName().Name}");
         }
 
         return registered;
+    }
+
+    public static IReadOnlyCollection<string> GetCardPresentationResourcePaths(string providerRoot)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return [];
+        }
+
+        lock (CardPatchSync)
+        {
+            return CardPresentationProviders.TryGetValue(root, out var provider)
+                ? provider.ResourcePaths.ToArray()
+                : [];
+        }
+    }
+
+    public static bool InitializeCardPresentationProvider(string providerRoot)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return false;
+        }
+
+        CardPresentationProvider provider;
+        lock (CardPatchSync)
+        {
+            if (!CardPresentationProviders.TryGetValue(root, out provider!))
+            {
+                return true;
+            }
+            if (provider.Initialized)
+            {
+                return true;
+            }
+        }
+
+        foreach (var initializer in provider.RegistryInitializers)
+        {
+            try
+            {
+                initializer.Invoke(null, null);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"无法初始化隔离卡牌呈现注册表 {initializer.DeclaringType?.FullName}." +
+                    $"{initializer.Name}：{exception.GetBaseException().Message}");
+                return false;
+            }
+        }
+
+        lock (CardPatchSync)
+        {
+            provider.Initialized = true;
+        }
+        if (provider.RegistryInitializers.Length > 0)
+        {
+            ModLog.Info(
+                $"已初始化 {provider.RegistryInitializers.Length} 个隔离卡牌呈现注册表：" +
+                provider.AssemblyName);
+        }
+        return true;
+    }
+
+    private static bool IsOwnedPortraitPatch(MethodInfo patchMethod)
+    {
+        var name = $"{patchMethod.DeclaringType?.Name}.{patchMethod.Name}";
+        if (new[]
+            {
+                "Frame", "Border", "Material", "Layout", "TextPatch", "TextReplacement",
+                "Title", "Description", "Banner", "Style"
+            }
+            .Any(token => name.Contains(token, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return new[] { "Portrait", "CardArt", "Artwork", "TextureFilter" }
+            .Any(token => name.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsScopedCardRarityPatch(MethodBase target) =>
+        target.DeclaringType != null &&
+        typeof(CardModel).IsAssignableFrom(target.DeclaringType) &&
+        target.Name == "get_Rarity";
+
+    private static void RememberCardPresentationProvider(
+        string providerRoot,
+        Assembly assembly,
+        IReadOnlyCollection<MethodInfo> patchMethods)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return;
+        }
+
+        var reachableMethods = DiscoverReachableProviderMethods(assembly, patchMethods);
+        var initializers = reachableMethods
+            .OfType<MethodInfo>()
+            .Where(method => method.Name == "EnsureLoaded" &&
+                             method.ReturnType == typeof(void) &&
+                             method.GetParameters().Length == 0)
+            .Distinct()
+            .ToArray();
+        var resourcePaths = DiscoverMethodResourcePaths(reachableMethods)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        lock (CardPatchSync)
+        {
+            CardPresentationProviders[root] = new CardPresentationProvider(
+                assembly.GetName().Name ?? assembly.FullName ?? "unknown",
+                initializers,
+                resourcePaths);
+        }
+        if (initializers.Length > 0 || resourcePaths.Length > 0)
+        {
+            ModLog.Info(
+                $"已发现卡牌呈现依赖：{assembly.GetName().Name}，" +
+                $"注册表={initializers.Length}，资源入口={resourcePaths.Length}");
+        }
+    }
+
+    private static IReadOnlyCollection<MethodBase> DiscoverReachableProviderMethods(
+        Assembly assembly,
+        IEnumerable<MethodInfo> roots)
+    {
+        var visited = new HashSet<MethodBase>();
+        var queue = new Queue<MethodBase>(roots);
+        while (queue.TryDequeue(out var method))
+        {
+            if (!visited.Add(method))
+            {
+                continue;
+            }
+
+            if (method.DeclaringType?.TypeInitializer is { } typeInitializer &&
+                typeInitializer.Module.Assembly == assembly &&
+                !visited.Contains(typeInitializer))
+            {
+                queue.Enqueue(typeInitializer);
+            }
+
+            foreach (var calledMethod in DiscoverCalledMethods(method))
+            {
+                if (calledMethod.Module.Assembly == assembly && !visited.Contains(calledMethod))
+                {
+                    queue.Enqueue(calledMethod);
+                }
+            }
+        }
+
+        return visited;
+    }
+
+    private static IEnumerable<MethodBase> DiscoverCalledMethods(MethodBase method)
+    {
+        byte[]? il;
+        try
+        {
+            il = method.GetMethodBody()?.GetILAsByteArray();
+        }
+        catch
+        {
+            yield break;
+        }
+        if (il == null)
+        {
+            yield break;
+        }
+
+        var typeArguments = method.DeclaringType?.IsGenericType == true
+            ? method.DeclaringType.GetGenericArguments()
+            : null;
+        var methodArguments = method is MethodInfo { IsGenericMethod: true } methodInfo
+            ? methodInfo.GetGenericArguments()
+            : null;
+        for (var offset = 0; offset + 4 < il.Length; offset++)
+        {
+            if (il[offset] is not (0x28 or 0x6F or 0x73))
+            {
+                continue;
+            }
+
+            MethodBase? calledMethod;
+            try
+            {
+                calledMethod = method.Module.ResolveMethod(
+                    BitConverter.ToInt32(il, offset + 1),
+                    typeArguments,
+                    methodArguments);
+            }
+            catch
+            {
+                continue;
+            }
+            if (calledMethod != null)
+            {
+                yield return calledMethod;
+            }
+        }
+    }
+
+    private static IEnumerable<string> DiscoverMethodResourcePaths(IEnumerable<MethodBase> methods)
+    {
+        foreach (var method in methods)
+        {
+            byte[]? il;
+            try
+            {
+                il = method.GetMethodBody()?.GetILAsByteArray();
+            }
+            catch
+            {
+                continue;
+            }
+            if (il == null)
+            {
+                continue;
+            }
+
+            for (var offset = 0; offset + 4 < il.Length; offset++)
+            {
+                // ldstr <metadata-token>. ResolveString validates the token, so accidental 0x72
+                // bytes inside another operand are harmless.
+                if (il[offset] != 0x72)
+                {
+                    continue;
+                }
+
+                string value;
+                try
+                {
+                    value = method.Module.ResolveString(BitConverter.ToInt32(il, offset + 1));
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (Match match in ResourceLiteralRegex().Matches(value))
+                {
+                    yield return match.Value;
+                }
+            }
+        }
     }
 
     private static MethodBase[] ResolveDynamicTargets(Type patchType)
@@ -297,6 +561,125 @@ internal static class VisualPatchGuard
         return applied;
     }
 
+    public static void ReplaySelectedCardRarityPostfixes(
+        CardModel card,
+        MethodBase originalMethod,
+        ref CardRarity result)
+    {
+        if (_cardPresentationScopes == null ||
+            !_cardPresentationScopes.TryPeek(out var activeCard) ||
+            !ReferenceEquals(activeCard.Model, card))
+        {
+            return;
+        }
+
+        var providerRoot = SkinService.GetCardPresentationProviderRoot(card);
+        if (providerRoot == null || !SkinService.PrepareCardPresentationProvider(providerRoot))
+        {
+            return;
+        }
+
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return;
+        }
+
+        ScopedCardModelPatch[] patches;
+        lock (CardPatchSync)
+        {
+            patches = ScopedCardModelPatches
+                .Where(patch => patch.ProviderRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                                SameMethod(patch.Target, originalMethod))
+                .ToArray();
+        }
+
+        foreach (var patch in patches)
+        {
+            try
+            {
+                var parameters = patch.PatchMethod.GetParameters();
+                var arguments = new object?[parameters.Length];
+                var resultIndex = -1;
+                var supported = true;
+                for (var index = 0; index < parameters.Length; index++)
+                {
+                    var parameter = parameters[index];
+                    var parameterType = parameter.ParameterType.IsByRef
+                        ? parameter.ParameterType.GetElementType()!
+                        : parameter.ParameterType;
+                    if (parameter.Name == "__instance" || typeof(CardModel).IsAssignableFrom(parameterType))
+                    {
+                        arguments[index] = card;
+                    }
+                    else if (parameter.Name == "__result" && parameterType == typeof(CardRarity))
+                    {
+                        arguments[index] = result;
+                        resultIndex = index;
+                    }
+                    else if (parameter.Name == "__originalMethod")
+                    {
+                        arguments[index] = originalMethod;
+                    }
+                    else
+                    {
+                        supported = false;
+                        break;
+                    }
+                }
+
+                if (!supported)
+                {
+                    continue;
+                }
+
+                patch.PatchMethod.Invoke(null, arguments);
+                if (resultIndex >= 0 && arguments[resultIndex] is CardRarity updatedResult)
+                {
+                    result = updatedResult;
+                }
+            }
+            catch (Exception exception)
+            {
+                WarnReplayOnce(
+                    new RemovedCardPatch(patch.ProviderRoot, patch.Target, patch.PatchMethod),
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    public static void EnterCardPresentationScope(NCard card)
+    {
+        _cardPresentationScopes ??= new Stack<NCard>();
+        _cardPresentationScopes.Push(card);
+    }
+
+    public static void ExitCardPresentationScope(NCard card)
+    {
+        if (_cardPresentationScopes == null || _cardPresentationScopes.Count == 0)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_cardPresentationScopes.Peek(), card))
+        {
+            _cardPresentationScopes.Pop();
+            return;
+        }
+
+        // 异常或第三方补丁打乱嵌套顺序时，只移除对应实例，避免后续非 UI 的
+        // CardModel.Rarity 读取被误判为仍处在卡牌渲染阶段。
+        var remaining = _cardPresentationScopes
+            .Where(candidate => !ReferenceEquals(candidate, card))
+            .Reverse()
+            .ToArray();
+        _cardPresentationScopes.Clear();
+        foreach (var candidate in remaining)
+        {
+            _cardPresentationScopes.Push(candidate);
+        }
+    }
+
     private static IEnumerable<(HarmonyLib.Patch Patch, ProviderPatchKind Kind)> EnumeratePatches(
         HarmonyLib.Patches patches)
     {
@@ -331,6 +714,32 @@ internal static class VisualPatchGuard
             }
 
             RemovedCardPatches.Add(new RemovedCardPatch(providerRoot, target, patchMethod));
+            return true;
+        }
+    }
+
+    private static bool RememberScopedCardModelPatch(
+        string providerRoot,
+        MethodBase target,
+        MethodInfo patchMethod)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return false;
+        }
+
+        lock (CardPatchSync)
+        {
+            if (ScopedCardModelPatches.Any(patch =>
+                    patch.ProviderRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                    SameMethod(patch.Target, target) &&
+                    patch.PatchMethod == patchMethod))
+            {
+                return false;
+            }
+
+            ScopedCardModelPatches.Add(new ScopedCardModelPatch(root, target, patchMethod));
             return true;
         }
     }
@@ -569,4 +978,23 @@ internal static class VisualPatchGuard
         string ProviderRoot,
         MethodBase Target,
         MethodInfo PatchMethod);
+
+    private sealed record ScopedCardModelPatch(
+        string ProviderRoot,
+        MethodBase Target,
+        MethodInfo PatchMethod);
+
+    private sealed class CardPresentationProvider(
+        string assemblyName,
+        MethodInfo[] registryInitializers,
+        string[] resourcePaths)
+    {
+        public string AssemblyName { get; } = assemblyName;
+        public MethodInfo[] RegistryInitializers { get; } = registryInitializers;
+        public string[] ResourcePaths { get; } = resourcePaths;
+        public bool Initialized { get; set; }
+    }
+
+    [GeneratedRegex("res://[^\\s\\\"'<>|]*", RegexOptions.IgnoreCase)]
+    private static partial Regex ResourceLiteralRegex();
 }
