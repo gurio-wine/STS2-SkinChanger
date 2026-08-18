@@ -1223,9 +1223,18 @@ internal sealed partial class SkinCatalog : IDisposable
         var options = new List<CardSkinOption>();
         foreach (var index in cosmeticIndexes)
         {
-            var allAssets = index.Assets.Values
-                .Where(asset => IsCardArtSourcePath(asset.SourcePath) ||
-                                IsLooseProviderCardArtPath(index.Mod.Id, asset.SourcePath))
+            var standardAssets = index.Assets.Values
+                .Where(asset => IsCardArtSourcePath(asset.SourcePath))
+                .ToArray();
+            var looseCandidates = index.Assets.Values
+                .Where(asset => IsLooseProviderCardArtPath(index.Mod.Id, asset.SourcePath))
+                .ToArray();
+            var looseAssets = IsBulkLooseCardPack(index.Mod.Id, looseCandidates)
+                ? looseCandidates
+                : [];
+            var allAssets = standardAssets
+                .Concat(looseAssets)
+                .DistinctBy(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             var changedAssets = baselineIndexes == null
                 ? allAssets
@@ -1286,6 +1295,32 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return options;
+    }
+
+    private static bool IsBulkLooseCardPack(
+        string providerId,
+        IReadOnlyCollection<ResourceAsset> candidates)
+    {
+        if (candidates.Count < 20)
+        {
+            return false;
+        }
+
+        var directChildren = candidates.Count(asset =>
+            IsDirectProviderChild(providerId, asset.SourcePath));
+        return directChildren >= 20 && directChildren * 100 >= candidates.Count * 80;
+    }
+
+    private static bool IsDirectProviderChild(string providerId, string path)
+    {
+        if (!IsProviderNamespacePath(path, NormalizeResourceToken(providerId)))
+        {
+            return false;
+        }
+
+        var relative = path[6..];
+        var firstSeparator = relative.IndexOf('/');
+        return firstSeparator >= 0 && !relative[(firstSeparator + 1)..].Contains('/');
     }
 
     private static bool VariantsOverlap(IReadOnlyList<CardArtVariant> variants)
@@ -1378,7 +1413,19 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     private static bool IsCardArtSourcePath(string path) =>
-        CardArtPathRegex().IsMatch(path);
+        CardArtPathRegex().IsMatch(path) && IsCardArtResourceExtension(path);
+
+    private static bool IsCardArtResourceExtension(string path)
+    {
+        var extension = System.IO.Path.GetExtension(path);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".svg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".tres", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".res", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsLooseProviderCardArtPath(string providerId, string path)
     {
