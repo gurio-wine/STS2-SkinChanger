@@ -471,8 +471,20 @@ internal sealed partial class SkinCatalog : IDisposable
                          normalizedRoot,
                          StringComparison.OrdinalIgnoreCase)))
         {
-            var queue = new Queue<string>(requestedPaths.Where(path =>
-                path.StartsWith("res://", StringComparison.OrdinalIgnoreCase)));
+            var providerRequestedPaths = requestedPaths
+                .Where(path => path.StartsWith("res://", StringComparison.OrdinalIgnoreCase) &&
+                               !path.Equals("res://", StringComparison.OrdinalIgnoreCase))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (requestedPaths.Contains("res://", StringComparer.OrdinalIgnoreCase))
+            {
+                foreach (var configPath in index.Archive.Paths.Where(path =>
+                             path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
+                {
+                    providerRequestedPaths.Add(configPath);
+                }
+            }
+
+            var queue = new Queue<string>(providerRequestedPaths);
             var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             while (queue.TryDequeue(out var path))
             {
@@ -493,7 +505,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     FindRemapFile(asset, path),
                     GetImportedPayloadFiles(asset, path));
                 resources[path] = resource;
-                if (requestedPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                if (providerRequestedPaths.Contains(path))
                 {
                     exposedPaths.Add(path);
                 }
@@ -503,9 +515,18 @@ internal sealed partial class SkinCatalog : IDisposable
                              .Cast<ResourceFile>())
                 {
                     var text = Encoding.UTF8.GetString(textFile.Archive.ReadFile(textFile.Path));
-                    foreach (Match reference in ResourcePathRegex().Matches(text))
+                    foreach (var referencedPath in EnumeratePresentationResourceReferences(
+                                 textFile.Path,
+                                 text))
                     {
-                        queue.Enqueue(reference.Groups[1].Value);
+                        // imported payload 已由其源资源的 RuntimeResource 收集；若把它再次当成
+                        // 独立源资源，会生成第二套别名并让 .import 指向错误位置。
+                        if (!referencedPath.StartsWith(
+                                "res://.godot/imported/",
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            queue.Enqueue(referencedPath);
+                        }
                     }
                 }
             }
@@ -539,6 +560,82 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return files;
+    }
+
+    private static IEnumerable<string> EnumeratePresentationResourceReferences(
+        string sourcePath,
+        string text)
+    {
+        if (!sourcePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            return ResourcePathRegex().Matches(text)
+                .Select(match => match.Groups[1].Value)
+                .ToArray();
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            var references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            CollectPresentationJsonReferences(document.RootElement, null, references);
+            return references;
+        }
+        catch
+        {
+            return ResourcePathRegex().Matches(text)
+                .Select(match => match.Groups[1].Value)
+                .ToArray();
+        }
+    }
+
+    private static void CollectPresentationJsonReferences(
+        JsonElement element,
+        string? propertyName,
+        ISet<string> references)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    CollectPresentationJsonReferences(property.Value, property.Name, references);
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    CollectPresentationJsonReferences(item, propertyName, references);
+                }
+                break;
+            case JsonValueKind.String:
+                var value = element.GetString();
+                if (value?.StartsWith("res://", StringComparison.OrdinalIgnoreCase) == true &&
+                    IsPresentationJsonProperty(propertyName))
+                {
+                    references.Add(value);
+                }
+                break;
+        }
+    }
+
+    private static bool IsPresentationJsonProperty(string? propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            return true;
+        }
+
+        if (new[]
+            {
+                "frame", "border", "material", "banner", "background", "energy", "highlight",
+                "layout", "mask"
+            }.Any(token => propertyName.Contains(token, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return !new[] { "portrait", "cardart", "card_art", "artwork", "image" }
+            .Any(token => propertyName.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
 
     private static IReadOnlyCollection<ResourceFile> CollectProviderNamespaceFiles(

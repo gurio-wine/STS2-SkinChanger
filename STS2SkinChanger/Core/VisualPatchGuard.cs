@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
@@ -15,6 +16,7 @@ internal static partial class VisualPatchGuard
     private static readonly Harmony Harmony = new(Entry.ModId);
     private static readonly object CardPatchSync = new();
     private static readonly List<RemovedCardPatch> RemovedCardPatches = [];
+    private static readonly List<ScopedCardModelPatch> ScopedCardModelPatches = [];
     private static readonly Dictionary<string, CardPresentationProvider> CardPresentationProviders =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
@@ -32,6 +34,7 @@ internal static partial class VisualPatchGuard
     public static int DiscoverCardPresentationPatches(string providerRoot, Assembly assembly)
     {
         var registered = 0;
+        var registeredMethods = new HashSet<MethodInfo>();
         foreach (var type in GetLoadableTypes(assembly))
         {
             var postfixes = type.GetMethods(
@@ -39,13 +42,6 @@ internal static partial class VisualPatchGuard
                 .Where(method => method.Name == "Postfix" ||
                                  method.Name.EndsWith("Postfix", StringComparison.Ordinal) ||
                                  method.GetCustomAttribute<HarmonyPostfix>() != null)
-                .Where(method => method.GetParameters().Any(parameter =>
-                {
-                    var parameterType = parameter.ParameterType.IsByRef
-                        ? parameter.ParameterType.GetElementType()!
-                        : parameter.ParameterType;
-                    return typeof(NCard).IsAssignableFrom(parameterType);
-                }) || method.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             if (postfixes.Length == 0)
             {
@@ -88,13 +84,25 @@ internal static partial class VisualPatchGuard
                     continue;
                 }
 
-                foreach (var target in targets.Where(target =>
-                             target.DeclaringType != null &&
-                             typeof(NCard).IsAssignableFrom(target.DeclaringType)))
+                foreach (var target in targets.Where(target => target.DeclaringType != null))
                 {
-                    if (RememberCardPatch(providerRoot, target, postfix))
+                    if (typeof(NCard).IsAssignableFrom(target.DeclaringType))
+                    {
+                        if (IsOwnedPortraitPatch(postfix))
+                        {
+                            continue;
+                        }
+                        if (RememberCardPatch(providerRoot, target, postfix))
+                        {
+                            registered++;
+                            registeredMethods.Add(postfix);
+                        }
+                    }
+                    else if (IsScopedCardRarityPatch(target) &&
+                             RememberScopedCardModelPatch(providerRoot, target, postfix))
                     {
                         registered++;
+                        registeredMethods.Add(postfix);
                     }
                 }
             }
@@ -102,7 +110,7 @@ internal static partial class VisualPatchGuard
 
         if (registered > 0)
         {
-            RememberCardPresentationProvider(providerRoot, assembly);
+            RememberCardPresentationProvider(providerRoot, assembly, registeredMethods);
             ModLog.Info($"已登记 {registered} 个隔离卡牌呈现补丁：{assembly.GetName().Name}");
         }
 
@@ -174,7 +182,32 @@ internal static partial class VisualPatchGuard
         return true;
     }
 
-    private static void RememberCardPresentationProvider(string providerRoot, Assembly assembly)
+    private static bool IsOwnedPortraitPatch(MethodInfo patchMethod)
+    {
+        var name = $"{patchMethod.DeclaringType?.Name}.{patchMethod.Name}";
+        if (new[]
+            {
+                "Frame", "Border", "Material", "Layout", "TextPatch", "TextReplacement",
+                "Title", "Description", "Banner", "Style"
+            }
+            .Any(token => name.Contains(token, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return new[] { "Portrait", "CardArt", "Artwork", "TextureFilter" }
+            .Any(token => name.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsScopedCardRarityPatch(MethodBase target) =>
+        target.DeclaringType != null &&
+        typeof(CardModel).IsAssignableFrom(target.DeclaringType) &&
+        target.Name == "get_Rarity";
+
+    private static void RememberCardPresentationProvider(
+        string providerRoot,
+        Assembly assembly,
+        IReadOnlyCollection<MethodInfo> patchMethods)
     {
         var root = NormalizeRoot(providerRoot);
         if (root == null)
@@ -182,15 +215,15 @@ internal static partial class VisualPatchGuard
             return;
         }
 
-        var types = GetLoadableTypes(assembly).ToArray();
-        var initializers = types
-            .SelectMany(GetStaticMethods)
+        var reachableMethods = DiscoverReachableProviderMethods(assembly, patchMethods);
+        var initializers = reachableMethods
+            .OfType<MethodInfo>()
             .Where(method => method.Name == "EnsureLoaded" &&
                              method.ReturnType == typeof(void) &&
                              method.GetParameters().Length == 0)
             .Distinct()
             .ToArray();
-        var resourcePaths = DiscoverAssemblyResourcePaths(types)
+        var resourcePaths = DiscoverMethodResourcePaths(reachableMethods)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -209,81 +242,126 @@ internal static partial class VisualPatchGuard
         }
     }
 
-    private static IEnumerable<MethodInfo> GetStaticMethods(Type type)
+    private static IReadOnlyCollection<MethodBase> DiscoverReachableProviderMethods(
+        Assembly assembly,
+        IEnumerable<MethodInfo> roots)
     {
+        var visited = new HashSet<MethodBase>();
+        var queue = new Queue<MethodBase>(roots);
+        while (queue.TryDequeue(out var method))
+        {
+            if (!visited.Add(method))
+            {
+                continue;
+            }
+
+            if (method.DeclaringType?.TypeInitializer is { } typeInitializer &&
+                typeInitializer.Module.Assembly == assembly &&
+                !visited.Contains(typeInitializer))
+            {
+                queue.Enqueue(typeInitializer);
+            }
+
+            foreach (var calledMethod in DiscoverCalledMethods(method))
+            {
+                if (calledMethod.Module.Assembly == assembly && !visited.Contains(calledMethod))
+                {
+                    queue.Enqueue(calledMethod);
+                }
+            }
+        }
+
+        return visited;
+    }
+
+    private static IEnumerable<MethodBase> DiscoverCalledMethods(MethodBase method)
+    {
+        byte[]? il;
         try
         {
-            return type.GetMethods(
-                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            il = method.GetMethodBody()?.GetILAsByteArray();
         }
         catch
         {
-            return [];
+            yield break;
         }
-    }
-
-    private static IEnumerable<string> DiscoverAssemblyResourcePaths(IEnumerable<Type> types)
-    {
-        foreach (var type in types)
+        if (il == null)
         {
-            MethodBase[] methods;
+            yield break;
+        }
+
+        var typeArguments = method.DeclaringType?.IsGenericType == true
+            ? method.DeclaringType.GetGenericArguments()
+            : null;
+        var methodArguments = method is MethodInfo { IsGenericMethod: true } methodInfo
+            ? methodInfo.GetGenericArguments()
+            : null;
+        for (var offset = 0; offset + 4 < il.Length; offset++)
+        {
+            if (il[offset] is not (0x28 or 0x6F or 0x73))
+            {
+                continue;
+            }
+
+            MethodBase? calledMethod;
             try
             {
-                var declaredMethods = type.GetMethods(
-                        BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public |
-                        BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
-                    .Cast<MethodBase>()
-                    .ToList();
-                if (type.TypeInitializer != null)
-                {
-                    declaredMethods.Add(type.TypeInitializer);
-                }
-                methods = declaredMethods.ToArray();
+                calledMethod = method.Module.ResolveMethod(
+                    BitConverter.ToInt32(il, offset + 1),
+                    typeArguments,
+                    methodArguments);
             }
             catch
             {
                 continue;
             }
-
-            foreach (var method in methods)
+            if (calledMethod != null)
             {
-                byte[]? il;
+                yield return calledMethod;
+            }
+        }
+    }
+
+    private static IEnumerable<string> DiscoverMethodResourcePaths(IEnumerable<MethodBase> methods)
+    {
+        foreach (var method in methods)
+        {
+            byte[]? il;
+            try
+            {
+                il = method.GetMethodBody()?.GetILAsByteArray();
+            }
+            catch
+            {
+                continue;
+            }
+            if (il == null)
+            {
+                continue;
+            }
+
+            for (var offset = 0; offset + 4 < il.Length; offset++)
+            {
+                // ldstr <metadata-token>. ResolveString validates the token, so accidental 0x72
+                // bytes inside another operand are harmless.
+                if (il[offset] != 0x72)
+                {
+                    continue;
+                }
+
+                string value;
                 try
                 {
-                    il = method.GetMethodBody()?.GetILAsByteArray();
+                    value = method.Module.ResolveString(BitConverter.ToInt32(il, offset + 1));
                 }
                 catch
                 {
                     continue;
                 }
-                if (il == null)
+
+                foreach (Match match in ResourceLiteralRegex().Matches(value))
                 {
-                    continue;
-                }
-
-                for (var offset = 0; offset + 4 < il.Length; offset++)
-                {
-                    // ldstr <metadata-token>. ResolveString validates the token, so accidental 0x72
-                    // bytes inside another operand are harmless.
-                    if (il[offset] != 0x72)
-                    {
-                        continue;
-                    }
-
-                    string value;
-                    try
-                    {
-                        value = method.Module.ResolveString(BitConverter.ToInt32(il, offset + 1));
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    foreach (Match match in ResourceLiteralRegex().Matches(value))
-                    {
-                        yield return match.Value;
-                    }
+                    yield return match.Value;
                 }
             }
         }
@@ -481,6 +559,86 @@ internal static partial class VisualPatchGuard
         return applied;
     }
 
+    public static void ReplaySelectedCardRarityPostfixes(
+        CardModel card,
+        MethodBase originalMethod,
+        ref CardRarity result)
+    {
+        var providerRoot = SkinService.GetCardPresentationProviderRoot(card);
+        if (providerRoot == null || !SkinService.PrepareCardPresentationProvider(providerRoot))
+        {
+            return;
+        }
+
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return;
+        }
+
+        ScopedCardModelPatch[] patches;
+        lock (CardPatchSync)
+        {
+            patches = ScopedCardModelPatches
+                .Where(patch => patch.ProviderRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                                SameMethod(patch.Target, originalMethod))
+                .ToArray();
+        }
+
+        foreach (var patch in patches)
+        {
+            try
+            {
+                var parameters = patch.PatchMethod.GetParameters();
+                var arguments = new object?[parameters.Length];
+                var resultIndex = -1;
+                var supported = true;
+                for (var index = 0; index < parameters.Length; index++)
+                {
+                    var parameter = parameters[index];
+                    var parameterType = parameter.ParameterType.IsByRef
+                        ? parameter.ParameterType.GetElementType()!
+                        : parameter.ParameterType;
+                    if (parameter.Name == "__instance" || typeof(CardModel).IsAssignableFrom(parameterType))
+                    {
+                        arguments[index] = card;
+                    }
+                    else if (parameter.Name == "__result" && parameterType == typeof(CardRarity))
+                    {
+                        arguments[index] = result;
+                        resultIndex = index;
+                    }
+                    else if (parameter.Name == "__originalMethod")
+                    {
+                        arguments[index] = originalMethod;
+                    }
+                    else
+                    {
+                        supported = false;
+                        break;
+                    }
+                }
+
+                if (!supported)
+                {
+                    continue;
+                }
+
+                patch.PatchMethod.Invoke(null, arguments);
+                if (resultIndex >= 0 && arguments[resultIndex] is CardRarity updatedResult)
+                {
+                    result = updatedResult;
+                }
+            }
+            catch (Exception exception)
+            {
+                WarnReplayOnce(
+                    new RemovedCardPatch(patch.ProviderRoot, patch.Target, patch.PatchMethod),
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
     private static IEnumerable<(HarmonyLib.Patch Patch, ProviderPatchKind Kind)> EnumeratePatches(
         HarmonyLib.Patches patches)
     {
@@ -515,6 +673,32 @@ internal static partial class VisualPatchGuard
             }
 
             RemovedCardPatches.Add(new RemovedCardPatch(providerRoot, target, patchMethod));
+            return true;
+        }
+    }
+
+    private static bool RememberScopedCardModelPatch(
+        string providerRoot,
+        MethodBase target,
+        MethodInfo patchMethod)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return false;
+        }
+
+        lock (CardPatchSync)
+        {
+            if (ScopedCardModelPatches.Any(patch =>
+                    patch.ProviderRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                    SameMethod(patch.Target, target) &&
+                    patch.PatchMethod == patchMethod))
+            {
+                return false;
+            }
+
+            ScopedCardModelPatches.Add(new ScopedCardModelPatch(root, target, patchMethod));
             return true;
         }
     }
@@ -754,6 +938,11 @@ internal static partial class VisualPatchGuard
         MethodBase Target,
         MethodInfo PatchMethod);
 
+    private sealed record ScopedCardModelPatch(
+        string ProviderRoot,
+        MethodBase Target,
+        MethodInfo PatchMethod);
+
     private sealed class CardPresentationProvider(
         string assemblyName,
         MethodInfo[] registryInitializers,
@@ -765,6 +954,6 @@ internal static partial class VisualPatchGuard
         public bool Initialized { get; set; }
     }
 
-    [GeneratedRegex("res://[^\\s\\\"'<>|]+", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("res://[^\\s\\\"'<>|]*", RegexOptions.IgnoreCase)]
     private static partial Regex ResourceLiteralRegex();
 }

@@ -778,3 +778,17 @@ internal static class CardLayoutFinalPatch
         CardSkinControls.ApplySelectedPortraitToNode(__instance);
     }
 }
+
+[HarmonyPatch(typeof(CardModel), nameof(CardModel.Rarity), MethodType.Getter)]
+internal static class CardRarityPresentationRouterPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(
+        CardModel __instance,
+        ref CardRarity __result,
+        System.Reflection.MethodBase __originalMethod) =>
+        VisualPatchGuard.ReplaySelectedCardRarityPostfixes(
+            __instance,
+            __originalMethod,
+            ref __result);
+}
