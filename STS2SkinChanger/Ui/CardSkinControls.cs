@@ -167,16 +167,7 @@ internal static class CardSkinControls
             return;
         }
 
-        var providerRoot = VisualPatchGuard.TryGetActiveCardPresentationProviderRoot(
-            card,
-            out var scopedProviderRoot)
-            ? scopedProviderRoot
-            : SkinService.GetCardPresentationProviderRoot(card.Model);
-        if (!SkinService.PrepareCardPresentationProvider(providerRoot))
-        {
-            PresentationLayouts.Remove(card);
-            return;
-        }
+        var providerRoot = SkinService.GetCardPresentationProviderRoot(card.Model);
         var replayed = VisualPatchGuard.ReplaySelectedCardPostfixes(
             card,
             originalMethod,
@@ -780,41 +771,5 @@ internal static class CardLayoutFinalPatch
         CardSkinControls.CaptureBaselineLayout(__instance);
         CardSkinControls.ReplaySelectedPresentation(__instance, __originalMethod, __args);
         CardSkinControls.ApplySelectedPortraitToNode(__instance);
-    }
-}
-
-[HarmonyPatch(typeof(CardModel), nameof(CardModel.Rarity), MethodType.Getter)]
-internal static class CardRarityPresentationRouterPatch
-{
-    [HarmonyPriority(Priority.Last)]
-    private static void Postfix(
-        CardModel __instance,
-        ref CardRarity __result,
-        System.Reflection.MethodBase __originalMethod) =>
-        VisualPatchGuard.ReplaySelectedCardRarityPostfixes(
-            __instance,
-            __originalMethod,
-            ref __result);
-}
-
-[HarmonyPatch]
-internal static class CardPresentationScopePatch
-{
-    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
-    {
-        yield return AccessTools.Method(typeof(NCard), nameof(NCard._Ready));
-        yield return AccessTools.Method(typeof(NCard), "Reload");
-        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
-    }
-
-    [HarmonyPriority(Priority.First)]
-    private static void Prefix(NCard __instance) =>
-        VisualPatchGuard.EnterCardPresentationScope(__instance);
-
-    [HarmonyPriority(Priority.Last)]
-    private static Exception? Finalizer(NCard __instance, Exception? __exception)
-    {
-        VisualPatchGuard.ExitCardPresentationScope(__instance);
-        return __exception;
     }
 }
