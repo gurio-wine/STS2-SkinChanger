@@ -20,6 +20,8 @@ internal static partial class VisualPatchGuard
     private static readonly Dictionary<string, CardPresentationProvider> CardPresentationProviders =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
+    [ThreadStatic]
+    private static Stack<NCard>? _cardPresentationScopes;
     private static readonly string[] VisualNameTokens =
     [
         "Visual", "Scene", "Portrait", "Icon", "Texture", "Sprite", "Atlas",
@@ -564,6 +566,13 @@ internal static partial class VisualPatchGuard
         MethodBase originalMethod,
         ref CardRarity result)
     {
+        if (_cardPresentationScopes == null ||
+            !_cardPresentationScopes.TryPeek(out var activeCard) ||
+            !ReferenceEquals(activeCard.Model, card))
+        {
+            return;
+        }
+
         var providerRoot = SkinService.GetCardPresentationProviderRoot(card);
         if (providerRoot == null || !SkinService.PrepareCardPresentationProvider(providerRoot))
         {
@@ -636,6 +645,38 @@ internal static partial class VisualPatchGuard
                     new RemovedCardPatch(patch.ProviderRoot, patch.Target, patch.PatchMethod),
                     exception.GetBaseException().Message);
             }
+        }
+    }
+
+    public static void EnterCardPresentationScope(NCard card)
+    {
+        _cardPresentationScopes ??= new Stack<NCard>();
+        _cardPresentationScopes.Push(card);
+    }
+
+    public static void ExitCardPresentationScope(NCard card)
+    {
+        if (_cardPresentationScopes == null || _cardPresentationScopes.Count == 0)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_cardPresentationScopes.Peek(), card))
+        {
+            _cardPresentationScopes.Pop();
+            return;
+        }
+
+        // 异常或第三方补丁打乱嵌套顺序时，只移除对应实例，避免后续非 UI 的
+        // CardModel.Rarity 读取被误判为仍处在卡牌渲染阶段。
+        var remaining = _cardPresentationScopes
+            .Where(candidate => !ReferenceEquals(candidate, card))
+            .Reverse()
+            .ToArray();
+        _cardPresentationScopes.Clear();
+        foreach (var candidate in remaining)
+        {
+            _cardPresentationScopes.Push(candidate);
         }
     }
 

@@ -792,3 +792,25 @@ internal static class CardRarityPresentationRouterPatch
             __originalMethod,
             ref __result);
 }
+
+[HarmonyPatch]
+internal static class CardPresentationScopePatch
+{
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(NCard), nameof(NCard._Ready));
+        yield return AccessTools.Method(typeof(NCard), "Reload");
+        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
+    }
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance) =>
+        VisualPatchGuard.EnterCardPresentationScope(__instance);
+
+    [HarmonyPriority(Priority.Last)]
+    private static Exception? Finalizer(NCard __instance, Exception? __exception)
+    {
+        VisualPatchGuard.ExitCardPresentationScope(__instance);
+        return __exception;
+    }
+}
