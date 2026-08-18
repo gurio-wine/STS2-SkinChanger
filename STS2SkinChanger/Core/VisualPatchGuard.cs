@@ -21,7 +21,7 @@ internal static partial class VisualPatchGuard
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
     [ThreadStatic]
-    private static Stack<NCard>? _cardPresentationScopes;
+    private static Stack<CardPresentationScope>? _cardPresentationScopes;
     private static readonly string[] VisualNameTokens =
     [
         "Visual", "Scene", "Portrait", "Icon", "Texture", "Sprite", "Atlas",
@@ -567,13 +567,13 @@ internal static partial class VisualPatchGuard
         ref CardRarity result)
     {
         if (_cardPresentationScopes == null ||
-            !_cardPresentationScopes.TryPeek(out var activeCard) ||
-            !ReferenceEquals(activeCard.Model, card))
+            !_cardPresentationScopes.TryPeek(out var activeScope) ||
+            !ReferenceEquals(activeScope.Card.Model, card))
         {
             return;
         }
 
-        var providerRoot = SkinService.GetCardPresentationProviderRoot(card);
+        var providerRoot = activeScope.ProviderRoot;
         if (providerRoot == null || !SkinService.PrepareCardPresentationProvider(providerRoot))
         {
             return;
@@ -650,8 +650,30 @@ internal static partial class VisualPatchGuard
 
     public static void EnterCardPresentationScope(NCard card)
     {
-        _cardPresentationScopes ??= new Stack<NCard>();
-        _cardPresentationScopes.Push(card);
+        _cardPresentationScopes ??= new Stack<CardPresentationScope>();
+        var providerRoot = _cardPresentationScopes.TryPeek(out var parent) &&
+                           ReferenceEquals(parent.Card.Model, card.Model)
+            ? parent.ProviderRoot
+            : card.Model == null
+                ? null
+                : SkinService.GetCardPresentationProviderRoot(card.Model);
+        _cardPresentationScopes.Push(new CardPresentationScope(card, providerRoot));
+    }
+
+    public static bool TryGetActiveCardPresentationProviderRoot(
+        NCard card,
+        out string? providerRoot)
+    {
+        if (_cardPresentationScopes != null &&
+            _cardPresentationScopes.TryPeek(out var activeScope) &&
+            ReferenceEquals(activeScope.Card, card))
+        {
+            providerRoot = activeScope.ProviderRoot;
+            return true;
+        }
+
+        providerRoot = null;
+        return false;
     }
 
     public static void ExitCardPresentationScope(NCard card)
@@ -661,7 +683,7 @@ internal static partial class VisualPatchGuard
             return;
         }
 
-        if (ReferenceEquals(_cardPresentationScopes.Peek(), card))
+        if (ReferenceEquals(_cardPresentationScopes.Peek().Card, card))
         {
             _cardPresentationScopes.Pop();
             return;
@@ -670,7 +692,7 @@ internal static partial class VisualPatchGuard
         // 异常或第三方补丁打乱嵌套顺序时，只移除对应实例，避免后续非 UI 的
         // CardModel.Rarity 读取被误判为仍处在卡牌渲染阶段。
         var remaining = _cardPresentationScopes
-            .Where(candidate => !ReferenceEquals(candidate, card))
+            .Where(candidate => !ReferenceEquals(candidate.Card, card))
             .Reverse()
             .ToArray();
         _cardPresentationScopes.Clear();
@@ -983,6 +1005,8 @@ internal static partial class VisualPatchGuard
         string ProviderRoot,
         MethodBase Target,
         MethodInfo PatchMethod);
+
+    private sealed record CardPresentationScope(NCard Card, string? ProviderRoot);
 
     private sealed class CardPresentationProvider(
         string assemblyName,

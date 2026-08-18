@@ -167,7 +167,11 @@ internal static class CardSkinControls
             return;
         }
 
-        var providerRoot = SkinService.GetCardPresentationProviderRoot(card.Model);
+        var providerRoot = VisualPatchGuard.TryGetActiveCardPresentationProviderRoot(
+            card,
+            out var scopedProviderRoot)
+            ? scopedProviderRoot
+            : SkinService.GetCardPresentationProviderRoot(card.Model);
         if (!SkinService.PrepareCardPresentationProvider(providerRoot))
         {
             PresentationLayouts.Remove(card);
