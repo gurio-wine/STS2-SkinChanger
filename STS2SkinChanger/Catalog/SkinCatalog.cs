@@ -457,6 +457,90 @@ internal sealed partial class SkinCatalog : IDisposable
         return files;
     }
 
+    public IReadOnlyDictionary<string, byte[]> BuildCardPresentationSupportOverlay(
+        string providerRoot,
+        IReadOnlyCollection<string> requestedPaths,
+        string aliasToken)
+    {
+        var normalizedRoot = NormalizeRootPath(providerRoot);
+        var resources = new Dictionary<string, RuntimeResource>(StringComparer.OrdinalIgnoreCase);
+        var exposedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var index in _cosmeticIndexes.Where(index =>
+                     index.Mod.RootPath != null &&
+                     NormalizeRootPath(index.Mod.RootPath).Equals(
+                         normalizedRoot,
+                         StringComparison.OrdinalIgnoreCase)))
+        {
+            var queue = new Queue<string>(requestedPaths.Where(path =>
+                path.StartsWith("res://", StringComparison.OrdinalIgnoreCase)));
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (queue.TryDequeue(out var path))
+            {
+                if (!visited.Add(path))
+                {
+                    continue;
+                }
+
+                var asset = index.TryBuildAsset(path);
+                if (asset == null)
+                {
+                    continue;
+                }
+
+                var resource = new RuntimeResource(
+                    path,
+                    FindDirectFile(asset, path),
+                    FindRemapFile(asset, path),
+                    GetImportedPayloadFiles(asset, path));
+                resources[path] = resource;
+                if (requestedPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                {
+                    exposedPaths.Add(path);
+                }
+
+                foreach (var textFile in new[] { resource.DirectFile, resource.RemapFile }
+                             .Where(file => file != null && MayContainResourceReferences(file.Path))
+                             .Cast<ResourceFile>())
+                {
+                    var text = Encoding.UTF8.GetString(textFile.Archive.ReadFile(textFile.Path));
+                    foreach (Match reference in ResourcePathRegex().Matches(text))
+                    {
+                        queue.Enqueue(reference.Groups[1].Value);
+                    }
+                }
+            }
+        }
+
+        if (resources.Count == 0 || exposedPaths.Count == 0)
+        {
+            return new Dictionary<string, byte[]>();
+        }
+
+        var overlay = BuildAliasedResourceOverlay(
+            resources.Values.ToArray(),
+            exposedPaths.ToArray(),
+            aliasToken);
+        var files = overlay.Files.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var exposedPath in exposedPaths)
+        {
+            var aliasPath = overlay.ResourcePaths[exposedPath];
+            foreach (var suffix in new[] { string.Empty, ".import", ".remap" })
+            {
+                if (files.TryGetValue(aliasPath + suffix, out var bytes))
+                {
+                    // DLL 中的注册表仍按原路径读取入口文件；入口里的所有依赖已改写到
+                    // provider 专属别名，因此不会把外框和材质泄漏给未选择该皮肤的卡牌。
+                    files[exposedPath + suffix] = bytes;
+                }
+            }
+        }
+
+        return files;
+    }
+
     private static IReadOnlyCollection<ResourceFile> CollectProviderNamespaceFiles(
         PckResourceIndex index,
         string providerId)
@@ -844,7 +928,21 @@ internal sealed partial class SkinCatalog : IDisposable
         path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
+        path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeRootPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+    }
 
     public RuntimeResourceOverlay BuildIsolatedCardResource(
         string groupId,

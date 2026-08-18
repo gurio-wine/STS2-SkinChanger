@@ -168,6 +168,11 @@ internal static class CardSkinControls
         }
 
         var providerRoot = SkinService.GetCardPresentationProviderRoot(card.Model);
+        if (!SkinService.PrepareCardPresentationProvider(providerRoot))
+        {
+            PresentationLayouts.Remove(card);
+            return;
+        }
         var replayed = VisualPatchGuard.ReplaySelectedCardPostfixes(
             card,
             originalMethod,

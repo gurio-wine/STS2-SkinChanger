@@ -6,14 +6,17 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace STS2SkinChanger.Core;
 
-internal static class VisualPatchGuard
+internal static partial class VisualPatchGuard
 {
     private static readonly Harmony Harmony = new(Entry.ModId);
     private static readonly object CardPatchSync = new();
     private static readonly List<RemovedCardPatch> RemovedCardPatches = [];
+    private static readonly Dictionary<string, CardPresentationProvider> CardPresentationProviders =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
     private static readonly string[] VisualNameTokens =
     [
@@ -99,10 +102,191 @@ internal static class VisualPatchGuard
 
         if (registered > 0)
         {
+            RememberCardPresentationProvider(providerRoot, assembly);
             ModLog.Info($"已登记 {registered} 个隔离卡牌呈现补丁：{assembly.GetName().Name}");
         }
 
         return registered;
+    }
+
+    public static IReadOnlyCollection<string> GetCardPresentationResourcePaths(string providerRoot)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return [];
+        }
+
+        lock (CardPatchSync)
+        {
+            return CardPresentationProviders.TryGetValue(root, out var provider)
+                ? provider.ResourcePaths.ToArray()
+                : [];
+        }
+    }
+
+    public static bool InitializeCardPresentationProvider(string providerRoot)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return false;
+        }
+
+        CardPresentationProvider provider;
+        lock (CardPatchSync)
+        {
+            if (!CardPresentationProviders.TryGetValue(root, out provider!))
+            {
+                return true;
+            }
+            if (provider.Initialized)
+            {
+                return true;
+            }
+        }
+
+        foreach (var initializer in provider.RegistryInitializers)
+        {
+            try
+            {
+                initializer.Invoke(null, null);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"无法初始化隔离卡牌呈现注册表 {initializer.DeclaringType?.FullName}." +
+                    $"{initializer.Name}：{exception.GetBaseException().Message}");
+                return false;
+            }
+        }
+
+        lock (CardPatchSync)
+        {
+            provider.Initialized = true;
+        }
+        if (provider.RegistryInitializers.Length > 0)
+        {
+            ModLog.Info(
+                $"已初始化 {provider.RegistryInitializers.Length} 个隔离卡牌呈现注册表：" +
+                provider.AssemblyName);
+        }
+        return true;
+    }
+
+    private static void RememberCardPresentationProvider(string providerRoot, Assembly assembly)
+    {
+        var root = NormalizeRoot(providerRoot);
+        if (root == null)
+        {
+            return;
+        }
+
+        var types = GetLoadableTypes(assembly).ToArray();
+        var initializers = types
+            .SelectMany(GetStaticMethods)
+            .Where(method => method.Name == "EnsureLoaded" &&
+                             method.ReturnType == typeof(void) &&
+                             method.GetParameters().Length == 0)
+            .Distinct()
+            .ToArray();
+        var resourcePaths = DiscoverAssemblyResourcePaths(types)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        lock (CardPatchSync)
+        {
+            CardPresentationProviders[root] = new CardPresentationProvider(
+                assembly.GetName().Name ?? assembly.FullName ?? "unknown",
+                initializers,
+                resourcePaths);
+        }
+        if (initializers.Length > 0 || resourcePaths.Length > 0)
+        {
+            ModLog.Info(
+                $"已发现卡牌呈现依赖：{assembly.GetName().Name}，" +
+                $"注册表={initializers.Length}，资源入口={resourcePaths.Length}");
+        }
+    }
+
+    private static IEnumerable<MethodInfo> GetStaticMethods(Type type)
+    {
+        try
+        {
+            return type.GetMethods(
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static IEnumerable<string> DiscoverAssemblyResourcePaths(IEnumerable<Type> types)
+    {
+        foreach (var type in types)
+        {
+            MethodBase[] methods;
+            try
+            {
+                var declaredMethods = type.GetMethods(
+                        BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public |
+                        BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                    .Cast<MethodBase>()
+                    .ToList();
+                if (type.TypeInitializer != null)
+                {
+                    declaredMethods.Add(type.TypeInitializer);
+                }
+                methods = declaredMethods.ToArray();
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var method in methods)
+            {
+                byte[]? il;
+                try
+                {
+                    il = method.GetMethodBody()?.GetILAsByteArray();
+                }
+                catch
+                {
+                    continue;
+                }
+                if (il == null)
+                {
+                    continue;
+                }
+
+                for (var offset = 0; offset + 4 < il.Length; offset++)
+                {
+                    // ldstr <metadata-token>. ResolveString validates the token, so accidental 0x72
+                    // bytes inside another operand are harmless.
+                    if (il[offset] != 0x72)
+                    {
+                        continue;
+                    }
+
+                    string value;
+                    try
+                    {
+                        value = method.Module.ResolveString(BitConverter.ToInt32(il, offset + 1));
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    foreach (Match match in ResourceLiteralRegex().Matches(value))
+                    {
+                        yield return match.Value;
+                    }
+                }
+            }
+        }
     }
 
     private static MethodBase[] ResolveDynamicTargets(Type patchType)
@@ -569,4 +753,18 @@ internal static class VisualPatchGuard
         string ProviderRoot,
         MethodBase Target,
         MethodInfo PatchMethod);
+
+    private sealed class CardPresentationProvider(
+        string assemblyName,
+        MethodInfo[] registryInitializers,
+        string[] resourcePaths)
+    {
+        public string AssemblyName { get; } = assemblyName;
+        public MethodInfo[] RegistryInitializers { get; } = registryInitializers;
+        public string[] ResourcePaths { get; } = resourcePaths;
+        public bool Initialized { get; set; }
+    }
+
+    [GeneratedRegex("res://[^\\s\\\"'<>|]+", RegexOptions.IgnoreCase)]
+    private static partial Regex ResourceLiteralRegex();
 }
