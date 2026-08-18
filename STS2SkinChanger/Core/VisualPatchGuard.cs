@@ -225,6 +225,17 @@ internal static partial class VisualPatchGuard
                              method.GetParameters().Length == 0)
             .Distinct()
             .ToArray();
+        var ancientUiPredicates = reachableMethods
+            .OfType<MethodInfo>()
+            .Where(method => method.IsStatic &&
+                             method.ReturnType == typeof(bool) &&
+                             method.GetParameters() is [{ ParameterType: var parameterType }] &&
+                             parameterType == typeof(string) &&
+                             method.Name.Contains("Ancient", StringComparison.OrdinalIgnoreCase) &&
+                             new[] { "Ui", "Card", "Style", "Spoof" }.Any(token =>
+                                 method.Name.Contains(token, StringComparison.OrdinalIgnoreCase)))
+            .Distinct()
+            .ToArray();
         var resourcePaths = DiscoverMethodResourcePaths(reachableMethods)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -234,13 +245,15 @@ internal static partial class VisualPatchGuard
             CardPresentationProviders[root] = new CardPresentationProvider(
                 assembly.GetName().Name ?? assembly.FullName ?? "unknown",
                 initializers,
+                ancientUiPredicates,
                 resourcePaths);
         }
         if (initializers.Length > 0 || resourcePaths.Length > 0)
         {
             ModLog.Info(
                 $"已发现卡牌呈现依赖：{assembly.GetName().Name}，" +
-                $"注册表={initializers.Length}，资源入口={resourcePaths.Length}");
+                $"注册表={initializers.Length}，远古模式规则={ancientUiPredicates.Length}，" +
+                $"资源入口={resourcePaths.Length}");
         }
     }
 
@@ -585,6 +598,11 @@ internal static partial class VisualPatchGuard
             return;
         }
 
+        if (ShouldUseAncientCardUi(root, card))
+        {
+            result = CardRarity.Ancient;
+        }
+
         ScopedCardModelPatch[] patches;
         lock (CardPatchSync)
         {
@@ -646,6 +664,45 @@ internal static partial class VisualPatchGuard
                     exception.GetBaseException().Message);
             }
         }
+    }
+
+    private static bool ShouldUseAncientCardUi(string providerRoot, CardModel card)
+    {
+        MethodInfo[] predicates;
+        lock (CardPatchSync)
+        {
+            predicates = CardPresentationProviders.TryGetValue(providerRoot, out var provider)
+                ? provider.AncientUiPredicates
+                : [];
+        }
+
+        var cardType = card.GetType().FullName ?? card.GetType().Name;
+        foreach (var predicate in predicates)
+        {
+            try
+            {
+                if (predicate.Invoke(null, [cardType]) is true)
+                {
+                    return true;
+                }
+            }
+            catch (Exception exception)
+            {
+                var key = predicate.Module.ModuleVersionId + ":ancient-ui:" + predicate.MetadataToken;
+                lock (CardPatchSync)
+                {
+                    if (!ReplayWarnings.Add(key))
+                    {
+                        continue;
+                    }
+                }
+                ModLog.Warn(
+                    $"无法读取隔离卡牌远古模式规则 {predicate.DeclaringType?.FullName}." +
+                    $"{predicate.Name}：{exception.GetBaseException().Message}");
+            }
+        }
+
+        return false;
     }
 
     public static void EnterCardPresentationScope(NCard card)
@@ -1011,10 +1068,12 @@ internal static partial class VisualPatchGuard
     private sealed class CardPresentationProvider(
         string assemblyName,
         MethodInfo[] registryInitializers,
+        MethodInfo[] ancientUiPredicates,
         string[] resourcePaths)
     {
         public string AssemblyName { get; } = assemblyName;
         public MethodInfo[] RegistryInitializers { get; } = registryInitializers;
+        public MethodInfo[] AncientUiPredicates { get; } = ancientUiPredicates;
         public string[] ResourcePaths { get; } = resourcePaths;
         public bool Initialized { get; set; }
     }
