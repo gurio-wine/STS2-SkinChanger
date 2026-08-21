@@ -1,0 +1,72 @@
+[
+  {
+    "language": "schinese",
+    "title": "皮肤切换器",
+    "description": "[h1]皮肤切换器[/h1]\n\n在选角界面、卡牌总览、单卡放大预览、怪物图鉴和远古图鉴中切换已安装的外观 Mod，无需重启游戏。\n\n[b]主要功能[/b]\n[list]\n[*]即时切换角色、卡牌、怪物和远古者皮肤\n[*]为每张卡牌单独选择卡图及配套卡框和布局\n[*]按“怪物 + 皮肤”独立调整 50%–200% 缩放\n[*]隔离纯外观 Mod 的强制补丁，避免未选择的皮肤占用资源\n[*]自动保存选择；未设置时优先使用第一个非原版皮肤\n[/list]\n\n[b]使用提示[/b]\n请将本 Mod 放在加载顺序第一位，以便完整接管皮肤资源。若未置顶，游戏内会显示提示，并可一键置顶后重启。\n\n本 Mod 不包含任何第三方皮肤资源，请另行安装并启用你想使用的皮肤 Mod。\n\n版本：0.9.29\n源代码：https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "tchinese",
+    "title": "外觀切換器",
+    "description": "[h1]外觀切換器[/h1]\n\n在角色選擇、卡牌圖鑑、卡牌放大預覽、怪物圖鑑和遠古者圖鑑中切換已安裝的外觀 Mod，無需重新啟動遊戲。\n\n[b]主要功能[/b]\n[list]\n[*]即時切換角色、卡牌、怪物和遠古者外觀\n[*]為每張卡牌獨立選擇卡圖及配套卡框與版面\n[*]依「怪物 + 外觀」分別調整 50%–200% 縮放\n[*]隔離純外觀 Mod 的強制修補，避免未選取的外觀占用資源\n[*]自動儲存選擇；尚未設定時優先使用第一個非原版外觀\n[/list]\n\n[b]使用提示[/b]\n請將本 Mod 放在載入順序第一位，以便完整管理外觀資源。若未置頂，遊戲內會顯示提示，並可一鍵置頂後重新啟動。\n\n本 Mod 不包含任何第三方外觀資源，請另外安裝並啟用想使用的外觀 Mod。\n\n版本：0.9.29\n原始碼：https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "japanese",
+    "title": "スキン切替ツール",
+    "description": "[h1]スキン切替ツール[/h1]\n\nキャラクター選択、カード図鑑、カード拡大表示、モンスター図鑑、エンシェント図鑑から、インストール済みの外見Modをゲームの再起動なしで切り替えられます。\n\n[b]主な機能[/b]\n[list]\n[*]キャラクター、カード、モンスター、エンシェントのスキンを即時切替\n[*]カードごとにイラスト、フレーム、レイアウトを個別選択\n[*]「モンスター + スキン」ごとに表示倍率を50%～200%で調整\n[*]外見Modの強制パッチを隔離し、未選択スキンによる上書きを防止\n[*]選択内容を自動保存し、未設定時は最初の非標準スキンを優先\n[/list]\n\n[b]使い方[/b]\n外見リソースを正しく管理するため、本Modをロード順の先頭に配置してください。先頭でない場合はゲーム内に警告が表示され、ワンクリックで先頭へ移動して再起動できます。\n\n本Modに第三者製スキンは含まれません。使用したいスキンModを別途インストールして有効にしてください。\n\nバージョン：0.9.29\nソースコード：https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "koreana",
+    "title": "스킨 체인저",
+    "description": "[h1]스킨 체인저[/h1]\n\n캐릭터 선택, 카드 도감, 확대 카드 미리보기, 몬스터 도감, 고대인 도감에서 설치된 외형 Mod를 게임 재시작 없이 전환할 수 있습니다.\n\n[b]주요 기능[/b]\n[list]\n[*]캐릭터, 카드, 몬스터, 고대인 스킨 즉시 전환\n[*]카드별 일러스트와 프레임, 레이아웃 개별 선택\n[*]‘몬스터 + 스킨’ 조합마다 크기를 50%–200%로 조절\n[*]외형 Mod의 강제 패치를 격리하여 선택하지 않은 스킨의 리소스 덮어쓰기 방지\n[*]선택 사항 자동 저장, 미설정 시 첫 번째 비기본 스킨 우선 적용\n[/list]\n\n[b]사용법[/b]\n외형 리소스를 안정적으로 관리하려면 이 Mod를 로드 순서의 첫 번째에 두세요. 첫 번째가 아니면 게임 내 경고에서 한 번에 맨 위로 이동하고 재시작할 수 있습니다.\n\n이 Mod에는 타사 스킨 리소스가 포함되어 있지 않습니다. 사용할 스킨 Mod를 별도로 설치하고 활성화하세요.\n\n버전: 0.9.29\n소스 코드: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "russian",
+    "title": "Менеджер обликов",
+    "description": "[h1]Менеджер обликов[/h1]\n\nПереключайте установленные косметические моды на экране выбора персонажа, в справочниках карт, монстров и Древних, а также в увеличенном просмотре карт — без перезапуска игры.\n\n[b]Возможности[/b]\n[list]\n[*]Мгновенная смена обликов персонажей, карт, монстров и Древних\n[*]Отдельный выбор изображения, рамки и макета для каждой карты\n[*]Масштаб 50%–200% отдельно для каждой пары «монстр + облик»\n[*]Изоляция принудительных косметических патчей, чтобы невыбранные облики не заменяли ресурсы\n[*]Автосохранение выбора; по умолчанию предпочитается первый нестандартный облик\n[/list]\n\n[b]Использование[/b]\nПоместите мод первым в порядке загрузки. Если он расположен иначе, внутриигровое предупреждение позволит переместить его наверх и перезапустить игру одним нажатием.\n\nСторонние облики не входят в комплект. Установите и включите нужные моды обликов отдельно.\n\nВерсия: 0.9.29\nИсходный код: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "german",
+    "title": "Skin-Wechsler",
+    "description": "[h1]Skin-Wechsler[/h1]\n\nWechsle installierte kosmetische Mods in der Charakterauswahl, der Kartenübersicht, der vergrößerten Kartenvorschau sowie in den Monster- und Ahnenkompendien — ohne das Spiel neu zu starten.\n\n[b]Funktionen[/b]\n[list]\n[*]Sofortiger Wechsel von Charakter-, Karten-, Monster- und Ahnen-Skins\n[*]Eigene Grafik, Rahmen und Layout für jede einzelne Karte\n[*]Skalierung von 50%–200% je Kombination aus Monster und Skin\n[*]Isoliert erzwungene kosmetische Patches, damit nicht ausgewählte Skins keine Ressourcen überschreiben\n[*]Speichert die Auswahl automatisch und bevorzugt zunächst den ersten Nicht-Standard-Skin\n[/list]\n\n[b]Verwendung[/b]\nSetze diese Mod an die erste Stelle der Ladereihenfolge. Andernfalls kann der Hinweis im Spiel sie mit einem Klick nach oben verschieben und das Spiel neu starten.\n\nDiese Mod enthält keine Skins von Drittanbietern. Installiere und aktiviere die gewünschten Skin-Mods separat.\n\nVersion: 0.9.29\nQuellcode: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "french",
+    "title": "Gestionnaire de skins",
+    "description": "[h1]Gestionnaire de skins[/h1]\n\nChangez les mods cosmétiques installés depuis la sélection de personnage, le compendium des cartes, l’aperçu agrandi des cartes et les compendiums des monstres et des Anciens, sans redémarrer le jeu.\n\n[b]Fonctionnalités[/b]\n[list]\n[*]Changement instantané des skins de personnages, cartes, monstres et Anciens\n[*]Illustration, cadre et disposition configurables pour chaque carte\n[*]Échelle de 50% à 200% pour chaque combinaison « monstre + skin »\n[*]Isolation des correctifs cosmétiques forcés afin qu’un skin non sélectionné ne remplace pas les ressources\n[*]Sauvegarde automatique des choix et priorité au premier skin non original par défaut\n[/list]\n\n[b]Utilisation[/b]\nPlacez ce mod en première position dans l’ordre de chargement. Sinon, l’avertissement en jeu permet de le déplacer en tête et de redémarrer en un clic.\n\nCe mod n’inclut aucun skin tiers. Installez et activez séparément les mods de skins souhaités.\n\nVersion : 0.9.29\nCode source : https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "italian",
+    "title": "Gestore delle skin",
+    "description": "[h1]Gestore delle skin[/h1]\n\nCambia i mod estetici installati dalla selezione del personaggio, dal compendio delle carte, dall’anteprima ingrandita, dal bestiario e dal compendio degli Antichi, senza riavviare il gioco.\n\n[b]Funzionalità[/b]\n[list]\n[*]Cambio immediato delle skin di personaggi, carte, mostri e Antichi\n[*]Illustrazione, cornice e layout selezionabili per ogni singola carta\n[*]Scala dal 50% al 200% per ogni combinazione «mostro + skin»\n[*]Isola le patch estetiche forzate per impedire alle skin non selezionate di sostituire le risorse\n[*]Salva automaticamente le scelte e preferisce inizialmente la prima skin non predefinita\n[/list]\n\n[b]Utilizzo[/b]\nPosiziona questo mod al primo posto nell’ordine di caricamento. In caso contrario, l’avviso nel gioco può spostarlo in cima e riavviare con un clic.\n\nQuesto mod non include skin di terze parti. Installa e abilita separatamente i mod delle skin che desideri usare.\n\nVersione: 0.9.29\nCodice sorgente: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "polish",
+    "title": "Menedżer skórek",
+    "description": "[h1]Menedżer skórek[/h1]\n\nPrzełączaj zainstalowane mody kosmetyczne na ekranie wyboru postaci, w kompendium kart, powiększonym podglądzie kart oraz kompendiach potworów i Pradawnych — bez ponownego uruchamiania gry.\n\n[b]Funkcje[/b]\n[list]\n[*]Natychmiastowa zmiana skórek postaci, kart, potworów i Pradawnych\n[*]Osobny wybór grafiki, ramki i układu dla każdej karty\n[*]Skala 50%–200% dla każdej kombinacji „potwór + skórka”\n[*]Izolowanie wymuszonych poprawek kosmetycznych, aby niewybrane skórki nie nadpisywały zasobów\n[*]Automatyczny zapis wyborów i domyślne preferowanie pierwszej niestandardowej skórki\n[/list]\n\n[b]Użycie[/b]\nUmieść ten mod na pierwszym miejscu kolejności ładowania. Jeśli jest niżej, komunikat w grze może przenieść go na górę i ponownie uruchomić grę jednym kliknięciem.\n\nMod nie zawiera skórek innych autorów. Zainstaluj i włącz wybrane mody skórek osobno.\n\nWersja: 0.9.29\nKod źródłowy: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "brazilian",
+    "title": "Gerenciador de Visuais",
+    "description": "[h1]Gerenciador de Visuais[/h1]\n\nAlterne mods cosméticos instalados na seleção de personagem, no compêndio de cartas, na visualização ampliada, no bestiário e no compêndio dos Anciões, sem reiniciar o jogo.\n\n[b]Recursos[/b]\n[list]\n[*]Troca instantânea de visuais de personagens, cartas, monstros e Anciões\n[*]Arte, moldura e layout selecionáveis para cada carta\n[*]Escala de 50% a 200% para cada combinação de monstro e visual\n[*]Isola alterações cosméticas forçadas para impedir que visuais não selecionados substituam recursos\n[*]Salva as escolhas automaticamente e prioriza o primeiro visual não original por padrão\n[/list]\n\n[b]Como usar[/b]\nColoque este mod em primeiro lugar na ordem de carregamento. Caso contrário, o aviso no jogo poderá movê-lo para o topo e reiniciar com um clique.\n\nEste mod não inclui visuais de terceiros. Instale e ative separadamente os mods de visuais que deseja usar.\n\nVersão: 0.9.29\nCódigo-fonte: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "thai",
+    "title": "ตัวสลับสกิน",
+    "description": "[h1]ตัวสลับสกิน[/h1]\n\nสลับ Mod รูปลักษณ์ที่ติดตั้งไว้จากหน้าตัวละคร สารานุกรมการ์ด หน้าขยายการ์ด สารานุกรมมอนสเตอร์ และสารานุกรม Ancient ได้ทันทีโดยไม่ต้องเริ่มเกมใหม่\n\n[b]คุณสมบัติ[/b]\n[list]\n[*]สลับสกินตัวละคร การ์ด มอนสเตอร์ และ Ancient แบบทันที\n[*]เลือกภาพ กรอบ และเลย์เอาต์แยกสำหรับการ์ดแต่ละใบ\n[*]ปรับขนาด 50%–200% แยกตามคู่ “มอนสเตอร์ + สกิน”\n[*]แยกแพตช์รูปลักษณ์ที่บังคับใช้ เพื่อไม่ให้สกินที่ไม่ได้เลือกเขียนทับทรัพยากร\n[*]บันทึกตัวเลือกอัตโนมัติ และเลือกสกินที่ไม่ใช่ค่าเริ่มต้นรายการแรกเมื่อยังไม่ได้ตั้งค่า\n[/list]\n\n[b]วิธีใช้[/b]\nวาง Mod นี้ไว้ลำดับแรกในการโหลด หากไม่ได้อยู่ลำดับแรก คำเตือนในเกมสามารถย้ายขึ้นบนสุดและเริ่มเกมใหม่ได้ในคลิกเดียว\n\nMod นี้ไม่มีทรัพยากรสกินจากผู้สร้างรายอื่น โปรดติดตั้งและเปิดใช้ Mod สกินที่ต้องการแยกต่างหาก\n\nเวอร์ชัน: 0.9.29\nซอร์สโค้ด: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "turkish",
+    "title": "Görünüm Değiştirici",
+    "description": "[h1]Görünüm Değiştirici[/h1]\n\nYüklü kozmetik modları karakter seçimi, kart özeti, büyütülmüş kart önizlemesi, canavar özeti ve Kadimler özeti üzerinden oyunu yeniden başlatmadan değiştirin.\n\n[b]Özellikler[/b]\n[list]\n[*]Karakter, kart, canavar ve Kadim görünümlerini anında değiştirme\n[*]Her kart için ayrı görsel, çerçeve ve düzen seçimi\n[*]Her “canavar + görünüm” çifti için %50–%200 ölçek ayarı\n[*]Seçilmeyen görünümlerin kaynakları geçersiz kılmasını önlemek için zorunlu kozmetik yamaları yalıtma\n[*]Seçimleri otomatik kaydetme ve ayarlanmamışsa ilk özgün olmayan görünümü tercih etme\n[/list]\n\n[b]Kullanım[/b]\nBu modu yükleme sırasının en başına yerleştirin. Aksi hâlde oyun içi uyarı, modu tek tıkla en üste taşıyıp oyunu yeniden başlatabilir.\n\nBu mod üçüncü taraf görünüm içermez. Kullanmak istediğiniz görünüm modlarını ayrıca yükleyip etkinleştirin.\n\nSürüm: 0.9.29\nKaynak kodu: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "latam",
+    "title": "Gestor de aspectos",
+    "description": "[h1]Gestor de aspectos[/h1]\n\nCambia los mods cosméticos instalados desde la selección de personaje, el compendio de cartas, la vista ampliada, el bestiario y el compendio de los Antiguos, sin reiniciar el juego.\n\n[b]Funciones[/b]\n[list]\n[*]Cambio instantáneo de aspectos de personajes, cartas, monstruos y Antiguos\n[*]Arte, marco y diseño seleccionables para cada carta\n[*]Escala del 50% al 200% para cada combinación de monstruo y aspecto\n[*]Aísla los parches cosméticos forzados para evitar que los aspectos no seleccionados reemplacen recursos\n[*]Guarda las selecciones automáticamente y prioriza el primer aspecto no original cuando no hay una configuración\n[/list]\n\n[b]Uso[/b]\nColoca este mod primero en el orden de carga. Si no lo está, el aviso dentro del juego puede moverlo al inicio y reiniciar con un solo clic.\n\nEste mod no incluye aspectos de terceros. Instala y activa por separado los mods de aspectos que quieras usar.\n\nVersión: 0.9.29\nCódigo fuente: https://github.com/gurio-wine/STS2-SkinChanger"
+  },
+  {
+    "language": "spanish",
+    "title": "Gestor de aspectos",
+    "description": "[h1]Gestor de aspectos[/h1]\n\nCambia los mods cosméticos instalados desde la selección de personaje, el compendio de cartas, la vista ampliada, el bestiario y el compendio de los Antiguos, sin reiniciar el juego.\n\n[b]Funciones[/b]\n[list]\n[*]Cambio inmediato de aspectos de personajes, cartas, monstruos y Antiguos\n[*]Ilustración, marco y diseño seleccionables para cada carta\n[*]Escala del 50% al 200% para cada combinación de monstruo y aspecto\n[*]Aísla los parches cosméticos forzados para impedir que los aspectos no seleccionados sustituyan recursos\n[*]Guarda las selecciones automáticamente y da prioridad al primer aspecto no original cuando no se ha configurado ninguno\n[/list]\n\n[b]Uso[/b]\nColoca este mod en primer lugar en el orden de carga. Si no lo está, el aviso del juego puede moverlo al inicio y reiniciar con un solo clic.\n\nEste mod no incluye aspectos de terceros. Instala y activa por separado los mods de aspectos que quieras utilizar.\n\nVersión: 0.9.29\nCódigo fuente: https://github.com/gurio-wine/STS2-SkinChanger"
+  }
+]

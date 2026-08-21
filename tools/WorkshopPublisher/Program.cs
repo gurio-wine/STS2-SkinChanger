@@ -77,6 +77,17 @@ try
     if (result.m_eResult != EResult.k_EResultOK)
         throw new InvalidOperationException($"SubmitItemUpdate failed: {result.m_eResult}");
 
+    if (!string.IsNullOrWhiteSpace(config.LocalizationsFile))
+    {
+        var localizationsPath = Path.GetFullPath(
+            Path.Combine(configDir, config.LocalizationsFile));
+        var localizations = JsonSerializer.Deserialize<List<WorkshopLocalization>>(
+            File.ReadAllText(localizationsPath), jsonOptions)
+            ?? throw new InvalidDataException("Workshop localizations are empty.");
+        foreach (var localization in localizations)
+            PublishLocalization(appId, publishedFileId, localization);
+    }
+
     Console.WriteLine($"PUBLISHED_FILE_ID={publishedFileId.m_PublishedFileId}");
     Console.WriteLine($"LEGAL_AGREEMENT_REQUIRED={result.m_bUserNeedsToAcceptWorkshopLegalAgreement}");
 }
@@ -98,6 +109,30 @@ static PublishedFileId_t CreateItem(AppId_t appId)
     Console.WriteLine($"CREATED_FILE_ID={result.m_nPublishedFileId.m_PublishedFileId}");
     Console.WriteLine($"LEGAL_AGREEMENT_REQUIRED={result.m_bUserNeedsToAcceptWorkshopLegalAgreement}");
     return result.m_nPublishedFileId;
+}
+
+static void PublishLocalization(
+    AppId_t appId,
+    PublishedFileId_t publishedFileId,
+    WorkshopLocalization localization)
+{
+    Console.WriteLine($"Publishing localization: {localization.Language}");
+    var update = SteamUGC.StartItemUpdate(appId, publishedFileId);
+    Require(
+        SteamUGC.SetItemUpdateLanguage(update, localization.Language),
+        $"SetItemUpdateLanguage({localization.Language})");
+    Require(
+        SteamUGC.SetItemTitle(update, localization.Title),
+        $"SetItemTitle({localization.Language})");
+    Require(
+        SteamUGC.SetItemDescription(update, localization.Description),
+        $"SetItemDescription({localization.Language})");
+
+    var result = WaitForCallResult<SubmitItemUpdateResult_t>(
+        SteamUGC.SubmitItemUpdate(update, string.Empty));
+    if (result.m_eResult != EResult.k_EResultOK)
+        throw new InvalidOperationException(
+            $"Localization update failed for {localization.Language}: {result.m_eResult}");
 }
 
 static T WaitForCallResult<T>(SteamAPICall_t call) where T : struct
@@ -146,4 +181,12 @@ internal sealed class WorkshopConfig
     public required string ContentFolder { get; init; }
     public required string PreviewFile { get; init; }
     public required string ChangeNote { get; init; }
+    public string? LocalizationsFile { get; init; }
+}
+
+internal sealed class WorkshopLocalization
+{
+    public required string Language { get; init; }
+    public required string Title { get; init; }
+    public required string Description { get; init; }
 }

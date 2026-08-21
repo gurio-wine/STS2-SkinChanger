@@ -1,10 +1,11 @@
 {
   "appId": 2868840,
   "publishedFileId": 3787302680,
-  "title": "皮肤切换器 - Skin Changer",
-  "description": "[h1]皮肤切换器 - Skin Changer[/h1]\n\n在选角界面、卡牌总览、单卡放大预览、怪物图鉴和远古图鉴中切换已安装的外观 Mod，无需重启游戏。\n\n[b]主要功能[/b]\n[list]\n[*]角色、卡牌、怪物和远古者皮肤即时切换\n[*]每张卡牌可单独选择卡图及配套卡框/布局\n[*]怪物皮肤可按“怪物 + 皮肤”独立调整 50%–200% 缩放\n[*]自动隔离纯外观 Mod 的强制补丁，避免未选择的皮肤占用资源\n[*]设置自动保存；未设置时优先使用第一个非原版皮肤\n[/list]\n\n[b]使用提示[/b]\n请将本 Mod 放在加载顺序第一位，以便完整接管皮肤资源。若未置顶，游戏内会显示提示，并可一键置顶后重启。\n\n仅管理玩家已经安装并启用的皮肤 Mod，本 Mod 自身不包含第三方皮肤资源。\n\n当前版本：0.9.29\n源代码：https://github.com/gurio-wine/STS2-SkinChanger\n\n[h1]English[/h1]\nSwitch installed cosmetic mods from character select, the card compendium, enlarged card previews, the monster compendium, and the Ancient compendium without restarting the game.\n\n[b]Features[/b]\n[list]\n[*]Hot-swap character, card, monster, and Ancient skins\n[*]Per-card art selection with matching frames and layouts\n[*]Per monster-and-skin scale control from 50% to 200%\n[*]Isolates forced cosmetic patches so unselected skins cannot take over resources\n[*]Persistent selections with a non-vanilla skin preferred by default\n[/list]\n\nPlace this mod first in the load order so it can manage cosmetic resources consistently. The in-game warning can move it to the top and restart automatically.\n\nThis manager does not bundle third-party skin assets; install and enable the skin mods you want to use separately.\n\nVersion: 0.9.29\nSource: https://github.com/gurio-wine/STS2-SkinChanger",
+  "title": "Skin Changer",
+  "description": "[h1]Skin Changer[/h1]\n\nSwitch installed cosmetic mods from character select, the card compendium, enlarged card previews, the monster compendium, and the Ancient compendium without restarting the game.\n\n[b]Features[/b]\n[list]\n[*]Hot-swap character, card, monster, and Ancient skins\n[*]Per-card art selection with matching frames and layouts\n[*]Per monster-and-skin scale control from 50% to 200%\n[*]Isolates forced cosmetic patches so unselected skins cannot take over resources\n[*]Persistent selections with a non-vanilla skin preferred by default\n[/list]\n\n[b]Usage[/b]\nPlace this mod first in the load order so it can manage cosmetic resources consistently. The in-game warning can move it to the top and restart automatically.\n\nThis manager does not bundle third-party skin assets; install and enable the skin mods you want to use separately.\n\nVersion: 0.9.29\nSource: https://github.com/gurio-wine/STS2-SkinChanger",
   "visibility": 0,
   "contentFolder": "content",
   "previewFile": "preview.jpg",
-  "changeNote": "首次发布 / Initial release — v0.9.29"
+  "changeNote": "Added separate descriptions for all 15 supported game languages / 为游戏支持的 15 种语言添加独立描述",
+  "localizationsFile": "localizations.json"
 }
