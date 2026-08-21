@@ -4,5 +4,8 @@
 /tools/PckInspect/obj/
 /tools/CatalogInspect/bin/
 /tools/CatalogInspect/obj/
+/tools/WorkshopPublisher/bin/
+/tools/WorkshopPublisher/obj/
+/workshop/content/
 *.user
 *.suo

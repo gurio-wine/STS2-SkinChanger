@@ -2,6 +2,8 @@
 
 一个独立的《杀戮尖塔 2》皮肤管理 Mod。它不会修改其他 Mod，也不依赖旧版“皮肤管理器”。
 
+[Steam 创意工坊 / Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680)
+
 ## 功能
 
 - 自动识别已加载、且 `affects_gameplay=false` 的纯外观 PCK，以及通过 DLL 接管原场景的外观 Mod。
