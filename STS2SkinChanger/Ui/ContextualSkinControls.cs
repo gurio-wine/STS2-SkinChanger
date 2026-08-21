@@ -16,9 +16,14 @@ internal static partial class ContextualSkinControls
 {
     private const string SelectorName = "STS2SkinSelector";
     private const string DropdownName = "SkinDropdown";
+    private const string MonsterScaleSliderName = "MonsterScaleSlider";
+    private const string MonsterScaleValueName = "MonsterScaleValue";
     private const string CharacterRefreshGenerationMeta = "sts2_skin_character_refresh_generation";
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
+    private const string MonsterScaleGroupMeta = "sts2_skin_monster_scale_group";
+    private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
+    private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
@@ -121,14 +126,91 @@ internal static partial class ContextualSkinControls
         }
 
         var selector = BuildSelector();
+        AddMonsterScaleControls(screen, selector);
         selector.AnchorLeft = 0.5f;
         selector.AnchorRight = 0.5f;
-        selector.OffsetLeft = -122;
+        selector.OffsetLeft = -292;
         selector.OffsetTop = 168;
-        selector.OffsetRight = 122;
+        selector.OffsetRight = 292;
         selector.OffsetBottom = 212;
         screen.AddChild(selector);
         return selector;
+    }
+
+    private static void AddMonsterScaleControls(NBestiary screen, HBoxContainer selector)
+    {
+        var label = BuildCompactLabel("大小", 50);
+        var slider = new HSlider
+        {
+            Name = MonsterScaleSliderName,
+            MinValue = SkinService.MinimumMonsterScale,
+            MaxValue = SkinService.MaximumMonsterScale,
+            Step = SkinService.MonsterScaleStep,
+            Value = 1d,
+            CustomMinimumSize = new Vector2(150, 36),
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter
+        };
+        var valueLabel = BuildCompactLabel("100%", 62);
+        valueLabel.Name = MonsterScaleValueName;
+        var reset = new Button
+        {
+            Text = "重置",
+            CustomMinimumSize = new Vector2(62, 38),
+            FocusMode = Control.FocusModeEnum.None,
+            MouseDefaultCursorShape = Control.CursorShape.PointingHand
+        };
+        ApplyCompactButtonTheme(reset);
+        slider.ValueChanged += value =>
+            OnMonsterScaleChanged(screen, selector, (float)value);
+        reset.Pressed += () => slider.Value = 1d;
+        selector.AddChild(label);
+        selector.AddChild(slider);
+        selector.AddChild(valueLabel);
+        selector.AddChild(reset);
+    }
+
+    private static Label BuildCompactLabel(string text, float width)
+    {
+        var label = new Label
+        {
+            Text = text,
+            CustomMinimumSize = new Vector2(width, 38),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        label.AddThemeColorOverride("font_color", new Color("fff6e2"));
+        label.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+        label.AddThemeConstantOverride("outline_size", 4);
+        label.AddThemeFontSizeOverride("font_size", 20);
+        if (GameFont != null)
+        {
+            label.AddThemeFontOverride("font", GameFont);
+        }
+
+        return label;
+    }
+
+    private static void ApplyCompactButtonTheme(Button button)
+    {
+        button.AddThemeColorOverride("font_color", new Color("fff6e2"));
+        button.AddThemeColorOverride("font_hover_color", Colors.White);
+        button.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
+        button.AddThemeFontSizeOverride("font_size", 19);
+        if (GameFont != null)
+        {
+            button.AddThemeFontOverride("font", GameFont);
+        }
+
+        button.AddThemeStyleboxOverride(
+            "normal",
+            CreateStyleBox(new Color("3c5f82"), new Color("7394ad"), 1));
+        button.AddThemeStyleboxOverride(
+            "hover",
+            CreateStyleBox(new Color("4b7392"), new Color("afcdde"), 1));
+        button.AddThemeStyleboxOverride(
+            "pressed",
+            CreateStyleBox(new Color("45104e"), new Color("efc850"), 2));
     }
 
     private static HBoxContainer BuildSelector()
@@ -249,8 +331,56 @@ internal static partial class ContextualSkinControls
         var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
             .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString() == selected);
         dropdown.Select(selectedIndex);
+        PopulateMonsterScale(selector, group.Id);
         selector.SetMeta(UpdatingMeta, false);
         selector.Visible = true;
+    }
+
+    private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
+    {
+        var slider = selector.GetNodeOrNull<HSlider>(MonsterScaleSliderName);
+        var valueLabel = selector.GetNodeOrNull<Label>(MonsterScaleValueName);
+        if (slider == null || valueLabel == null)
+        {
+            return;
+        }
+
+        var scale = SkinService.GetSelectedMonsterScale(groupId);
+        slider.Value = scale;
+        valueLabel.Text = $"{Mathf.RoundToInt(scale * 100f)}%";
+    }
+
+    private static void OnMonsterScaleChanged(
+        NBestiary screen,
+        HBoxContainer selector,
+        float scale)
+    {
+        var valueLabel = selector.GetNodeOrNull<Label>(MonsterScaleValueName);
+        if (valueLabel != null)
+        {
+            valueLabel.Text = $"{Mathf.RoundToInt(scale * 100f)}%";
+        }
+
+        if (selector.GetMeta(UpdatingMeta, false).AsBool())
+        {
+            return;
+        }
+
+        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return;
+        }
+
+        try
+        {
+            SkinService.SetSelectedMonsterScale(groupId, scale);
+            ApplyMonsterScaleToDescendants(screen, groupId);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("保存怪物缩放失败：" + exception.Message);
+        }
     }
 
     private static void ApplyDropdownSelection(HBoxContainer selector, OptionButton dropdown, int index)
@@ -271,6 +401,10 @@ internal static partial class ContextualSkinControls
             dropdown.Select(currentIndex);
             return;
         }
+
+        selector.SetMeta(UpdatingMeta, true);
+        PopulateMonsterScale(selector, groupId);
+        selector.SetMeta(UpdatingMeta, false);
 
         if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
         {
@@ -509,6 +643,63 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static void MarkAndApplyMonsterScale(string modelId, NCreatureVisuals visuals)
+    {
+        var group = FindGroup(modelId);
+        if (group == null)
+        {
+            return;
+        }
+
+        visuals.SetMeta(MonsterScaleGroupMeta, group.Id);
+        CaptureMonsterBaseScale(visuals);
+        ApplyStoredMonsterScale(visuals, group.Id);
+    }
+
+    internal static void ReapplyMonsterScaleAfterGameScale(NCreatureVisuals visuals)
+    {
+        if (!visuals.HasMeta(MonsterScaleGroupMeta))
+        {
+            return;
+        }
+
+        var groupId = visuals.GetMeta(MonsterScaleGroupMeta).AsString();
+        CaptureMonsterBaseScale(visuals);
+        ApplyStoredMonsterScale(visuals, groupId);
+    }
+
+    private static void CaptureMonsterBaseScale(NCreatureVisuals visuals)
+    {
+        visuals.SetMeta(MonsterBaseScaleMeta, visuals.Scale);
+        visuals.SetMeta(MonsterBaseDefaultScaleMeta, visuals.DefaultScale);
+    }
+
+    private static void ApplyStoredMonsterScale(NCreatureVisuals visuals, string groupId)
+    {
+        var factor = SkinService.GetSelectedMonsterScale(groupId);
+        var baseScale = visuals.GetMeta(MonsterBaseScaleMeta, visuals.Scale).AsVector2();
+        var baseDefaultScale = visuals
+            .GetMeta(MonsterBaseDefaultScaleMeta, visuals.DefaultScale)
+            .AsSingle();
+        visuals.Scale = baseScale * factor;
+        visuals.DefaultScale = baseDefaultScale * factor;
+    }
+
+    private static void ApplyMonsterScaleToDescendants(Node root, string groupId)
+    {
+        if (root is NCreatureVisuals visuals &&
+            visuals.GetMeta(MonsterScaleGroupMeta, string.Empty).AsString()
+                .Equals(groupId, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyStoredMonsterScale(visuals, groupId);
+        }
+
+        foreach (var child in root.GetChildren())
+        {
+            ApplyMonsterScaleToDescendants(child, groupId);
+        }
+    }
+
     internal static void ReplaceCachedScene(string resourcePath, ref PackedScene result)
     {
         var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
@@ -684,11 +875,22 @@ internal static class CharacterVisualResultPatch
 internal static class MonsterVisualResultPatch
 {
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result) =>
+    private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result)
+    {
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
             ContextualSkinControls.CanonicalScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
             ref __result);
+        ContextualSkinControls.MarkAndApplyMonsterScale(__instance.Id.Entry, __result);
+    }
+}
+
+[HarmonyPatch(typeof(NCreatureVisuals), nameof(NCreatureVisuals.SetScaleAndHue))]
+internal static class MonsterVisualScalePatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCreatureVisuals __instance) =>
+        ContextualSkinControls.ReapplyMonsterScaleAfterGameScale(__instance);
 }
 
 [HarmonyPatch(typeof(AssetCache), nameof(AssetCache.GetScene))]

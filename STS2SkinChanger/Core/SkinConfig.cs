@@ -12,6 +12,9 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public Dictionary<string, Dictionary<string, float>> MonsterScales { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public bool SuppressLoadOrderWarning { get; set; }
 
     public bool? LastKnownFirstInLoadOrder { get; set; }
@@ -25,6 +28,14 @@ internal sealed class SkinConfig
                 var config = JsonSerializer.Deserialize<SkinConfig>(File.ReadAllText(path), JsonOptions) ?? new SkinConfig();
                 // JSON 中显式的 null 会覆盖属性初始化器，反序列化后兜底一次。
                 config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                config.MonsterScales ??=
+                    new Dictionary<string, Dictionary<string, float>>(StringComparer.OrdinalIgnoreCase);
+                config.MonsterScales = config.MonsterScales.ToDictionary(
+                    pair => pair.Key,
+                    pair => new Dictionary<string, float>(
+                        pair.Value ?? new Dictionary<string, float>(),
+                        StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
                 return config;
             }
         }

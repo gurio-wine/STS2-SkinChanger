@@ -10,6 +10,9 @@ namespace STS2SkinChanger.Core;
 
 internal static class SkinService
 {
+    public const float MinimumMonsterScale = 0.5f;
+    public const float MaximumMonsterScale = 2f;
+    public const float MonsterScaleStep = 0.05f;
     public const string InheritCardSelectionId = "__inherit__";
 
     private static readonly object Sync = new();
@@ -1034,6 +1037,53 @@ internal static class SkinService
             var catalog = Catalog;
             return catalog != null &&
                    catalog.IsResourceBackedOption(groupId, Config.GetSelection(groupId));
+        }
+    }
+
+    public static float GetSelectedMonsterScale(string groupId)
+    {
+        lock (Sync)
+        {
+            var optionId = Config.GetSelection(groupId);
+            return Config.MonsterScales.TryGetValue(groupId, out var options) &&
+                   options.TryGetValue(optionId, out var scale)
+                ? Mathf.Clamp(scale, MinimumMonsterScale, MaximumMonsterScale)
+                : 1f;
+        }
+    }
+
+    public static void SetSelectedMonsterScale(string groupId, float scale)
+    {
+        lock (Sync)
+        {
+            var normalized = Mathf.Clamp(
+                Mathf.Round(scale / MonsterScaleStep) * MonsterScaleStep,
+                MinimumMonsterScale,
+                MaximumMonsterScale);
+            var optionId = Config.GetSelection(groupId);
+            if (Mathf.IsEqualApprox(normalized, 1f))
+            {
+                if (Config.MonsterScales.TryGetValue(groupId, out var existing))
+                {
+                    existing.Remove(optionId);
+                    if (existing.Count == 0)
+                    {
+                        Config.MonsterScales.Remove(groupId);
+                    }
+                }
+            }
+            else
+            {
+                if (!Config.MonsterScales.TryGetValue(groupId, out var options))
+                {
+                    options = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+                    Config.MonsterScales[groupId] = options;
+                }
+
+                options[optionId] = normalized;
+            }
+
+            Config.Save(ConfigPath);
         }
     }
 
