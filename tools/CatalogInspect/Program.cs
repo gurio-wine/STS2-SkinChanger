@@ -60,7 +60,8 @@ foreach (var group in catalog.CardGroups)
     {
         Console.WriteLine(
             $"  {option.Id}\t{option.Name}\t" +
-            $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient");
+            $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient, " +
+            $"{option.CardPresentations.Count} presentations");
     }
 }
 
@@ -70,7 +71,8 @@ foreach (var option in catalog.PckCardOptions)
         [option.ProviderId ?? option.Id]);
     Console.WriteLine(
         $"card-provider:{option.Id}\t{option.Name}\t{option.Assets.Count} assets, " +
-        $"{namespaceFiles.Count} namespace files");
+        $"{namespaceFiles.Count} namespace files, " +
+        $"{option.CardPresentations.Count} presentations");
 }
 
 if (runtimeIndex >= 0)
@@ -103,7 +105,8 @@ if (validateIndex >= 0)
     {
         Console.WriteLine(
             $"provider {probe.Id}: visual={probe.VisualGroupCount}, " +
-            $"cards={probe.CardAssetCount}, images={probe.RuntimeImageCount}");
+            $"cards={probe.CardAssetCount}, presentations={probe.CardPresentationCount}, " +
+            $"images={probe.RuntimeImageCount}");
     }
 
     foreach (var option in catalog.PckCardOptions)
@@ -116,6 +119,116 @@ if (validateIndex >= 0)
         {
             failures.Add(
                 $"cards/{option.Id}: one option still mixes variants {string.Join(", ", variants)}");
+        }
+    }
+
+    var validatedPresentations = 0;
+    var presentationFailures = 0;
+    foreach (var option in catalog.PckCardOptions)
+    {
+        foreach (var presentation in option.CardPresentations)
+        {
+            if (string.IsNullOrWhiteSpace(option.ProviderRootPath))
+            {
+                failures.Add(
+                    $"cards/{option.Id}/{presentation.Key}: presentation has no provider root");
+                presentationFailures++;
+                continue;
+            }
+
+            var presentationFailed = false;
+            foreach (var resourcePath in presentation.Value.ResourcePaths)
+            {
+                try
+                {
+                    RuntimeResourceOverlay overlay;
+                    try
+                    {
+                        overlay = catalog.BuildIsolatedCardResource(
+                            string.Empty,
+                            option.Id,
+                            resourcePath,
+                            useSelectedProvider: true,
+                            $"validate/presentation/{validatedPresentations:D4}/provider");
+                    }
+                    catch
+                    {
+                        overlay = catalog.BuildIsolatedCardResource(
+                            string.Empty,
+                            option.Id,
+                            resourcePath,
+                            useSelectedProvider: false,
+                            $"validate/presentation/{validatedPresentations:D4}/base");
+                    }
+                    if (!overlay.ResourcePaths.ContainsKey(resourcePath) || overlay.Files.Count == 0)
+                    {
+                        failures.Add(
+                            $"cards/{option.Id}/{presentation.Key}: empty presentation resource {resourcePath}");
+                        presentationFailures++;
+                        presentationFailed = true;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    failures.Add(
+                        $"cards/{option.Id}/{presentation.Key}: cannot isolate {resourcePath}: " +
+                        exception.Message);
+                    presentationFailures++;
+                    presentationFailed = true;
+                }
+            }
+
+            if (!presentationFailed)
+            {
+                validatedPresentations++;
+            }
+        }
+    }
+    Console.WriteLine(
+        $"presentation validation: {validatedPresentations} passed, " +
+        $"{presentationFailures} failed");
+
+    var presentationKeys = catalog.PckCardOptions
+        .SelectMany(option => option.CardPresentations.Keys)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (presentationKeys.Length > 0)
+    {
+        var groupByCardType = presentationKeys.ToDictionary(
+            cardType => cardType,
+            cardType => "presentation-validation-" + cardType.ToLowerInvariant(),
+            StringComparer.OrdinalIgnoreCase);
+        catalog.FinalizeCardGroups(presentationKeys.Select(cardType => new CardCatalogEntry(
+            cardType,
+            $"res://validation/card_atlas.sprites/{cardType.ToLowerInvariant()}.tres",
+            groupByCardType[cardType],
+            groupByCardType[cardType],
+            groupByCardType[cardType])));
+
+        foreach (var sourceOption in catalog.PckCardOptions)
+        {
+            foreach (var presentation in sourceOption.CardPresentations)
+            {
+                var routedOption = catalog.CardGroups
+                    .FirstOrDefault(group => group.Id.Equals(
+                        groupByCardType[presentation.Key],
+                        StringComparison.OrdinalIgnoreCase))?
+                    .Options.FirstOrDefault(option => option.Id.Equals(
+                        sourceOption.Id,
+                        StringComparison.OrdinalIgnoreCase));
+                if (routedOption == null ||
+                    !routedOption.CardPresentations.ContainsKey(presentation.Key) ||
+                    routedOption.CardPresentations.Keys.Any(cardType =>
+                        !cardType.Equals(presentation.Key, StringComparison.OrdinalIgnoreCase)) ||
+                    !string.Equals(
+                        routedOption.ProviderRootPath,
+                        sourceOption.ProviderRootPath,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    failures.Add(
+                        $"cards/{sourceOption.Id}/{presentation.Key}: presentation routing leaked or lost provider ownership");
+                }
+            }
         }
     }
 

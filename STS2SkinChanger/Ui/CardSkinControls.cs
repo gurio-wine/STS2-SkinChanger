@@ -2,6 +2,7 @@ using Godot;
 using HarmonyLib;
 using System.Runtime.CompilerServices;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.UI;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -20,12 +21,22 @@ internal static class CardSkinControls
     private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
     private const string GroupMeta = "sts2_card_skin_group";
     private const string UpdatingMeta = "sts2_card_skin_updating";
+    private const string NormalTextBackgroundOverlayName = "STS2ManagedNormalTextBackgroundOverlay";
+    private const string AncientBorderPath =
+        "res://images/atlases/compressed.sprites/card_template/ancient_card_border.tres";
+    private const string AncientBannerPath =
+        "res://images/atlases/ui_atlas.sprites/card/ancient_banner.tres";
+    private const string AncientBannerMaterialPath =
+        "res://materials/cards/banners/card_banner_ancient_mat.tres";
     private static readonly System.Reflection.MethodInfo ReloadCardMethod =
         AccessTools.Method(typeof(NCard), "Reload");
     private static readonly System.Reflection.MethodInfo UpdateLibraryFilterMethod =
         AccessTools.Method(typeof(NCardLibrary), "UpdateFilter", [typeof(bool)]);
     private static readonly ConditionalWeakTable<NCard, CardLayoutState> BaselineLayouts = new();
     private static readonly ConditionalWeakTable<NCard, CardPresentationState> PresentationLayouts = new();
+    private static readonly System.Reflection.FieldInfo? HighlightShaderMaterialField =
+        AccessTools.Field(typeof(NCardHighlight), "_shaderMaterial");
+    private static Texture2D? _normalTextBackgroundCoverTexture;
 
     public static void Attach(NCardLibrary screen)
     {
@@ -157,43 +168,335 @@ internal static class CardSkinControls
         }
     }
 
-    public static void ReplaySelectedPresentation(
-        NCard card,
-        System.Reflection.MethodBase originalMethod,
-        object[] originalArguments)
+    public static void ApplySelectedPresentation(NCard card)
     {
         if (card.Model == null)
         {
             return;
         }
 
-        var providerRoot = SkinService.GetCardPresentationProviderRoot(card.Model);
-        var replayed = VisualPatchGuard.ReplaySelectedCardPostfixes(
-            card,
-            originalMethod,
-            originalArguments,
-            providerRoot);
-        if (providerRoot == null)
+        var presentation = SkinService.GetCardPresentation(card.Model);
+        if (presentation == null)
         {
             PresentationLayouts.Remove(card);
-            return;
-        }
-
-        if (replayed > 0)
-        {
-            if (!BaselineLayouts.TryGetValue(card, out var baseline))
-            {
-                baseline = CardLayoutState.Capture(card);
-            }
-
-            PresentationLayouts.Remove(card);
-            PresentationLayouts.Add(
-                card,
-                new CardPresentationState(baseline.FindAddedNodes(card)));
             return;
         }
 
         PresentationLayouts.Remove(card);
+        ApplyManagedCardPresentation(card, presentation);
+        if (BaselineLayouts.TryGetValue(card, out var baseline))
+        {
+            PresentationLayouts.Add(
+                card,
+                new CardPresentationState(baseline.FindAddedNodes(card)));
+        }
+    }
+
+    private static void ApplyManagedCardPresentation(
+        NCard card,
+        CardPresentationDefinition presentation)
+    {
+        var portrait = card.GetNodeOrNull<TextureRect>("%Portrait");
+        var portraitBorder = card.GetNodeOrNull<TextureRect>("%PortraitBorder");
+        var frame = card.GetNodeOrNull<TextureRect>("%Frame");
+        var banner = card.GetNodeOrNull<TextureRect>("%TitleBanner");
+        var ancientPortrait = card.GetNodeOrNull<TextureRect>("%AncientPortrait");
+        var ancientGlass = card.GetNodeOrNull<TextureRect>("%AncientBorderGlassOverlay");
+        var ancientBorder = card.GetNodeOrNull<TextureRect>("%AncientBorder");
+        var ancientTextBg = card.GetNodeOrNull<TextureRect>("%AncientTextBg");
+        var ancientBanner = card.GetNodeOrNull<TextureRect>("%AncientBanner");
+        var ancientHighlight = card.GetNodeOrNull<TextureRect>("%AncientHighlight") ??
+                               FindNodeByName(card, "AncientHighlight") as TextureRect;
+        var portraitCanvas = card.GetNodeOrNull<CanvasGroup>("%PortraitCanvasGroup");
+        var energyIcon = card.GetNodeOrNull<TextureRect>("%EnergyIcon");
+        var highlight = card.GetNodeOrNull<TextureRect>("%Highlight");
+        var fire = FindNodeByName(card, "Fire") as AnimatedSprite2D;
+        var useAncientLayout = presentation.UseAncientLayout ||
+                               card.Model!.Rarity == CardRarity.Ancient;
+
+        if (useAncientLayout)
+        {
+            SetVisible(portrait, false);
+            SetVisible(portraitBorder, false);
+            SetVisible(frame, false);
+            SetVisible(banner, false);
+            SetVisible(ancientPortrait, true);
+            SetVisible(ancientGlass, true);
+            SetVisible(ancientBorder, true);
+            SetVisible(ancientTextBg, true);
+            SetVisible(ancientBanner, true);
+            if (fire != null)
+            {
+                fire.Visible = true;
+                fire.Play();
+            }
+
+            if (ancientBorder is { Texture: null } border)
+            {
+                border.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    AncientBorderPath);
+            }
+            if (ancientBanner is { Texture: null } ancientBannerWithoutTexture)
+            {
+                ancientBannerWithoutTexture.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    AncientBannerPath);
+            }
+            if (ancientBanner is { Material: null } ancientBannerWithoutMaterial)
+            {
+                ancientBannerWithoutMaterial.Material = SkinService.LoadCardPresentationResource<Material>(
+                    card.Model!,
+                    AncientBannerMaterialPath);
+            }
+            if (ancientTextBg is { Texture: null } textBackground)
+            {
+                textBackground.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    DefaultAncientTextBackgroundPath(card.Model!));
+            }
+            if (portraitCanvas != null)
+            {
+                var maskMaterialPath = card.Visibility == ModelVisibility.Visible
+                    ? "res://scenes/cards/card_canvas_group_mask_material.tres"
+                    : "res://scenes/cards/card_canvas_group_mask_blur_material.tres";
+                portraitCanvas.Material = SkinService.LoadCardPresentationResource<Material>(
+                    card.Model!,
+                    maskMaterialPath);
+            }
+        }
+
+        ApplyTexture(card, frame, presentation.Frame);
+        ApplyTexture(card, ancientBorder, presentation.Frame);
+        ApplyMaterial(card, frame, presentation.FrameMaterial);
+        ApplyMaterial(card, ancientBorder, presentation.FrameMaterial);
+        ApplyTexture(card, banner, presentation.BannerTexture);
+        ApplyTexture(card, ancientBanner, presentation.BannerTexture);
+        ApplyMaterial(card, banner, presentation.BannerMaterial);
+        ApplyMaterial(card, ancientBanner, presentation.BannerMaterial);
+        ApplyTexture(card, portraitBorder, presentation.PortraitBorder);
+        ApplyMaterial(card, portraitBorder, presentation.PortraitBorderMaterial);
+        ApplyTexture(card, ancientTextBg, presentation.AncientTextBackground);
+        ApplyMaterial(card, ancientTextBg, presentation.TextBackgroundMaterial);
+        ApplyTexture(card, energyIcon, presentation.EnergyIcon);
+        ApplyTexture(card, highlight, presentation.Highlight);
+        ApplyTexture(card, ancientHighlight, presentation.Highlight);
+        ApplyMaterial(card, highlight, presentation.HighlightMaterial);
+        ApplyMaterial(card, ancientHighlight, presentation.HighlightMaterial);
+
+        if (presentation.FrameVisible is { } frameVisible)
+        {
+            SetVisible(frame, frameVisible && !useAncientLayout);
+            SetVisible(ancientBorder, frameVisible && useAncientLayout);
+        }
+        if (presentation.BannerVisible is { } bannerVisible)
+        {
+            SetVisible(banner, bannerVisible && !useAncientLayout);
+            SetVisible(ancientBanner, bannerVisible && useAncientLayout);
+        }
+        if (useAncientLayout)
+        {
+            SetVisible(ancientTextBg, presentation.TextBackgroundVisible);
+        }
+        else
+        {
+            ApplyNormalTextBackground(card, presentation);
+        }
+        if (presentation.PortraitBorderVisible is { } portraitBorderVisible)
+        {
+            SetVisible(portraitBorder, portraitBorderVisible && !useAncientLayout);
+        }
+        SetVisible(energyIcon, presentation.EnergyIconVisible);
+        if (presentation.HighlightVisible is { } highlightVisible)
+        {
+            SetVisible(highlight, highlightVisible && !useAncientLayout);
+            SetVisible(ancientHighlight, highlightVisible && useAncientLayout);
+        }
+        ApplyTypePlaqueVisibility(card, presentation);
+        SetVisible(card.GetNodeOrNull<CanvasItem>("%DescriptionLabel"), presentation.DescriptionVisible);
+        SetVisible(
+            FindNodeByName(card, "Infection") as CanvasItem,
+            presentation.InfectionOverlayVisible);
+    }
+
+    private static string DefaultAncientTextBackgroundPath(CardModel card)
+    {
+        var type = card.Type switch
+        {
+            CardType.Attack => "attack",
+            CardType.Power => "power",
+            _ => "skill"
+        };
+        return $"res://images/atlases/compressed.sprites/card_template/ancient_card_text_bg_{type}.tres";
+    }
+
+    private static void ApplyTexture(
+        NCard card,
+        TextureRect? target,
+        string? resourcePath)
+    {
+        if (target != null && !string.IsNullOrWhiteSpace(resourcePath))
+        {
+            var texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                card.Model!,
+                resourcePath);
+            if (texture != null)
+            {
+                target.Texture = texture;
+            }
+        }
+    }
+
+    private static void ApplyMaterial(
+        NCard card,
+        CanvasItem? target,
+        string? resourcePath)
+    {
+        if (target != null && !string.IsNullOrWhiteSpace(resourcePath))
+        {
+            var material = SkinService.LoadCardPresentationResource<Material>(
+                card.Model!,
+                resourcePath);
+            if (material != null)
+            {
+                target.Material = material;
+                SyncHighlightShaderMaterial(target, material);
+            }
+        }
+    }
+
+    private static void ApplyNormalTextBackground(
+        NCard card,
+        CardPresentationDefinition presentation)
+    {
+        if (presentation.AncientTextBackground == null &&
+            presentation.TextBackgroundMaterial == null &&
+            presentation.TextBackgroundVisible == null)
+        {
+            return;
+        }
+
+        var body = card.Body;
+        var description = card.GetNodeOrNull<Control>("%DescriptionLabel");
+        if (body == null || description == null)
+        {
+            return;
+        }
+
+        var overlay = body.GetNodeOrNull<TextureRect>(NormalTextBackgroundOverlayName);
+        if (overlay == null)
+        {
+            overlay = new TextureRect
+            {
+                Name = NormalTextBackgroundOverlayName,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Scale,
+                TextureFilter = CanvasItem.TextureFilterEnum.Linear,
+                Visible = false
+            };
+            body.AddChild(overlay);
+            body.MoveChild(overlay, Math.Max(0, description.GetIndex()));
+        }
+
+        var plaque = card.GetNodeOrNull<Control>("%TypePlaque");
+        var left = description.Position.X - 14f;
+        var top = description.Position.Y - 18f;
+        var right = description.Position.X + description.Size.X + 14f;
+        var bottom = description.Position.Y + description.Size.Y + 12f;
+        if (plaque != null)
+        {
+            left = MathF.Min(left, plaque.Position.X - 18f);
+            top = MathF.Min(top, plaque.Position.Y - 18f);
+            right = MathF.Max(right, plaque.Position.X + plaque.Size.X + 18f);
+        }
+        overlay.Position = new Vector2(left, top);
+        overlay.Size = new Vector2(MathF.Max(1f, right - left), MathF.Max(1f, bottom - top));
+
+        var visible = presentation.TextBackgroundVisible ?? true;
+        overlay.Texture = visible && presentation.AncientTextBackground != null
+            ? SkinService.LoadCardPresentationResource<Texture2D>(
+                card.Model!,
+                presentation.AncientTextBackground)
+            : visible
+                ? null
+                : GetNormalTextBackgroundCoverTexture();
+        overlay.Material = visible && presentation.TextBackgroundMaterial != null
+            ? SkinService.LoadCardPresentationResource<Material>(
+                card.Model!,
+                presentation.TextBackgroundMaterial)
+            : null;
+        overlay.Visible = overlay.Texture != null;
+    }
+
+    private static Texture2D GetNormalTextBackgroundCoverTexture()
+    {
+        if (_normalTextBackgroundCoverTexture != null &&
+            GodotObject.IsInstanceValid(_normalTextBackgroundCoverTexture))
+        {
+            return _normalTextBackgroundCoverTexture;
+        }
+
+        using var image = Image.CreateEmpty(8, 8, false, Image.Format.Rgba8);
+        image.Fill(new Color(0.11f, 0.10f, 0.08f, 0.92f));
+        _normalTextBackgroundCoverTexture = ImageTexture.CreateFromImage(image);
+        return _normalTextBackgroundCoverTexture;
+    }
+
+    private static void ApplyTypePlaqueVisibility(
+        NCard card,
+        CardPresentationDefinition presentation)
+    {
+        if (presentation.TypePlaqueVisible == null && presentation.TypeLabelVisible == null)
+        {
+            return;
+        }
+
+        var plaque = card.GetNodeOrNull<Control>("%TypePlaque");
+        var label = card.GetNodeOrNull<CanvasItem>("%TypeLabel");
+        var plaqueVisible = presentation.TypePlaqueVisible ?? true;
+        var labelVisible = presentation.TypeLabelVisible ?? true;
+        if (plaque != null)
+        {
+            plaque.Visible = plaqueVisible || labelVisible;
+            plaque.SelfModulate = plaqueVisible
+                ? Colors.White
+                : new Color(1f, 1f, 1f, 0f);
+        }
+        SetVisible(label, labelVisible);
+    }
+
+    private static Node? FindNodeByName(Node root, string name)
+    {
+        foreach (var child in root.GetChildren())
+        {
+            if (child.Name.ToString().Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return child;
+            }
+            var nested = FindNodeByName(child, name);
+            if (nested != null)
+            {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    private static void SyncHighlightShaderMaterial(CanvasItem target, Material? material)
+    {
+        if (target is NCardHighlight highlight && material is ShaderMaterial shaderMaterial)
+        {
+            HighlightShaderMaterialField?.SetValue(highlight, shaderMaterial);
+        }
+    }
+
+    private static void SetVisible(CanvasItem? target, bool? visible)
+    {
+        if (target != null && visible is { } value)
+        {
+            target.Visible = value;
+        }
     }
 
     public static void ApplySelectedPortraitToNode(NCard card)
@@ -205,7 +508,8 @@ internal static class CardSkinControls
 
         // CardModel.Portrait 的 getter 已被 Priority.Last 的 Postfix 接管，这里拿到的已是换肤后的贴图。
         var portrait = card.Model.Portrait;
-        var targetPath = card.Model.Rarity == CardRarity.Ancient
+        var targetPath = card.Model.Rarity == CardRarity.Ancient ||
+                         SkinService.GetCardPresentation(card.Model)?.UseAncientLayout == true
             ? "%AncientPortrait"
             : "%Portrait";
         var target = card.GetNodeOrNull<TextureRect>(targetPath);
@@ -383,15 +687,31 @@ internal static class CardSkinControls
             "%AncientBorder",
             "%AncientTextBg",
             "%AncientBanner",
-            "%PortraitCanvasGroup"
+            "%AncientHighlight",
+            "%PortraitCanvasGroup",
+            "%EnergyIcon",
+            "%Highlight",
+            "%TypePlaque",
+            "%TypeLabel",
+            "%DescriptionLabel"
         ];
 
         public static CardLayoutState Capture(NCard card)
         {
             var states = NodePaths
                 .Select(path => card.GetNodeOrNull<CanvasItem>(path))
+                .Concat(Descendants(card)
+                    .OfType<CanvasItem>()
+                    .Where(item =>
+                        item.Name.ToString().Contains(
+                            "Infection",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        item.Name.ToString().Equals(
+                            "Fire",
+                            StringComparison.OrdinalIgnoreCase)))
                 .Where(item => item != null)
                 .Cast<CanvasItem>()
+                .DistinctBy(item => item.GetInstanceId())
                 .Select(item => new CanvasItemState(
                     item,
                     item.Visible,
@@ -408,7 +728,8 @@ internal static class CardSkinControls
                     (item as TextureRect)?.ExpandMode,
                     (item as TextureRect)?.StretchMode,
                     (item as TextureRect)?.FlipH,
-                    (item as TextureRect)?.FlipV))
+                    (item as TextureRect)?.FlipV,
+                    (item as AnimatedSprite2D)?.IsPlaying()))
                 .ToArray();
             var nodeIds = Descendants(card)
                 .Select(node => node.GetInstanceId())
@@ -477,6 +798,18 @@ internal static class CardSkinControls
                         textureRect.FlipV = flipV;
                     }
                 }
+                if (state.Item is AnimatedSprite2D animated && state.WasPlaying is { } wasPlaying)
+                {
+                    if (wasPlaying)
+                    {
+                        animated.Play();
+                    }
+                    else
+                    {
+                        animated.Stop();
+                    }
+                }
+                SyncHighlightShaderMaterial(state.Item, state.Material);
             }
         }
     }
@@ -497,7 +830,8 @@ internal static class CardSkinControls
         TextureRect.ExpandModeEnum? ExpandMode,
         TextureRect.StretchModeEnum? StretchMode,
         bool? FlipH,
-        bool? FlipV);
+        bool? FlipV,
+        bool? WasPlaying);
 
     private sealed record CardPresentationState(
         IReadOnlyList<Node> AddedNodes);
@@ -741,7 +1075,6 @@ internal static class CardLayoutResetPatch
 {
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
     {
-        yield return AccessTools.Method(typeof(NCard), nameof(NCard._Ready));
         yield return AccessTools.Method(typeof(NCard), "Reload");
         yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
     }
@@ -756,20 +1089,16 @@ internal static class CardLayoutFinalPatch
 {
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
     {
-        yield return AccessTools.Method(typeof(NCard), nameof(NCard._Ready));
         yield return AccessTools.Method(typeof(NCard), "Reload");
         yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
     }
 
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(
-        NCard __instance,
-        System.Reflection.MethodBase __originalMethod,
-        object[] __args)
+    private static void Postfix(NCard __instance)
     {
         // 原方法刚刚创建的资源才是本轮有效基线；先重新捕获，再应用所选呈现。
         CardSkinControls.CaptureBaselineLayout(__instance);
-        CardSkinControls.ReplaySelectedPresentation(__instance, __originalMethod, __args);
+        CardSkinControls.ApplySelectedPresentation(__instance);
         CardSkinControls.ApplySelectedPortraitToNode(__instance);
     }
 }

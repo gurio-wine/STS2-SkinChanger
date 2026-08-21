@@ -12,9 +12,6 @@ namespace STS2SkinChanger.Core;
 internal static class VisualPatchGuard
 {
     private static readonly Harmony Harmony = new(Entry.ModId);
-    private static readonly object CardPatchSync = new();
-    private static readonly List<RemovedCardPatch> RemovedCardPatches = [];
-    private static readonly HashSet<string> ReplayWarnings = new(StringComparer.Ordinal);
     private static readonly string[] VisualNameTokens =
     [
         "Visual", "Scene", "Portrait", "Icon", "Texture", "Sprite", "Atlas",
@@ -25,156 +22,6 @@ internal static class VisualPatchGuard
         "Visual", "Vfx", "Spine", "Sprite", "Portrait", "Icon", "Character",
         "Creature", "Merchant", "Card", "Animation", "Audio", "Sound"
     ];
-
-    public static int DiscoverCardPresentationPatches(string providerRoot, Assembly assembly)
-    {
-        var registered = 0;
-        foreach (var type in GetLoadableTypes(assembly))
-        {
-            var postfixes = type.GetMethods(
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-                .Where(method => method.Name == "Postfix" ||
-                                 method.Name.EndsWith("Postfix", StringComparison.Ordinal) ||
-                                 method.GetCustomAttribute<HarmonyPostfix>() != null)
-                .Where(method => method.GetParameters().Any(parameter =>
-                {
-                    var parameterType = parameter.ParameterType.IsByRef
-                        ? parameter.ParameterType.GetElementType()!
-                        : parameter.ParameterType;
-                    return typeof(NCard).IsAssignableFrom(parameterType);
-                }) || method.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            if (postfixes.Length == 0)
-            {
-                continue;
-            }
-
-            MethodBase[] dynamicTargets;
-            try
-            {
-                dynamicTargets = ResolveDynamicTargets(type);
-            }
-            catch
-            {
-                dynamicTargets = [];
-            }
-
-            var classAnnotations = type.GetCustomAttributes<HarmonyPatch>(inherit: true)
-                .Select(annotation => annotation.info)
-                .ToArray();
-            foreach (var postfix in postfixes)
-            {
-                MethodBase[] targets;
-                try
-                {
-                    var annotations = classAnnotations
-                        .Concat(postfix.GetCustomAttributes<HarmonyPatch>(inherit: true)
-                            .Select(annotation => annotation.info))
-                        .ToArray();
-                    targets = dynamicTargets.Length > 0
-                        ? dynamicTargets
-                        : ResolveAnnotatedTargets(annotations);
-                    if (targets.Length == 0 &&
-                        postfix.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
-                    {
-                        targets = [AccessTools.Method(typeof(NCard), "Reload")];
-                    }
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (var target in targets.Where(target =>
-                             target.DeclaringType != null &&
-                             typeof(NCard).IsAssignableFrom(target.DeclaringType)))
-                {
-                    if (RememberCardPatch(providerRoot, target, postfix))
-                    {
-                        registered++;
-                    }
-                }
-            }
-        }
-
-        if (registered > 0)
-        {
-            ModLog.Info($"已登记 {registered} 个隔离卡牌呈现补丁：{assembly.GetName().Name}");
-        }
-
-        return registered;
-    }
-
-    private static MethodBase[] ResolveDynamicTargets(Type patchType)
-    {
-        var targetMethods = patchType.GetMethod(
-            "TargetMethods",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-            binder: null,
-            types: Type.EmptyTypes,
-            modifiers: null);
-        if (targetMethods?.Invoke(null, null) is IEnumerable<MethodBase> many)
-        {
-            return many.Where(method => method != null).ToArray();
-        }
-
-        var targetMethod = patchType.GetMethod(
-            "TargetMethod",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-            binder: null,
-            types: Type.EmptyTypes,
-            modifiers: null);
-        return targetMethod?.Invoke(null, null) is MethodBase one ? [one] : [];
-    }
-
-    private static MethodBase[] ResolveAnnotatedTargets(IReadOnlyCollection<HarmonyMethod> annotations)
-    {
-        if (annotations.Count == 0)
-        {
-            return [];
-        }
-
-        var target = HarmonyMethod.Merge(annotations.ToList());
-        if (target.method != null)
-        {
-            return [target.method];
-        }
-
-        if (target.declaringType == null)
-        {
-            return [];
-        }
-
-        MethodBase? resolved = target.methodType switch
-        {
-            MethodType.Getter => AccessTools.PropertyGetter(target.declaringType, target.methodName),
-            MethodType.Setter => AccessTools.PropertySetter(target.declaringType, target.methodName),
-            MethodType.Constructor => AccessTools.Constructor(target.declaringType, target.argumentTypes),
-            MethodType.StaticConstructor => target.declaringType.TypeInitializer,
-            _ when target.methodName != null =>
-                AccessTools.Method(target.declaringType, target.methodName, target.argumentTypes),
-            _ => null
-        };
-        return resolved == null ? [] : [resolved];
-    }
-
-    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
-    {
-        try
-        {
-            return assembly.GetTypes();
-        }
-        catch (ReflectionTypeLoadException exception)
-        {
-            return exception.Types.Where(type => type != null).Cast<Type>();
-        }
-    }
-
-    /*
-     * Only the helper methods above execute during provider discovery. Provider initializers and
-     * Harmony patch installation remain disabled; registered postfixes run later for the selected
-     * card through ReplaySelectedCardPostfixes.
-     */
 
     public static int RemoveProviderVisualPatches(IEnumerable<string> providerRoots)
     {
@@ -190,7 +37,6 @@ internal static class VisualPatchGuard
         }
 
         var removed = 0;
-        var capturedCardPatches = 0;
         var affectedTargets = new HashSet<string>(StringComparer.Ordinal);
         foreach (var target in HarmonyLib.Harmony.GetAllPatchedMethods()
                      .Where(IsVisualTarget)
@@ -211,15 +57,6 @@ internal static class VisualPatchGuard
             {
                 try
                 {
-                    if (typeof(NCard).IsAssignableFrom(target.DeclaringType) &&
-                        entry.Kind == ProviderPatchKind.Postfix)
-                    {
-                        if (RememberCardPatch(entry.Root!, target, entry.Patch.PatchMethod))
-                        {
-                            capturedCardPatches++;
-                        }
-                    }
-
                     Harmony.Unpatch(target, entry.Patch.PatchMethod);
                     removed++;
                     affectedTargets.Add($"{target.DeclaringType?.Name}.{target.Name}");
@@ -238,63 +75,10 @@ internal static class VisualPatchGuard
         {
             ModLog.Info(
                 $"已移除 {removed} 个提供者皮肤呈现补丁，保留其余 DLL 功能；目标：" +
-                string.Join("、", affectedTargets.OrderBy(name => name)) +
-                $"；登记卡牌呈现重放={capturedCardPatches}，" +
-                $"不参与重放={removed - capturedCardPatches}");
+                string.Join("、", affectedTargets.OrderBy(name => name)));
         }
 
         return removed;
-    }
-
-    public static int ReplaySelectedCardPostfixes(
-        NCard card,
-        MethodBase originalMethod,
-        object[] originalArguments,
-        string? providerRoot)
-    {
-        var root = providerRoot == null ? null : NormalizeRoot(providerRoot);
-        if (root == null)
-        {
-            return 0;
-        }
-
-        RemovedCardPatch[] patches;
-        lock (CardPatchSync)
-        {
-            patches = RemovedCardPatches
-                .Where(patch => patch.ProviderRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
-                                IsCardPresentationStage(patch.Target, originalMethod))
-                .ToArray();
-        }
-
-        var applied = 0;
-        foreach (var patch in patches)
-        {
-            try
-            {
-                if (!TryBuildPatchArguments(
-                        patch.PatchMethod,
-                        card,
-                        patch.Target,
-                        SameMethod(patch.Target, originalMethod) ? originalArguments : [],
-                        out var invokeArguments))
-                {
-                    WarnReplayOnce(
-                        patch,
-                        "参数包含无法在隔离呈现阶段还原的 Harmony 状态");
-                    continue;
-                }
-
-                patch.PatchMethod.Invoke(null, invokeArguments);
-                applied++;
-            }
-            catch (Exception exception)
-            {
-                WarnReplayOnce(patch, exception.GetBaseException().Message);
-            }
-        }
-
-        return applied;
     }
 
     private static IEnumerable<(HarmonyLib.Patch Patch, ProviderPatchKind Kind)> EnumeratePatches(
@@ -316,123 +100,6 @@ internal static class VisualPatchGuard
         {
             yield return (patch, ProviderPatchKind.Finalizer);
         }
-    }
-
-    private static bool RememberCardPatch(string providerRoot, MethodBase target, MethodInfo patchMethod)
-    {
-        lock (CardPatchSync)
-        {
-            if (RemovedCardPatches.Any(patch =>
-                    patch.ProviderRoot.Equals(providerRoot, StringComparison.OrdinalIgnoreCase) &&
-                    SameMethod(patch.Target, target) &&
-                    patch.PatchMethod == patchMethod))
-            {
-                return false;
-            }
-
-            RemovedCardPatches.Add(new RemovedCardPatch(providerRoot, target, patchMethod));
-            return true;
-        }
-    }
-
-    private static bool TryBuildPatchArguments(
-        MethodInfo patchMethod,
-        NCard card,
-        MethodBase originalMethod,
-        object[] originalArguments,
-        out object?[] invokeArguments)
-    {
-        var targetParameters = originalMethod.GetParameters();
-        invokeArguments = new object?[patchMethod.GetParameters().Length];
-        for (var index = 0; index < invokeArguments.Length; index++)
-        {
-            var parameter = patchMethod.GetParameters()[index];
-            var name = parameter.Name ?? string.Empty;
-            var parameterType = parameter.ParameterType.IsByRef
-                ? parameter.ParameterType.GetElementType()!
-                : parameter.ParameterType;
-            if (name == "__instance" ||
-                typeof(NCard).IsAssignableFrom(parameterType) ||
-                parameterType == typeof(object) &&
-                patchMethod.Name.Contains("NCard", StringComparison.OrdinalIgnoreCase))
-            {
-                invokeArguments[index] = card;
-                continue;
-            }
-            if (name == "__originalMethod")
-            {
-                invokeArguments[index] = originalMethod;
-                continue;
-            }
-            if (name == "__args")
-            {
-                invokeArguments[index] = originalArguments;
-                continue;
-            }
-            if (name.StartsWith("___", StringComparison.Ordinal))
-            {
-                var field = AccessTools.Field(originalMethod.DeclaringType, name[3..]);
-                if (field == null)
-                {
-                    return false;
-                }
-                invokeArguments[index] = field.GetValue(card);
-                continue;
-            }
-            if (name.StartsWith("__", StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            var targetIndex = Array.FindIndex(targetParameters, target => target.Name == name);
-            if (targetIndex >= 0 && targetIndex < originalArguments.Length)
-            {
-                invokeArguments[index] = originalArguments[targetIndex];
-                continue;
-            }
-            if (parameter.HasDefaultValue)
-            {
-                invokeArguments[index] = parameter.DefaultValue is DBNull ? null : parameter.DefaultValue;
-                continue;
-            }
-
-            return false;
-        }
-
-        return true;
-    }
-
-    private static bool SameMethod(MethodBase left, MethodBase right)
-    {
-        try
-        {
-            return left.Module == right.Module && left.MetadataToken == right.MetadataToken;
-        }
-        catch
-        {
-            return left == right;
-        }
-    }
-
-    private static bool IsCardPresentationStage(MethodBase patchTarget, MethodBase currentTarget) =>
-        SameMethod(patchTarget, currentTarget) ||
-        (currentTarget.Name == nameof(NCard.UpdateVisuals) && patchTarget.Name == "Reload" &&
-         typeof(NCard).IsAssignableFrom(patchTarget.DeclaringType));
-
-    private static void WarnReplayOnce(RemovedCardPatch patch, string reason)
-    {
-        var key = patch.PatchMethod.Module.ModuleVersionId + ":" + patch.PatchMethod.MetadataToken;
-        lock (CardPatchSync)
-        {
-            if (!ReplayWarnings.Add(key))
-            {
-                return;
-            }
-        }
-
-        ModLog.Warn(
-            $"无法隔离重放卡牌呈现补丁 {patch.PatchMethod.DeclaringType?.FullName}." +
-            $"{patch.PatchMethod.Name}：{reason}");
     }
 
     private static bool IsVisualTarget(MethodBase target)
@@ -565,8 +232,4 @@ internal static class VisualPatchGuard
         Finalizer
     }
 
-    private sealed record RemovedCardPatch(
-        string ProviderRoot,
-        MethodBase Target,
-        MethodInfo PatchMethod);
 }

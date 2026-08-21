@@ -4,8 +4,6 @@ using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
-using System.Runtime.Loader;
-using System.Text.Json;
 
 namespace STS2SkinChanger.Core;
 
@@ -108,14 +106,14 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
-            var cardPresentationPatches = DiscoverCardPresentationPatches(mod, provider);
             mod.state = ModLoadState.Loaded;
             InvokeOnModDetectedMethod.Invoke(null, [mod]);
             ModLog.Info(
                 $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
-                $"独立图片={provider.RuntimeImageCount}, 卡牌呈现规则={cardPresentationPatches}；" +
-                "原 PCK 未全局挂载，DLL 初始化器未执行，所有资源与卡牌呈现均由皮肤切换器按选择接管。");
+                $"卡牌呈现={provider.CardPresentationCount}, 独立图片={provider.RuntimeImageCount}；" +
+                "原 PCK 未全局挂载，DLL 初始化器和补丁均不执行；" +
+                "卡牌呈现只读取 PCK 配置并由皮肤切换器自身渲染。");
             return true;
         }
         catch (Exception exception)
@@ -126,92 +124,6 @@ internal static class ManagedSkinModLoader
                 exception.GetBaseException().Message);
             return false;
         }
-    }
-
-    private static int DiscoverCardPresentationPatches(Mod mod, SkinProviderProbe provider)
-    {
-        var manifest = mod.manifest!;
-        if (provider.CardAssetCount == 0 || !manifest.hasDll || manifest.id == null)
-        {
-            return 0;
-        }
-
-        var assemblyPath = ResolvePresentationAssemblyPath(mod.path, manifest.id);
-        if (!File.Exists(assemblyPath))
-        {
-            return 0;
-        }
-
-        try
-        {
-            var loadContext = AssemblyLoadContext.GetLoadContext(typeof(Entry).Assembly) ??
-                              throw new InvalidOperationException("无法取得游戏程序集加载上下文。");
-            var assembly = loadContext.LoadFromAssemblyPath(assemblyPath);
-            return VisualPatchGuard.DiscoverCardPresentationPatches(mod.path, assembly);
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn(
-                $"读取 {manifest.id} 的卡牌呈现补丁失败，将仅使用卡图资源：" +
-                exception.GetBaseException().Message);
-            return 0;
-        }
-    }
-
-    private static string ResolvePresentationAssemblyPath(string modPath, string modId)
-    {
-        var fallback = Path.Combine(modPath, modId + ".dll");
-        foreach (var manifestPath in Directory.EnumerateFiles(
-                     modPath,
-                     "*-variants.manifest",
-                     SearchOption.TopDirectoryOnly))
-        {
-            try
-            {
-                var manifest = JsonSerializer.Deserialize<AssemblyVariantManifest>(
-                    File.ReadAllText(manifestPath),
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (manifest?.Variants.Count is not > 0)
-                {
-                    continue;
-                }
-
-                var gameVersion = GameVersionField.GetValue(null) as SemanticVersion;
-                AssemblyVariantEntry? selected = null;
-                SemanticVersion? selectedVersion = null;
-                foreach (var variant in manifest.Variants)
-                {
-                    if (!SemanticVersion.TryFromString(variant.CompatTarget, out var compatibility) ||
-                        compatibility == null ||
-                        gameVersion != null && compatibility.CompareTo(gameVersion) > 0)
-                    {
-                        continue;
-                    }
-
-                    if (selectedVersion == null || compatibility.CompareTo(selectedVersion) > 0)
-                    {
-                        selected = variant;
-                        selectedVersion = compatibility;
-                    }
-                }
-
-                selected ??= manifest.Variants[0];
-                var candidate = Path.Combine(modPath, selected.Directory, selected.Assembly);
-                if (File.Exists(candidate))
-                {
-                    ModLog.Info(
-                        $"卡牌呈现使用兼容程序集 {Path.GetRelativePath(modPath, candidate)} " +
-                        $"(target={selected.CompatTarget})。");
-                    return candidate;
-                }
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn($"读取程序集变体清单 {manifestPath} 失败：{exception.Message}");
-            }
-        }
-
-        return fallback;
     }
 
     private static void CleanupOldProviderNamespaces()
@@ -351,17 +263,6 @@ internal static class ManagedSkinModLoader
         Path.GetFullPath(path)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-    private sealed class AssemblyVariantManifest
-    {
-        public List<AssemblyVariantEntry> Variants { get; set; } = [];
-    }
-
-    private sealed class AssemblyVariantEntry
-    {
-        public string CompatTarget { get; set; } = string.Empty;
-        public string Directory { get; set; } = string.Empty;
-        public string Assembly { get; set; } = string.Empty;
-    }
 }
 
 [HarmonyPatch]

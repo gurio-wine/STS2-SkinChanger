@@ -133,6 +133,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             var visualGroups = 0;
             var cardAssets = 0;
+            var cardPresentations = 0;
             if (mod.PckPath != null && File.Exists(mod.PckPath))
             {
                 PckArchive? archive = null;
@@ -147,10 +148,15 @@ internal sealed partial class SkinCatalog : IDisposable
                         remapFilter: null);
                     visualGroups = BuildGroups([index])
                         .Count(group => group.Options.Count > 0);
-                    cardAssets = BuildCardGroups([index])
+                    var configuredCardGroups = BuildCardGroups([index]);
+                    cardAssets = configuredCardGroups
                         .Sum(group => group.Options.Sum(option =>
                             option.NormalPortraits.Count + option.AncientPortraits.Count));
-                    cardAssets += BuildPckCardOptions([index]).Sum(option => option.Assets.Count);
+                    cardPresentations = configuredCardGroups
+                        .Sum(group => group.Options.Sum(option => option.CardPresentations.Count));
+                    var pckCardOptions = BuildPckCardOptions([index]);
+                    cardAssets += pckCardOptions.Sum(option => option.Assets.Count);
+                    cardPresentations += pckCardOptions.Sum(option => option.CardPresentations.Count);
                 }
                 catch (Exception exception)
                 {
@@ -187,7 +193,8 @@ internal sealed partial class SkinCatalog : IDisposable
                                 System.IO.Path.GetFileNameWithoutExtension(path)));
                 }
 
-                if (visualGroups == 0 && cardAssets == 0 && LooksLikeDllSkinProvider(mod))
+                if (visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
+                    LooksLikeDllSkinProvider(mod))
                 {
                     // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
                     // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。
@@ -195,13 +202,14 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
             }
 
-            if (visualGroups > 0 || cardAssets > 0 || runtimeImages > 0)
+            if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0)
             {
                 providers.Add(new SkinProviderProbe(
                     mod.Id,
                     mod.RootPath,
                     visualGroups,
                     cardAssets,
+                    cardPresentations,
                     runtimeImages));
             }
         }
@@ -549,11 +557,18 @@ internal sealed partial class SkinCatalog : IDisposable
                                            specialGroupId,
                                            StringComparison.OrdinalIgnoreCase))
                         .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                    var presentations = option.CardPresentations
+                        .Where(pair => cardsByType.TryGetValue(pair.Key, out var card) &&
+                                       card.FilterGroupId.Equals(
+                                           specialGroupId,
+                                           StringComparison.OrdinalIgnoreCase))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
                     AddCardOption(groups, specialGroupId, option with
                     {
                         NormalPortraits = normal,
                         AncientPortraits = ancient,
-                        Assets = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase)
+                        Assets = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                        CardPresentations = presentations
                     });
                 }
             }
@@ -563,12 +578,18 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             var assetsByGroup = new Dictionary<string, Dictionary<string, ResourceAsset>>(
                 StringComparer.OrdinalIgnoreCase);
+            var presentationsByGroup =
+                new Dictionary<string, Dictionary<string, CardPresentationDefinition>>(
+                    StringComparer.OrdinalIgnoreCase);
             foreach (var card in cardEntries)
             {
                 var assets = option.Assets
                     .Where(pair => CardArtMatches(pair.Key, card))
                     .ToArray();
-                if (assets.Length == 0)
+                var hasPresentation = option.CardPresentations.TryGetValue(
+                    card.TypeName,
+                    out var presentation);
+                if (assets.Length == 0 && !hasPresentation)
                 {
                     continue;
                 }
@@ -588,11 +609,29 @@ internal sealed partial class SkinCatalog : IDisposable
                 {
                     groupAssets[asset.Key] = asset.Value;
                 }
+                if (hasPresentation && presentation != null)
+                {
+                    if (!presentationsByGroup.TryGetValue(groupId, out var groupPresentations))
+                    {
+                        groupPresentations = new Dictionary<string, CardPresentationDefinition>(
+                            StringComparer.OrdinalIgnoreCase);
+                        presentationsByGroup.Add(groupId, groupPresentations);
+                    }
+                    groupPresentations[card.TypeName] = presentation;
+                }
             }
 
-            foreach (var pair in assetsByGroup)
+            foreach (var groupId in assetsByGroup.Keys
+                         .Union(presentationsByGroup.Keys, StringComparer.OrdinalIgnoreCase))
             {
-                AddCardOption(groups, pair.Key, option with { Assets = pair.Value });
+                AddCardOption(groups, groupId, option with
+                {
+                    Assets = assetsByGroup.GetValueOrDefault(groupId) ??
+                             new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                    CardPresentations = presentationsByGroup.GetValueOrDefault(groupId) ??
+                                        new Dictionary<string, CardPresentationDefinition>(
+                                            StringComparer.OrdinalIgnoreCase)
+                });
             }
         }
 
@@ -860,6 +899,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 .FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
                 .Options.FirstOrDefault(option =>
                     option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+            option ??= _pckCardOptions.FirstOrDefault(candidate =>
+                candidate.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
             asset = option == null ? null : ResolveCardProviderAsset(option, resourcePath);
         }
         else
@@ -869,7 +910,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         if (asset == null)
         {
-            throw new InvalidOperationException($"找不到独立卡图资源：{resourcePath}");
+            throw new InvalidOperationException($"找不到独立卡牌资源：{resourcePath}");
         }
         var resource = new RuntimeResource(
             resourcePath,
@@ -1167,6 +1208,17 @@ internal sealed partial class SkinCatalog : IDisposable
                                     entries.Last().NormalPortrait,
                                     entries.Last().AncientPortrait),
                                 StringComparer.OrdinalIgnoreCase);
+                        var presentations = config.AncientReplacements
+                            .Where(entry => TryGetCardPortraitGroup(entry.PathForGrouping)?.Equals(
+                                groupId, StringComparison.OrdinalIgnoreCase) == true)
+                            .Where(entry => !string.IsNullOrWhiteSpace(entry.CardType))
+                            .GroupBy(
+                                entry => NormalizeCardPresentationType(entry.CardType),
+                                StringComparer.OrdinalIgnoreCase)
+                            .ToDictionary(
+                                entries => entries.Key,
+                                _ => new CardPresentationDefinition(UseAncientLayout: true),
+                                StringComparer.OrdinalIgnoreCase);
                         if (normal.Count == 0 && ancient.Count == 0)
                         {
                             continue;
@@ -1186,7 +1238,8 @@ internal sealed partial class SkinCatalog : IDisposable
                             normal,
                             ancient,
                             ProviderRootPath: index.Mod.RootPath,
-                            ProviderId: index.Mod.Id);
+                            ProviderId: index.Mod.Id,
+                            Presentations: presentations);
                         if (existingIndex >= 0)
                         {
                             group.Options[existingIndex] = group.Options[existingIndex].Merge(option);
@@ -1223,6 +1276,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var options = new List<CardSkinOption>();
         foreach (var index in cosmeticIndexes)
         {
+            var presentations = LoadCardPresentations(index);
             var standardAssets = index.Assets.Values
                 .Where(asset => IsCardArtSourcePath(asset.SourcePath))
                 .ToArray();
@@ -1239,7 +1293,7 @@ internal sealed partial class SkinCatalog : IDisposable
             var changedAssets = baselineIndexes == null
                 ? allAssets
                 : allAssets.Where(asset => AssetDiffersFromBaseline(asset, baselineIndexes)).ToArray();
-            if (changedAssets.Length == 0)
+            if (changedAssets.Length == 0 && presentations.Count == 0)
             {
                 continue;
             }
@@ -1290,12 +1344,85 @@ internal sealed partial class SkinCatalog : IDisposable
                         asset => asset,
                         StringComparer.OrdinalIgnoreCase),
                     index.Mod.RootPath,
-                    index.Mod.Id));
+                    index.Mod.Id,
+                    Presentations: presentations
+                        .Where(pair => !splitVariants || variant.Stems.Contains(
+                            NormalizeCardPresentationType(pair.Key)))
+                        .ToDictionary(
+                            pair => pair.Key,
+                            pair => pair.Value,
+                            StringComparer.OrdinalIgnoreCase)));
             }
         }
 
         return options;
     }
+
+    private static IReadOnlyDictionary<string, CardPresentationDefinition> LoadCardPresentations(
+        PckResourceIndex index)
+    {
+        var presentations = new Dictionary<string, CardPresentationDefinition>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var configPath in index.Archive.Paths.Where(path =>
+                     path.EndsWith("/frame_replacements.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                var document = JsonSerializer.Deserialize<CardFrameReplacementDocument>(
+                    index.Archive.ReadFile(configPath),
+                    CardReplacementJsonOptions);
+                if (document == null)
+                {
+                    continue;
+                }
+
+                foreach (var entry in document.Entries.Where(entry =>
+                             !string.IsNullOrWhiteSpace(entry.CardId)))
+                {
+                    presentations[NormalizeCardPresentationType(entry.CardId)] =
+                        new CardPresentationDefinition(
+                            entry.UiMode.Equals("Ancient", StringComparison.OrdinalIgnoreCase),
+                            EmptyToNull(entry.Frame),
+                            EmptyToNull(entry.FrameMaterial),
+                            EmptyToNull(entry.BannerTexture),
+                            EmptyToNull(entry.BannerMaterial),
+                            EmptyToNull(entry.PortraitBorder),
+                            EmptyToNull(entry.PortraitBorderMaterial),
+                            EmptyToNull(entry.AncientTextBg),
+                            EmptyToNull(entry.TextBackgroundMaterial),
+                            EmptyToNull(entry.EnergyIcon),
+                            EmptyToNull(entry.Highlight),
+                            EmptyToNull(entry.HighlightMaterial),
+                            entry.FrameVisible,
+                            entry.BannerVisible,
+                            entry.TextBackgroundVisible,
+                            entry.PortraitBorderVisible,
+                            entry.EnergyIconVisible,
+                            entry.HighlightVisible,
+                            entry.TypePlaqueVisible,
+                            entry.TypeLabelVisible,
+                            entry.DescriptionVisible,
+                            entry.InfectionOverlayVisible);
+                }
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"无法读取卡牌呈现配置 {configPath}: {exception.Message}");
+            }
+        }
+
+        return presentations;
+    }
+
+    private static string NormalizeCardPresentationType(string cardId)
+    {
+        var separator = cardId.LastIndexOf('.');
+        return separator >= 0 ? cardId[(separator + 1)..] : cardId;
+    }
+
+    private static string? EmptyToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 
     private static bool IsBulkLooseCardPack(
         string providerId,
@@ -2173,6 +2300,7 @@ internal sealed record SkinProviderProbe(
     string? RootPath,
     int VisualGroupCount,
     int CardAssetCount,
+    int CardPresentationCount,
     int RuntimeImageCount);
 
 internal sealed class SkinGroup(string id, string displayName)
@@ -2203,10 +2331,13 @@ internal sealed record CardSkinOption(
     IReadOnlyDictionary<string, AncientCardPortrait> AncientPortraits,
     IReadOnlyDictionary<string, ResourceAsset>? PckAssets = null,
     string? ProviderRootPath = null,
-    string? ProviderId = null)
+    string? ProviderId = null,
+    IReadOnlyDictionary<string, CardPresentationDefinition>? Presentations = null)
 {
     public IReadOnlyDictionary<string, ResourceAsset> Assets { get; init; } =
         PckAssets ?? new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, CardPresentationDefinition> CardPresentations { get; init; } =
+        Presentations ?? new Dictionary<string, CardPresentationDefinition>(StringComparer.OrdinalIgnoreCase);
 
     public CardSkinOption Merge(CardSkinOption other)
     {
@@ -2227,12 +2358,20 @@ internal sealed record CardSkinOption(
         {
             assets[pair.Key] = pair.Value;
         }
+        var presentations = new Dictionary<string, CardPresentationDefinition>(
+            CardPresentations,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in other.CardPresentations)
+        {
+            presentations[pair.Key] = pair.Value;
+        }
 
         return this with
         {
             NormalPortraits = normal,
             AncientPortraits = ancient,
             Assets = assets,
+            CardPresentations = presentations,
             ProviderRootPath = ProviderRootPath ?? other.ProviderRootPath,
             ProviderId = ProviderId ?? other.ProviderId
         };
@@ -2261,6 +2400,81 @@ internal sealed record CardCatalogEntry(
     string FilterGroupId);
 
 internal sealed record AncientCardPortrait(string? NormalPortrait, string? AncientPortrait);
+
+internal sealed record CardPresentationDefinition(
+    bool UseAncientLayout = false,
+    string? Frame = null,
+    string? FrameMaterial = null,
+    string? BannerTexture = null,
+    string? BannerMaterial = null,
+    string? PortraitBorder = null,
+    string? PortraitBorderMaterial = null,
+    string? AncientTextBackground = null,
+    string? TextBackgroundMaterial = null,
+    string? EnergyIcon = null,
+    string? Highlight = null,
+    string? HighlightMaterial = null,
+    bool? FrameVisible = null,
+    bool? BannerVisible = null,
+    bool? TextBackgroundVisible = null,
+    bool? PortraitBorderVisible = null,
+    bool? EnergyIconVisible = null,
+    bool? HighlightVisible = null,
+    bool? TypePlaqueVisible = null,
+    bool? TypeLabelVisible = null,
+    bool? DescriptionVisible = null,
+    bool? InfectionOverlayVisible = null)
+{
+    public IEnumerable<string> ResourcePaths => new[]
+        {
+            Frame,
+            FrameMaterial,
+            BannerTexture,
+            BannerMaterial,
+            PortraitBorder,
+            PortraitBorderMaterial,
+            AncientTextBackground,
+            TextBackgroundMaterial,
+            EnergyIcon,
+            Highlight,
+            HighlightMaterial
+        }
+        .Where(path => !string.IsNullOrWhiteSpace(path))
+        .Cast<string>()
+        .Distinct(StringComparer.OrdinalIgnoreCase);
+}
+
+internal sealed class CardFrameReplacementDocument
+{
+    public List<CardFrameReplacementEntry> Entries { get; set; } = [];
+}
+
+internal sealed class CardFrameReplacementEntry
+{
+    public string CardId { get; set; } = string.Empty;
+    public string UiMode { get; set; } = string.Empty;
+    public string? Frame { get; set; }
+    public string? FrameMaterial { get; set; }
+    public string? BannerTexture { get; set; }
+    public string? BannerMaterial { get; set; }
+    public string? PortraitBorder { get; set; }
+    public string? PortraitBorderMaterial { get; set; }
+    public string? AncientTextBg { get; set; }
+    public string? TextBackgroundMaterial { get; set; }
+    public string? EnergyIcon { get; set; }
+    public string? Highlight { get; set; }
+    public string? HighlightMaterial { get; set; }
+    public bool? FrameVisible { get; set; }
+    public bool? BannerVisible { get; set; }
+    public bool? TextBackgroundVisible { get; set; }
+    public bool? PortraitBorderVisible { get; set; }
+    public bool? EnergyIconVisible { get; set; }
+    public bool? HighlightVisible { get; set; }
+    public bool? TypePlaqueVisible { get; set; }
+    public bool? TypeLabelVisible { get; set; }
+    public bool? DescriptionVisible { get; set; }
+    public bool? InfectionOverlayVisible { get; set; }
+}
 
 internal sealed class CardReplacementConfig
 {

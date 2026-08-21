@@ -314,16 +314,96 @@ internal static class SkinService
         }
     }
 
-    public static string? GetCardPresentationProviderRoot(CardModel card)
+    public static CardPresentationDefinition? GetCardPresentation(CardModel card)
     {
         lock (Sync)
         {
             var group = GetCardGroup(card);
             var selection = GetEffectiveCardSelection(card);
-            return group?.Options.FirstOrDefault(option =>
-                       option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
-                       CardOptionAffectsCard(option, card))
-                   ?.ProviderRootPath;
+            var option = group?.Options.FirstOrDefault(candidate =>
+                candidate.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
+                CardOptionAffectsCard(candidate, card));
+            return option?.CardPresentations.GetValueOrDefault(card.GetType().Name);
+        }
+    }
+
+    public static T? LoadCardPresentationResource<T>(CardModel card, string? resourcePath)
+        where T : Resource
+    {
+        if (string.IsNullOrWhiteSpace(resourcePath))
+        {
+            return null;
+        }
+
+        lock (Sync)
+        {
+            var group = GetCardGroup(card);
+            var selection = GetEffectiveCardSelection(card);
+            var option = group?.Options.FirstOrDefault(candidate =>
+                candidate.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
+                CardOptionAffectsCard(candidate, card));
+            var cacheKey = $"card-presentation:{typeof(T).FullName}:{selection}:{resourcePath}";
+            if (RuntimeResourceCache.TryGetValue(cacheKey, out var cached) &&
+                cached is T typedCached &&
+                GodotObject.IsInstanceValid(typedCached))
+            {
+                return typedCached;
+            }
+
+            T? resource = null;
+            if (group != null)
+            {
+                foreach (var useSelectedProvider in new[] { true, false })
+                {
+                    if (useSelectedProvider && option?.ProviderRootPath == null)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var generation = ++_overlayGeneration;
+                        var sourceName = useSelectedProvider ? "provider" : "base";
+                        var overlay = Catalog!.BuildIsolatedCardResource(
+                            group.Id,
+                            selection,
+                            resourcePath,
+                            useSelectedProvider,
+                            $"{_sessionId}/{generation:D3}_card_presentation_{sourceName}");
+                        var overlayPath = System.IO.Path.Combine(
+                            OS.GetUserDataDir(),
+                            $"sts2_skin_overlay_{_sessionId}_{generation:D3}_card_presentation_{sourceName}.pck");
+                        PckArchive.Write(overlayPath, overlay.Files);
+                        if (ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+                        {
+                            resource = ResourceLoader.Load<T>(
+                                overlay.ResourcePaths[resourcePath],
+                                null,
+                                ResourceLoader.CacheMode.IgnoreDeep);
+                        }
+                    }
+                    catch
+                    {
+                        // Provider configs may intentionally point at a base-game resource. Try the
+                        // isolated baseline next so another globally loaded skin cannot supply it.
+                    }
+
+                    if (resource != null)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            resource ??= ResourceLoader.Load<T>(
+                resourcePath,
+                null,
+                ResourceLoader.CacheMode.Reuse);
+            if (resource != null)
+            {
+                RuntimeResourceCache[cacheKey] = resource;
+            }
+            return resource;
         }
     }
 
@@ -606,6 +686,7 @@ internal static class SkinService
         var cardType = card.GetType().Name;
         return option.NormalPortraits.ContainsKey(cardType) ||
                option.AncientPortraits.ContainsKey(cardType) ||
+               option.CardPresentations.ContainsKey(cardType) ||
                option.Assets.Keys.Any(assetPath => CardArtMatches(assetPath, card));
     }
 
