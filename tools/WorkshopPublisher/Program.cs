@@ -67,7 +67,11 @@ try
     Console.WriteLine($"Publishing workshop item {publishedFileId.m_PublishedFileId}...");
     var update = SteamUGC.StartItemUpdate(appId, publishedFileId);
     Require(SteamUGC.SetItemTitle(update, config.Title), "SetItemTitle");
-    Require(SteamUGC.SetItemDescription(update, config.Description), "SetItemDescription");
+    Require(
+        SteamUGC.SetItemDescription(
+            update,
+            ComposeDescription(config.Description, config.Limitations)),
+        "SetItemDescription");
     Require(SteamUGC.SetItemVisibility(update, config.Visibility), "SetItemVisibility");
     Require(SteamUGC.SetItemContent(update, contentFolder), "SetItemContent");
     Require(SteamUGC.SetItemPreview(update, previewFile), "SetItemPreview");
@@ -125,7 +129,9 @@ static void PublishLocalization(
         SteamUGC.SetItemTitle(update, localization.Title),
         $"SetItemTitle({localization.Language})");
     Require(
-        SteamUGC.SetItemDescription(update, localization.Description),
+        SteamUGC.SetItemDescription(
+            update,
+            ComposeDescription(localization.Description, localization.Limitations)),
         $"SetItemDescription({localization.Language})");
 
     var result = WaitForCallResult<SubmitItemUpdateResult_t>(
@@ -165,6 +171,11 @@ static T WaitForCallResult<T>(SteamAPICall_t call) where T : struct
     return value;
 }
 
+static string ComposeDescription(string description, string? limitations) =>
+    string.IsNullOrWhiteSpace(limitations)
+        ? description
+        : description.TrimEnd() + "\n\n" + limitations.Trim();
+
 static void Require(bool success, string operation)
 {
     if (!success)
@@ -177,6 +188,7 @@ internal sealed class WorkshopConfig
     public ulong PublishedFileId { get; set; }
     public required string Title { get; init; }
     public required string Description { get; init; }
+    public string? Limitations { get; init; }
     public ERemoteStoragePublishedFileVisibility Visibility { get; init; }
     public required string ContentFolder { get; init; }
     public required string PreviewFile { get; init; }
@@ -189,4 +201,5 @@ internal sealed class WorkshopLocalization
     public required string Language { get; init; }
     public required string Title { get; init; }
     public required string Description { get; init; }
+    public string? Limitations { get; init; }
 }
