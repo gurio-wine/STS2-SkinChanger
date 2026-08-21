@@ -14,6 +14,8 @@ internal sealed class SkinConfig
 
     public bool SuppressLoadOrderWarning { get; set; }
 
+    public bool? LastKnownFirstInLoadOrder { get; set; }
+
     public static SkinConfig Load(string path)
     {
         try

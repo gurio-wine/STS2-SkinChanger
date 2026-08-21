@@ -21,15 +21,13 @@ internal static class LoadOrderWarningController
 
     public static void Schedule()
     {
-        if (_shownThisSession ||
-            ManagedSkinModLoader.IsFirstInLoadOrder)
+        if (_shownThisSession)
         {
             return;
         }
 
-        // 目录可能尚未初始化，先确保配置已读取，否则会漏掉用户之前保存的"不再提示"。
-        SkinService.EnsureConfigLoaded();
-        if (SkinService.Config.SuppressLoadOrderWarning)
+        if (!SkinService.ShouldShowLoadOrderWarning(
+                ManagedSkinModLoader.IsFirstInLoadOrder))
         {
             return;
         }
@@ -80,7 +78,7 @@ internal static class LoadOrderWarningController
             }
 
             verticalPopup.SetText(
-                "SkinChanger 加载顺序",
+                "皮肤切换器-Skin Changer 加载顺序",
                 "本 Mod 当前不在 Mod 加载顺序第一位。排在它前面的皮肤 Mod 会先加载自己的 DLL/PCK，" +
                 "因此无法被完整接管。可以立即置顶并重启，也可以稍后在 Mod 管理界面手动调整。");
             verticalPopup.YesButton.SetText("知道了");
@@ -149,7 +147,7 @@ internal static class LoadOrderWarningController
         {
             MoveSelfToFirst();
             StartRestartHelper();
-            ModLog.Info("已将 SkinChanger 置顶，正在重启游戏。");
+            ModLog.Info("已将皮肤切换器-Skin Changer 置顶，正在重启游戏。");
             popup.GetParent()?.QueueFree();
             Callable.From(() =>
             {
@@ -167,8 +165,8 @@ internal static class LoadOrderWarningController
         {
             ModLog.Error("置顶并重启失败：" + exception.GetBaseException().Message);
             popup.SetText(
-                "SkinChanger 加载顺序",
-                "自动置顶或重启失败，设置没有被静默忽略。请在 Mod 管理界面手动把 SkinChanger 移到第一位并重启游戏。\n\n" +
+                "皮肤切换器-Skin Changer 加载顺序",
+                "自动置顶或重启失败，设置没有被静默忽略。请在 Mod 管理界面手动把皮肤切换器-Skin Changer 移到第一位并重启游戏。\n\n" +
                 exception.GetBaseException().Message);
         }
     }
@@ -176,7 +174,7 @@ internal static class LoadOrderWarningController
     private static void MoveSelfToFirst()
     {
         var self = ModManager.Mods.FirstOrDefault(mod => Entry.IsSelfModId(mod.manifest?.id)) ??
-                   throw new InvalidOperationException("当前 Mod 列表中找不到 SkinChanger。");
+                   throw new InvalidOperationException("当前 Mod 列表中找不到皮肤切换器-Skin Changer。");
         var settings = SaveManager.Instance.SettingsSave;
         settings.ModSettings ??= new ModSettings();
         var modList = settings.ModSettings.ModList;

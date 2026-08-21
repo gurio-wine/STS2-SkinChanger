@@ -68,6 +68,30 @@ internal static class SkinService
         }
     }
 
+    public static bool ShouldShowLoadOrderWarning(bool isFirstInLoadOrder)
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            var movedAwayFromFirst =
+                Config.LastKnownFirstInLoadOrder == true && !isFirstInLoadOrder;
+            var stateChanged = Config.LastKnownFirstInLoadOrder != isFirstInLoadOrder;
+            if (movedAwayFromFirst)
+            {
+                Config.SuppressLoadOrderWarning = false;
+                ModLog.Info("检测到本 Mod 从加载顺序第一位移出，已恢复加载顺序提醒。");
+            }
+
+            Config.LastKnownFirstInLoadOrder = isFirstInLoadOrder;
+            if (stateChanged || movedAwayFromFirst)
+            {
+                Config.Save(ConfigPath);
+            }
+
+            return !isFirstInLoadOrder && !Config.SuppressLoadOrderWarning;
+        }
+    }
+
     public static void EnsureConfigLoaded()
     {
         lock (Sync)
@@ -1248,7 +1272,7 @@ internal static class SkinService
         var config = SkinConfig.Load(LegacyConfigPath);
         if (File.Exists(LegacyConfigPath))
         {
-            ModLog.Info("已将旧版 STS2SkinChanger 设置迁移到 SkinChanger。");
+            ModLog.Info("已将旧版 STS2SkinChanger 设置迁移到皮肤切换器-Skin Changer。");
         }
         return config;
     }

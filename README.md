@@ -1,4 +1,4 @@
-# SkinChanger
+# 皮肤切换器-Skin Changer
 
 一个独立的《杀戮尖塔 2》皮肤管理 Mod。它不会修改其他 Mod，也不依赖旧版“皮肤管理器”。
 
@@ -32,7 +32,7 @@
 dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release
 ```
 
-产物位于 `STS2SkinChanger/bin/Release/SkinChanger.dll`。
+产物位于 `STS2SkinChanger/bin/Release/Gurio.SkinChanger.dll`；游戏要求 DLL 文件名与 Mod ID 完全一致。
 
 ## 开发检查工具
 
