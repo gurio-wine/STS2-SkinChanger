@@ -53,7 +53,9 @@ internal static class SkinService
         private set => _lastError = value;
     }
 
-    private static string ConfigPath => System.IO.Path.Combine(OS.GetUserDataDir(), "sts2_skin_switcher.json");
+    private static string ConfigPath => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer.json");
+    private static string LegacyConfigPath =>
+        System.IO.Path.Combine(OS.GetUserDataDir(), "sts2_skin_switcher.json");
 
     public static void SuppressLoadOrderWarning()
     {
@@ -72,7 +74,7 @@ internal static class SkinService
         {
             if (!_configLoaded)
             {
-                Config = SkinConfig.Load(ConfigPath);
+                Config = LoadConfig();
                 _configLoaded = true;
             }
         }
@@ -101,7 +103,7 @@ internal static class SkinService
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
                 var mods = ModManager.GetLoadedMods()
                     .Where(mod => mod.manifest is { id: not null })
-                    .Where(mod => !mod.manifest!.id!.Equals(Entry.ModId, StringComparison.OrdinalIgnoreCase))
+                    .Where(mod => !Entry.IsSelfModId(mod.manifest!.id))
                     .Select(mod => new SkinModDescriptor(
                         mod.manifest!.id!,
                         mod.manifest.name ?? mod.manifest.id!,
@@ -114,7 +116,7 @@ internal static class SkinService
                     .ToArray();
 
                 Catalog = SkinCatalog.Build(gamePckPath, mods);
-                Config = SkinConfig.Load(ConfigPath);
+                Config = LoadConfig();
                 _configLoaded = true;
                 SanitizeSelections();
                 MountOverlay(Catalog.Groups.Select(group => group.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -166,7 +168,7 @@ internal static class SkinService
                 }
 
                 Catalog.FinalizeCardGroups(entries);
-                SanitizeCardSelections(includeIndividualCards: true);
+                SanitizeCardSelections();
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -1236,65 +1238,48 @@ internal static class SkinService
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
         groupId + "\n" + resourcePath;
 
+    private static SkinConfig LoadConfig()
+    {
+        if (File.Exists(ConfigPath))
+        {
+            return SkinConfig.Load(ConfigPath);
+        }
+
+        var config = SkinConfig.Load(LegacyConfigPath);
+        if (File.Exists(LegacyConfigPath))
+        {
+            ModLog.Info("已将旧版 STS2SkinChanger 设置迁移到 SkinChanger。");
+        }
+        return config;
+    }
+
     private static void SanitizeSelections()
     {
         foreach (var group in Catalog!.Groups)
         {
-            if (!Config.Selections.TryGetValue(group.Id, out var selected) ||
-                (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-                 group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
+            if (!Config.Selections.ContainsKey(group.Id))
             {
                 Config.Selections[group.Id] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             }
         }
 
-        // 清理已不存在的分组选择（例如被移出管理范围的 merchant），保持配置整洁。
-        foreach (var key in Config.Selections.Keys
-                     .Where(key => !key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
-                     .Where(key => Catalog.Groups.All(group =>
-                         !group.Id.Equals(key, StringComparison.OrdinalIgnoreCase)))
-                     .ToArray())
-        {
-            Config.Selections.Remove(key);
-        }
-
         SanitizeCardSelections();
     }
 
-    private static void SanitizeCardSelections(bool includeIndividualCards = false)
+    private static void SanitizeCardSelections()
     {
         foreach (var group in Catalog!.CardGroups)
         {
             var key = CardSelectionKey(group.Id);
-            if (!Config.Selections.TryGetValue(key, out var selected) ||
-                (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-                 group.Options.All(option => !option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
+            if (!Config.Selections.ContainsKey(key))
             {
                 Config.Selections[key] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             }
         }
 
-        if (!includeIndividualCards)
-        {
-            return;
-        }
-
-        var cards = ModelDb.AllCards
-            .GroupBy(IndividualCardSelectionKey, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-        foreach (var key in Config.Selections.Keys
-                     .Where(key => key.StartsWith("cards:item:", StringComparison.OrdinalIgnoreCase))
-                     .ToArray())
-        {
-            var selected = Config.Selections[key];
-            if (!cards.TryGetValue(key, out var card) ||
-                (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-                 !GetCardOptions(card).Any(option =>
-                     option.Id.Equals(selected, StringComparison.OrdinalIgnoreCase))))
-            {
-                Config.Selections.Remove(key);
-            }
-        }
+        // Never erase explicit choices merely because a provider is temporarily unavailable
+        // or its catalog was incomplete during this startup. Runtime lookup falls back safely,
+        // and the stored choice becomes active again when the provider returns.
     }
 
     private static void CleanupOldOverlays()

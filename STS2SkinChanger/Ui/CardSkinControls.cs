@@ -719,11 +719,6 @@ internal static class CardSkinControls
                     item.Modulate,
                     item.SelfModulate,
                     item.ZIndex,
-                    (item as Control)?.Position,
-                    (item as Control)?.Size,
-                    (item as Control)?.Scale,
-                    (item as Control)?.Rotation,
-                    (item as Control)?.PivotOffset,
                     (item as TextureRect)?.Texture,
                     (item as TextureRect)?.ExpandMode,
                     (item as TextureRect)?.StretchMode,
@@ -762,19 +757,6 @@ internal static class CardSkinControls
                 state.Item.Modulate = state.Modulate;
                 state.Item.SelfModulate = state.SelfModulate;
                 state.Item.ZIndex = state.ZIndex;
-                if (state.Item is Control control &&
-                    state.Position is { } position &&
-                    state.Size is { } size &&
-                    state.Scale is { } scale &&
-                    state.Rotation is { } rotation &&
-                    state.PivotOffset is { } pivotOffset)
-                {
-                    control.Position = position;
-                    control.Size = size;
-                    control.Scale = scale;
-                    control.Rotation = rotation;
-                    control.PivotOffset = pivotOffset;
-                }
                 if (state.Item is TextureRect textureRect)
                 {
                     if (state.Texture == null || GodotObject.IsInstanceValid(state.Texture))
@@ -821,11 +803,6 @@ internal static class CardSkinControls
         Color Modulate,
         Color SelfModulate,
         int ZIndex,
-        Vector2? Position,
-        Vector2? Size,
-        Vector2? Scale,
-        float? Rotation,
-        Vector2? PivotOffset,
         Texture2D? Texture,
         TextureRect.ExpandModeEnum? ExpandMode,
         TextureRect.StretchModeEnum? StretchMode,

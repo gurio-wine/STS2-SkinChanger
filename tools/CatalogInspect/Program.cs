@@ -344,7 +344,7 @@ if (validateIndex >= 0)
                         foreach (Match reference in ResourceReferenceRegex().Matches(textResource))
                         {
                             var referencedPath = reference.Value;
-                            if (providerArchive.Contains(referencedPath) &&
+                            if (ContainsProviderResource(providerArchive, referencedPath) &&
                                 !ContainsRuntimeResource(overlay, referencedPath))
                             {
                                 failures.Add(
@@ -381,6 +381,11 @@ if (validateIndex >= 0)
         files.ContainsKey(resourcePath) ||
         files.ContainsKey(resourcePath + ".import") ||
         files.ContainsKey(resourcePath + ".remap");
+
+    static bool ContainsProviderResource(PckArchive archive, string resourcePath) =>
+        archive.Contains(resourcePath) ||
+        archive.Contains(resourcePath + ".import") ||
+        archive.Contains(resourcePath + ".remap");
 
     static bool ContainsAsset(
         IReadOnlyDictionary<string, ResourceFile> files,

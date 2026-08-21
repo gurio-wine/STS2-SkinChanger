@@ -8,7 +8,13 @@ namespace STS2SkinChanger;
 [ModInitializer("Initialize")]
 public static class Entry
 {
-    public const string ModId = "STS2SkinChanger";
+    public const string ModId = "Gurio.SkinChanger";
+    public const string LegacyModId = "STS2SkinChanger";
+
+    public static bool IsSelfModId(string? modId) =>
+        modId != null &&
+        (modId.Equals(ModId, StringComparison.OrdinalIgnoreCase) ||
+         modId.Equals(LegacyModId, StringComparison.OrdinalIgnoreCase));
 
     public static void Initialize()
     {

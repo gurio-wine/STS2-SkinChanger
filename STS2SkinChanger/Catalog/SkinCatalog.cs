@@ -1412,6 +1412,21 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        var knownCardStems = index.Assets.Keys
+            .Select(TryGetCardArtIdentity)
+            .Where(identity => identity != null)
+            .Select(identity => identity!.Stem)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var inferred in ManagedCardPresentationScanner.Scan(
+                     index.Mod.RootPath,
+                     knownCardStems))
+        {
+            // Explicit provider manifests remain authoritative. DLL inference only fills the
+            // presentation intent that would otherwise be lost when provider code is disabled.
+            presentations.TryAdd(inferred.Key, inferred.Value);
+        }
+
         return presentations;
     }
 
@@ -2576,19 +2591,26 @@ internal sealed partial class PckResourceIndex : IDisposable
             return existing;
         }
 
+        var normalizedSourcePath = SkinCatalog.NormalizeTakeoverPath(sourcePath);
+        if (!normalizedSourcePath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase) &&
+            Assets.TryGetValue(normalizedSourcePath, out existing))
+        {
+            return existing;
+        }
+
         foreach (var suffix in new[] { ".import", ".remap" })
         {
             var remapPath = sourcePath + suffix;
             if (Archive.Contains(remapPath))
             {
                 AddRemap(remapPath);
-                return Assets.GetValueOrDefault(sourcePath);
+                return Assets.GetValueOrDefault(normalizedSourcePath);
             }
         }
 
         if (Archive.Contains(sourcePath))
         {
-            var asset = GetAsset(sourcePath);
+            var asset = GetAsset(normalizedSourcePath);
             asset.AddFile(Archive, sourcePath);
             return asset;
         }

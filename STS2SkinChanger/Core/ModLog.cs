@@ -4,7 +4,7 @@ namespace STS2SkinChanger.Core;
 
 internal static class ModLog
 {
-    private const string Prefix = "[STS2SkinChanger] ";
+    private const string Prefix = "[SkinChanger] ";
 
     public static void Info(string message) => Log.Info(Prefix + message);
 

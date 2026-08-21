@@ -1,9 +1,15 @@
+using System.Diagnostics;
 using HarmonyLib;
+using Godot;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
+using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Saves;
 using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui.LoadOrderWarning;
@@ -74,11 +80,12 @@ internal static class LoadOrderWarningController
             }
 
             verticalPopup.SetText(
-                "STS2 皮肤切换器加载顺序",
+                "SkinChanger 加载顺序",
                 "本 Mod 当前不在 Mod 加载顺序第一位。排在它前面的皮肤 Mod 会先加载自己的 DLL/PCK，" +
-                "因此无法被完整接管。请在 Mod 管理界面把“STS2 皮肤切换器”移到第一位，然后重启游戏。");
+                "因此无法被完整接管。可以立即置顶并重启，也可以稍后在 Mod 管理界面手动调整。");
             verticalPopup.YesButton.SetText("知道了");
             verticalPopup.NoButton.SetText("不再提示");
+            AddPrioritizeAndRestartButton(verticalPopup);
             _shownThisSession = true;
             ModLog.Info("已显示加载顺序提示框。");
 
@@ -104,6 +111,111 @@ internal static class LoadOrderWarningController
             }
         }
     }
+
+    private static void AddPrioritizeAndRestartButton(NVerticalPopup popup)
+    {
+        var scene = ResourceLoader.Load<PackedScene>(
+            "res://scenes/ui/abandon_run_yes_button.tscn");
+        if (scene == null)
+        {
+            ModLog.Warn("无法加载置顶并重启按钮场景。");
+            return;
+        }
+
+        var button = scene.Instantiate<NPopupYesNoButton>(PackedScene.GenEditState.Disabled);
+        button.Name = "SkinChangerPrioritizeAndRestart";
+        button.AnchorLeft = 0.5f;
+        button.AnchorTop = 1f;
+        button.AnchorRight = 0.5f;
+        button.AnchorBottom = 1f;
+        button.OffsetLeft = -110f;
+        button.OffsetTop = -78f;
+        button.OffsetRight = 110f;
+        button.OffsetBottom = -6f;
+        button.GrowHorizontal = Control.GrowDirection.Both;
+        button.GrowVertical = Control.GrowDirection.Begin;
+        popup.AddChild(button);
+        button.SetText("置顶并重启");
+        button.DisconnectHotkeys();
+        button.GetNodeOrNull<CanvasItem>("%HotkeyIcon")?.Hide();
+        button.Connect(
+            NClickableControl.SignalName.Released,
+            Callable.From<NButton>(_ => PrioritizeAndRestart(popup)));
+    }
+
+    private static void PrioritizeAndRestart(NVerticalPopup popup)
+    {
+        try
+        {
+            MoveSelfToFirst();
+            StartRestartHelper();
+            ModLog.Info("已将 SkinChanger 置顶，正在重启游戏。");
+            popup.GetParent()?.QueueFree();
+            Callable.From(() =>
+            {
+                if (NGame.Instance != null)
+                {
+                    NGame.Instance.Quit();
+                }
+                else
+                {
+                    (Engine.GetMainLoop() as SceneTree)?.Quit();
+                }
+            }).CallDeferred();
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("置顶并重启失败：" + exception.GetBaseException().Message);
+            popup.SetText(
+                "SkinChanger 加载顺序",
+                "自动置顶或重启失败，设置没有被静默忽略。请在 Mod 管理界面手动把 SkinChanger 移到第一位并重启游戏。\n\n" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static void MoveSelfToFirst()
+    {
+        var self = ModManager.Mods.FirstOrDefault(mod => Entry.IsSelfModId(mod.manifest?.id)) ??
+                   throw new InvalidOperationException("当前 Mod 列表中找不到 SkinChanger。");
+        var settings = SaveManager.Instance.SettingsSave;
+        settings.ModSettings ??= new ModSettings();
+        var modList = settings.ModSettings.ModList;
+        var wasEnabled = modList
+            .FirstOrDefault(entry => Entry.IsSelfModId(entry.Id) && entry.Source == self.modSource)?
+            .IsEnabled ?? true;
+        modList.RemoveAll(entry => Entry.IsSelfModId(entry.Id));
+        modList.Insert(0, new SettingsSaveMod(self) { IsEnabled = wasEnabled });
+        SaveManager.Instance.SaveSettings();
+    }
+
+    private static void StartRestartHelper()
+    {
+        var executablePath = OS.GetExecutablePath();
+        var workingDirectory = System.IO.Path.GetDirectoryName(executablePath) ?? string.Empty;
+        var script =
+            $"Wait-Process -Id {System.Environment.ProcessId}; " +
+            $"Start-Process -FilePath '{EscapePowerShellLiteral(executablePath)}' " +
+            $"-WorkingDirectory '{EscapePowerShellLiteral(workingDirectory)}'";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-WindowStyle");
+        startInfo.ArgumentList.Add("Hidden");
+        startInfo.ArgumentList.Add("-Command");
+        startInfo.ArgumentList.Add(script);
+        if (Process.Start(startInfo) == null)
+        {
+            throw new InvalidOperationException("无法启动游戏重启辅助进程。");
+        }
+    }
+
+    private static string EscapePowerShellLiteral(string value) => value.Replace("'", "''");
 }
 
 [HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer._Ready))]

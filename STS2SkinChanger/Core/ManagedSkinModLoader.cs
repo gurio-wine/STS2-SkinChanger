@@ -49,7 +49,7 @@ internal static class ManagedSkinModLoader
         var descriptors = mods
             .Where(mod => mod.state is ModLoadState.None or ModLoadState.Loaded)
             .Where(mod => mod.manifest is { id: not null })
-            .Where(mod => !mod.manifest!.id!.Equals(Entry.ModId, StringComparison.OrdinalIgnoreCase))
+            .Where(mod => !Entry.IsSelfModId(mod.manifest!.id))
             .Select(ToDescriptor)
             .ToArray();
         var probes = SkinCatalog.ProbeSkinProviders(descriptors);
@@ -75,7 +75,7 @@ internal static class ManagedSkinModLoader
         if (alreadyLoaded.Length > 0)
         {
             ModLog.Warn(
-                "托管加载模式仅能拦截排在本 Mod 后面的皮肤提供者。请把 STS2 皮肤切换器移到 Mod 顺序最前并重启。" +
+                "托管加载模式仅能拦截排在本 Mod 后面的皮肤提供者。请把 SkinChanger 移到 Mod 顺序最前并重启。" +
                 $" 本次已提前加载：{string.Join("、", alreadyLoaded)}");
         }
 
