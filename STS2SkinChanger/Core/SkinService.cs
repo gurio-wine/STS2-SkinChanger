@@ -1027,6 +1027,16 @@ internal static class SkinService
         }
     }
 
+    public static bool IsManagedResourceOptionSelected(string groupId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            return catalog != null &&
+                   catalog.IsResourceBackedOption(groupId, Config.GetSelection(groupId));
+        }
+    }
+
     public static Texture2D GetSelectedRuntimeImageTexture(string groupId)
     {
         lock (Sync)

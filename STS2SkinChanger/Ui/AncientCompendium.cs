@@ -3,9 +3,11 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using STS2SkinChanger.Catalog;
@@ -501,6 +503,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             previewHost.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             _previewViewport.AddChild(previewHost);
             previewHost.AddChild(preview);
+            ManagedAncientSceneAnimation.TryStart(group?.Id, preview);
             ModLog.Info($"远古图鉴已展示 {ancient.Id.Entry}。");
         }
         catch (Exception exception)
@@ -597,6 +600,131 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ContextualSkinControls.CreateStyleBox(new Color("2a465faa"), gold, 3));
     }
 
+}
+
+internal static class ManagedAncientSceneAnimation
+{
+    public static void TryStart(string? groupId, Node sceneRoot)
+    {
+        if (string.IsNullOrWhiteSpace(groupId) ||
+            !SkinService.IsManagedResourceOptionSelected(groupId))
+        {
+            return;
+        }
+
+        var spineNode = sceneRoot.GetNodeOrNull<Node>("SpineSprite") ??
+                        sceneRoot.FindChild("SpineSprite", recursive: true, owned: false);
+        if (spineNode == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var sprite = new MegaSprite(spineNode);
+            sceneRoot.RunWhenSpineReady(sprite, animationState =>
+                StartDefaultAnimation(groupId, sprite, animationState));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"准备 {groupId} 的远古 Spine 动画失败：{exception.Message}");
+        }
+    }
+
+    private static void StartDefaultAnimation(
+        string groupId,
+        MegaSprite sprite,
+        MegaAnimationState animationState)
+    {
+        try
+        {
+            var animationNames = sprite.GetSkeleton()?.GetData()?.GetAnimationNames();
+            if (animationNames == null || animationNames.Count == 0)
+            {
+                return;
+            }
+
+            using var current = animationState.GetCurrent(0);
+            var currentName = current?.GetAnimationName();
+            if (!string.IsNullOrWhiteSpace(currentName) &&
+                animationNames.Any(name =>
+                    name.Equals(currentName, StringComparison.OrdinalIgnoreCase)) &&
+                !currentName.Equals("Dummy", StringComparison.OrdinalIgnoreCase) &&
+                !currentName.StartsWith("Touch_", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var intro = FindAnimation(animationNames, "Intro");
+            var idle = FindAnimation(animationNames, "Idle");
+            if (intro != null)
+            {
+                animationState.SetAnimation(intro, loop: false);
+                if (idle != null)
+                {
+                    animationState.AddAnimation(idle, delay: 0f, loop: true);
+                }
+
+                ModLog.Info($"已启动 {groupId} 的远古 Spine 动画：{intro}" +
+                            (idle == null ? string.Empty : $" -> {idle}"));
+                return;
+            }
+
+            var loopAnimation = idle ??
+                                FindAnimation(animationNames, "animation") ??
+                                FindAnimation(animationNames, "default") ??
+                                animationNames.FirstOrDefault(name =>
+                                    !name.Equals("Dummy", StringComparison.OrdinalIgnoreCase) &&
+                                    !name.StartsWith("Touch_", StringComparison.OrdinalIgnoreCase));
+            if (loopAnimation == null)
+            {
+                return;
+            }
+
+            animationState.SetAnimation(loopAnimation, loop: true);
+            ModLog.Info($"已启动 {groupId} 的远古 Spine 循环动画：{loopAnimation}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"启动 {groupId} 的远古 Spine 动画失败：{exception.Message}");
+        }
+    }
+
+    private static string? FindAnimation(
+        IReadOnlyList<string> animationNames,
+        string expectedName) =>
+        animationNames.FirstOrDefault(name =>
+            name.Equals(expectedName, StringComparison.OrdinalIgnoreCase));
+}
+
+[HarmonyPatch(typeof(NAncientEventLayout), "InitializeVisuals")]
+internal static class ManagedAncientSceneAnimationPatch
+{
+    private static readonly System.Reflection.FieldInfo AncientEventField =
+        AccessTools.Field(typeof(NAncientEventLayout), "_ancientEvent");
+
+    private static void Postfix(NAncientEventLayout __instance)
+    {
+        try
+        {
+            if (AncientEventField.GetValue(__instance) is not AncientEventModel ancient)
+            {
+                return;
+            }
+
+            var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
+            var container = __instance.GetNodeOrNull<Node>("%AncientBgContainer");
+            var sceneRoot = container?.GetChildCount() > 0 ? container.GetChild(0) : null;
+            if (sceneRoot != null)
+            {
+                ManagedAncientSceneAnimation.TryStart(group?.Id, sceneRoot);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("在游戏内启动远古 Spine 动画失败：" + exception.Message);
+        }
+    }
 }
 
 [HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu._Ready))]
