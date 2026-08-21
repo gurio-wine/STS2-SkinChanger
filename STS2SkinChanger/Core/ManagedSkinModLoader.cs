@@ -9,11 +9,13 @@ namespace STS2SkinChanger.Core;
 
 internal static class ManagedSkinModLoader
 {
-    private static readonly MethodInfo InvokeOnModDetectedMethod =
+    private static readonly MethodInfo? InvokeOnModDetectedMethod =
         AccessTools.Method(typeof(ModManager), "InvokeOnModDetected");
-    private static readonly FieldInfo GameVersionField =
+    private static readonly FieldInfo? OnModDetectedField =
+        AccessTools.Field(typeof(ModManager), "OnModDetected");
+    private static readonly FieldInfo? GameVersionField =
         AccessTools.Field(typeof(ModManager), "_gameVersion");
-    private static readonly FieldInfo CircularDependenciesField =
+    private static readonly FieldInfo? CircularDependenciesField =
         AccessTools.Field(typeof(ModManager), "_circularDependencies");
     private static readonly Dictionary<string, SkinProviderProbe> ProvidersByRoot =
         new(StringComparer.OrdinalIgnoreCase);
@@ -34,7 +36,7 @@ internal static class ManagedSkinModLoader
 
         _initialized = true;
         // 在产生任何副作用前预检游戏内部反射目标，避免运行到一半因句柄缺失而进入"脏回退"。
-        _reflectionTargetsReady = InvokeOnModDetectedMethod != null &&
+        _reflectionTargetsReady = (InvokeOnModDetectedMethod != null || OnModDetectedField != null) &&
                                   GameVersionField != null &&
                                   CircularDependenciesField != null;
         if (!_reflectionTargetsReady)
@@ -107,7 +109,7 @@ internal static class ManagedSkinModLoader
             }
 
             mod.state = ModLoadState.Loaded;
-            InvokeOnModDetectedMethod.Invoke(null, [mod]);
+            NotifyModDetected(mod);
             ModLog.Info(
                 $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
@@ -123,6 +125,30 @@ internal static class ManagedSkinModLoader
                 $"托管 {mod.manifest?.name ?? mod.manifest?.id} 失败，将交回游戏原加载器：" +
                 exception.GetBaseException().Message);
             return false;
+        }
+    }
+
+    private static void NotifyModDetected(Mod mod)
+    {
+        if (InvokeOnModDetectedMethod != null)
+        {
+            InvokeOnModDetectedMethod.Invoke(null, [mod]);
+            return;
+        }
+
+        var handlers = (OnModDetectedField?.GetValue(null) as Delegate)?.GetInvocationList() ?? [];
+        foreach (var handler in handlers)
+        {
+            try
+            {
+                handler.DynamicInvoke(mod);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"通知 Mod 加载监听器 {handler.Method.DeclaringType?.FullName}.{handler.Method.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
         }
     }
 
@@ -166,7 +192,7 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
-        var circularDependencies = CircularDependenciesField.GetValue(null) as
+        var circularDependencies = CircularDependenciesField!.GetValue(null) as
             IReadOnlyDictionary<string, string>;
         if (circularDependencies?.ContainsKey(manifest.id) == true)
         {
@@ -183,7 +209,7 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
-        var gameVersion = GameVersionField.GetValue(null) as SemanticVersion;
+        var gameVersion = GameVersionField!.GetValue(null) as SemanticVersion;
         return gameVersion == null || gameVersion.CompareTo(minimum) >= 0;
     }
 

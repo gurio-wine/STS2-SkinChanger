@@ -2,6 +2,8 @@
 
 一个独立的《杀戮尖塔 2》皮肤管理 Mod。它不会修改其他 Mod，也不依赖旧版“皮肤管理器”。
 
+当前同时兼容正式版 `v0.107.1` 与公开测试版 `v0.111.0`；发布 DLL 以最低支持版本 `v0.107.1` 构建。
+
 [Steam 创意工坊 / Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680)
 
 ## 功能
@@ -33,6 +35,8 @@
 ```bash
 dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release
 ```
+
+也可用 `-p:GameAssemblyDir=<游戏程序集目录>` 指定要验证的游戏版本；不同版本的反编译结果统一存放在 `D:/Projects/Godot/Slay The Spire 2/<版本号>/`。
 
 产物位于 `STS2SkinChanger/bin/Release/Gurio.SkinChanger.dll`；游戏要求 DLL 文件名与 Mod ID 完全一致。
 

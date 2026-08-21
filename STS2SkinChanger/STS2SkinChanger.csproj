@@ -9,19 +9,20 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GameAssemblyDir Condition="'$(GameAssemblyDir)' == ''">/mnt/d/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64</GameAssemblyDir>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="sts2">
-      <HintPath>/mnt/d/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64/sts2.dll</HintPath>
+      <HintPath>$(GameAssemblyDir)/sts2.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="GodotSharp">
-      <HintPath>/mnt/d/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64/GodotSharp.dll</HintPath>
+      <HintPath>$(GameAssemblyDir)/GodotSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
-      <HintPath>/mnt/d/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64/0Harmony.dll</HintPath>
+      <HintPath>$(GameAssemblyDir)/0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

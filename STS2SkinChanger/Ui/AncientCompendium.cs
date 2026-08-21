@@ -114,8 +114,7 @@ internal static class AncientCompendiumEntry
         stack.Push(gallery);
     }
 
-    internal static AncientEventModel[] GetAncients() => ModelDb.All
-        .OfType<AncientEventModel>()
+    internal static AncientEventModel[] GetAncients() => ModelDb.AllAncients
         .Where(ancient => ResourceLoader.Exists(GetScenePath(ancient)))
         .DistinctBy(ancient => ancient.Id)
         .OrderBy(ancient => GetTitle(ancient), StringComparer.CurrentCultureIgnoreCase)
@@ -644,8 +643,16 @@ internal static class ManagedAncientSceneAnimation
                 return;
             }
 
-            using var current = animationState.GetCurrent(0);
-            var currentName = current?.GetAnimationName();
+            var current = animationState.GetCurrent(0);
+            string? currentName;
+            try
+            {
+                currentName = current?.GetAnimationName();
+            }
+            finally
+            {
+                (current as IDisposable)?.Dispose();
+            }
             if (!string.IsNullOrWhiteSpace(currentName) &&
                 animationNames.Any(name =>
                     name.Equals(currentName, StringComparison.OrdinalIgnoreCase)) &&
