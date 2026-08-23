@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
@@ -44,6 +45,14 @@ internal static partial class ContextualSkinControls
         AccessTools.Field(typeof(NCharacterSelectScreen), "_name");
     private static readonly System.Reflection.FieldInfo CharacterDescriptionField =
         AccessTools.Field(typeof(NCharacterSelectScreen), "_description");
+    private static readonly System.Reflection.FieldInfo CharacterRelicTitleField =
+        AccessTools.Field(typeof(NCharacterSelectScreen), "_relicTitle");
+    private static readonly System.Reflection.FieldInfo CharacterRelicDescriptionField =
+        AccessTools.Field(typeof(NCharacterSelectScreen), "_relicDescription");
+    private static readonly System.Reflection.FieldInfo CharacterRelicIconField =
+        AccessTools.Field(typeof(NCharacterSelectScreen), "_relicIcon");
+    private static readonly System.Reflection.FieldInfo CharacterRelicIconOutlineField =
+        AccessTools.Field(typeof(NCharacterSelectScreen), "_relicIconOutline");
 
     // These paths are inputs to our isolated overlay and must not pass through another Mod's Harmony redirect.
     internal static string CanonicalScenePath(string innerPath) =>
@@ -513,6 +522,45 @@ internal static partial class ContextualSkinControls
                     : new LocString(
                         "characters",
                         character.CharacterSelectDesc).GetFormattedText();
+            }
+
+            var relic = character.StartingRelics.FirstOrDefault();
+            if (relic == null)
+            {
+                return;
+            }
+
+            var isLocked = button?.IsLocked == true;
+            if (CharacterRelicTitleField.GetValue(screen) is RichTextLabel relicTitle)
+            {
+                relicTitle.Text = isLocked
+                    ? new LocString(
+                        "main_menu_ui",
+                        "CHARACTER_SELECT.lockedRelic.title").GetFormattedText()
+                    : relic.Title.GetFormattedText();
+            }
+
+            if (CharacterRelicDescriptionField.GetValue(screen) is RichTextLabel relicDescription)
+            {
+                relicDescription.Text = isLocked
+                    ? new LocString(
+                        "main_menu_ui",
+                        "CHARACTER_SELECT.lockedRelic.description").GetFormattedText()
+                    : relic.DynamicDescription.GetFormattedText();
+            }
+
+            if (CharacterRelicIconField.GetValue(screen) is TextureRect relicIcon)
+            {
+                relicIcon.Texture = relic.Icon;
+                relicIcon.SelfModulate = isLocked ? StsColors.ninetyPercentBlack : Colors.White;
+            }
+
+            if (CharacterRelicIconOutlineField.GetValue(screen) is TextureRect relicIconOutline)
+            {
+                relicIconOutline.Texture = relic.IconOutline;
+                relicIconOutline.SelfModulate = isLocked
+                    ? StsColors.halfTransparentWhite
+                    : StsColors.halfTransparentBlack;
             }
         }
         catch (Exception exception)

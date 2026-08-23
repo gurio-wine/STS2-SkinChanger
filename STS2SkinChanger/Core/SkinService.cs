@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using System.Security.Cryptography;
@@ -1417,6 +1418,7 @@ internal static class SkinService
 
         var files = catalog.BuildOverlay(Config.Selections, groups);
         MountArchiveOverlay(files, "visual", "Godot 拒绝加载生成的皮肤资源包。");
+        RefreshLocalizationIfNeeded(files.Keys);
 
         // Register scripts and run third-party initializers only after every private scene, atlas,
         // imported payload and frame directory is visible at its original res:// path. Static
@@ -1432,6 +1434,34 @@ internal static class SkinService
         }
 
         ManagedSkinModLoader.ActivateSelectedProviders(selectedFullRuntimeProviders);
+    }
+
+    private static void RefreshLocalizationIfNeeded(IEnumerable<string> mountedPaths)
+    {
+        if (!mountedPaths.Any(path =>
+                path.Contains("/localization/", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        try
+        {
+            var manager = LocManager.Instance;
+            if (manager == null || string.IsNullOrWhiteSpace(manager.Language))
+            {
+                // During boot LocManager initializes after Mod PCK mounting and reads the
+                // selected files itself. Only an in-session switch needs an explicit reload.
+                return;
+            }
+
+            manager.SetLanguage(manager.Language);
+            ModLog.Info($"已刷新 {manager.Language} 本地化缓存。");
+        }
+        catch (Exception exception)
+        {
+            // A broken optional translation must not make an otherwise valid visual switch fail.
+            ModLog.Warn("刷新皮肤本地化缓存失败：" + exception.GetBaseException().Message);
+        }
     }
 
     private static void MountCardOverlay(IReadOnlySet<string> groups)

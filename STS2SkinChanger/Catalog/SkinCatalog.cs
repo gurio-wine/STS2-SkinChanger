@@ -2566,7 +2566,21 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in indexes)
         {
             var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
-            var runtimeAssets = index.Assets.Values
+            var indexedAssets = index.Assets.Values.ToArray();
+            // The lightweight PCK index eagerly registers canonical game animation/scene paths,
+            // but a DLL provider may keep its routed scene below any private top-level folder.
+            // Discover direct resources by their game-facing structure before building options;
+            // this keeps arbitrary provider namespaces working without indexing every project file.
+            var privateRuntimeAssets = index.Archive.Paths
+                .Where(path => path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase))
+                .Where(path => TryGetRuntimeProviderAsset(index.Mod.Id, path) != null)
+                .Select(index.TryBuildAsset)
+                .Where(asset => asset != null)
+                .Cast<ResourceAsset>()
+                .ToArray();
+            var runtimeAssets = indexedAssets
+                .Concat(privateRuntimeAssets)
+                .DistinctBy(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase)
                 .Select(asset => (
                     Asset: asset,
                     Mapping: TryGetRuntimeProviderAsset(index.Mod.Id, asset.SourcePath)))
@@ -2742,6 +2756,17 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static string NormalizeRuntimeProviderCanonicalPath(string path)
     {
+        // Some providers keep a complete character-select scene in an arbitrary private
+        // directory (for example res://<ModId>/animations/char_select/) and route to it from
+        // a Harmony property patch. The file name is still the stable game-facing contract, so
+        // recognize it independently of the provider's folder layout.
+        var characterSelectMatch = AnyCharacterSelectSceneRegex().Match(path);
+        if (characterSelectMatch.Success)
+        {
+            return "res://scenes/screens/char_select/char_select_bg_" +
+                   characterSelectMatch.Groups[1].Value + ".tscn";
+        }
+
         const string creatureTemplatePrefix = "res://scenes/creature_visuals/templates/";
         const string creatureTemplateSuffix = "_template.tscn";
         if (TryMapCharacterTemplatePath(
@@ -3072,6 +3097,7 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         foreach (var regex in new[]
                  {
+                     AnyCharacterSelectSceneRegex(),
                      RuntimeCharacterSelectSceneRegex(),
                      RuntimeCharacterSelectIconRegex(),
                      RuntimeCreatureTemplateRegex(),
@@ -3245,6 +3271,9 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://scenes/screens/char_select/char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterSelectSceneRegex();
+
+    [GeneratedRegex("(?:^|/)char_select_bg_([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
+    private static partial Regex AnyCharacterSelectSceneRegex();
 
     [GeneratedRegex("^res://scenes/merchant/characters/([^/.]+)_merchant\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex MerchantCharacterSceneRegex();
