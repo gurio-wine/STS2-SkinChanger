@@ -20,6 +20,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<CardSkinGroup> _configuredCardGroups;
     private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
+    private readonly IReadOnlySet<string> _managedGodotScriptProviders;
 
     private SkinCatalog(
         PckArchive gameArchive,
@@ -36,6 +37,11 @@ internal sealed partial class SkinCatalog : IDisposable
         _configuredCardGroups = cardGroups;
         _pckCardOptions = pckCardOptions;
         _cardGroups = cardGroups.ToList();
+        _managedGodotScriptProviders = cosmeticIndexes
+            .Where(index => index.Mod.HasDll && index.Archive.Paths.Any(path =>
+                path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)))
+            .Select(index => index.Mod.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     public IReadOnlyList<SkinGroup> Groups => _groups;
@@ -134,6 +140,7 @@ internal sealed partial class SkinCatalog : IDisposable
             var visualGroups = 0;
             var cardAssets = 0;
             var cardPresentations = 0;
+            var managedScriptCount = 0;
             if (mod.PckPath != null && File.Exists(mod.PckPath))
             {
                 PckArchive? archive = null;
@@ -146,6 +153,10 @@ internal sealed partial class SkinCatalog : IDisposable
                         archive,
                         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                         remapFilter: null);
+                    managedScriptCount = mod.HasDll
+                        ? archive.Paths.Count(path =>
+                            path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                        : 0;
                     visualGroups = BuildGroups([index])
                         .Count(group => group.Options.Count > 0);
                     var configuredCardGroups = BuildCardGroups([index]);
@@ -213,7 +224,8 @@ internal sealed partial class SkinCatalog : IDisposable
                     visualGroups,
                     cardAssets,
                     cardPresentations,
-                    runtimeImages));
+                    runtimeImages,
+                    managedScriptCount));
             }
         }
 
@@ -236,10 +248,12 @@ internal sealed partial class SkinCatalog : IDisposable
                 return false;
             }
 
-            var metadata = Encoding.Latin1.GetString(File.ReadAllBytes(assemblyPath));
-            var usesPatchMechanism = metadata.Contains("HarmonyLib", StringComparison.Ordinal) ||
-                                     metadata.Contains("HarmonyPatch", StringComparison.Ordinal) ||
-                                     metadata.Contains("PatchAll", StringComparison.Ordinal);
+            var bytes = File.ReadAllBytes(assemblyPath);
+            var metadata = Encoding.Latin1.GetString(bytes);
+            var unicodeMetadata = Encoding.Unicode.GetString(bytes);
+            var usesPatchMechanism = ContainsMetadata("HarmonyLib") ||
+                                     ContainsMetadata("HarmonyPatch") ||
+                                     ContainsMetadata("PatchAll");
             if (!usesPatchMechanism)
             {
                 return false;
@@ -255,7 +269,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 "card_atlas.sprites",
                 "map_marker_",
                 "ui/run_history"
-            }.Any(path => metadata.Contains(path, StringComparison.OrdinalIgnoreCase));
+            }.Any(path => ContainsMetadata(path, StringComparison.OrdinalIgnoreCase));
             if (!hasSkinResourcePath)
             {
                 return false;
@@ -269,8 +283,14 @@ internal sealed partial class SkinCatalog : IDisposable
                    HasTarget("AtlasManager", "GetSprite", "LoadAtlas");
 
             bool HasTarget(string typeName, params string[] methodNames) =>
-                metadata.Contains(typeName, StringComparison.Ordinal) &&
-                methodNames.Any(methodName => metadata.Contains(methodName, StringComparison.Ordinal));
+                ContainsMetadata(typeName) &&
+                methodNames.Any(methodName => ContainsMetadata(methodName));
+
+            bool ContainsMetadata(
+                string value,
+                StringComparison comparison = StringComparison.Ordinal) =>
+                metadata.Contains(value, comparison) ||
+                unicodeMetadata.Contains(value, comparison);
         }
         catch
         {
@@ -284,6 +304,28 @@ internal sealed partial class SkinCatalog : IDisposable
             .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))?
             .IsRuntimeProvider == true;
     }
+
+    public bool ProviderUsesManagedCharacterScene(string groupId, string optionId)
+    {
+        if (!_managedGodotScriptProviders.Contains(optionId))
+        {
+            return false;
+        }
+
+        var option = Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(candidate =>
+                candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+        return option?.Assets.Keys.Any(path =>
+        {
+            var scene = CreatureVisualSceneRegex().Match(path);
+            return scene.Success &&
+                   scene.Groups[1].Value.Equals(groupId, StringComparison.OrdinalIgnoreCase);
+        }) == true;
+    }
+
+    public bool ProviderUsesManagedGodotScripts(string optionId) =>
+        _managedGodotScriptProviders.Contains(optionId);
 
     public bool IsResourceBackedOption(string groupId, string optionId)
     {
@@ -384,6 +426,7 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlySet<string>? onlyGroups = null)
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        var selectedProviders = new List<SkinOption>();
         foreach (var group in Groups)
         {
             if (onlyGroups != null && !onlyGroups.Contains(group.Id))
@@ -394,6 +437,10 @@ internal sealed partial class SkinCatalog : IDisposable
             selections.TryGetValue(group.Id, out var selectedId);
             var selected = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+            if (selected?.IsRuntimeProvider == true)
+            {
+                selectedProviders.Add(selected);
+            }
             var sourcePaths = group.Options
                 .SelectMany(option => option.Assets.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -430,6 +477,17 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
             }
 
+        }
+
+        // 代码型外观 Mod 常把场景、骨骼和贴图放在自己的 res://<ModId>/
+        // 命名空间，再由 DLL 把游戏资源入口路由过去。接管 DLL 路由以后仍需把
+        // 当前所选提供者的私有依赖一起挂载，否则主场景能替换但内部引用会丢失。
+        foreach (var selected in selectedProviders.DistinctBy(option => option.Id))
+        {
+            foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
+            {
+                files[file.Key] = file.Value;
+            }
         }
 
         return files;
@@ -506,6 +564,10 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     public Dictionary<string, ResourceFile> BuildCardProviderNamespaceOverlay(
+        IEnumerable<string> providerIds) =>
+        BuildProviderNamespaceOverlay(providerIds);
+
+    private Dictionary<string, ResourceFile> BuildProviderNamespaceOverlay(
         IEnumerable<string> providerIds)
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
@@ -552,6 +614,86 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return paths.Select(path => new ResourceFile(index.Archive, path)).ToArray();
+    }
+
+    private IReadOnlyDictionary<string, ResourceFile> CollectSelectedProviderOverlayDependencies(
+        SkinOption selected)
+    {
+        var indexes = _cosmeticIndexes
+            .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var providerIdToken = NormalizeResourceToken(selected.Id);
+        var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
+        var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var assetFile in selected.Assets.Values.SelectMany(asset => asset.Files))
+        {
+            var index = indexes.FirstOrDefault(candidate =>
+                ReferenceEquals(candidate.Archive, assetFile.Archive));
+            if (index != null)
+            {
+                Enqueue(index, assetFile, includeInOverlay: false);
+            }
+        }
+
+        while (queue.TryDequeue(out var pending))
+        {
+            if (!MayContainResourceReferences(pending.File.Path))
+            {
+                continue;
+            }
+
+            var text = Encoding.UTF8.GetString(pending.File.Archive.ReadFile(pending.File.Path));
+            foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
+            {
+                var sourcePath = match.Value;
+                if (!IsProviderNamespacePath(sourcePath, providerIdToken))
+                {
+                    continue;
+                }
+
+                var candidates = new[] { pending.Index }
+                    .Concat(indexes.Where(index => !ReferenceEquals(index, pending.Index)));
+                ResourceAsset? dependency = null;
+                PckResourceIndex? dependencyIndex = null;
+                foreach (var candidate in candidates)
+                {
+                    dependency = candidate.Assets.GetValueOrDefault(sourcePath) ??
+                                 candidate.TryBuildAsset(sourcePath);
+                    if (dependency != null)
+                    {
+                        dependencyIndex = candidate;
+                        break;
+                    }
+                }
+
+                if (dependency == null || dependencyIndex == null)
+                {
+                    continue;
+                }
+
+                foreach (var dependencyFile in dependency.Files)
+                {
+                    Enqueue(dependencyIndex, dependencyFile, includeInOverlay: true);
+                }
+            }
+        }
+
+        return files;
+
+        void Enqueue(PckResourceIndex index, ResourceFile file, bool includeInOverlay)
+        {
+            if (includeInOverlay)
+            {
+                files[file.Path] = file;
+            }
+
+            var key = index.Mod.Id + "\n" + file.Path;
+            if (queued.Add(key))
+            {
+                queue.Enqueue((index, file));
+            }
+        }
     }
 
     private static bool IsProviderNamespacePath(string path, string idToken)
@@ -1912,7 +2054,9 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
             var runtimeAssets = index.Assets.Values
-                .Select(asset => (Asset: asset, Mapping: TryGetRuntimeProviderAsset(asset.SourcePath)))
+                .Select(asset => (
+                    Asset: asset,
+                    Mapping: TryGetRuntimeProviderAsset(index.Mod.Id, asset.SourcePath)))
                 .Where(pair => pair.Mapping != null)
                 .Select(pair => (pair.Asset, Mapping: pair.Mapping!))
                 .ToArray();
@@ -2047,18 +2191,55 @@ internal sealed partial class SkinCatalog : IDisposable
             RuntimeImagePath: runtimeImagePath));
     }
 
-    private static RuntimeProviderAsset? TryGetRuntimeProviderAsset(string sourcePath)
+    private static RuntimeProviderAsset? TryGetRuntimeProviderAsset(
+        string providerId,
+        string sourcePath)
     {
-        var canonicalPath = sourcePath.StartsWith("res://custom/", StringComparison.OrdinalIgnoreCase)
-            ? "res://" + sourcePath[13..]
-            : sourcePath;
+        var canonicalPath = CanonicalizeRuntimeProviderPath(providerId, sourcePath);
         var identity = TryGetRuntimeProviderGroup(sourcePath) ??
+                       TryGetPrimaryGroup(canonicalPath) ??
                        TryGetCharacterSelectIconGroup(canonicalPath) ??
                        TryGetCharacterUiTextureGroup(canonicalPath) ??
                        TryGetCharacterMapMarkerGroup(canonicalPath) ??
                        TryGetCharacterIconSceneGroup(canonicalPath) ??
                        TryGetCharacterSupplementGroup(canonicalPath);
         return identity == null ? null : new RuntimeProviderAsset(identity, canonicalPath);
+    }
+
+    private static string CanonicalizeRuntimeProviderPath(string providerId, string sourcePath)
+    {
+        if (sourcePath.StartsWith("res://custom/", StringComparison.OrdinalIgnoreCase))
+        {
+            return NormalizeRuntimeProviderCanonicalPath("res://" + sourcePath[13..]);
+        }
+
+        // 通用支持 res://<ModId>/<游戏原资源相对路径>。不匹配提供者自己的
+        // 顶层目录时保持原路径，避免把普通资源目录误当成游戏入口。
+        if (!IsProviderNamespacePath(sourcePath, NormalizeResourceToken(providerId)))
+        {
+            return sourcePath;
+        }
+
+        var relative = sourcePath[6..];
+        var separator = relative.IndexOf('/');
+        return separator < 0
+            ? sourcePath
+            : NormalizeRuntimeProviderCanonicalPath("res://" + relative[(separator + 1)..]);
+    }
+
+    private static string NormalizeRuntimeProviderCanonicalPath(string path)
+    {
+        const string privateCharacterSelectPrefix = "res://scenes/character_select/";
+        const string shortCharacterSelectPrefix = "res://scenes/char_select/";
+        const string gameCharacterSelectPrefix = "res://scenes/screens/char_select/";
+        if (path.StartsWith(privateCharacterSelectPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return gameCharacterSelectPrefix + path[privateCharacterSelectPrefix.Length..];
+        }
+
+        return path.StartsWith(shortCharacterSelectPrefix, StringComparison.OrdinalIgnoreCase)
+            ? gameCharacterSelectPrefix + path[shortCharacterSelectPrefix.Length..]
+            : path;
     }
 
     private static GroupIdentity? TryGetCharacterSupplementGroup(string sourcePath)
@@ -2164,6 +2345,15 @@ internal sealed partial class SkinCatalog : IDisposable
         if (character.Success)
         {
             var id = character.Groups[1].Value.ToLowerInvariant();
+            foreach (var suffix in new[] { "_rest_site", "_merchant", "_character_select" })
+            {
+                if (id.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    id = id[..^suffix.Length];
+                    break;
+                }
+            }
+
             return new GroupIdentity(id, DisplayName(id));
         }
 
@@ -2464,10 +2654,10 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("(?:^|/)card_portraits/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardPortraitGroupRegex();
 
-    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites|cards?|card_art|cardart)/", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("/(?:card_portraits|[^/]*cards?\\.sprites|cards?|card_art|cardart)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardArtPathRegex();
 
-    [GeneratedRegex("/(?:card_portraits|card_atlas\\.sprites|cards?|card_art|cardart)/([^/]+)/", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("/(?:card_portraits|[^/]*cards?\\.sprites|cards?|card_art|cardart)/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardArtIdentityRegex();
 
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
@@ -2545,7 +2735,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex ResourcePathRegex();
 
     [GeneratedRegex(
-        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|spskel|ctex|tscn|tres|gdc|gd|gdshader|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
+        "res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+?\\.(?:spatlas|spskel|ctex|tscn|tres|cs|gdc|gd|gdshader|scn|res|png|webp|jpe?g|svg|skel|atlas|json|ogg|wav|mp3)(?=[\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]|$)",
         RegexOptions.IgnoreCase)]
     private static partial Regex EmbeddedResourcePathRegex();
 
@@ -2580,7 +2770,8 @@ internal sealed record SkinProviderProbe(
     int VisualGroupCount,
     int CardAssetCount,
     int CardPresentationCount,
-    int RuntimeImageCount);
+    int RuntimeImageCount,
+    int ManagedScriptCount);
 
 internal sealed record AncientLayeredImagePaths(
     string Character,

@@ -303,6 +303,22 @@ internal static class SkinService
     public static string GetCardSelection(string groupId) =>
         Config.GetSelection(CardSelectionKey(groupId));
 
+    public static bool ShouldDriveManagedCharacterAnimations(string groupId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null)
+            {
+                return false;
+            }
+
+            var selectedId = Config.GetSelection(groupId);
+            return catalog.IsRuntimeProviderOption(groupId, selectedId) &&
+                   catalog.ProviderUsesManagedCharacterScene(groupId, selectedId);
+        }
+    }
+
     public static IReadOnlyList<CardSkinOption> GetCardOptions(CardModel card)
     {
         lock (Sync)
@@ -1289,6 +1305,16 @@ internal static class SkinService
     private static void MountOverlay(IReadOnlySet<string> groups)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        foreach (var group in catalog.Groups.Where(group => groups.Contains(group.Id)))
+        {
+            var selectedId = Config.GetSelection(group.Id);
+            if (catalog.IsRuntimeProviderOption(group.Id, selectedId) &&
+                catalog.ProviderUsesManagedGodotScripts(selectedId))
+            {
+                ManagedSkinModLoader.EnsureProviderGodotScripts(selectedId);
+            }
+        }
+
         var files = catalog.BuildOverlay(Config.Selections, groups);
         if (files.Count == 0)
         {

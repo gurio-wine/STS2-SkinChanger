@@ -113,7 +113,7 @@ if (validateIndex >= 0)
         Console.WriteLine(
             $"provider {probe.Id}: visual={probe.VisualGroupCount}, " +
             $"cards={probe.CardAssetCount}, presentations={probe.CardPresentationCount}, " +
-            $"images={probe.RuntimeImageCount}");
+            $"images={probe.RuntimeImageCount}, scripts={probe.ManagedScriptCount}");
     }
 
     foreach (var option in catalog.PckCardOptions)

@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
+using System.Runtime.Loader;
 
 namespace STS2SkinChanger.Core;
 
@@ -20,6 +21,10 @@ internal static class ManagedSkinModLoader
     private static readonly Dictionary<string, SkinProviderProbe> ProvidersByRoot =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderRoots =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> RegisteredProviderAssemblies =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ProviderScriptAssembly> ProviderScriptAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
@@ -108,13 +113,18 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
+            RememberProviderGodotScripts(mod, provider);
             mod.state = ModLoadState.Loaded;
             NotifyModDetected(mod);
             ModLog.Info(
                 $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
-                $"卡牌呈现={provider.CardPresentationCount}, 独立图片={provider.RuntimeImageCount}；" +
+                $"卡牌呈现={provider.CardPresentationCount}, 独立图片={provider.RuntimeImageCount}, " +
+                $"场景脚本={provider.ManagedScriptCount}；" +
                 "原 PCK 未全局挂载，DLL 初始化器和补丁均不执行；" +
+                (provider.ManagedScriptCount > 0
+                    ? "只有选中该皮肤时才注册场景实例化所需的 Godot 脚本类型；"
+                    : string.Empty) +
                 "卡牌呈现只读取 PCK 配置并由皮肤切换器自身渲染。");
             return true;
         }
@@ -123,6 +133,94 @@ internal static class ManagedSkinModLoader
             mod.state = ModLoadState.None;
             ModLog.Warn(
                 $"托管 {mod.manifest?.name ?? mod.manifest?.id} 失败，将交回游戏原加载器：" +
+                exception.GetBaseException().Message);
+            return false;
+        }
+    }
+
+    private static void RememberProviderGodotScripts(Mod mod, SkinProviderProbe provider)
+    {
+        if (provider.ManagedScriptCount <= 0 ||
+            mod.manifest is not { hasDll: true, id: not null })
+        {
+            return;
+        }
+
+        var assemblyPath = Path.GetFullPath(Path.Combine(mod.path, mod.manifest.id + ".dll"));
+        if (!File.Exists(assemblyPath))
+        {
+            ModLog.Warn(
+                $"{mod.manifest.name ?? mod.manifest.id} 的 PCK 引用了 C# 场景脚本，" +
+                $"但未找到程序集 {assemblyPath}。");
+            return;
+        }
+
+        ProviderScriptAssemblies[mod.manifest.id] = new ProviderScriptAssembly(
+            assemblyPath,
+            mod.manifest.name ?? mod.manifest.id);
+    }
+
+    public static bool EnsureProviderGodotScripts(string providerId)
+    {
+        if (!ProviderScriptAssemblies.TryGetValue(providerId, out var provider))
+        {
+            return false;
+        }
+
+        try
+        {
+            var assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(candidate =>
+                {
+                    try
+                    {
+                        return !candidate.IsDynamic &&
+                               Path.GetFullPath(candidate.Location)
+                                   .Equals(provider.AssemblyPath, StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                });
+            if (assembly == null)
+            {
+                var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
+                assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??
+                           Assembly.LoadFrom(provider.AssemblyPath);
+            }
+
+            if (!RegisteredProviderAssemblies.Add(provider.AssemblyPath))
+            {
+                return true;
+            }
+
+            var bridgeType = typeof(GodotObject).Assembly.GetType("Godot.Bridge.ScriptManagerBridge");
+            var lookupMethod = bridgeType?.GetMethods(
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(method =>
+                    method.Name.Equals("LookupScriptsInAssembly", StringComparison.Ordinal) &&
+                    method.GetParameters() is [{ ParameterType: var parameterType }] &&
+                    parameterType == typeof(Assembly));
+            if (lookupMethod == null)
+            {
+                RegisteredProviderAssemblies.Remove(provider.AssemblyPath);
+                ModLog.Warn(
+                    $"无法找到 Godot 场景脚本注册入口，{provider.Name} " +
+                    "的自定义场景脚本可能无法实例化。");
+                return false;
+            }
+
+            lookupMethod.Invoke(null, [assembly]);
+            ModLog.Info($"已按当前选择注册 {provider.Name} 的 Godot 场景脚本类型，未执行其初始化器或补丁。");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            RegisteredProviderAssemblies.Remove(provider.AssemblyPath);
+            ModLog.Warn(
+                $"注册 {provider.Name} 的 Godot 场景脚本失败；" +
+                "仍会隔离其全局视觉补丁：" +
                 exception.GetBaseException().Message);
             return false;
         }
@@ -288,6 +386,8 @@ internal static class ManagedSkinModLoader
     private static string NormalizePath(string path) =>
         Path.GetFullPath(path)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private sealed record ProviderScriptAssembly(string AssemblyPath, string Name);
 
 }
 
