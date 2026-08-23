@@ -1110,6 +1110,46 @@ internal static class SkinService
         }
     }
 
+    public static AncientLayeredImageTextures? GetSelectedAncientLayeredImageTextures(string groupId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+            var paths = catalog.GetAncientLayeredImagePaths(
+                groupId,
+                Config.GetSelection(groupId));
+            if (paths == null)
+            {
+                return null;
+            }
+
+            var requestedPaths = new[]
+                {
+                    paths.Character,
+                    paths.BackgroundCover,
+                    paths.Mask,
+                    paths.SleepingCharacter
+                }
+                .Where(path => path != null)
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var resources = LoadRuntimeResources(groupId, requestedPaths);
+
+            Texture2D Required(string path) =>
+                resources.GetValueOrDefault(path) as Texture2D ??
+                throw new InvalidOperationException($"远古图层资源不是贴图：{path}");
+            Texture2D? Optional(string? path) =>
+                path == null ? null : Required(path);
+
+            return new AncientLayeredImageTextures(
+                Required(paths.Character),
+                Optional(paths.BackgroundCover),
+                Optional(paths.Mask),
+                Optional(paths.SleepingCharacter));
+        }
+    }
+
     public static IReadOnlyDictionary<string, PackedScene> LoadRuntimeScenes(
         string groupId,
         IReadOnlyCollection<string> scenePaths)
@@ -1382,3 +1422,9 @@ internal static class SkinService
         }
     }
 }
+
+internal sealed record AncientLayeredImageTextures(
+    Texture2D Character,
+    Texture2D? BackgroundCover,
+    Texture2D? Mask,
+    Texture2D? SleepingCharacter);

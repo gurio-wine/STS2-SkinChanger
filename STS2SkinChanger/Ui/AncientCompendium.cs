@@ -502,6 +502,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             previewHost.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             _previewViewport.AddChild(previewHost);
             previewHost.AddChild(preview);
+            ManagedAncientLayeredImage.TryApply(group?.Id, preview);
             ManagedAncientSceneAnimation.TryStart(group?.Id, preview);
             ModLog.Info($"远古图鉴已展示 {ancient.Id.Entry}。");
         }
@@ -599,6 +600,116 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ContextualSkinControls.CreateStyleBox(new Color("2a465faa"), gold, 3));
     }
 
+}
+
+internal static class ManagedAncientLayeredImage
+{
+    private const string CoverNodeName = "SkinChangerAncientBackgroundCover";
+    private const string CharacterNodeName = "SkinChangerAncientCharacter";
+    private const string CharacterMaskShaderCode = """
+        shader_type canvas_item;
+        uniform sampler2D mask_texture;
+
+        void fragment() {
+            vec4 base_color = texture(TEXTURE, UV);
+            vec4 mask_color = texture(mask_texture, UV);
+            float mask_value = mask_color.a * dot(mask_color.rgb, vec3(0.299, 0.587, 0.114));
+            COLOR = vec4(base_color.rgb, base_color.a * mask_value);
+        }
+        """;
+
+    public static void TryApply(string? groupId, Node sceneRoot)
+    {
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return;
+        }
+
+        try
+        {
+            var layers = SkinService.GetSelectedAncientLayeredImageTextures(groupId);
+            if (layers == null)
+            {
+                return;
+            }
+
+            var placeholderMarker = groupId + "_placeholder";
+            var target = DescendantsAndSelf(sceneRoot)
+                .OfType<TextureRect>()
+                .FirstOrDefault(textureRect =>
+                    textureRect.Texture?.ResourcePath.Contains(
+                        placeholderMarker,
+                        StringComparison.OrdinalIgnoreCase) == true);
+            if (target?.GetParent() is not Node parent)
+            {
+                ModLog.Warn($"远古图层皮肤 {groupId} 找不到原场景占位图。");
+                return;
+            }
+
+            RemoveOldLayer(parent, CoverNodeName);
+            RemoveOldLayer(parent, CharacterNodeName);
+
+            var insertIndex = target.GetIndex() + 1;
+            if (layers.BackgroundCover != null)
+            {
+                var cover = DuplicateLayer(target, CoverNodeName, layers.BackgroundCover);
+                cover.Material = null;
+                parent.AddChild(cover);
+                parent.MoveChild(cover, insertIndex++);
+            }
+
+            var character = DuplicateLayer(target, CharacterNodeName, layers.Character);
+            if (layers.Mask != null)
+            {
+                var shader = new Shader { Code = CharacterMaskShaderCode };
+                var material = new ShaderMaterial { Shader = shader };
+                material.SetShaderParameter("mask_texture", layers.Mask);
+                character.Material = material;
+            }
+            else
+            {
+                character.Material = null;
+            }
+
+            parent.AddChild(character);
+            parent.MoveChild(character, insertIndex);
+            ModLog.Info($"已应用 {groupId} 的代码型远古图层皮肤。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"应用 {groupId} 的远古图层皮肤失败：{exception.Message}");
+        }
+    }
+
+    private static TextureRect DuplicateLayer(
+        TextureRect source,
+        string name,
+        Texture2D texture)
+    {
+        var layer = source.Duplicate() as TextureRect ??
+                    throw new InvalidOperationException("无法复制远古场景占位图节点。");
+        layer.Name = name;
+        layer.Texture = texture;
+        return layer;
+    }
+
+    private static void RemoveOldLayer(Node parent, string name)
+    {
+        var existing = parent.GetNodeOrNull<Node>(name);
+        existing?.Free();
+    }
+
+    private static IEnumerable<Node> DescendantsAndSelf(Node root)
+    {
+        yield return root;
+        foreach (Node child in root.GetChildren())
+        {
+            foreach (var descendant in DescendantsAndSelf(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
 }
 
 internal static class ManagedAncientSceneAnimation
@@ -739,6 +850,7 @@ internal static class ManagedAncientSceneAnimationPatch
             var sceneRoot = container?.GetChildCount() > 0 ? container.GetChild(0) : null;
             if (sceneRoot != null)
             {
+                ManagedAncientLayeredImage.TryApply(group?.Id, sceneRoot);
                 ManagedAncientSceneAnimation.TryStart(group?.Id, sceneRoot);
             }
         }

@@ -347,6 +347,42 @@ if (validateIndex >= 0)
                 continue;
             }
 
+            var layeredImages = catalog.GetAncientLayeredImagePaths(group.Id, option.Id);
+            if (layeredImages != null)
+            {
+                try
+                {
+                    var layerPaths = new[]
+                        {
+                            layeredImages.Character,
+                            layeredImages.BackgroundCover,
+                            layeredImages.Mask,
+                            layeredImages.SleepingCharacter
+                        }
+                        .Where(path => path != null)
+                        .Cast<string>()
+                        .ToArray();
+                    var layerOverlay = catalog.BuildRuntimeResourceOverlay(
+                        group.Id,
+                        option.Id,
+                        layerPaths,
+                        $"validate/layers/{validated:D4}");
+                    foreach (var layerPath in layerPaths)
+                    {
+                        if (!layerOverlay.ResourcePaths.ContainsKey(layerPath))
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: cannot isolate Ancient image layer {layerPath}");
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    failures.Add(
+                        $"{group.Id}/{option.Id}: Ancient image layer validation failed: {exception.Message}");
+                }
+            }
+
             try
             {
                 var overlay = catalog.BuildRuntimeResourceOverlay(

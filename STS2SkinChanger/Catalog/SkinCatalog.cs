@@ -296,6 +296,52 @@ internal sealed partial class SkinCatalog : IDisposable
             .RuntimeImagePath;
     }
 
+    public AncientLayeredImagePaths? GetAncientLayeredImagePaths(string groupId, string optionId)
+    {
+        var option = Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(candidate =>
+                candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+        if (option == null)
+        {
+            return null;
+        }
+
+        string? character = null;
+        string? backgroundCover = null;
+        string? mask = null;
+        string? sleepingCharacter = null;
+        foreach (var sourcePath in option.Assets.Keys)
+        {
+            var match = AncientLayerImageRegex().Match(NormalizeTakeoverPath(sourcePath));
+            if (!match.Success ||
+                !match.Groups["id"].Value.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            switch (match.Groups["kind"].Value.ToLowerInvariant())
+            {
+                case "character":
+                    character = sourcePath;
+                    break;
+                case "background_cover":
+                    backgroundCover = sourcePath;
+                    break;
+                case "character_mask":
+                    mask = sourcePath;
+                    break;
+                case "character_sleeping":
+                    sleepingCharacter = sourcePath;
+                    break;
+            }
+        }
+
+        return character == null
+            ? null
+            : new AncientLayeredImagePaths(character, backgroundCover, mask, sleepingCharacter);
+    }
+
     public string? FindGroupIdForResourcePath(string resourcePath)
     {
         var identity = TryGetPrimaryGroup(resourcePath) ??
@@ -1978,6 +2024,19 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        // 有些代码型远古皮肤不提供替换场景，而是在运行时把完整画布图层
+        // 叠到原场景的占位图上。按通用的 <远古 ID>_character 等资源约定
+        // 归组，随后由本 Mod 自己完成图层合成，无需执行提供者 DLL。
+        var ancientLayer = AncientLayerImageRegex().Match(NormalizeTakeoverPath(sourcePath));
+        if (ancientLayer.Success)
+        {
+            var id = ancientLayer.Groups["id"].Value.ToLowerInvariant();
+            if (KnownAncientIds.Contains(id))
+            {
+                return new GroupIdentity(id, DisplayName(id));
+            }
+        }
+
         // 商人 NPC 不纳入本 Mod 的管理范围（无切换界面，其呈现依赖提供者
         // 自身的代码补丁）。不识别 merchant 分组后，纯商人 Mod 不会被当作
         // 皮肤提供者，走游戏原加载器，表现与未安装本 Mod 时一致。
@@ -2242,6 +2301,11 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("^res://animations/backgrounds/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex AncientBackgroundAnimationRegex();
 
+    [GeneratedRegex(
+        "^res://images/ancients/(?<id>.+?)_(?<kind>character|character_sleeping|character_mask|background_cover)\\.(?:png|webp|jpe?g|svg)$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex AncientLayerImageRegex();
+
     [GeneratedRegex("^res://images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterSelectIconRegex();
 
@@ -2327,6 +2391,12 @@ internal sealed record SkinProviderProbe(
     int CardAssetCount,
     int CardPresentationCount,
     int RuntimeImageCount);
+
+internal sealed record AncientLayeredImagePaths(
+    string Character,
+    string? BackgroundCover,
+    string? Mask,
+    string? SleepingCharacter);
 
 internal sealed class SkinGroup(string id, string displayName)
 {
