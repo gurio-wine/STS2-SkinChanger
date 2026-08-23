@@ -70,7 +70,10 @@ try
     Require(
         SteamUGC.SetItemDescription(
             update,
-            ComposeDescription(config.Description, config.Limitations)),
+            ComposeDescription(
+                config.Description,
+                config.StatementHeading,
+                config.Limitations)),
         "SetItemDescription");
     Require(SteamUGC.SetItemVisibility(update, config.Visibility), "SetItemVisibility");
     Require(SteamUGC.SetItemContent(update, contentFolder), "SetItemContent");
@@ -131,7 +134,10 @@ static void PublishLocalization(
     Require(
         SteamUGC.SetItemDescription(
             update,
-            ComposeDescription(localization.Description, localization.Limitations)),
+            ComposeDescription(
+                localization.Description,
+                localization.StatementHeading,
+                localization.Limitations)),
         $"SetItemDescription({localization.Language})");
 
     var result = WaitForCallResult<SubmitItemUpdateResult_t>(
@@ -171,10 +177,28 @@ static T WaitForCallResult<T>(SteamAPICall_t call) where T : struct
     return value;
 }
 
-static string ComposeDescription(string description, string? limitations) =>
-    string.IsNullOrWhiteSpace(limitations)
-        ? description
-        : description.TrimEnd() + "\n\n" + limitations.Trim();
+static string ComposeDescription(
+    string description,
+    string? statementHeading,
+    string? limitations)
+{
+    var composed = description.TrimEnd();
+    if (!string.IsNullOrWhiteSpace(statementHeading))
+    {
+        var statementStart = composed.LastIndexOf("\n\n", StringComparison.Ordinal);
+        if (statementStart < 0)
+            throw new InvalidDataException(
+                "A statement heading requires the statement to be the final description paragraph.");
+
+        composed = composed[..statementStart]
+            + $"\n\n[h2]{statementHeading.Trim()}[/h2]\n"
+            + composed[(statementStart + 2)..];
+    }
+
+    return string.IsNullOrWhiteSpace(limitations)
+        ? composed
+        : composed + "\n\n" + limitations.Trim();
+}
 
 static void Require(bool success, string operation)
 {
@@ -187,6 +211,7 @@ internal sealed class WorkshopConfig
     public uint AppId { get; init; }
     public ulong PublishedFileId { get; set; }
     public required string Title { get; init; }
+    public string? StatementHeading { get; init; }
     public required string Description { get; init; }
     public string? Limitations { get; init; }
     public ERemoteStoragePublishedFileVisibility Visibility { get; init; }
@@ -200,6 +225,7 @@ internal sealed class WorkshopLocalization
 {
     public required string Language { get; init; }
     public required string Title { get; init; }
+    public string? StatementHeading { get; init; }
     public required string Description { get; init; }
     public string? Limitations { get; init; }
 }
