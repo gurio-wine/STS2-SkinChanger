@@ -808,6 +808,17 @@ internal sealed partial class SkinCatalog : IDisposable
                 entries => entries.Key,
                 entries => entries.First(),
                 StringComparer.OrdinalIgnoreCase);
+        var knownCardGroups = cardEntries
+            .SelectMany(card => new[]
+            {
+                card.CatalogGroupId,
+                card.FilterGroupId,
+                card.PoolGroupId,
+                TryGetCardPortraitGroup(card.PortraitPath)
+            })
+            .Where(group => !string.IsNullOrWhiteSpace(group))
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var groups = new Dictionary<string, CardSkinGroup>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var configuredGroup in _configuredCardGroups)
@@ -870,7 +881,7 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var card in cardEntries)
             {
                 var assets = option.Assets
-                    .Where(pair => CardArtMatches(pair.Key, card))
+                    .Where(pair => CardArtMatches(pair.Key, card, knownCardGroups))
                     .ToArray();
                 var hasPresentation = option.CardPresentations.TryGetValue(
                     card.TypeName,
@@ -1614,6 +1625,22 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyList<PckResourceIndex>? baselineIndexes = null)
     {
         var options = new List<CardSkinOption>();
+        var knownCardGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // 基线按“游戏原版 -> 玩法 Mod”的顺序建立。逐个扩充已知颜色，既能让
+        // 后续玩法 Mod 添加新角色颜色，也不会把其前置画风目录误登记成颜色。
+        foreach (var baselineIndex in baselineIndexes ?? [])
+        {
+            foreach (var path in baselineIndex.Archive.Paths
+                         .Select(NormalizeIndexedSourcePath)
+                         .Where(IsCardArtSourcePath))
+            {
+                var category = TryGetCardArtPathLayout(path, knownCardGroups)?.Category;
+                if (!string.IsNullOrWhiteSpace(category))
+                {
+                    knownCardGroups.Add(category);
+                }
+            }
+        }
         foreach (var index in cosmeticIndexes)
         {
             var presentations = LoadCardPresentations(index);
@@ -1642,15 +1669,19 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var originalVariantKeys = allAssets
-                .Select(asset => GetCardVariantKey(asset.SourcePath))
+                .Select(asset => GetCardVariantKey(asset.SourcePath, knownCardGroups))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             var variants = changedAssets
-                .GroupBy(asset => GetCardVariantKey(asset.SourcePath), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(
+                    asset => GetCardVariantKey(asset.SourcePath, knownCardGroups),
+                    StringComparer.OrdinalIgnoreCase)
                 .Select(group => new CardArtVariant(
                     group.Key,
                     group.ToArray(),
-                    group.Select(asset => TryGetCardArtIdentity(asset.SourcePath)?.Stem)
+                    group.Select(asset => TryGetCardArtIdentity(
+                            asset.SourcePath,
+                            knownCardGroups)?.Stem)
                         .Where(stem => !string.IsNullOrEmpty(stem))
                         .Cast<string>()
                         .ToHashSet(StringComparer.OrdinalIgnoreCase)))
@@ -1705,6 +1736,18 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return options;
+    }
+
+    private static string NormalizeIndexedSourcePath(string path)
+    {
+        if (path.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+        {
+            return path[..^7];
+        }
+
+        return path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)
+            ? path[..^6]
+            : path;
     }
 
     private static IReadOnlyDictionary<string, CardPresentationDefinition> LoadCardPresentations(
@@ -1763,7 +1806,7 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var knownCardStems = index.Assets.Keys
-            .Select(TryGetCardArtIdentity)
+            .Select(path => TryGetCardArtIdentity(path))
             .Where(identity => identity != null)
             .Select(identity => identity!.Stem)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2001,19 +2044,11 @@ internal sealed partial class SkinCatalog : IDisposable
         return false;
     }
 
-    private static string GetCardVariantKey(string path)
+    private static string GetCardVariantKey(
+        string path,
+        IReadOnlySet<string>? knownCardGroups = null)
     {
-        var match = CardArtIdentityRegex().Match(path);
-        if (!match.Success)
-        {
-            return string.Empty;
-        }
-
-        var fileSeparator = path.LastIndexOf('/');
-        var variantStart = match.Index + match.Length;
-        var variant = fileSeparator <= variantStart
-            ? string.Empty
-            : path[variantStart..fileSeparator].Trim('/');
+        var variant = TryGetCardArtPathLayout(path, knownCardGroups)?.Variant ?? string.Empty;
         return variant.Equals("beta", StringComparison.OrdinalIgnoreCase)
             ? string.Empty
             : variant;
@@ -2074,10 +2109,13 @@ internal sealed partial class SkinCatalog : IDisposable
         return IsProviderNamespacePath(path, NormalizeResourceToken(providerId));
     }
 
-    private static bool CardArtMatches(string assetPath, CardCatalogEntry card)
+    private static bool CardArtMatches(
+        string assetPath,
+        CardCatalogEntry card,
+        IReadOnlySet<string> knownCardGroups)
     {
-        var asset = TryGetCardArtIdentity(assetPath);
-        var portrait = TryGetCardArtIdentity(card.PortraitPath);
+        var asset = TryGetCardArtIdentity(assetPath, knownCardGroups);
+        var portrait = TryGetCardArtIdentity(card.PortraitPath, knownCardGroups);
         if (asset == null || portrait == null)
         {
             return false;
@@ -2095,15 +2133,16 @@ internal sealed partial class SkinCatalog : IDisposable
                CardStemsMatch(asset.Stem, typeStem);
     }
 
-    private static CardArtIdentity? TryGetCardArtIdentity(string? path)
+    private static CardArtIdentity? TryGetCardArtIdentity(
+        string? path,
+        IReadOnlySet<string>? knownCardGroups = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
             return null;
         }
 
-        var match = CardArtIdentityRegex().Match(path);
-        var category = match.Success ? match.Groups[1].Value.ToLowerInvariant() : string.Empty;
+        var category = TryGetCardArtPathLayout(path, knownCardGroups)?.Category ?? string.Empty;
         var fileName = path[(path.LastIndexOf('/') + 1)..];
         var extensionIndex = fileName.LastIndexOf('.');
         var rawStem = extensionIndex >= 0 ? fileName[..extensionIndex] : fileName;
@@ -2127,6 +2166,37 @@ internal sealed partial class SkinCatalog : IDisposable
 
         var stem = NormalizeCardToken(rawStem);
         return new CardArtIdentity(category, stem);
+    }
+
+    private static CardArtPathLayout? TryGetCardArtPathLayout(
+        string path,
+        IReadOnlySet<string>? knownCardGroups)
+    {
+        var root = CardArtPathRegex().Match(path);
+        var fileSeparator = path.LastIndexOf('/');
+        if (!root.Success || fileSeparator < root.Index + root.Length)
+        {
+            return null;
+        }
+
+        var directories = path[(root.Index + root.Length)..fileSeparator]
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (directories.Length == 0)
+        {
+            return null;
+        }
+
+        var groupIndex = knownCardGroups == null || knownCardGroups.Count == 0
+            ? 0
+            : Array.FindIndex(directories, knownCardGroups.Contains);
+        if (groupIndex < 0)
+        {
+            groupIndex = 0;
+        }
+
+        var category = directories[groupIndex].ToLowerInvariant();
+        var variant = string.Join('/', directories.Where((_, index) => index != groupIndex));
+        return new CardArtPathLayout(category, variant);
     }
 
     private static bool CardStemsMatch(string candidate, string expected) =>
@@ -2846,6 +2916,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private sealed record GroupIdentity(string Id, string DisplayName);
     private sealed record RuntimeProviderAsset(GroupIdentity Identity, string CanonicalPath);
+    private sealed record CardArtPathLayout(string Category, string Variant);
     private sealed record CardArtIdentity(string Category, string Stem);
     private sealed record CardArtVariant(string Key, ResourceAsset[] Assets, HashSet<string> Stems);
     private sealed record RuntimeResource(

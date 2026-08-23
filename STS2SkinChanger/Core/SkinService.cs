@@ -838,8 +838,12 @@ internal static class SkinService
 
     private static bool CardArtMatches(string assetPath, CardModel card)
     {
-        var assetIdentity = CardPortraitIdentity(assetPath);
         var portraitIdentity = CardPortraitIdentity(card.PortraitPath);
+        var poolGroupId = GetCardPoolGroupId(card);
+        var assetIdentity = CardPortraitIdentity(
+            assetPath,
+            poolGroupId,
+            portraitIdentity?.Category);
         if (assetIdentity == null || portraitIdentity == null)
         {
             return false;
@@ -847,7 +851,7 @@ internal static class SkinService
 
         if (!string.IsNullOrEmpty(assetIdentity.Value.Category) &&
             !assetIdentity.Value.Category.Equals(
-                GetCardPoolGroupId(card), StringComparison.OrdinalIgnoreCase) &&
+                poolGroupId, StringComparison.OrdinalIgnoreCase) &&
             !assetIdentity.Value.Category.Equals(
                 portraitIdentity.Value.Category, StringComparison.OrdinalIgnoreCase))
         {
@@ -859,7 +863,10 @@ internal static class SkinService
                CardStemsMatch(assetIdentity.Value.Stem, typeStem);
     }
 
-    private static (string Category, string Stem)? CardPortraitIdentity(string? path)
+    private static (string Category, string Stem)? CardPortraitIdentity(
+        string? path,
+        string? expectedCategory = null,
+        string? alternateCategory = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -890,11 +897,26 @@ internal static class SkinService
         var category = string.Empty;
         if (markerIndex >= 0)
         {
-            var categoryStart = markerIndex + markerLength;
-            var categoryEnd = lowerPath.IndexOf('/', categoryStart);
-            if (categoryEnd > categoryStart)
+            var directoryStart = markerIndex + markerLength;
+            var fileSeparator = lowerPath.LastIndexOf('/');
+            if (fileSeparator >= directoryStart)
             {
-                category = lowerPath[categoryStart..categoryEnd];
+                var directories = lowerPath[directoryStart..fileSeparator]
+                    .Split('/', StringSplitOptions.RemoveEmptyEntries);
+                var categoryIndex = Array.FindIndex(directories, candidate =>
+                    (!string.IsNullOrWhiteSpace(expectedCategory) &&
+                     candidate.Equals(expectedCategory, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(alternateCategory) &&
+                     candidate.Equals(alternateCategory, StringComparison.OrdinalIgnoreCase)));
+                if (categoryIndex < 0 && directories.Length > 0)
+                {
+                    categoryIndex = 0;
+                }
+
+                if (categoryIndex >= 0)
+                {
+                    category = directories[categoryIndex];
+                }
             }
         }
 

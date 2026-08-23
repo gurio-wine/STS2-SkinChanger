@@ -91,6 +91,19 @@ var descriptors = manifests
     .ToList();
 
 using var catalog = SkinCatalog.Build(args[0], descriptors);
+var validationCards = validateIndex >= 0
+    ? BuildValidationCardEntries(
+        new[] { args[0] }.Concat(descriptors
+            .Where(descriptor => descriptor.AffectsGameplay && descriptor.PckPath != null)
+            .Select(descriptor => descriptor.PckPath!)))
+    : [];
+if (validationCards.Count > 0)
+{
+    catalog.FinalizeCardGroups(validationCards);
+}
+var validationCardGroups = validationCards
+    .SelectMany(card => new[] { card.CatalogGroupId, card.FilterGroupId, card.PoolGroupId })
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
 foreach (var group in catalog.Groups)
 {
     Console.WriteLine($"{group.Id}\t{group.DisplayName}");
@@ -107,6 +120,7 @@ foreach (var group in catalog.CardGroups)
     {
         Console.WriteLine(
             $"  {option.Id}\t{option.Name}\t" +
+            $"{option.Assets.Count} assets, " +
             $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient, " +
             $"{option.CardPresentations.Count} presentations");
     }
@@ -156,10 +170,10 @@ if (validateIndex >= 0)
             $"images={probe.RuntimeImageCount}, scripts={probe.ManagedScriptCount}");
     }
 
-    foreach (var option in catalog.PckCardOptions)
+    foreach (var option in catalog.PckCardOptions.Where(option => option.Assets.Count > 0))
     {
         var variants = option.Assets.Keys
-            .Select(GetCardVariantKey)
+            .Select(path => GetCardVariantKey(path, validationCardGroups))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (variants.Length > 1)
@@ -168,6 +182,43 @@ if (validateIndex >= 0)
                 $"cards/{option.Id}: one option still mixes variants {string.Join(", ", variants)}");
         }
     }
+
+    var validatedCardResources = 0;
+    foreach (var option in catalog.PckCardOptions.Where(option => option.Assets.Count > 0))
+    {
+        var routedGroup = catalog.CardGroups.FirstOrDefault(group =>
+            group.Options.Any(candidate => candidate.Id.Equals(
+                option.Id,
+                StringComparison.OrdinalIgnoreCase)));
+        var sample = option.Assets.FirstOrDefault();
+        if (routedGroup == null || string.IsNullOrWhiteSpace(sample.Key))
+        {
+            failures.Add($"cards/{option.Id}: option was not routed to a card group");
+            continue;
+        }
+
+        try
+        {
+            var overlay = catalog.BuildIsolatedCardResource(
+                routedGroup.Id,
+                option.Id,
+                sample.Key,
+                useSelectedProvider: true,
+                $"validate/card/{validatedCardResources:D4}");
+            if (!overlay.ResourcePaths.ContainsKey(sample.Key) || overlay.Files.Count == 0)
+            {
+                failures.Add($"cards/{option.Id}: sample card resource is empty");
+                continue;
+            }
+
+            validatedCardResources++;
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"cards/{option.Id}: cannot isolate sample card: {exception.Message}");
+        }
+    }
+    Console.WriteLine($"card resource validation: {validatedCardResources} passed");
 
     var validatedPresentations = 0;
     var presentationFailures = 0;
@@ -549,7 +600,7 @@ if (validateIndex >= 0)
                 files.ContainsKey(file.Path) ||
                 files.ContainsKey(SkinCatalog.NormalizeTakeoverPath(file.Path)));
 
-    static string GetCardVariantKey(string path)
+    static string GetCardVariantKey(string path, IReadOnlySet<string> knownCardGroups)
     {
         var lower = path.ToLowerInvariant();
         var markerEnd = -1;
@@ -572,11 +623,26 @@ if (validateIndex >= 0)
             return string.Empty;
         }
 
-        var categoryEnd = lower.IndexOf('/', markerEnd);
         var fileSeparator = lower.LastIndexOf('/');
-        var variant = categoryEnd < 0 || fileSeparator <= categoryEnd
-            ? string.Empty
-            : lower[(categoryEnd + 1)..fileSeparator].Trim('/');
+        if (fileSeparator < markerEnd)
+        {
+            return string.Empty;
+        }
+
+        var directories = lower[markerEnd..fileSeparator]
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (directories.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var groupIndex = Array.FindIndex(directories, knownCardGroups.Contains);
+        if (groupIndex < 0)
+        {
+            groupIndex = 0;
+        }
+
+        var variant = string.Join('/', directories.Where((_, index) => index != groupIndex));
         return variant.Equals("beta", StringComparison.OrdinalIgnoreCase)
             ? string.Empty
             : variant;
@@ -604,6 +670,61 @@ if (validateIndex >= 0)
         path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
 
+}
+
+static IReadOnlyList<CardCatalogEntry> BuildValidationCardEntries(IEnumerable<string> pckPaths)
+{
+    var cards = new Dictionary<string, CardCatalogEntry>(StringComparer.OrdinalIgnoreCase);
+    foreach (var pckPath in pckPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+    {
+        using var archive = PckArchive.Open(pckPath);
+        foreach (var archivePath in archive.Paths)
+        {
+            var sourcePath = archivePath.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
+                ? archivePath[..^7]
+                : archivePath.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)
+                    ? archivePath[..^6]
+                    : archivePath;
+            var lower = sourcePath.ToLowerInvariant();
+            var markerEnd = -1;
+            foreach (var marker in new[] { "/card_portraits/", "/card_atlas.sprites/" })
+            {
+                var markerIndex = lower.IndexOf(marker, StringComparison.Ordinal);
+                if (markerIndex >= 0)
+                {
+                    markerEnd = markerIndex + marker.Length;
+                    break;
+                }
+            }
+
+            var fileSeparator = lower.LastIndexOf('/');
+            if (markerEnd < 0 || fileSeparator < markerEnd)
+            {
+                continue;
+            }
+
+            var groupEnd = lower.IndexOf('/', markerEnd);
+            if (groupEnd < 0 || groupEnd > fileSeparator)
+            {
+                groupEnd = fileSeparator;
+            }
+
+            var group = lower[markerEnd..groupEnd];
+            var fileName = sourcePath[(fileSeparator + 1)..];
+            var extension = fileName.LastIndexOf('.');
+            var stem = extension < 0 ? fileName : fileName[..extension];
+            if (group.Length == 0 || stem.Length == 0)
+            {
+                continue;
+            }
+
+            cards.TryAdd(
+                group + "\n" + stem,
+                new CardCatalogEntry(stem, sourcePath, group, group, group));
+        }
+    }
+
+    return cards.Values.ToArray();
 }
 
 static void RunCardExportSelfTest(string gamePckPath)
