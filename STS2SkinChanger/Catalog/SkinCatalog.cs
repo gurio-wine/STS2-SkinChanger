@@ -632,7 +632,14 @@ internal sealed partial class SkinCatalog : IDisposable
                 ReferenceEquals(candidate.Archive, assetFile.Archive));
             if (index != null)
             {
-                Enqueue(index, assetFile, includeInOverlay: false);
+                // 当前选项自身的文件也保留一份原始私有路径。许多 Spine atlas
+                // 只写同目录相对页名（silent.png），无法由 res:// 引用扫描发现；
+                // 原路径副本让 Godot 能按 atlas 所在目录自然解析贴图，同时仍然
+                // 只暴露当前所选皮肤，不会挂载同一提供者的其他外观组。
+                Enqueue(
+                    index,
+                    assetFile,
+                    includeInOverlay: IsProviderNamespacePath(assetFile.Path, providerIdToken));
             }
         }
 

@@ -276,6 +276,13 @@ internal static class ManagedSkinModLoader
         }
 
         var mods = ModManager.Mods;
+        // 即使一个公共库碰巧带有可识别的图片或场景，只要别的 Mod 声明依赖它，
+        // 就必须交回游戏正常加载。否则隔离其 DLL 会让所有依赖者在反射阶段失败。
+        if (IsRequiredByAnotherMod(mod, mods))
+        {
+            return false;
+        }
+
         if (mods.Any(other =>
                 !ReferenceEquals(other, mod) &&
                 other.manifest?.id == manifest.id &&
@@ -378,9 +385,18 @@ internal static class ManagedSkinModLoader
             manifest.hasPck
                 ? Path.Combine(mod.path, manifest.id + ".pck")
                 : null,
-            manifest.affectsGameplay,
+            manifest.affectsGameplay || IsRequiredByAnotherMod(mod, ModManager.Mods),
             mod.path,
             manifest.hasDll);
+    }
+
+    public static bool IsRequiredByAnotherMod(Mod mod, IEnumerable<Mod> mods)
+    {
+        var modId = mod.manifest?.id;
+        return modId != null && mods.Any(other =>
+            !ReferenceEquals(other, mod) &&
+            other.manifest?.dependencies?.Any(dependency =>
+                string.Equals(dependency.id, modId, StringComparison.OrdinalIgnoreCase)) == true);
     }
 
     private static string NormalizePath(string path) =>

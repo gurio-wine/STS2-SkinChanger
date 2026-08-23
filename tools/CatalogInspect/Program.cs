@@ -24,7 +24,7 @@ var validateIndex = Array.IndexOf(args, "--validate-runtime");
 var optionIndexes = new[] { runtimeIndex, validateIndex }.Where(index => index >= 0).ToArray();
 var firstOptionIndex = optionIndexes.Length == 0 ? args.Length : optionIndexes.Min();
 var modRoots = args.Skip(1).Take(firstOptionIndex - 1);
-var descriptors = new List<SkinModDescriptor>();
+var manifests = new List<InspectedManifest>();
 foreach (var root in modRoots)
 {
     foreach (var manifestPath in Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories))
@@ -41,7 +41,34 @@ foreach (var root in modRoots)
             var hasDll = json.TryGetProperty("has_dll", out var hasDllValue) && hasDllValue.GetBoolean();
             var pckPath = hasPck ? System.IO.Path.Combine(rootPath, pckName + ".pck") : null;
             var affectsGameplay = !json.TryGetProperty("affects_gameplay", out var gameplayValue) || gameplayValue.GetBoolean();
-            descriptors.Add(new SkinModDescriptor(id, name, pckPath, affectsGameplay, rootPath, hasDll));
+            var dependencies = new List<string>();
+            if (json.TryGetProperty("dependencies", out var dependencyValues) &&
+                dependencyValues.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var dependencyValue in dependencyValues.EnumerateArray())
+                {
+                    var dependencyId = dependencyValue.ValueKind switch
+                    {
+                        JsonValueKind.String => dependencyValue.GetString(),
+                        JsonValueKind.Object when dependencyValue.TryGetProperty("id", out var idValue) =>
+                            idValue.GetString(),
+                        _ => null
+                    };
+                    if (!string.IsNullOrWhiteSpace(dependencyId))
+                    {
+                        dependencies.Add(dependencyId);
+                    }
+                }
+            }
+
+            manifests.Add(new InspectedManifest(
+                id,
+                name,
+                pckPath,
+                affectsGameplay,
+                rootPath,
+                hasDll,
+                dependencies));
         }
         catch (Exception exception)
         {
@@ -49,6 +76,19 @@ foreach (var root in modRoots)
         }
     }
 }
+
+var requiredIds = manifests
+    .SelectMany(manifest => manifest.Dependencies)
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+var descriptors = manifests
+    .Select(manifest => new SkinModDescriptor(
+        manifest.Id,
+        manifest.Name,
+        manifest.PckPath,
+        manifest.AffectsGameplay || requiredIds.Contains(manifest.Id),
+        manifest.RootPath,
+        manifest.HasDll))
+    .ToList();
 
 using var catalog = SkinCatalog.Build(args[0], descriptors);
 foreach (var group in catalog.Groups)
@@ -320,6 +360,19 @@ if (validateIndex >= 0)
                 if (!ContainsAsset(selectedOverlay, asset.Key, asset.Value))
                 {
                     failures.Add($"{group.Id}/{option.Id}: global overlay is missing {asset.Key}");
+                }
+
+                if (option.IsRuntimeProvider)
+                {
+                    foreach (var privateFile in asset.Value.Files.Where(file =>
+                                 IsProviderNamespaceFile(file.Path, option.Id)))
+                    {
+                        if (!selectedOverlay.ContainsKey(privateFile.Path))
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: selected private dependency is missing {privateFile.Path}");
+                        }
+                    }
                 }
             }
 
@@ -640,6 +693,29 @@ static void RunCardExportSelfTest(string gamePckPath)
     }
 }
 
+static bool IsProviderNamespaceFile(string path, string providerId)
+{
+    if (!path.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var relative = path[6..];
+    var separator = relative.IndexOf('/');
+    var topLevel = separator < 0 ? relative : relative[..separator];
+    var topLevelToken = new string(topLevel
+        .Where(char.IsLetterOrDigit)
+        .Select(char.ToLowerInvariant)
+        .ToArray());
+    var providerToken = new string(providerId
+        .Where(char.IsLetterOrDigit)
+        .Select(char.ToLowerInvariant)
+        .ToArray());
+    return providerToken.Length > 0 &&
+           (topLevelToken.Equals(providerToken, StringComparison.OrdinalIgnoreCase) ||
+            topLevelToken.StartsWith(providerToken, StringComparison.OrdinalIgnoreCase));
+}
+
 partial class Program
 {
     [GeneratedRegex(
@@ -647,3 +723,12 @@ partial class Program
         RegexOptions.IgnoreCase)]
     private static partial Regex ResourceReferenceRegex();
 }
+
+internal sealed record InspectedManifest(
+    string Id,
+    string Name,
+    string? PckPath,
+    bool AffectsGameplay,
+    string RootPath,
+    bool HasDll,
+    IReadOnlyList<string> Dependencies);

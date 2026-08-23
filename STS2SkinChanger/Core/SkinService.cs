@@ -128,16 +128,19 @@ internal static class SkinService
                 CleanupOldOverlays();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
-                var mods = ModManager.GetLoadedMods()
+                var loadedMods = ModManager.GetLoadedMods()
                     .Where(mod => mod.manifest is { id: not null })
                     .Where(mod => !Entry.IsSelfModId(mod.manifest!.id))
+                    .ToArray();
+                var mods = loadedMods
                     .Select(mod => new SkinModDescriptor(
                         mod.manifest!.id!,
                         mod.manifest.name ?? mod.manifest.id!,
                         mod.manifest.hasPck
                             ? System.IO.Path.Combine(mod.path, mod.manifest.id + ".pck")
                             : null,
-                        mod.manifest.affectsGameplay,
+                        mod.manifest.affectsGameplay ||
+                        ManagedSkinModLoader.IsRequiredByAnotherMod(mod, loadedMods),
                         mod.path,
                         mod.manifest.hasDll))
                     .ToArray();
