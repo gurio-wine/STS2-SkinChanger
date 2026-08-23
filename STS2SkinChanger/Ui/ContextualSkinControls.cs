@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
@@ -39,6 +40,10 @@ internal static partial class ContextualSkinControls
         AccessTools.Method(typeof(NBestiary), "SelectMonster", [typeof(NBestiaryEntry)]);
     private static readonly System.Reflection.MethodInfo MonsterVisualsPathGetter =
         AccessTools.PropertyGetter(typeof(MonsterModel), "VisualsPath");
+    private static readonly System.Reflection.FieldInfo CharacterNameField =
+        AccessTools.Field(typeof(NCharacterSelectScreen), "_name");
+    private static readonly System.Reflection.FieldInfo CharacterDescriptionField =
+        AccessTools.Field(typeof(NCharacterSelectScreen), "_description");
 
     // These paths are inputs to our isolated overlay and must not pass through another Mod's Harmony redirect.
     internal static string CanonicalScenePath(string innerPath) =>
@@ -443,9 +448,15 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
+        // A behavior-driven provider can replace the title/description and hide the original
+        // background without changing a canonical scene. Always restore the game presentation
+        // first so switching *away* from such a provider is just as complete as switching to it.
+        RestoreCharacterInfoText(screen, character);
+
         if (SkinService.IsExternalRuntimeProviderSelected(groupId))
         {
             RebuildRuntimeProviderCharacterDisplay(screen, character);
+            ReplaySelectedCharacterPresentation(screen, character, groupId);
             return;
         }
 
@@ -477,7 +488,59 @@ internal static partial class ContextualSkinControls
                     throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
         ReplaceCharacterBackground(screen, character, scene);
         RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
+        ReplaySelectedCharacterPresentation(screen, character, groupId);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    private static void RestoreCharacterInfoText(
+        NCharacterSelectScreen screen,
+        CharacterModel character)
+    {
+        try
+        {
+            var button = FindCharacterButton(screen, character);
+            var title = button?.IsLocked == true
+                ? new LocString("main_menu_ui", "CHARACTER_SELECT.locked.title").GetFormattedText()
+                : new LocString("characters", character.CharacterSelectTitle).GetFormattedText();
+            var nameLabel = CharacterNameField.GetValue(screen);
+            AccessTools.Method(nameLabel?.GetType(), "SetTextAutoSize", [typeof(string)])?
+                .Invoke(nameLabel, [title]);
+
+            if (CharacterDescriptionField.GetValue(screen) is RichTextLabel description)
+            {
+                description.Text = button?.IsLocked == true
+                    ? character.GetUnlockText().GetFormattedText()
+                    : new LocString(
+                        "characters",
+                        character.CharacterSelectDesc).GetFormattedText();
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"恢复 {character.Id.Entry} 的选角文字失败：{exception.GetBaseException().Message}");
+        }
+    }
+
+    private static void ReplaySelectedCharacterPresentation(
+        NCharacterSelectScreen screen,
+        CharacterModel character,
+        string groupId)
+    {
+        var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
+        if (providerId == null)
+        {
+            return;
+        }
+
+        var button = FindCharacterButton(screen, character);
+        if (button != null)
+        {
+            ManagedSkinModLoader.ReplaySelectedCharacterPresentation(
+                providerId,
+                screen,
+                button,
+                character);
+        }
     }
 
     private static void RebuildRuntimeProviderCharacterDisplay(
@@ -667,6 +730,12 @@ internal static partial class ContextualSkinControls
         {
             var scene = SkinService.GetOrLoadRuntimeScene(group.Id, visualsPath);
             var replacement = scene.Instantiate<NCreatureVisuals>(PackedScene.GenEditState.Disabled);
+            var copied = ManagedSceneCompatibility.CopyMissingUniqueNodes(result, replacement);
+            if (copied > 0)
+            {
+                ModLog.Info($"已为 {modelId} 的替换场景补齐 {copied} 个游戏必需节点。");
+            }
+
             result?.QueueFree();
             result = replacement;
         }
@@ -825,6 +894,7 @@ internal static partial class ContextualSkinControls
         {
             var replacement = SkinService.GetOrLoadRuntimeScene(group.Id, resourcePath)
                 .Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            ManagedSceneCompatibility.CopyMissingUniqueNodes(result, replacement);
             result?.QueueFree();
             result = replacement;
         }

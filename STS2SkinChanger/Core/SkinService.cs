@@ -1064,6 +1064,23 @@ internal static class SkinService
         }
     }
 
+    public static string? GetSelectedFullRuntimeProvider(string groupId)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return null;
+            }
+
+            var selection = Config.GetSelection(groupId);
+            return Catalog.IsRuntimeProviderOption(groupId, selection) &&
+                   Catalog.ProviderUsesFullRuntime(selection)
+                ? selection
+                : null;
+        }
+    }
+
     public static void ApplySelectedVisualPostfix(
         string groupId,
         object model,

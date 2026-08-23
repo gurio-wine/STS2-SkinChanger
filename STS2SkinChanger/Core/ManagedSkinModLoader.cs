@@ -1,9 +1,12 @@
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Debug;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -245,8 +248,8 @@ internal static class ManagedSkinModLoader
 
     /// <summary>
     /// Activates the original initializer of each selected single-bundle skin after its complete
-    /// PCK has been mounted. This retains custom animation/VFX/room behavior while the provider is
-    /// selected, but unlike normal mod loading its Harmony callbacks are removed on deselection.
+    /// PCK has been mounted. Resource replacement callbacks are then removed because Skin Changer
+    /// owns those entry points; animation/VFX/room behavior remains active until deselection.
     /// </summary>
     public static void ActivateSelectedProviders(IEnumerable<string> selectedProviderIds)
     {
@@ -300,11 +303,27 @@ internal static class ManagedSkinModLoader
                 }
             }
 
-            var patches = CaptureProviderPatches(assembly);
-            ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(assembly, patches);
+            var installedPatches = CaptureProviderPatches(assembly);
+            var resourceOwnershipPatches = installedPatches
+                .Where(IsManagedResourceOwnershipPatch)
+                .ToArray();
+            UnpatchProviderCallbacks(resourceOwnershipPatches);
+
+            var leakedResourcePatches = CaptureProviderPatches(assembly)
+                .Where(IsManagedResourceOwnershipPatch)
+                .ToArray();
+            if (leakedResourcePatches.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"仍有 {leakedResourcePatches.Length} 个资源替换补丁未能隔离");
+            }
+
+            var behaviorPatches = CaptureProviderPatches(assembly);
+            ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(assembly, behaviorPatches);
             ModLog.Info(
                 $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
-                $"资源整包已隔离挂载，激活 {patches.Count} 个原作者行为补丁。切换离开后会自动卸载这些补丁。");
+                $"资源整包已隔离挂载，{resourceOwnershipPatches.Length} 个重复资源入口已交由本 Mod 接管，" +
+                $"保留 {behaviorPatches.Count} 个原作者动画/场景行为补丁；切换离开后会自动卸载。");
         }
         catch (Exception exception)
         {
@@ -333,7 +352,7 @@ internal static class ManagedSkinModLoader
     private static IReadOnlyList<ProviderPatch> CaptureProviderPatches(Assembly assembly) =>
         Harmony.GetAllPatchedMethods()
             .SelectMany(target => EnumerateProviderPatches(target, Harmony.GetPatchInfo(target), assembly))
-            .DistinctBy(patch => (patch.Target, patch.Callback))
+            .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
             .ToArray();
 
     private static IEnumerable<ProviderPatch> EnumerateProviderPatches(
@@ -346,16 +365,173 @@ internal static class ManagedSkinModLoader
             yield break;
         }
 
-        foreach (var patch in patches.Prefixes
-                     .Concat(patches.Postfixes)
-                     .Concat(patches.Transpilers)
-                     .Concat(patches.Finalizers))
+        foreach (var entry in patches.Prefixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Prefix))
+                     .Concat(patches.Postfixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Postfix)))
+                     .Concat(patches.Transpilers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Transpiler)))
+                     .Concat(patches.Finalizers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Finalizer))))
         {
-            if (ReferenceEquals(patch.PatchMethod.Module.Assembly, assembly))
+            if (ReferenceEquals(entry.Patch.PatchMethod.Module.Assembly, assembly))
             {
-                yield return new ProviderPatch(target, patch.PatchMethod);
+                yield return new ProviderPatch(target, entry.Patch.PatchMethod, entry.Kind);
             }
         }
+    }
+
+    /// <summary>
+    /// Skin Changer has already selected and isolated the concrete resource for these targets.
+    /// Leaving a provider's own resolver active would run a second selection pipeline before our
+    /// final postfix. Besides being redundant, sprite kits may instantiate and harden a very large
+    /// scene that is immediately discarded, or return an object from a previously selected skin.
+    /// </summary>
+    private static bool IsManagedResourceOwnershipPatch(ProviderPatch patch)
+    {
+        var declaringType = patch.Target.DeclaringType;
+        if (declaringType == null)
+        {
+            return false;
+        }
+
+        if (declaringType == typeof(AssetCache) ||
+            declaringType == typeof(ResourceLoader) ||
+            declaringType == typeof(AtlasManager) ||
+            declaringType == typeof(SceneHelper) ||
+            declaringType == typeof(ImageHelper))
+        {
+            return patch.Target.Name.StartsWith("Get", StringComparison.Ordinal) ||
+                   patch.Target.Name.StartsWith("Load", StringComparison.Ordinal) ||
+                   patch.Target.Name.StartsWith("Instantiate", StringComparison.Ordinal) ||
+                   patch.Target.Name.Contains("Path", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (!typeof(CharacterModel).IsAssignableFrom(declaringType) &&
+            !typeof(MonsterModel).IsAssignableFrom(declaringType))
+        {
+            return false;
+        }
+
+        if (patch.Target.Name.Equals(nameof(CharacterModel.CreateVisuals), StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!patch.Target.Name.StartsWith("get_", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var propertyName = patch.Target.Name[4..];
+        return new[]
+        {
+            "Visual", "Scene", "Portrait", "Icon", "Texture", "Background", "MapMarker", "Path"
+        }.Any(token => propertyName.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Replays presentation-only postfixes after Skin Changer has rebuilt the current character
+    /// selection baseline. This makes behavior-driven skins reversible in both directions without
+    /// calling SelectCharacter again (which would replay SFX, screen shake and lobby mutations).
+    /// </summary>
+    public static void ReplaySelectedCharacterPresentation(
+        string providerId,
+        NCharacterSelectScreen screen,
+        NCharacterSelectButton button,
+        CharacterModel character)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime))
+        {
+            return;
+        }
+
+        var replayed = 0;
+        foreach (var patch in runtime.Patches.Where(patch =>
+                     patch.Kind == ProviderPatchKind.Postfix &&
+                     IsCharacterPresentationTarget(patch.Target)))
+        {
+            var instance = typeof(NCharacterSelectScreen).IsAssignableFrom(patch.Target.DeclaringType)
+                ? (object)screen
+                : button;
+            if (!TryBuildCharacterPresentationArguments(
+                    patch.Callback,
+                    patch.Target,
+                    instance,
+                    button,
+                    character,
+                    out var arguments))
+            {
+                continue;
+            }
+
+            try
+            {
+                patch.Callback.Invoke(null, arguments);
+                replayed++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重放 {providerId} 的选角呈现 {patch.Callback.DeclaringType?.FullName}." +
+                    $"{patch.Callback.Name} 失败：{exception.GetBaseException().Message}");
+            }
+        }
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已在恢复游戏基线后重放 {providerId} 的 {replayed} 个选角呈现步骤。");
+        }
+    }
+
+    private static bool IsCharacterPresentationTarget(MethodBase target) =>
+        target.DeclaringType != null &&
+        ((typeof(NCharacterSelectScreen).IsAssignableFrom(target.DeclaringType) &&
+          target.Name.Equals(nameof(NCharacterSelectScreen.SelectCharacter), StringComparison.Ordinal)) ||
+         (typeof(NCharacterSelectButton).IsAssignableFrom(target.DeclaringType) &&
+          target.Name.Equals("Init", StringComparison.Ordinal)));
+
+    private static bool TryBuildCharacterPresentationArguments(
+        MethodInfo callback,
+        MethodBase target,
+        object instance,
+        NCharacterSelectButton button,
+        CharacterModel character,
+        out object?[] arguments)
+    {
+        var parameters = callback.GetParameters();
+        arguments = new object?[parameters.Length];
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(instance):
+                    arguments[index] = instance;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = target;
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
+                    break;
+                case "charSelectButton" or "button" when parameterType.IsInstanceOfType(button):
+                    arguments[index] = button;
+                    break;
+                case "characterModel" or "character" or "model" when parameterType.IsInstanceOfType(character):
+                    arguments[index] = character;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return false;
+            }
+        }
+
+        return true;
     }
 
     private static void UnpatchProviderCallbacks(IEnumerable<ProviderPatch> patches)
@@ -894,7 +1070,18 @@ internal static class ManagedSkinModLoader
         Assembly Assembly,
         IReadOnlyList<ProviderPatch> Patches);
 
-    private sealed record ProviderPatch(MethodBase Target, MethodInfo Callback);
+    private sealed record ProviderPatch(
+        MethodBase Target,
+        MethodInfo Callback,
+        ProviderPatchKind Kind);
+
+    private enum ProviderPatchKind
+    {
+        Prefix,
+        Postfix,
+        Transpiler,
+        Finalizer
+    }
 
     private sealed record ManagedVisualPostfix(Type TargetType, MethodInfo Method);
 
