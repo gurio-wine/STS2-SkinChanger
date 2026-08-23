@@ -1,3 +1,5 @@
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -309,12 +311,14 @@ internal sealed partial class SkinCatalog : IDisposable
                 return false;
             }
 
-            return HasTarget("CharacterModel", "CreateVisuals", "CharacterSelectIcon", "IconTexture") ||
+            // References alone are not enough for the broad CardModel/AssetCache APIs: card UI
+            // libraries naturally mention those names without replacing a skin. Prefer actual
+            // HarmonyPatch attribute targets, which can be inspected without loading the DLL.
+            // Keep a narrow string fallback for dynamically resolved creature visual patches.
+            return HasDirectVisualHarmonyPatch(assemblyPath) ||
+                   HasTarget("CharacterModel", "CreateVisuals") ||
                    HasTarget("MonsterModel", "CreateVisuals") ||
-                   HasTarget("EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
-                   HasTarget("CardModel", "Portrait", "PortraitPath") ||
-                   HasTarget("AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
-                   HasTarget("AtlasManager", "GetSprite", "LoadAtlas");
+                   HasTarget("EventModel", "CreateBackgroundScene");
 
             bool HasTarget(string typeName, params string[] methodNames) =>
                 ContainsMetadata(typeName) &&
@@ -330,6 +334,99 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             return false;
         }
+    }
+
+    private static bool HasDirectVisualHarmonyPatch(string assemblyPath)
+    {
+        using var stream = File.OpenRead(assemblyPath);
+        using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
+        if (!peReader.HasMetadata)
+        {
+            return false;
+        }
+
+        var reader = peReader.GetMetadataReader();
+        foreach (var typeHandle in reader.TypeDefinitions)
+        {
+            var type = reader.GetTypeDefinition(typeHandle);
+            var patchMetadata = new StringBuilder();
+            AppendHarmonyPatchMetadata(reader, type.GetCustomAttributes(), patchMetadata);
+            foreach (var methodHandle in type.GetMethods())
+            {
+                AppendHarmonyPatchMetadata(
+                    reader,
+                    reader.GetMethodDefinition(methodHandle).GetCustomAttributes(),
+                    patchMetadata);
+            }
+
+            if (patchMetadata.Length == 0)
+            {
+                continue;
+            }
+
+            var value = patchMetadata.ToString();
+            if (HasPatchTarget(value, "CharacterModel", "CreateVisuals", "CharacterSelectIcon", "IconTexture") ||
+                HasPatchTarget(value, "MonsterModel", "CreateVisuals") ||
+                HasPatchTarget(value, "EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
+                HasPatchTarget(value, "CardModel", "Portrait", "PortraitPath") ||
+                HasPatchTarget(value, "AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
+                HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+
+        static bool HasPatchTarget(string metadata, string typeName, params string[] members) =>
+            metadata.Contains(typeName, StringComparison.Ordinal) &&
+            members.Any(member => metadata.Contains(member, StringComparison.Ordinal));
+    }
+
+    private static void AppendHarmonyPatchMetadata(
+        MetadataReader reader,
+        CustomAttributeHandleCollection attributes,
+        StringBuilder destination)
+    {
+        foreach (var attributeHandle in attributes)
+        {
+            var attribute = reader.GetCustomAttribute(attributeHandle);
+            if (!GetAttributeTypeName(reader, attribute.Constructor)
+                    .Equals("HarmonyPatch", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var bytes = reader.GetBlobBytes(attribute.Value);
+            destination.Append(Encoding.UTF8.GetString(bytes));
+            destination.Append('\n');
+        }
+    }
+
+    private static string GetAttributeTypeName(MetadataReader reader, EntityHandle constructor)
+    {
+        EntityHandle typeHandle;
+        switch (constructor.Kind)
+        {
+            case HandleKind.MemberReference:
+                typeHandle = reader.GetMemberReference((MemberReferenceHandle)constructor).Parent;
+                break;
+            case HandleKind.MethodDefinition:
+                typeHandle = reader.GetMethodDefinition((MethodDefinitionHandle)constructor)
+                    .GetDeclaringType();
+                break;
+            default:
+                return string.Empty;
+        }
+
+        return typeHandle.Kind switch
+        {
+            HandleKind.TypeDefinition => reader.GetString(
+                reader.GetTypeDefinition((TypeDefinitionHandle)typeHandle).Name),
+            HandleKind.TypeReference => reader.GetString(
+                reader.GetTypeReference((TypeReferenceHandle)typeHandle).Name),
+            _ => string.Empty
+        };
     }
 
     public bool IsRuntimeProviderOption(string groupId, string optionId)
