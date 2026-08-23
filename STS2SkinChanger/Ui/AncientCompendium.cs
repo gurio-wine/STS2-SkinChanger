@@ -643,16 +643,9 @@ internal static class ManagedAncientSceneAnimation
                 return;
             }
 
-            var current = animationState.GetCurrent(0);
-            string? currentName;
-            try
-            {
-                currentName = current?.GetAnimationName();
-            }
-            finally
-            {
-                (current as IDisposable)?.Dispose();
-            }
+            // 两个支持版本都提供这个值类型入口，并由各自版本负责
+            // MegaTrackEntry 的正确释放方式。
+            var currentName = animationState.GetCurrentAnimationName(0);
             if (!string.IsNullOrWhiteSpace(currentName) &&
                 animationNames.Any(name =>
                     name.Equals(currentName, StringComparison.OrdinalIgnoreCase)) &&
@@ -666,10 +659,10 @@ internal static class ManagedAncientSceneAnimation
             var idle = FindAnimation(animationNames, "Idle");
             if (intro != null)
             {
-                animationState.SetAnimation(intro, loop: false);
+                SetAnimationCompat(animationState, intro, loop: false);
                 if (idle != null)
                 {
-                    animationState.AddAnimation(idle, delay: 0f, loop: true);
+                    AddAnimationCompat(animationState, idle, delay: 0f, loop: true);
                 }
 
                 ModLog.Info($"已启动 {groupId} 的远古 Spine 动画：{intro}" +
@@ -688,13 +681,35 @@ internal static class ManagedAncientSceneAnimation
                 return;
             }
 
-            animationState.SetAnimation(loopAnimation, loop: true);
+            SetAnimationCompat(animationState, loopAnimation, loop: true);
             ModLog.Info($"已启动 {groupId} 的远古 Spine 循环动画：{loopAnimation}");
         }
         catch (Exception exception)
         {
             ModLog.Warn($"启动 {groupId} 的远古 Spine 动画失败：{exception.Message}");
         }
+    }
+
+    private static void SetAnimationCompat(
+        MegaAnimationState animationState,
+        string animationName,
+        bool loop)
+    {
+        // SetAnimation 在 0.107.1 返回 MegaTrackEntry，到 0.111.0 改为 void。
+        // 两版底层 Spine 方法签名不变，直接调用它可避免发布 DLL 绑定某一版。
+        using var result = animationState.BoundObject.Call(
+            "set_animation", animationName, loop, 0);
+    }
+
+    private static void AddAnimationCompat(
+        MegaAnimationState animationState,
+        string animationName,
+        float delay,
+        bool loop)
+    {
+        // AddAnimation 也发生了相同的返回类型变化。
+        using var result = animationState.BoundObject.Call(
+            "add_animation", animationName, delay, loop, 0);
     }
 
     private static string? FindAnimation(
