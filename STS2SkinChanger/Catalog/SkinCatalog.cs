@@ -351,6 +351,16 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var sourcePath in sourcePaths)
             {
+                // 远古事件会在线程预加载阶段先验证原背景场景。复杂皮肤场景若直接
+                // 覆盖这个路径，任何脚本或 Spine 依赖加载失败都会中断整个事件
+                // 布局，连玩法选项也无法创建。远古场景已有独立运行时加载与最终
+                // 结果接管，因此这里始终保留游戏原场景供预加载使用。
+                var takeoverSourcePath = NormalizeTakeoverPath(sourcePath);
+                if (AncientBackgroundSceneRegex().IsMatch(takeoverSourcePath))
+                {
+                    continue;
+                }
+
                 var asset = selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
                     ? selectedAsset
                     : ResolveBaseline(sourcePath);

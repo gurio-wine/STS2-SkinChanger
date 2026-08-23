@@ -241,6 +241,17 @@ if (validateIndex >= 0)
         foreach (var sourcePath in group.Options.SelectMany(option => option.Assets.Keys)
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            if (IsAncientBackgroundScene(sourcePath))
+            {
+                if (ContainsResource(baselineOverlay, sourcePath))
+                {
+                    failures.Add(
+                        $"{group.Id}/base: global overlay must preserve the game's Ancient scene {sourcePath}");
+                }
+
+                continue;
+            }
+
             var baseline = catalog.ResolveBaseline(sourcePath);
             if (baseline != null && !ContainsAsset(baselineOverlay, sourcePath, baseline))
             {
@@ -288,6 +299,17 @@ if (validateIndex >= 0)
                 groupSet);
             foreach (var asset in option.Assets)
             {
+                if (IsAncientBackgroundScene(asset.Key))
+                {
+                    if (ContainsResource(selectedOverlay, asset.Key))
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: global overlay replaced the game's Ancient scene {asset.Key}");
+                    }
+
+                    continue;
+                }
+
                 if (!ContainsAsset(selectedOverlay, asset.Key, asset.Value))
                 {
                     failures.Add($"{group.Id}/{option.Id}: global overlay is missing {asset.Key}");
@@ -386,6 +408,15 @@ if (validateIndex >= 0)
         archive.Contains(resourcePath) ||
         archive.Contains(resourcePath + ".import") ||
         archive.Contains(resourcePath + ".remap");
+
+    static bool IsAncientBackgroundScene(string resourcePath)
+    {
+        var path = SkinCatalog.NormalizeTakeoverPath(resourcePath);
+        return path.StartsWith(
+                   "res://scenes/events/background_scenes/",
+                   StringComparison.OrdinalIgnoreCase) &&
+               path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase);
+    }
 
     static bool ContainsAsset(
         IReadOnlyDictionary<string, ResourceFile> files,
