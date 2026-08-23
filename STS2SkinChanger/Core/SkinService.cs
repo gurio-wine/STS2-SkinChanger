@@ -241,21 +241,39 @@ internal static class SkinService
                 return false;
             }
 
-            var hadPrevious = Config.Selections.TryGetValue(groupId, out var previous);
+            var updates = Catalog.BuildVisualSelectionTransaction(
+                groupId,
+                optionId,
+                Config.Selections);
+            var previousSelections = updates.Keys.ToDictionary(
+                key => key,
+                key => Config.Selections.TryGetValue(key, out var previous)
+                    ? (HadValue: true, Value: (string?)previous)
+                    : (HadValue: false, Value: (string?)null),
+                StringComparer.OrdinalIgnoreCase);
+            var affectedGroups = updates.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
-                Config.Selections[groupId] = optionId;
-                ClearRuntimeResourceCache(groupId);
-                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+                foreach (var update in updates)
+                {
+                    Config.Selections[update.Key] = update.Value;
+                    ClearRuntimeResourceCache(update.Key);
+                }
+
+                MountOverlay(affectedGroups);
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
             }
             catch (Exception exception)
             {
-                RestoreSelection(groupId, previous, hadPrevious);
-                ClearRuntimeResourceCache(groupId);
-                TryRestoreOverlay(groupId, cardOverlay: false);
+                foreach (var previous in previousSelections)
+                {
+                    RestoreSelection(previous.Key, previous.Value.Value, previous.Value.HadValue);
+                    ClearRuntimeResourceCache(previous.Key);
+                }
+
+                TryRestoreOverlay(affectedGroups, cardOverlay: false);
                 LastError = exception.Message;
                 ModLog.Error($"切换 {groupId} 失败：{exception}");
                 return false;
@@ -1080,7 +1098,8 @@ internal static class SkinService
 
             var selection = Config.GetSelection(groupId);
             return Catalog.IsRuntimeProviderOption(groupId, selection) &&
-                   Catalog.ProviderUsesFullRuntime(selection)
+                   Catalog.ProviderUsesFullRuntime(selection) &&
+                   Catalog.IsFullRuntimeProviderFullySelected(selection, Config.Selections)
                 ? selection
                 : null;
         }
@@ -1095,7 +1114,10 @@ internal static class SkinService
         lock (Sync)
         {
             var selection = Config.GetSelection(groupId);
-            providerId = Catalog?.IsRuntimeProviderOption(groupId, selection) == true
+            var catalog = Catalog;
+            providerId = catalog?.IsRuntimeProviderOption(groupId, selection) == true &&
+                         (!catalog.ProviderUsesFullRuntime(selection) ||
+                          catalog.IsFullRuntimeProviderFullySelected(selection, Config.Selections))
                 ? selection
                 : null;
         }
@@ -1360,9 +1382,15 @@ internal static class SkinService
 
     private static void TryRestoreOverlay(string groupId, bool cardOverlay)
     {
+        TryRestoreOverlay(
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId },
+            cardOverlay);
+    }
+
+    private static void TryRestoreOverlay(IReadOnlySet<string> groups, bool cardOverlay)
+    {
         try
         {
-            var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId };
             if (cardOverlay)
             {
                 MountCardOverlay(groups);
@@ -1374,20 +1402,15 @@ internal static class SkinService
         }
         catch (Exception restoreException)
         {
-            ModLog.Error($"回滚 {groupId} 的皮肤覆盖失败：{restoreException}");
+            ModLog.Error($"回滚 {string.Join(", ", groups)} 的皮肤覆盖失败：{restoreException}");
         }
     }
 
     private static void MountOverlay(IReadOnlySet<string> groups)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-        var selectedFullRuntimeProviders = catalog.Groups
-            .Select(group => (Group: group, Selection: Config.GetSelection(group.Id)))
-            .Where(pair =>
-                catalog.IsRuntimeProviderOption(pair.Group.Id, pair.Selection) &&
-                catalog.ProviderUsesFullRuntime(pair.Selection))
-            .Select(pair => pair.Selection)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedFullRuntimeProviders = catalog.GetFullySelectedFullRuntimeProviders(
+            Config.Selections);
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(selectedFullRuntimeProviders);
@@ -1531,6 +1554,47 @@ internal static class SkinService
             if (!Config.Selections.ContainsKey(group.Id))
             {
                 Config.Selections[group.Id] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+            }
+        }
+
+        // Older configurations could contain only one half of a multi-group DLL skin. Prefer the
+        // provider selected by the greatest number of its groups, then make each winning bundle
+        // coherent. Conflicting partial bundles are reset instead of leaving active callbacks able
+        // to force resources belonging to another selection.
+        var selectedBundles = Catalog.Groups
+            .Select(group => Config.GetSelection(group.Id))
+            .Where(Catalog.ProviderUsesFullRuntime)
+            .GroupBy(providerId => providerId, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Key)
+            .ToArray();
+        var claimedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in selectedBundles)
+        {
+            var ownedGroups = Catalog.GetFullRuntimeProviderGroups(providerId);
+            var conflictsWithExplicitChoice = ownedGroups.Any(ownedGroupId =>
+            {
+                var selectedId = Config.GetSelection(ownedGroupId);
+                return !selectedId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
+                       !selectedId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase);
+            });
+            if (conflictsWithExplicitChoice || ownedGroups.Any(claimedGroups.Contains))
+            {
+                foreach (var ownedGroupId in ownedGroups.Where(ownedGroupId =>
+                             Config.GetSelection(ownedGroupId)
+                                 .Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Config.Selections[ownedGroupId] = SkinCatalog.BaseOptionId;
+                }
+
+                continue;
+            }
+
+            foreach (var ownedGroupId in ownedGroups)
+            {
+                Config.Selections[ownedGroupId] = providerId;
+                claimedGroups.Add(ownedGroupId);
             }
         }
 

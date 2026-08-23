@@ -22,6 +22,9 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly List<CardSkinGroup> _cardGroups;
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
+    private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceFile>>
+        _fullRuntimeProviderBaselineOverlays = new(StringComparer.OrdinalIgnoreCase);
 
     private SkinCatalog(
         PckArchive gameArchive,
@@ -43,7 +46,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)))
             .Select(index => index.Mod.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var visualGroupCounts = _groups
+        var visualGroupsByProvider = _groups
             .SelectMany(group => group.Options.Select(option =>
                 (GroupId: group.Id, ProviderId: option.Id)))
             .GroupBy(pair => pair.ProviderId, StringComparer.OrdinalIgnoreCase)
@@ -51,7 +54,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 group => group.Key,
                 group => group.Select(pair => pair.GroupId)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Count(),
+                    .ToArray(),
                 StringComparer.OrdinalIgnoreCase);
         var cardProviderIds = _pckCardOptions
             .Where(option => option.Assets.Count > 0 || option.CardPresentations.Count > 0)
@@ -64,9 +67,15 @@ internal sealed partial class SkinCatalog : IDisposable
             .Where(index => index.Mod.HasDll)
             .Select(index => index.Mod.Id)
             .Where(providerId =>
-                visualGroupCounts.GetValueOrDefault(providerId) == 1 &&
+                visualGroupsByProvider.ContainsKey(providerId) &&
                 !cardProviderIds.Contains(providerId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _fullRuntimeProviderGroups = visualGroupsByProvider
+            .Where(pair => _fullRuntimeProviders.Contains(pair.Key))
+            .ToDictionary(
+                pair => pair.Key,
+                pair => (IReadOnlyList<string>)pair.Value,
+                StringComparer.OrdinalIgnoreCase);
     }
 
     public IReadOnlyList<SkinGroup> Groups => _groups;
@@ -353,13 +362,77 @@ internal sealed partial class SkinCatalog : IDisposable
         _managedGodotScriptProviders.Contains(optionId);
 
     /// <summary>
-    /// A DLL-backed provider that owns one visual group and no independently selectable cards is
-    /// a single cosmetic bundle. Such a bundle can safely run its original visual initializer only
-    /// while selected, which preserves custom animation, VFX, room and companion behavior without
-    /// allowing one choice to force another character or card skin.
+    /// A DLL-backed provider that owns visual groups and no independently selectable cards is an
+    /// inseparable cosmetic runtime bundle. A provider that spans several groups is activated only
+    /// when all of those groups select it, so its original callbacks cannot force a partially
+    /// selected character, companion or monster skin.
     /// </summary>
     public bool ProviderUsesFullRuntime(string optionId) =>
         _fullRuntimeProviders.Contains(optionId);
+
+    public IReadOnlyList<string> GetFullRuntimeProviderGroups(string optionId) =>
+        _fullRuntimeProviderGroups.GetValueOrDefault(optionId) ?? [];
+
+    public bool IsFullRuntimeProviderFullySelected(
+        string optionId,
+        IReadOnlyDictionary<string, string> selections)
+    {
+        if (!_fullRuntimeProviderGroups.TryGetValue(optionId, out var groupIds) || groupIds.Count == 0)
+        {
+            return false;
+        }
+
+        return groupIds.All(groupId =>
+            selections.TryGetValue(groupId, out var selectedId) &&
+            selectedId.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public IReadOnlySet<string> GetFullySelectedFullRuntimeProviders(
+        IReadOnlyDictionary<string, string> selections) =>
+        _fullRuntimeProviders
+            .Where(providerId => IsFullRuntimeProviderFullySelected(providerId, selections))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyDictionary<string, string> BuildVisualSelectionTransaction(
+        string groupId,
+        string optionId,
+        IReadOnlyDictionary<string, string> selections)
+    {
+        var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var targetGroupIds = ProviderUsesFullRuntime(optionId)
+            ? GetFullRuntimeProviderGroups(optionId)
+            : [groupId];
+        var displacedProviders = targetGroupIds
+            .Select(targetGroupId => selections.GetValueOrDefault(targetGroupId))
+            .Where(selectedId =>
+                selectedId != null &&
+                ProviderUsesFullRuntime(selectedId) &&
+                !selectedId.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var displacedProviderId in displacedProviders)
+        {
+            foreach (var ownedGroupId in GetFullRuntimeProviderGroups(displacedProviderId))
+            {
+                if (selections.TryGetValue(ownedGroupId, out var selectedId) &&
+                    selectedId.Equals(displacedProviderId, StringComparison.OrdinalIgnoreCase))
+                {
+                    updates[ownedGroupId] = BaseOptionId;
+                }
+            }
+        }
+
+        updates[groupId] = optionId;
+        if (ProviderUsesFullRuntime(optionId))
+        {
+            foreach (var ownedGroupId in GetFullRuntimeProviderGroups(optionId))
+            {
+                updates[ownedGroupId] = optionId;
+            }
+        }
+
+        return updates;
+    }
 
     public bool IsResourceBackedOption(string groupId, string optionId)
     {
@@ -496,10 +569,29 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(file => NormalizeTakeoverPath(file.Path))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // Full single-bundle providers can legitimately contain canonical support paths in
-        // addition to private files. Add the package first so the explicit group mapping below is
-        // always the final authority for every resource the catalog knows how to select.
-        foreach (var selected in selectedProviders.Where(option => ProviderUsesFullRuntime(option.Id)))
+        // Resource packs cannot be unloaded. Before an affected runtime bundle is selected or
+        // deselected, restore every canonical game/mod resource that any of its full packages can
+        // shadow. The selected package and explicit group mappings below then win in that order.
+        // Private provider namespaces have no baseline and are harmless after the callbacks stop.
+        var relevantFullRuntimeProviders = includedGroups
+            .SelectMany(group => group.Options)
+            .Select(option => option.Id)
+            .Where(ProviderUsesFullRuntime)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in relevantFullRuntimeProviders)
+        {
+            foreach (var file in CollectFullRuntimeProviderBaselineOverlay(providerId))
+            {
+                files[file.Key] = file.Value;
+            }
+        }
+
+        // Full runtime providers can legitimately contain canonical support paths in addition to
+        // private files. Mount them only for a coherent all-groups selection; explicit group
+        // mapping below remains the final authority for every catalog-owned resource.
+        foreach (var selected in selectedProviders.Where(option =>
+                     ProviderUsesFullRuntime(option.Id) &&
+                     IsFullRuntimeProviderFullySelected(option.Id, selections)))
         {
             foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
             {
@@ -571,6 +663,48 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        return files;
+    }
+
+    private IReadOnlyDictionary<string, ResourceFile> CollectFullRuntimeProviderBaselineOverlay(
+        string providerId)
+    {
+        if (_fullRuntimeProviderBaselineOverlays.TryGetValue(providerId, out var cached))
+        {
+            return cached;
+        }
+
+        var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        var idToken = NormalizeResourceToken(providerId);
+        var sourcePaths = _cosmeticIndexes
+            .Where(index => index.Mod.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(index => index.Archive.Paths
+                .Where(path => !IsProviderProjectControlFile(path))
+                .Select(NormalizeTakeoverPath)
+                .Concat(index.Assets.Keys))
+            .Where(path => !IsProviderNamespacePath(path, idToken))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var sourcePath in sourcePaths)
+        {
+            var baseline = ResolveBaseline(sourcePath);
+            if (baseline == null)
+            {
+                continue;
+            }
+
+            foreach (var file in baseline.Files)
+            {
+                var targetPath = MapAssetFilePath(sourcePath, baseline.SourcePath, file.Path);
+                files[targetPath] = file;
+                var takeoverPath = NormalizeTakeoverPath(targetPath);
+                if (!takeoverPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    files[takeoverPath] = file;
+                }
+            }
+        }
+
+        _fullRuntimeProviderBaselineOverlays[providerId] = files;
         return files;
     }
 
@@ -731,7 +865,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .ToArray();
         if (ProviderUsesFullRuntime(selected.Id))
         {
-            // A single-group DLL skin is one inseparable visual bundle. Its binary scenes can store
+            // A full DLL skin is one inseparable visual bundle. Its binary scenes can store
             // resource paths in prefix-compressed form (for example "res://img/attack/" followed by
             // hundreds of frame names), so text-reference walking can never reconstruct the whole
             // dependency graph. Mount the provider package at its original paths while selected,

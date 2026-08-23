@@ -418,12 +418,103 @@ if (validateIndex >= 0)
                     failures);
             }
 
-            var selectedOverlay = catalog.BuildOverlay(
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            var selectedSelections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [group.Id] = option.Id
+            };
+            var selectedGroupSet = groupSet;
+            var isFullRuntimeProvider = catalog.ProviderUsesFullRuntime(option.Id);
+            if (isFullRuntimeProvider)
+            {
+                var ownedGroups = catalog.GetFullRuntimeProviderGroups(option.Id);
+                var transaction = catalog.BuildVisualSelectionTransaction(
+                    group.Id,
+                    option.Id,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+                foreach (var ownedGroupId in ownedGroups)
                 {
-                    [group.Id] = option.Id
-                },
-                groupSet);
+                    selectedSelections[ownedGroupId] = option.Id;
+                    if (!transaction.TryGetValue(ownedGroupId, out var transactionSelection) ||
+                        !transactionSelection.Equals(option.Id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: linked selection omitted {ownedGroupId}");
+                    }
+                }
+
+                selectedGroupSet = ownedGroups.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (!catalog.IsFullRuntimeProviderFullySelected(option.Id, selectedSelections))
+                {
+                    failures.Add($"{group.Id}/{option.Id}: linked provider was not fully selected");
+                }
+
+                var exitTransaction = catalog.BuildVisualSelectionTransaction(
+                    group.Id,
+                    SkinCatalog.BaseOptionId,
+                    selectedSelections);
+                foreach (var ownedGroupId in ownedGroups)
+                {
+                    if (!exitTransaction.TryGetValue(ownedGroupId, out var exitSelection) ||
+                        !exitSelection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: linked deselection left {ownedGroupId} active");
+                    }
+                }
+
+                if (ownedGroups.Count > 1)
+                {
+                    var partialOverlay = catalog.BuildOverlay(
+                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            [group.Id] = option.Id
+                        },
+                        groupSet);
+                    var ownProviderFiles = option.Assets.Values
+                        .SelectMany(asset => asset.Files)
+                        .Select(file => file.Path)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var leakedProviderFile = partialOverlay.Values.FirstOrDefault(file =>
+                        file.Archive.Path.Equals(
+                            descriptors.FirstOrDefault(descriptor => descriptor.Id.Equals(
+                                option.Id,
+                                StringComparison.OrdinalIgnoreCase))?.PckPath,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        !ownProviderFiles.Contains(file.Path));
+                    if (leakedProviderFile != null)
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: partial selection mounted bundled file " +
+                            leakedProviderFile.Path);
+                    }
+                }
+
+                var provider = descriptors.FirstOrDefault(descriptor =>
+                    descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
+                if (provider?.PckPath != null && File.Exists(provider.PckPath))
+                {
+                    var deselectedOverlay = catalog.BuildOverlay(
+                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                        selectedGroupSet);
+                    using var providerArchive = PckArchive.Open(provider.PckPath);
+                    var baselineCollisions = providerArchive.Paths
+                        .Where(path => !IsProviderProjectControlFile(path))
+                        .Select(SkinCatalog.NormalizeTakeoverPath)
+                        .Where(path => !IsProviderNamespaceFile(path, option.Id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Where(path => catalog.ResolveBaseline(path) != null)
+                        .ToArray();
+                    var unrestoredCollision = baselineCollisions.FirstOrDefault(path =>
+                        !ContainsResource(deselectedOverlay, path));
+                    if (unrestoredCollision != null)
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: deselection did not restore {unrestoredCollision}");
+                    }
+                }
+            }
+
+            var selectedOverlay = catalog.BuildOverlay(selectedSelections, selectedGroupSet);
             foreach (var asset in option.Assets)
             {
                 if (IsAncientBackgroundScene(asset.Key))
@@ -458,7 +549,7 @@ if (validateIndex >= 0)
 
             if (option.IsRuntimeProvider)
             {
-                if (catalog.ProviderUsesFullRuntime(option.Id))
+                if (isFullRuntimeProvider)
                 {
                     var provider = descriptors.FirstOrDefault(descriptor =>
                         descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
@@ -510,20 +601,23 @@ if (validateIndex >= 0)
                 }
             }
 
-            var ownPaths = group.Options
-                .SelectMany(candidate => candidate.Assets.Keys)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var foreignAsset in catalog.Groups
-                         .Where(otherGroup => !otherGroup.Id.Equals(group.Id, StringComparison.OrdinalIgnoreCase))
-                         .SelectMany(otherGroup => otherGroup.Options
-                             .Where(candidate => candidate.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase)))
-                         .SelectMany(candidate => candidate.Assets)
-                         .Where(asset => !ownPaths.Contains(asset.Key)))
+            if (!isFullRuntimeProvider)
             {
-                if (ContainsAsset(selectedOverlay, foreignAsset.Key, foreignAsset.Value))
+                var ownPaths = group.Options
+                    .SelectMany(candidate => candidate.Assets.Keys)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var foreignAsset in catalog.Groups
+                             .Where(otherGroup => !otherGroup.Id.Equals(group.Id, StringComparison.OrdinalIgnoreCase))
+                             .SelectMany(otherGroup => otherGroup.Options
+                                 .Where(candidate => candidate.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase)))
+                             .SelectMany(candidate => candidate.Assets)
+                             .Where(asset => !ownPaths.Contains(asset.Key)))
                 {
-                    failures.Add(
-                        $"{group.Id}/{option.Id}: global overlay leaked another group's asset {foreignAsset.Key}");
+                    if (ContainsAsset(selectedOverlay, foreignAsset.Key, foreignAsset.Value))
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: global overlay leaked another group's asset {foreignAsset.Key}");
+                    }
                 }
             }
 
