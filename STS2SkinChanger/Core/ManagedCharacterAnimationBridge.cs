@@ -1,5 +1,7 @@
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using System.Reflection;
 
@@ -14,6 +16,31 @@ internal static class ManagedCharacterAnimationBridge
 {
     private static readonly MethodInfo? SetAnimationMethod = ResolveAnimationMethod("SetAnimation", 3);
     private static readonly MethodInfo? AddAnimationMethod = ResolveAnimationMethod("AddAnimation", 4);
+
+    /// <summary>
+    /// Starts otherwise-idle Spine nodes in a rebuilt character-select scene without binding the
+    /// published DLL to MegaAnimationState.SetAnimation's return type. That return type differs
+    /// between the supported main and beta game branches, while the native Spine call is stable.
+    /// </summary>
+    public static void TryStartCharacterSelectLoops(Node sceneRoot, string providerId)
+    {
+        foreach (var node in DescendantsAndSelf(sceneRoot).Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        {
+            try
+            {
+                var sprite = new MegaSprite(node);
+                sceneRoot.RunWhenSpineReady(sprite, animationState =>
+                    TryStartCharacterSelectLoop(sprite, animationState, providerId));
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"准备 {providerId} 的选角 Spine 动画失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
 
     public static void TryDrive(NCreature creature, string trigger)
     {
@@ -97,6 +124,67 @@ internal static class ManagedCharacterAnimationBridge
     private static bool IsLooping(string animation) =>
         animation.EndsWith("_loop", StringComparison.OrdinalIgnoreCase) ||
         animation.Equals("idle", StringComparison.OrdinalIgnoreCase);
+
+    private static void TryStartCharacterSelectLoop(
+        MegaSprite sprite,
+        MegaAnimationState animationState,
+        string providerId)
+    {
+        try
+        {
+            var animationNames = sprite.GetSkeleton()?.GetData()?.GetAnimationNames();
+            if (animationNames == null || animationNames.Count == 0)
+            {
+                return;
+            }
+
+            var currentName = animationState.GetCurrentAnimationName(0);
+            if (!string.IsNullOrWhiteSpace(currentName) &&
+                animationNames.Any(name =>
+                    name.Equals(currentName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var loopAnimation = FindAnimation(animationNames, "idle_loop") ??
+                                FindAnimation(animationNames, "idle") ??
+                                FindAnimation(animationNames, "default") ??
+                                FindAnimation(animationNames, "animation") ??
+                                animationNames.FirstOrDefault(name =>
+                                    !name.Equals("Dummy", StringComparison.OrdinalIgnoreCase));
+            if (loopAnimation == null)
+            {
+                return;
+            }
+
+            using var result = animationState.BoundObject.Call(
+                "set_animation", loopAnimation, true, 0);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                $"启动 {providerId} 的选角 Spine 动画失败：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static string? FindAnimation(
+        IReadOnlyList<string> animationNames,
+        string expectedName) =>
+        animationNames.FirstOrDefault(name =>
+            name.Equals(expectedName, StringComparison.OrdinalIgnoreCase));
+
+    private static IEnumerable<Node> DescendantsAndSelf(Node root)
+    {
+        yield return root;
+        foreach (Node child in root.GetChildren())
+        {
+            foreach (var descendant in DescendantsAndSelf(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
 
     private static MethodInfo? ResolveAnimationMethod(string name, int parameterCount) =>
         typeof(MegaAnimationState)

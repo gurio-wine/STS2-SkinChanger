@@ -304,25 +304,35 @@ internal static class ManagedSkinModLoader
             }
 
             var installedPatches = CaptureProviderPatches(assembly);
-            var resourceOwnershipPatches = installedPatches
-                .Where(IsManagedResourceOwnershipPatch)
+            var presentationPatches = installedPatches
+                .Where(IsManagedCharacterPresentationPatch)
                 .ToArray();
-            UnpatchProviderCallbacks(resourceOwnershipPatches);
+            var managedPatches = installedPatches
+                .Where(patch =>
+                    IsManagedResourceOwnershipPatch(patch) ||
+                    IsManagedCharacterPresentationPatch(patch))
+                .ToArray();
+            UnpatchProviderCallbacks(managedPatches);
 
-            var leakedResourcePatches = CaptureProviderPatches(assembly)
-                .Where(IsManagedResourceOwnershipPatch)
+            var leakedManagedPatches = CaptureProviderPatches(assembly)
+                .Where(patch =>
+                    IsManagedResourceOwnershipPatch(patch) ||
+                    IsManagedCharacterPresentationPatch(patch))
                 .ToArray();
-            if (leakedResourcePatches.Length > 0)
+            if (leakedManagedPatches.Length > 0)
             {
                 throw new InvalidOperationException(
-                    $"仍有 {leakedResourcePatches.Length} 个资源替换补丁未能隔离");
+                    $"仍有 {leakedManagedPatches.Length} 个资源/选角呈现补丁未能隔离");
             }
 
             var behaviorPatches = CaptureProviderPatches(assembly);
-            ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(assembly, behaviorPatches);
+            ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(
+                assembly,
+                behaviorPatches,
+                presentationPatches);
             ModLog.Info(
                 $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
-                $"资源整包已隔离挂载，{resourceOwnershipPatches.Length} 个重复资源入口已交由本 Mod 接管，" +
+                $"资源整包已隔离挂载，{managedPatches.Length} 个资源/选角呈现入口已交由本 Mod 接管，" +
                 $"保留 {behaviorPatches.Count} 个原作者动画/场景行为补丁；切换离开后会自动卸载。");
         }
         catch (Exception exception)
@@ -391,6 +401,15 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
+        // A cosmetic provider may patch a rendered relic node before the game has assigned its
+        // model. The selected PCK already owns the icon resource, so this eager second texture pass
+        // is both redundant and unsafe across game versions.
+        if (declaringType.Name.Equals("NRelic", StringComparison.Ordinal) &&
+            patch.Target.Name.Equals("_Ready", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         if (declaringType == typeof(AssetCache) ||
             declaringType == typeof(ResourceLoader) ||
             declaringType == typeof(AtlasManager) ||
@@ -426,6 +445,10 @@ internal static class ManagedSkinModLoader
         }.Any(token => propertyName.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static bool IsManagedCharacterPresentationPatch(ProviderPatch patch) =>
+        patch.Kind == ProviderPatchKind.Postfix &&
+        IsCharacterPresentationTarget(patch.Target);
+
     /// <summary>
     /// Replays presentation-only postfixes after Skin Changer has rebuilt the current character
     /// selection baseline. This makes behavior-driven skins reversible in both directions without
@@ -443,9 +466,7 @@ internal static class ManagedSkinModLoader
         }
 
         var replayed = 0;
-        foreach (var patch in runtime.Patches.Where(patch =>
-                     patch.Kind == ProviderPatchKind.Postfix &&
-                     IsCharacterPresentationTarget(patch.Target)))
+        foreach (var patch in runtime.CharacterPresentationPatches)
         {
             var instance = typeof(NCharacterSelectScreen).IsAssignableFrom(patch.Target.DeclaringType)
                 ? (object)screen
@@ -1068,7 +1089,8 @@ internal static class ManagedSkinModLoader
 
     private sealed record ActiveProviderRuntime(
         Assembly Assembly,
-        IReadOnlyList<ProviderPatch> Patches);
+        IReadOnlyList<ProviderPatch> Patches,
+        IReadOnlyList<ProviderPatch> CharacterPresentationPatches);
 
     private sealed record ProviderPatch(
         MethodBase Target,

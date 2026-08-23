@@ -541,6 +541,15 @@ internal static partial class ContextualSkinControls
                 button,
                 character);
         }
+
+        var animatedBackground = screen.GetNodeOrNull<Node>("AnimatedBg");
+        var sceneRoot = animatedBackground?.GetChildCount() > 0
+            ? animatedBackground.GetChild(0)
+            : null;
+        if (sceneRoot != null)
+        {
+            ManagedCharacterAnimationBridge.TryStartCharacterSelectLoops(sceneRoot, providerId);
+        }
     }
 
     private static void RebuildRuntimeProviderCharacterDisplay(
@@ -945,7 +954,9 @@ internal static partial class ContextualSkinControls
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
 internal static class CharacterSelectionSkinPatch
 {
-    [HarmonyPriority(Priority.Last)]
+    // Refresh the selector before unmanaged third-party postfixes get a chance to throw. Managed
+    // cosmetic presentation postfixes are isolated and safely replayed after the scene rebuild.
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(
         NCharacterSelectScreen __instance,
         CharacterModel characterModel) =>
