@@ -168,10 +168,20 @@ internal static class CardSkinControls
         }
     }
 
-    public static void ApplySelectedPresentation(NCard card)
+    public static void ApplySelectedPresentation(
+        NCard card,
+        ExternalCardVisualOwnership externalOwnership)
     {
         if (card.Model == null)
         {
+            return;
+        }
+
+        // A live card editor owns the frame/layout layer only after the player has
+        // explicitly configured that card there. Other cards remain managed here.
+        if (externalOwnership.Frame)
+        {
+            PresentationLayouts.Remove(card);
             return;
         }
 
@@ -183,7 +193,7 @@ internal static class CardSkinControls
         }
 
         PresentationLayouts.Remove(card);
-        ApplyManagedCardPresentation(card, presentation);
+        ApplyManagedCardPresentation(card, presentation, externalOwnership.Text);
         if (BaselineLayouts.TryGetValue(card, out var baseline))
         {
             PresentationLayouts.Add(
@@ -194,7 +204,8 @@ internal static class CardSkinControls
 
     private static void ApplyManagedCardPresentation(
         NCard card,
-        CardPresentationDefinition presentation)
+        CardPresentationDefinition presentation,
+        bool preserveExternalText)
     {
         var portrait = card.GetNodeOrNull<TextureRect>("%Portrait");
         var portraitBorder = card.GetNodeOrNull<TextureRect>("%PortraitBorder");
@@ -312,8 +323,13 @@ internal static class CardSkinControls
             SetVisible(highlight, highlightVisible && !useAncientLayout);
             SetVisible(ancientHighlight, highlightVisible && useAncientLayout);
         }
-        ApplyTypePlaqueVisibility(card, presentation);
-        SetVisible(card.GetNodeOrNull<CanvasItem>("%DescriptionLabel"), presentation.DescriptionVisible);
+        if (!preserveExternalText)
+        {
+            ApplyTypePlaqueVisibility(card, presentation);
+            SetVisible(
+                card.GetNodeOrNull<CanvasItem>("%DescriptionLabel"),
+                presentation.DescriptionVisible);
+        }
         SetVisible(
             FindNodeByName(card, "Infection") as CanvasItem,
             presentation.InfectionOverlayVisible);
@@ -499,9 +515,17 @@ internal static class CardSkinControls
         }
     }
 
-    public static void ApplySelectedPortraitToNode(NCard card)
+    public static void ApplySelectedPortraitToNode(
+        NCard card,
+        ExternalCardVisualOwnership externalOwnership)
     {
         if (card.Model == null)
+        {
+            return;
+        }
+
+        // Do not overwrite a still-running editor's explicit static/GIF portrait.
+        if (externalOwnership.Portrait)
         {
             return;
         }
@@ -1062,6 +1086,20 @@ internal static class CardLayoutResetPatch
 }
 
 [HarmonyPatch]
+internal static class CardLayoutBaselineCapturePatch
+{
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(NCard), "Reload");
+        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
+    }
+
+    [HarmonyPriority(Priority.First)]
+    private static void Postfix(NCard __instance) =>
+        CardSkinControls.CaptureBaselineLayout(__instance);
+}
+
+[HarmonyPatch]
 internal static class CardLayoutFinalPatch
 {
     private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
@@ -1073,9 +1111,12 @@ internal static class CardLayoutFinalPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCard __instance)
     {
-        // 原方法刚刚创建的资源才是本轮有效基线；先重新捕获，再应用所选呈现。
-        CardSkinControls.CaptureBaselineLayout(__instance);
-        CardSkinControls.ApplySelectedPresentation(__instance);
-        CardSkinControls.ApplySelectedPortraitToNode(__instance);
+        // 基线已在 Priority.First 的 Postfix 中捕获，避免把其他 Mod 后置
+        // 修改过的卡框误当成原版。这里最后只做当前所有者的呈现。
+        var externalOwnership = __instance.Model == null
+            ? default
+            : ExternalCardVisualBridge.GetOwnership(__instance.Model);
+        CardSkinControls.ApplySelectedPresentation(__instance, externalOwnership);
+        CardSkinControls.ApplySelectedPortraitToNode(__instance, externalOwnership);
     }
 }

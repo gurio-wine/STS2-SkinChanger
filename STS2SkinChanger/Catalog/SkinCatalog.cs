@@ -155,7 +155,10 @@ internal sealed partial class SkinCatalog : IDisposable
                     cardPresentations = configuredCardGroups
                         .Sum(group => group.Options.Sum(option => option.CardPresentations.Count));
                     var pckCardOptions = BuildPckCardOptions([index]);
-                    cardAssets += pckCardOptions.Sum(option => option.Assets.Count);
+                    cardAssets += pckCardOptions.Sum(option =>
+                        option.Assets.Count +
+                        option.NormalPortraits.Count +
+                        option.AncientPortraits.Count);
                     cardPresentations += pckCardOptions.Sum(option => option.CardPresentations.Count);
                 }
                 catch (Exception exception)
@@ -634,6 +637,10 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             var assetsByGroup = new Dictionary<string, Dictionary<string, ResourceAsset>>(
                 StringComparer.OrdinalIgnoreCase);
+            var normalByGroup = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase);
+            var ancientByGroup = new Dictionary<string, Dictionary<string, AncientCardPortrait>>(
+                StringComparer.OrdinalIgnoreCase);
             var presentationsByGroup =
                 new Dictionary<string, Dictionary<string, CardPresentationDefinition>>(
                     StringComparer.OrdinalIgnoreCase);
@@ -645,7 +652,16 @@ internal sealed partial class SkinCatalog : IDisposable
                 var hasPresentation = option.CardPresentations.TryGetValue(
                     card.TypeName,
                     out var presentation);
-                if (assets.Length == 0 && !hasPresentation)
+                var hasNormalPortrait = option.NormalPortraits.TryGetValue(
+                    card.TypeName,
+                    out var normalPortrait);
+                var hasAncientPortrait = option.AncientPortraits.TryGetValue(
+                    card.TypeName,
+                    out var ancientPortrait);
+                if (assets.Length == 0 &&
+                    !hasNormalPortrait &&
+                    !hasAncientPortrait &&
+                    !hasPresentation)
                 {
                     continue;
                 }
@@ -665,6 +681,26 @@ internal sealed partial class SkinCatalog : IDisposable
                 {
                     groupAssets[asset.Key] = asset.Value;
                 }
+                if (hasNormalPortrait && normalPortrait != null)
+                {
+                    if (!normalByGroup.TryGetValue(groupId, out var groupPortraits))
+                    {
+                        groupPortraits = new Dictionary<string, string>(
+                            StringComparer.OrdinalIgnoreCase);
+                        normalByGroup.Add(groupId, groupPortraits);
+                    }
+                    groupPortraits[card.TypeName] = normalPortrait;
+                }
+                if (hasAncientPortrait && ancientPortrait != null)
+                {
+                    if (!ancientByGroup.TryGetValue(groupId, out var groupPortraits))
+                    {
+                        groupPortraits = new Dictionary<string, AncientCardPortrait>(
+                            StringComparer.OrdinalIgnoreCase);
+                        ancientByGroup.Add(groupId, groupPortraits);
+                    }
+                    groupPortraits[card.TypeName] = ancientPortrait;
+                }
                 if (hasPresentation && presentation != null)
                 {
                     if (!presentationsByGroup.TryGetValue(groupId, out var groupPresentations))
@@ -678,10 +714,17 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             foreach (var groupId in assetsByGroup.Keys
+                         .Union(normalByGroup.Keys, StringComparer.OrdinalIgnoreCase)
+                         .Union(ancientByGroup.Keys, StringComparer.OrdinalIgnoreCase)
                          .Union(presentationsByGroup.Keys, StringComparer.OrdinalIgnoreCase))
             {
                 AddCardOption(groups, groupId, option with
                 {
+                    NormalPortraits = normalByGroup.GetValueOrDefault(groupId) ??
+                                      new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    AncientPortraits = ancientByGroup.GetValueOrDefault(groupId) ??
+                                       new Dictionary<string, AncientCardPortrait>(
+                                           StringComparer.OrdinalIgnoreCase),
                     Assets = assetsByGroup.GetValueOrDefault(groupId) ??
                              new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
                     CardPresentations = presentationsByGroup.GetValueOrDefault(groupId) ??
@@ -1333,6 +1376,7 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in cosmeticIndexes)
         {
             var presentations = LoadCardPresentations(index);
+            var exportedPortraits = LoadExportedCardPortraits(index);
             var standardAssets = index.Assets.Values
                 .Where(asset => IsCardArtSourcePath(asset.SourcePath))
                 .ToArray();
@@ -1349,7 +1393,9 @@ internal sealed partial class SkinCatalog : IDisposable
             var changedAssets = baselineIndexes == null
                 ? allAssets
                 : allAssets.Where(asset => AssetDiffersFromBaseline(asset, baselineIndexes)).ToArray();
-            if (changedAssets.Length == 0 && presentations.Count == 0)
+            if (changedAssets.Length == 0 &&
+                presentations.Count == 0 &&
+                exportedPortraits.Count == 0)
             {
                 continue;
             }
@@ -1370,7 +1416,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 .OrderBy(group => group.Key.Length == 0 ? 0 : 1)
                 .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray();
-            var splitVariants = variants.Length > 1 && VariantsOverlap(variants);
+            // An exported project is already one intentional package. Its manifest is
+            // authoritative, so filename-derived variant splitting must not fragment it.
+            var splitVariants = exportedPortraits.Count == 0 &&
+                                variants.Length > 1 &&
+                                VariantsOverlap(variants);
             var optionVariants = splitVariants
                 ? variants
                 :
@@ -1393,7 +1443,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 options.Add(new CardSkinOption(
                     variantId,
                     variantName,
-                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    new Dictionary<string, string>(
+                        exportedPortraits,
+                        StringComparer.OrdinalIgnoreCase),
                     new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
                     variant.Assets.ToDictionary(
                         asset => asset.SourcePath,
@@ -1420,7 +1472,8 @@ internal sealed partial class SkinCatalog : IDisposable
         var presentations = new Dictionary<string, CardPresentationDefinition>(
             StringComparer.OrdinalIgnoreCase);
         foreach (var configPath in index.Archive.Paths.Where(path =>
-                     path.EndsWith("/frame_replacements.json", StringComparison.OrdinalIgnoreCase)))
+                     path.EndsWith("/frame_replacements.json", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith("/framed_card_project.json", StringComparison.OrdinalIgnoreCase)))
         {
             try
             {
@@ -1484,6 +1537,143 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return presentations;
+    }
+
+    private static IReadOnlyDictionary<string, string> LoadExportedCardPortraits(
+        PckResourceIndex index)
+    {
+        var portraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var configPath in index.Archive.Paths.Where(path =>
+                     path.EndsWith("/card_replacements.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            ReadExportedPortraitEntries(
+                index,
+                configPath,
+                portraits,
+                ["image", "portrait"],
+                requireStaticKind: true,
+                overwrite: true);
+        }
+
+        foreach (var configPath in index.Archive.Paths.Where(path =>
+                     path.EndsWith("/framed_card_project.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            ReadExportedPortraitEntries(
+                index,
+                configPath,
+                portraits,
+                ["portrait", "image"],
+                requireStaticKind: false,
+                overwrite: true);
+        }
+
+        foreach (var configPath in index.Archive.Paths.Where(path =>
+                     path.EndsWith("/animations/card_animations.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            // SkinChanger does not play an isolated export's timeline yet, but its
+            // declared fallback still gives the player a correct static portrait.
+            ReadExportedPortraitEntries(
+                index,
+                configPath,
+                portraits,
+                ["fallbackImage", "image", "portrait"],
+                requireStaticKind: false,
+                overwrite: false);
+        }
+
+        return portraits;
+    }
+
+    private static void ReadExportedPortraitEntries(
+        PckResourceIndex index,
+        string configPath,
+        IDictionary<string, string> portraits,
+        IReadOnlyList<string> portraitProperties,
+        bool requireStaticKind,
+        bool overwrite)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(index.Archive.ReadFile(configPath));
+            if (!TryGetJsonProperty(document.RootElement, "entries", out var entries) ||
+                entries.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (var entry in entries.EnumerateArray())
+            {
+                var cardId = TryGetJsonString(entry, "cardId");
+                if (string.IsNullOrWhiteSpace(cardId))
+                {
+                    continue;
+                }
+
+                if (requireStaticKind)
+                {
+                    var kind = TryGetJsonString(entry, "kind");
+                    if (!string.IsNullOrWhiteSpace(kind) &&
+                        !kind.Equals("image", StringComparison.OrdinalIgnoreCase) &&
+                        !kind.Equals("static", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                }
+
+                var portrait = portraitProperties
+                    .Select(property => TryGetJsonString(entry, property))
+                    .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+                if (string.IsNullOrWhiteSpace(portrait) ||
+                    (!portrait.StartsWith("res://", StringComparison.OrdinalIgnoreCase) &&
+                     !portrait.StartsWith("uid://", StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                var cardType = NormalizeCardPresentationType(cardId);
+                if (overwrite)
+                {
+                    portraits[cardType] = portrait;
+                }
+                else
+                {
+                    portraits.TryAdd(cardType, portrait);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"无法读取卡牌管理器导出配置 {configPath}: {exception.Message}");
+        }
+    }
+
+    private static string? TryGetJsonString(JsonElement element, string propertyName) =>
+        TryGetJsonProperty(element, propertyName, out var property) &&
+        property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+
+    private static bool TryGetJsonProperty(
+        JsonElement element,
+        string propertyName,
+        out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
     }
 
     private static string NormalizeCardPresentationType(string cardId)

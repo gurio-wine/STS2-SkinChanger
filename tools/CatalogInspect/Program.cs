@@ -4,11 +4,18 @@ using System.Text.RegularExpressions;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
 
+if (args.Length == 2 && args[1].Equals("--self-test-card-export", StringComparison.OrdinalIgnoreCase))
+{
+    RunCardExportSelfTest(args[0]);
+    return;
+}
+
 if (args.Length < 2)
 {
     Console.Error.WriteLine(
         "usage: CatalogInspect <game.pck> <mod-root> [<mod-root> ...] " +
-        "[--runtime-scene <group> <selection> <scene> <output.pck> | --validate-runtime]");
+        "[--runtime-scene <group> <selection> <scene> <output.pck> | --validate-runtime] " +
+        "or CatalogInspect <game.pck> --self-test-card-export");
     return;
 }
 
@@ -519,6 +526,118 @@ if (validateIndex >= 0)
         path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
 
+}
+
+static void RunCardExportSelfTest(string gamePckPath)
+{
+    var testRoot = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(),
+        "skin-changer-card-export-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(testRoot);
+    try
+    {
+        var providerPck = System.IO.Path.Combine(testRoot, "ExportedCardSkin.pck");
+        var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["res://generated/card_replacements.json"] = Encoding.UTF8.GetBytes(
+                """
+                {"entries":[
+                  {"cardId":"Tests.ExportCard","kind":"image","image":"res://generated/export.png"}
+                ]}
+                """),
+            ["res://generated/framed_card_project.json"] = Encoding.UTF8.GetBytes(
+                """
+                {"entries":[
+                  {"cardId":"Tests.FramedCard","portrait":"res://generated/framed.png",
+                   "frame":"res://generated/frame.tres","frameVisible":true}
+                ]}
+                """),
+            ["res://generated/animations/card_animations.json"] = Encoding.UTF8.GetBytes(
+                """
+                {"entries":[
+                  {"cardId":"Tests.AnimatedCard","fallbackImage":"res://generated/fallback.png"}
+                ]}
+                """),
+            ["res://generated/export.png"] = [1, 2, 3],
+            ["res://generated/framed.png"] = [4, 5, 6],
+            ["res://generated/fallback.png"] = [7, 8, 9],
+            ["res://generated/frame.tres"] = Encoding.UTF8.GetBytes(
+                "[gd_resource type=\"StyleBoxFlat\" format=3]\n")
+        };
+        PckArchive.Write(providerPck, files);
+
+        using var catalog = SkinCatalog.Build(
+            gamePckPath,
+            [new SkinModDescriptor(
+                "Tests.ExportedCardSkin",
+                "Exported Card Skin",
+                providerPck,
+                false,
+                testRoot,
+                false)]);
+        var sourceOption = catalog.PckCardOptions.Single(option =>
+            option.Id.Equals("Tests.ExportedCardSkin", StringComparison.OrdinalIgnoreCase));
+        var expectedPortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ExportCard"] = "res://generated/export.png",
+            ["FramedCard"] = "res://generated/framed.png",
+            ["AnimatedCard"] = "res://generated/fallback.png"
+        };
+        foreach (var expected in expectedPortraits)
+        {
+            if (!sourceOption.NormalPortraits.TryGetValue(expected.Key, out var actual) ||
+                !actual.Equals(expected.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"export portrait mapping failed for {expected.Key}: {actual ?? "<missing>"}");
+            }
+        }
+        if (!sourceOption.CardPresentations.TryGetValue("FramedCard", out var framed) ||
+            !string.Equals(framed.Frame, "res://generated/frame.tres", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("framed export presentation mapping failed");
+        }
+
+        var cards = expectedPortraits.Keys.Select(cardType => new CardCatalogEntry(
+            cardType,
+            $"res://validation/{cardType.ToLowerInvariant()}.png",
+            "tests",
+            "tests",
+            "tests")).ToArray();
+        catalog.FinalizeCardGroups(cards);
+        var routed = catalog.CardGroups.Single(group => group.Id == "tests")
+            .Options.Single(option => option.Id.Equals(
+                sourceOption.Id,
+                StringComparison.OrdinalIgnoreCase));
+        if (routed.NormalPortraits.Count != expectedPortraits.Count ||
+            routed.CardPresentations.Keys.Any(key =>
+                !key.Equals("FramedCard", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException("exported card routing leaked or lost mappings");
+        }
+
+        foreach (var expected in expectedPortraits)
+        {
+            var overlay = catalog.BuildIsolatedCardResource(
+                "tests",
+                routed.Id,
+                expected.Value,
+                useSelectedProvider: true,
+                "self-test/" + expected.Key.ToLowerInvariant());
+            if (!overlay.ResourcePaths.ContainsKey(expected.Value) || overlay.Files.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"exported portrait isolation failed for {expected.Key}");
+            }
+        }
+
+        Console.WriteLine(
+            "card export self-test passed: static, framed and animation fallback manifests");
+    }
+    finally
+    {
+        Directory.Delete(testRoot, recursive: true);
+    }
 }
 
 partial class Program
