@@ -1,0 +1,335 @@
+using System.Buffers.Binary;
+using System.Collections.Immutable;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
+
+namespace STS2SkinChanger.Catalog;
+
+/// <summary>
+/// Reads common MonsterModel.VisualsPath replacement intent without loading or
+/// executing the provider assembly. This lets private provider scenes become
+/// selectable resources while the provider initializer and Harmony patches stay
+/// isolated.
+/// </summary>
+internal static class ManagedMonsterSceneScanner
+{
+    private static readonly IReadOnlyDictionary<ushort, OpCode> OpCodesByValue =
+        typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.FieldType == typeof(OpCode))
+            .Select(field => (OpCode)field.GetValue(null)!)
+            .ToDictionary(opCode => unchecked((ushort)opCode.Value));
+
+    public static IReadOnlyList<ManagedMonsterSceneReplacement> Scan(
+        string? providerRoot,
+        string providerId)
+    {
+        if (string.IsNullOrWhiteSpace(providerRoot) || !Directory.Exists(providerRoot))
+        {
+            return [];
+        }
+
+        var primaryAssembly = System.IO.Path.Combine(providerRoot, providerId + ".dll");
+        var assemblyPaths = File.Exists(primaryAssembly)
+            ? [primaryAssembly]
+            : Directory.EnumerateFiles(providerRoot, "*.dll", SearchOption.TopDirectoryOnly)
+                .ToArray();
+        var replacements = new Dictionary<string, ManagedMonsterSceneReplacement>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var assemblyPath in assemblyPaths)
+        {
+            try
+            {
+                ScanAssembly(assemblyPath, replacements);
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"无法静态分析怪物场景 DLL {assemblyPath}: {exception.Message}");
+            }
+        }
+
+        return replacements.Values.ToArray();
+    }
+
+    private static void ScanAssembly(
+        string assemblyPath,
+        IDictionary<string, ManagedMonsterSceneReplacement> replacements)
+    {
+        using var stream = new FileStream(
+            assemblyPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var peReader = new PEReader(stream, PEStreamOptions.PrefetchEntireImage);
+        if (!peReader.HasMetadata)
+        {
+            return;
+        }
+
+        var reader = peReader.GetMetadataReader();
+        var signatureProvider = new MetadataTypeNameProvider();
+        foreach (var typeHandle in reader.TypeDefinitions)
+        {
+            var type = reader.GetTypeDefinition(typeHandle);
+            var patchTypeName = reader.GetString(type.Name);
+            foreach (var methodHandle in type.GetMethods())
+            {
+                var method = reader.GetMethodDefinition(methodHandle);
+                if (method.RelativeVirtualAddress == 0)
+                {
+                    continue;
+                }
+
+                var signature = method.DecodeSignature(signatureProvider, reader);
+                if (signature.ParameterTypes.Any(IsNonMonsterModelType))
+                {
+                    continue;
+                }
+
+                var body = peReader.GetMethodBody(method.RelativeVirtualAddress);
+                var il = body.GetILBytes();
+                if (il == null)
+                {
+                    continue;
+                }
+
+                var candidates = ScanIl(reader, il);
+                if (candidates.Count == 0)
+                {
+                    continue;
+                }
+
+                var hasStringResult = signature.ParameterTypes.Any(IsStringByReferenceType);
+                var isVisualsPathPatch = patchTypeName.Contains(
+                                             "VisualsPath",
+                                             StringComparison.OrdinalIgnoreCase) ||
+                                         hasStringResult &&
+                                         (signature.ParameterTypes.Any(IsMonsterModelType) ||
+                                          candidates.Any(candidate => candidate.ModelTypeName != null) ||
+                                          patchTypeName.Contains("Monster", StringComparison.OrdinalIgnoreCase));
+                if (!isVisualsPathPatch)
+                {
+                    continue;
+                }
+
+                var fallbackTypeName = GetPatchTargetName(patchTypeName);
+                foreach (var candidate in candidates)
+                {
+                    var modelTypeName = candidate.ModelTypeName ?? fallbackTypeName;
+                    if (!IsPlausibleModelType(modelTypeName))
+                    {
+                        continue;
+                    }
+
+                    var simpleTypeName = SimpleTypeName(modelTypeName!);
+                    replacements[NormalizeToken(simpleTypeName)] =
+                        new ManagedMonsterSceneReplacement(simpleTypeName, candidate.ScenePath);
+                }
+            }
+        }
+    }
+
+    private static List<SceneCandidate> ScanIl(MetadataReader reader, byte[] il)
+    {
+        var result = new List<SceneCandidate>();
+        string? lastModelType = null;
+        var offset = 0;
+        while (offset < il.Length)
+        {
+            var first = il[offset++];
+            var value = first == 0xfe && offset < il.Length
+                ? (ushort)(0xfe00 | il[offset++])
+                : first;
+            if (!OpCodesByValue.TryGetValue(value, out var opCode))
+            {
+                return result;
+            }
+
+            var operandOffset = offset;
+            var operandSize = GetOperandSize(opCode.OperandType, il, operandOffset);
+            if (operandSize < 0 || operandOffset + operandSize > il.Length)
+            {
+                return result;
+            }
+
+            if (opCode.OperandType == OperandType.InlineType && operandSize == 4 &&
+                (opCode.Equals(OpCodes.Isinst) || opCode.Equals(OpCodes.Castclass)))
+            {
+                var token = BinaryPrimitives.ReadInt32LittleEndian(il.AsSpan(operandOffset, 4));
+                lastModelType = ResolveTypeName(reader, MetadataTokens.EntityHandle(token));
+            }
+            else if (opCode.OperandType == OperandType.InlineString && operandSize == 4)
+            {
+                var token = BinaryPrimitives.ReadInt32LittleEndian(il.AsSpan(operandOffset, 4));
+                try
+                {
+                    var valueString = reader.GetUserString(
+                        MetadataTokens.UserStringHandle(token & 0x00ffffff));
+                    if (IsScenePath(valueString))
+                    {
+                        result.Add(new SceneCandidate(lastModelType, valueString));
+                    }
+                }
+                catch (Exception exception) when (
+                    exception is BadImageFormatException or ArgumentException)
+                {
+                    // Ignore malformed metadata in third-party providers.
+                }
+            }
+
+            offset += operandSize;
+        }
+
+        return result;
+    }
+
+    private static bool IsScenePath(string value) =>
+        value.StartsWith("res://", StringComparison.OrdinalIgnoreCase) &&
+        value.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMonsterModelType(string typeName) =>
+        TypeNameEndsWith(typeName, "MonsterModel");
+
+    private static bool IsStringByReferenceType(string typeName) =>
+        typeName.Equals("String&", StringComparison.OrdinalIgnoreCase) ||
+        typeName.Equals("System.String&", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsNonMonsterModelType(string typeName) =>
+        TypeNameEndsWith(typeName, "CharacterModel") ||
+        TypeNameEndsWith(typeName, "CardModel") ||
+        TypeNameEndsWith(typeName, "EventModel");
+
+    private static bool TypeNameEndsWith(string typeName, string expected) =>
+        typeName.Equals(expected, StringComparison.OrdinalIgnoreCase) ||
+        typeName.EndsWith("." + expected, StringComparison.OrdinalIgnoreCase) ||
+        typeName.EndsWith("+" + expected, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPlausibleModelType(string? typeName)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+        {
+            return false;
+        }
+
+        var token = NormalizeToken(typeName);
+        return token.Length > 2 && token is not
+            "monster" and not
+            "monstermodel" and not
+            "ncreaturevisuals" and not
+            "packedscene" and not
+            "node" and not
+            "node2d";
+    }
+
+    private static string? GetPatchTargetName(string patchTypeName)
+    {
+        var marker = patchTypeName.IndexOf("VisualsPath", StringComparison.OrdinalIgnoreCase);
+        if (marker <= 0)
+        {
+            return null;
+        }
+
+        var prefix = patchTypeName[..marker].TrimEnd('_', '.', '+');
+        var separator = Math.Max(prefix.LastIndexOf('.'), prefix.LastIndexOf('+'));
+        return separator >= 0 ? prefix[(separator + 1)..].TrimEnd('_') : prefix;
+    }
+
+    private static string? ResolveTypeName(MetadataReader reader, EntityHandle handle)
+    {
+        return handle.Kind switch
+        {
+            HandleKind.TypeDefinition => GetTypeName(reader, reader.GetTypeDefinition(
+                (TypeDefinitionHandle)handle)),
+            HandleKind.TypeReference => GetTypeName(reader, reader.GetTypeReference(
+                (TypeReferenceHandle)handle)),
+            _ => null
+        };
+    }
+
+    private static string GetTypeName(MetadataReader reader, TypeDefinition type)
+    {
+        var name = reader.GetString(type.Name);
+        var typeNamespace = reader.GetString(type.Namespace);
+        return string.IsNullOrEmpty(typeNamespace) ? name : typeNamespace + "." + name;
+    }
+
+    private static string GetTypeName(MetadataReader reader, TypeReference type)
+    {
+        var name = reader.GetString(type.Name);
+        var typeNamespace = reader.GetString(type.Namespace);
+        return string.IsNullOrEmpty(typeNamespace) ? name : typeNamespace + "." + name;
+    }
+
+    private static string SimpleTypeName(string typeName)
+    {
+        var separator = Math.Max(typeName.LastIndexOf('.'), typeName.LastIndexOf('+'));
+        return separator >= 0 ? typeName[(separator + 1)..] : typeName;
+    }
+
+    private static string NormalizeToken(string value) =>
+        new(SimpleTypeName(value)
+            .Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
+
+    private static int GetOperandSize(OperandType operandType, byte[] il, int offset) => operandType switch
+    {
+        OperandType.InlineNone => 0,
+        OperandType.ShortInlineBrTarget or
+        OperandType.ShortInlineI or
+        OperandType.ShortInlineVar => 1,
+        OperandType.InlineVar => 2,
+        OperandType.InlineBrTarget or
+        OperandType.InlineField or
+        OperandType.InlineI or
+        OperandType.InlineMethod or
+        OperandType.InlineSig or
+        OperandType.InlineString or
+        OperandType.InlineTok or
+        OperandType.InlineType or
+        OperandType.ShortInlineR => 4,
+        OperandType.InlineI8 or
+        OperandType.InlineR => 8,
+        OperandType.InlineSwitch when offset + 4 <= il.Length =>
+            4 + checked(BinaryPrimitives.ReadInt32LittleEndian(il.AsSpan(offset, 4)) * 4),
+        _ => -1
+    };
+
+    private sealed class MetadataTypeNameProvider : ISignatureTypeProvider<string, MetadataReader>
+    {
+        public string GetArrayType(string elementType, ArrayShape shape) => elementType + "[]";
+        public string GetByReferenceType(string elementType) => elementType + "&";
+        public string GetFunctionPointerType(MethodSignature<string> signature) => "fnptr";
+        public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments) => genericType;
+        public string GetGenericMethodParameter(MetadataReader genericContext, int index) => "!!" + index;
+        public string GetGenericTypeParameter(MetadataReader genericContext, int index) => "!" + index;
+        public string GetModifiedType(string modifierType, string unmodifiedType, bool isRequired) => unmodifiedType;
+        public string GetPinnedType(string elementType) => elementType;
+        public string GetPointerType(string elementType) => elementType + "*";
+        public string GetPrimitiveType(PrimitiveTypeCode typeCode) => typeCode.ToString();
+        public string GetSZArrayType(string elementType) => elementType + "[]";
+
+        public string GetTypeFromDefinition(
+            MetadataReader reader,
+            TypeDefinitionHandle handle,
+            byte rawTypeKind) => GetTypeName(reader, reader.GetTypeDefinition(handle));
+
+        public string GetTypeFromReference(
+            MetadataReader reader,
+            TypeReferenceHandle handle,
+            byte rawTypeKind) => GetTypeName(reader, reader.GetTypeReference(handle));
+
+        public string GetTypeFromSpecification(
+            MetadataReader reader,
+            MetadataReader genericContext,
+            TypeSpecificationHandle handle,
+            byte rawTypeKind) => reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+    }
+
+    private sealed record SceneCandidate(string? ModelTypeName, string ScenePath);
+}
+
+internal sealed record ManagedMonsterSceneReplacement(string ModelTypeName, string ScenePath);

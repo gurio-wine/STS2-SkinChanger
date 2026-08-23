@@ -1027,11 +1027,17 @@ internal static class SkinService
 
     public static PackedScene GetOrLoadRuntimeScene(string groupId, string scenePath)
     {
-        return GetOrLoadRuntimeResource(groupId, scenePath) as PackedScene ??
+        return GetOrLoadRuntimeResource(
+                   groupId,
+                   scenePath,
+                   includeProviderDependencies: true) as PackedScene ??
                throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
     }
 
-    public static Resource GetOrLoadRuntimeResource(string groupId, string resourcePath)
+    public static Resource GetOrLoadRuntimeResource(
+        string groupId,
+        string resourcePath,
+        bool includeProviderDependencies = false)
     {
         lock (Sync)
         {
@@ -1043,7 +1049,10 @@ internal static class SkinService
             }
 
             RuntimeResourceCache.Remove(cacheKey);
-            return LoadRuntimeResources(groupId, [resourcePath])[resourcePath];
+            return LoadRuntimeResources(
+                groupId,
+                [resourcePath],
+                includeProviderDependencies)[resourcePath];
         }
     }
 
@@ -1052,6 +1061,26 @@ internal static class SkinService
         lock (Sync)
         {
             return Catalog?.IsRuntimeProviderOption(groupId, Config.GetSelection(groupId)) == true;
+        }
+    }
+
+    public static void ApplySelectedVisualPostfix(
+        string groupId,
+        object model,
+        ref MegaCrit.Sts2.Core.Nodes.Combat.NCreatureVisuals visuals)
+    {
+        string? providerId;
+        lock (Sync)
+        {
+            var selection = Config.GetSelection(groupId);
+            providerId = Catalog?.IsRuntimeProviderOption(groupId, selection) == true
+                ? selection
+                : null;
+        }
+
+        if (providerId != null)
+        {
+            ManagedSkinModLoader.ApplySelectedVisualPostfix(providerId, model, ref visuals);
         }
     }
 

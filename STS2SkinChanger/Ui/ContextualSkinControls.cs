@@ -37,6 +37,8 @@ internal static partial class ContextualSkinControls
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");
     private static readonly System.Reflection.MethodInfo BestiarySelectMonsterMethod =
         AccessTools.Method(typeof(NBestiary), "SelectMonster", [typeof(NBestiaryEntry)]);
+    private static readonly System.Reflection.MethodInfo MonsterVisualsPathGetter =
+        AccessTools.PropertyGetter(typeof(MonsterModel), "VisualsPath");
 
     // These paths are inputs to our isolated overlay and must not pass through another Mod's Harmony redirect.
     internal static string CanonicalScenePath(string innerPath) =>
@@ -82,7 +84,9 @@ internal static partial class ContextualSkinControls
     {
         var selector = EnsureMonsterSelector(screen);
         var monster = entry.IsDiscovered ? entry.Entry.monsterModel : null;
-        var group = monster == null ? null : FindGroup(monster.Id.Entry);
+        var group = monster == null
+            ? null
+            : FindGroup(monster.Id.Entry, monster.GetType().Name);
         RegisterRefresh(
             selector,
             group == null || monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster, group.Id));
@@ -588,7 +592,7 @@ internal static partial class ContextualSkinControls
         MonsterModel monster,
         string groupId)
     {
-        var visualsPath = CanonicalScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant());
+        var visualsPath = GetMonsterVisualsPath(monster);
         var scene = SkinService.LoadRuntimeScene(groupId, visualsPath);
         PreloadManager.Cache.SetAsset(visualsPath, scene);
 
@@ -608,10 +612,32 @@ internal static partial class ContextualSkinControls
         ModLog.Info($"已完整重建 {monster.Id.Entry} 的图鉴展示。");
     }
 
-    private static SkinGroup? FindGroup(string modelId)
+    internal static string GetMonsterVisualsPath(MonsterModel monster)
     {
-        var token = NormalizeToken(modelId);
-        return SkinService.Catalog?.Groups.FirstOrDefault(group => NormalizeToken(group.Id) == token);
+        try
+        {
+            if (MonsterVisualsPathGetter.Invoke(monster, null) is string path &&
+                !string.IsNullOrWhiteSpace(path))
+            {
+                return path;
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"无法读取 {monster.Id.Entry} 的实际 VisualsPath，将使用默认场景路径：{exception.Message}");
+        }
+
+        return CanonicalScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant());
+    }
+
+    private static SkinGroup? FindGroup(string modelId, string? modelTypeName = null)
+    {
+        var tokens = new[] { modelId, modelTypeName }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => NormalizeToken(value!))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return SkinService.Catalog?.Groups.FirstOrDefault(group =>
+            tokens.Contains(NormalizeToken(group.Id)));
     }
 
     private static string NormalizeToken(string value) => NonAlphanumericRegex().Replace(value, string.Empty).ToLowerInvariant();
@@ -622,9 +648,16 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCreatedVisuals(
         string modelId,
         string visualsPath,
+        ref NCreatureVisuals result) =>
+        ReplaceCreatedVisuals(modelId, null, visualsPath, ref result);
+
+    internal static void ReplaceCreatedVisuals(
+        string modelId,
+        string? modelTypeName,
+        string visualsPath,
         ref NCreatureVisuals result)
     {
-        var group = FindGroup(modelId);
+        var group = FindGroup(modelId, modelTypeName);
         if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
         {
             return;
@@ -643,9 +676,25 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    internal static void MarkAndApplyMonsterScale(string modelId, NCreatureVisuals visuals)
+    internal static void ApplySelectedProviderVisualPostfix(
+        string modelId,
+        string? modelTypeName,
+        object model,
+        ref NCreatureVisuals visuals)
     {
-        var group = FindGroup(modelId);
+        var group = FindGroup(modelId, modelTypeName);
+        if (group != null)
+        {
+            SkinService.ApplySelectedVisualPostfix(group.Id, model, ref visuals);
+        }
+    }
+
+    internal static void MarkAndApplyMonsterScale(
+        string modelId,
+        string modelTypeName,
+        NCreatureVisuals visuals)
+    {
+        var group = FindGroup(modelId, modelTypeName);
         if (group == null)
         {
             return;
@@ -864,11 +913,18 @@ internal static class BestiarySelectionSkinPatch
 internal static class CharacterVisualResultPatch
 {
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result) =>
+    private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result)
+    {
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
             ContextualSkinControls.CanonicalScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
             ref __result);
+        ContextualSkinControls.ApplySelectedProviderVisualPostfix(
+            __instance.Id.Entry,
+            __instance.GetType().Name,
+            __instance,
+            ref __result);
+    }
 }
 
 [HarmonyPatch(typeof(MonsterModel), nameof(MonsterModel.CreateVisuals))]
@@ -879,9 +935,18 @@ internal static class MonsterVisualResultPatch
     {
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
-            ContextualSkinControls.CanonicalScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
+            __instance.GetType().Name,
+            ContextualSkinControls.GetMonsterVisualsPath(__instance),
             ref __result);
-        ContextualSkinControls.MarkAndApplyMonsterScale(__instance.Id.Entry, __result);
+        ContextualSkinControls.ApplySelectedProviderVisualPostfix(
+            __instance.Id.Entry,
+            __instance.GetType().Name,
+            __instance,
+            ref __result);
+        ContextualSkinControls.MarkAndApplyMonsterScale(
+            __instance.Id.Entry,
+            __instance.GetType().Name,
+            __result);
     }
 }
 

@@ -1,6 +1,7 @@
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using System.Reflection;
 
 namespace STS2SkinChanger.Core;
 
@@ -11,6 +12,9 @@ namespace STS2SkinChanger.Core;
 /// </summary>
 internal static class ManagedCharacterAnimationBridge
 {
+    private static readonly MethodInfo? SetAnimationMethod = ResolveAnimationMethod("SetAnimation", 3);
+    private static readonly MethodInfo? AddAnimationMethod = ResolveAnimationMethod("AddAnimation", 4);
+
     public static void TryDrive(NCreature creature, string trigger)
     {
         try
@@ -41,16 +45,23 @@ internal static class ManagedCharacterAnimationBridge
             }
 
             var animationState = spine.GetAnimationState();
-            animationState.SetAnimation(animation, IsLooping(animation));
+            if (SetAnimationMethod == null)
+            {
+                return;
+            }
+
+            SetAnimationMethod.Invoke(animationState, [animation, IsLooping(animation), 0]);
             if (!route.QueueIdle)
             {
                 return;
             }
 
             var idle = ResolveIdleAnimation(creature, spine);
-            if (idle != null && !idle.Equals(animation, StringComparison.OrdinalIgnoreCase))
+            if (idle != null &&
+                AddAnimationMethod != null &&
+                !idle.Equals(animation, StringComparison.OrdinalIgnoreCase))
             {
-                animationState.AddAnimation(idle, 0f, loop: true);
+                AddAnimationMethod.Invoke(animationState, [idle, 0f, true, 0]);
             }
         }
         catch
@@ -86,6 +97,24 @@ internal static class ManagedCharacterAnimationBridge
     private static bool IsLooping(string animation) =>
         animation.EndsWith("_loop", StringComparison.OrdinalIgnoreCase) ||
         animation.Equals("idle", StringComparison.OrdinalIgnoreCase);
+
+    private static MethodInfo? ResolveAnimationMethod(string name, int parameterCount) =>
+        typeof(MegaAnimationState)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(method =>
+            {
+                if (!method.Name.Equals(name, StringComparison.Ordinal) ||
+                    method.GetParameters() is not { } parameters ||
+                    parameters.Length != parameterCount)
+                {
+                    return false;
+                }
+
+                var expected = name.Equals("SetAnimation", StringComparison.Ordinal)
+                    ? new[] { typeof(string), typeof(bool), typeof(int) }
+                    : new[] { typeof(string), typeof(float), typeof(bool), typeof(int) };
+                return parameters.Select(parameter => parameter.ParameterType).SequenceEqual(expected);
+            });
 
     private sealed record AnimationRoute(string[] Candidates, bool QueueIdle);
 }

@@ -1,7 +1,9 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Debug;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -24,7 +26,13 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> RegisteredProviderAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, ProviderScriptAssembly> ProviderScriptAssemblies =
+    private static readonly Dictionary<string, ProviderAssembly> ProviderAssemblies =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, IReadOnlyList<ManagedVisualPostfix>> VisualPostfixesByProvider =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ReportedVisualPostfixes =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> FailedVisualPostfixes =
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
@@ -113,7 +121,7 @@ internal static class ManagedSkinModLoader
                 mod.version = version;
             }
 
-            RememberProviderGodotScripts(mod, provider);
+            RememberProviderAssembly(mod, provider);
             mod.state = ModLoadState.Loaded;
             NotifyModDetected(mod);
             ModLog.Info(
@@ -121,7 +129,8 @@ internal static class ManagedSkinModLoader
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
                 $"卡牌呈现={provider.CardPresentationCount}, 独立图片={provider.RuntimeImageCount}, " +
                 $"场景脚本={provider.ManagedScriptCount}；" +
-                "原 PCK 未全局挂载，DLL 初始化器和补丁均不执行；" +
+                "原 PCK 未全局挂载，DLL 初始化器和全局补丁均不执行；" +
+                "只有选中该皮肤时，才会按需调用与模型 CreateVisuals 明确绑定的视觉后处理；" +
                 (provider.ManagedScriptCount > 0
                     ? "只有选中该皮肤时才注册场景实例化所需的 Godot 脚本类型；"
                     : string.Empty) +
@@ -138,10 +147,9 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    private static void RememberProviderGodotScripts(Mod mod, SkinProviderProbe provider)
+    private static void RememberProviderAssembly(Mod mod, SkinProviderProbe provider)
     {
-        if (provider.ManagedScriptCount <= 0 ||
-            mod.manifest is not { hasDll: true, id: not null })
+        if (mod.manifest is not { hasDll: true, id: not null })
         {
             return;
         }
@@ -149,45 +157,30 @@ internal static class ManagedSkinModLoader
         var assemblyPath = Path.GetFullPath(Path.Combine(mod.path, mod.manifest.id + ".dll"));
         if (!File.Exists(assemblyPath))
         {
-            ModLog.Warn(
-                $"{mod.manifest.name ?? mod.manifest.id} 的 PCK 引用了 C# 场景脚本，" +
-                $"但未找到程序集 {assemblyPath}。");
+            ModLog.Warn($"找不到皮肤提供者程序集 {assemblyPath}。");
             return;
         }
 
-        ProviderScriptAssemblies[mod.manifest.id] = new ProviderScriptAssembly(
+        ProviderAssemblies[mod.manifest.id] = new ProviderAssembly(
             assemblyPath,
-            mod.manifest.name ?? mod.manifest.id);
+            mod.manifest.name ?? mod.manifest.id,
+            provider.ManagedScriptCount > 0);
     }
 
     public static bool EnsureProviderGodotScripts(string providerId)
     {
-        if (!ProviderScriptAssemblies.TryGetValue(providerId, out var provider))
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider) ||
+            !provider.HasGodotScripts)
         {
             return false;
         }
 
         try
         {
-            var assembly = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(candidate =>
-                {
-                    try
-                    {
-                        return !candidate.IsDynamic &&
-                               Path.GetFullPath(candidate.Location)
-                                   .Equals(provider.AssemblyPath, StringComparison.OrdinalIgnoreCase);
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                });
+            var assembly = GetOrLoadProviderAssembly(provider);
             if (assembly == null)
             {
-                var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
-                assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??
-                           Assembly.LoadFrom(provider.AssemblyPath);
+                return false;
             }
 
             if (!RegisteredProviderAssemblies.Add(provider.AssemblyPath))
@@ -212,7 +205,9 @@ internal static class ManagedSkinModLoader
             }
 
             lookupMethod.Invoke(null, [assembly]);
-            ModLog.Info($"已按当前选择注册 {provider.Name} 的 Godot 场景脚本类型，未执行其初始化器或补丁。");
+            ModLog.Info(
+                $"已按当前选择注册 {provider.Name} 的 Godot 场景脚本类型，" +
+                "未执行其初始化器或注册全局 Harmony 补丁。");
             return true;
         }
         catch (Exception exception)
@@ -223,6 +218,332 @@ internal static class ManagedSkinModLoader
                 "仍会隔离其全局视觉补丁：" +
                 exception.GetBaseException().Message);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Runs only the selected provider's Harmony postfixes for model visual creation. The provider
+    /// assembly is never patched into Harmony globally: this preserves isolation while retaining
+    /// skin-specific transforms, removed attachment nodes and other scene finishing work that cannot
+    /// be represented by replacement textures alone.
+    /// </summary>
+    public static void ApplySelectedVisualPostfix(
+        string providerId,
+        object model,
+        ref NCreatureVisuals visuals)
+    {
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider) ||
+            !GodotObject.IsInstanceValid(visuals))
+        {
+            return;
+        }
+
+        try
+        {
+            var assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly == null)
+            {
+                return;
+            }
+
+            if (!VisualPostfixesByProvider.TryGetValue(providerId, out var postfixes))
+            {
+                postfixes = DiscoverVisualPostfixes(assembly);
+                VisualPostfixesByProvider[providerId] = postfixes;
+            }
+
+            foreach (var postfix in postfixes.Where(candidate =>
+                         candidate.TargetType.IsInstanceOfType(model)))
+            {
+                InvokeVisualPostfix(provider, postfix, model, ref visuals);
+            }
+        }
+        catch (Exception exception)
+        {
+            var key = providerId + ":discovery";
+            if (FailedVisualPostfixes.Add(key))
+            {
+                ModLog.Warn(
+                    $"读取 {provider.Name} 的按需视觉后处理失败，已继续使用资源皮肤：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static Assembly? GetOrLoadProviderAssembly(ProviderAssembly provider)
+    {
+        var assembly = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(candidate =>
+            {
+                try
+                {
+                    return !candidate.IsDynamic &&
+                           Path.GetFullPath(candidate.Location)
+                               .Equals(provider.AssemblyPath, StringComparison.OrdinalIgnoreCase);
+                }
+                catch
+                {
+                    return false;
+                }
+            });
+        if (assembly != null)
+        {
+            return assembly;
+        }
+
+        var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
+        return loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??
+               Assembly.LoadFrom(provider.AssemblyPath);
+    }
+
+    private static IReadOnlyList<ManagedVisualPostfix> DiscoverVisualPostfixes(Assembly assembly)
+    {
+        return GetLoadableTypes(assembly)
+            .Select(type => (Type: type, Target: GetVisualPatchTarget(type)))
+            .Where(pair => pair.Target != null)
+            .SelectMany(pair => pair.Type
+                .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(IsPostfixMethod)
+                .Select(method => new ManagedVisualPostfix(pair.Target!, method)))
+            .OrderBy(postfix => postfix.Method.MetadataToken)
+            .ToArray();
+    }
+
+    private static Type? GetVisualPatchTarget(Type patchType)
+    {
+        Type? targetType = null;
+        string? methodName = null;
+        foreach (var attribute in patchType.CustomAttributes.Where(attribute =>
+                     attribute.AttributeType.FullName == "HarmonyLib.HarmonyPatch"))
+        {
+            foreach (var argument in attribute.ConstructorArguments)
+            {
+                if (argument.ArgumentType == typeof(Type))
+                {
+                    targetType = argument.Value as Type;
+                }
+                else if (argument.ArgumentType == typeof(string))
+                {
+                    methodName = argument.Value as string;
+                }
+            }
+
+            foreach (var argument in attribute.NamedArguments)
+            {
+                if (argument.TypedValue.ArgumentType == typeof(Type))
+                {
+                    targetType = argument.TypedValue.Value as Type;
+                }
+                else if (argument.TypedValue.ArgumentType == typeof(string))
+                {
+                    methodName = argument.TypedValue.Value as string;
+                }
+            }
+        }
+
+        if (!string.Equals(methodName, nameof(CharacterModel.CreateVisuals), StringComparison.Ordinal) ||
+            targetType == null ||
+            (!typeof(CharacterModel).IsAssignableFrom(targetType) &&
+             !typeof(MonsterModel).IsAssignableFrom(targetType)))
+        {
+            return null;
+        }
+
+        return targetType;
+    }
+
+    private static bool IsPostfixMethod(MethodInfo method) =>
+        method.Name.Equals("Postfix", StringComparison.Ordinal) ||
+        method.CustomAttributes.Any(attribute =>
+            attribute.AttributeType.FullName == "HarmonyLib.HarmonyPostfix");
+
+    private static void InvokeVisualPostfix(
+        ProviderAssembly provider,
+        ManagedVisualPostfix postfix,
+        object model,
+        ref NCreatureVisuals visuals)
+    {
+        var parameters = postfix.Method.GetParameters();
+        var arguments = new object?[parameters.Length];
+        var resultIndex = -1;
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(model):
+                    arguments[index] = model;
+                    break;
+                case "__result" when parameterType.IsAssignableFrom(typeof(NCreatureVisuals)) ||
+                                      typeof(NCreatureVisuals).IsAssignableFrom(parameterType):
+                    arguments[index] = visuals;
+                    resultIndex = index;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = AccessTools.Method(postfix.TargetType, nameof(CharacterModel.CreateVisuals));
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return;
+            }
+        }
+
+        var key = provider.AssemblyPath + ":" + postfix.Method.MetadataToken;
+        try
+        {
+            var spineSnapshot = CaptureAliasedSpineResource(visuals);
+            var returned = postfix.Method.Invoke(null, arguments);
+            if (resultIndex >= 0 && arguments[resultIndex] is NCreatureVisuals replaced)
+            {
+                visuals = replaced;
+            }
+            else if (returned is NCreatureVisuals returnedVisuals)
+            {
+                visuals = returnedVisuals;
+            }
+
+            RestoreAliasedSpineResource(spineSnapshot);
+
+            if (ReportedVisualPostfixes.Add(key))
+            {
+                ModLog.Info(
+                    $"已按当前选择应用 {provider.Name} 的视觉后处理：" +
+                    $"{postfix.Method.DeclaringType?.FullName}.{postfix.Method.Name}。");
+            }
+        }
+        catch (Exception exception)
+        {
+            if (FailedVisualPostfixes.Add(key))
+            {
+                ModLog.Warn(
+                    $"{provider.Name} 的视觉后处理与当前游戏版本不兼容，已跳过且不会中断游戏：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static AliasedSpineResourceSnapshot? CaptureAliasedSpineResource(
+        NCreatureVisuals visuals)
+    {
+        var spineNode = visuals.GetNodeOrNull<Node>("%Visuals");
+        if (spineNode == null)
+        {
+            return null;
+        }
+
+        var resource = spineNode.Get("skeleton_data_res").As<Resource>();
+        if (resource == null || !TryGetCanonicalAliasPath(resource.ResourcePath, out var canonicalPath))
+        {
+            return null;
+        }
+
+        return new AliasedSpineResourceSnapshot(spineNode, resource, canonicalPath);
+    }
+
+    private static void RestoreAliasedSpineResource(AliasedSpineResourceSnapshot? snapshot)
+    {
+        if (snapshot == null || !GodotObject.IsInstanceValid(snapshot.SpineNode))
+        {
+            return;
+        }
+
+        var current = snapshot.SpineNode.Get("skeleton_data_res").As<Resource>();
+        // A provider commonly reloads the same logical resource through its canonical path. That
+        // may return a stale pre-switch cache entry, so put the already isolated selected resource
+        // back. A genuinely different private path is left untouched.
+        if (current == null ||
+            !current.ResourcePath.Equals(snapshot.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        snapshot.SpineNode.Set("skeleton_data_res", snapshot.Resource);
+        TryRefreshSpineAttachments(snapshot.SpineNode);
+    }
+
+    private static bool TryGetCanonicalAliasPath(string resourcePath, out string canonicalPath)
+    {
+        const string prefix = "res://sts2_skin_runtime/";
+        canonicalPath = string.Empty;
+        if (!resourcePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var relative = resourcePath[prefix.Length..];
+        var sessionSeparator = relative.IndexOf('/');
+        var generationSeparator = sessionSeparator < 0
+            ? -1
+            : relative.IndexOf('/', sessionSeparator + 1);
+        if (generationSeparator < 0 || generationSeparator + 1 >= relative.Length)
+        {
+            return false;
+        }
+
+        canonicalPath = "res://" + relative[(generationSeparator + 1)..];
+        return true;
+    }
+
+    private static void TryRefreshSpineAttachments(Node spineNode)
+    {
+        try
+        {
+            var skeleton = spineNode.Call("get_skeleton").As<GodotObject>();
+            var skin = skeleton?.Call("get_skin").As<GodotObject>();
+            var slots = skeleton?.Call("get_slots").As<Godot.Collections.Array>();
+            var attachments = skin?.Call("get_attachments").As<Godot.Collections.Array>();
+            if (slots == null || attachments == null)
+            {
+                return;
+            }
+
+            foreach (var entryValue in attachments)
+            {
+                var entry = entryValue.As<GodotObject>();
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                var slotIndex = entry.Call("get_slot_index").AsInt32();
+                var attachment = entry.Call("get_attachment");
+                if (attachment.VariantType == Variant.Type.Nil ||
+                    slotIndex < 0 ||
+                    slotIndex >= slots.Count)
+                {
+                    continue;
+                }
+
+                slots[slotIndex].As<GodotObject>()?.Call("set_attachment", attachment);
+            }
+        }
+        catch
+        {
+            // Attachment refresh is a best-effort cache repair after a provider reloaded the same
+            // skeleton path. The selected resource itself has already been restored.
+        }
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            return exception.Types.OfType<Type>();
         }
     }
 
@@ -403,7 +724,17 @@ internal static class ManagedSkinModLoader
         Path.GetFullPath(path)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-    private sealed record ProviderScriptAssembly(string AssemblyPath, string Name);
+    private sealed record ProviderAssembly(
+        string AssemblyPath,
+        string Name,
+        bool HasGodotScripts);
+
+    private sealed record ManagedVisualPostfix(Type TargetType, MethodInfo Method);
+
+    private sealed record AliasedSpineResourceSnapshot(
+        Node SpineNode,
+        Resource Resource,
+        string CanonicalPath);
 
 }
 

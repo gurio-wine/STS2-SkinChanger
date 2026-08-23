@@ -382,6 +382,13 @@ if (validateIndex >= 0)
         {
             resourcePaths = [creaturePath];
         }
+        else if (group.Options.Any(option => option.ManagedMonsterScene != null))
+        {
+            // DLL-only monster skins can replace a protected VisualsPath with a private scene whose
+            // file name does not match the model ID. BuildRuntimeResourceOverlay intentionally maps
+            // that private scene onto the requested creature scene at runtime.
+            resourcePaths = [creaturePath];
+        }
         else
         {
             continue;
@@ -527,6 +534,12 @@ if (validateIndex >= 0)
                     resourcePaths,
                     $"validate/{validated:D4}",
                     includeProviderDependencies: true);
+                if (option.ManagedMonsterScene != null &&
+                    !overlay.ResourcePaths.ContainsKey(creaturePath))
+                {
+                    failures.Add(
+                        $"{group.Id}/{option.Id}: private monster scene was not mapped to {creaturePath}");
+                }
                 var provider = descriptors.FirstOrDefault(descriptor =>
                     descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
                 if (provider?.PckPath != null && File.Exists(provider.PckPath))

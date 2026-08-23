@@ -329,9 +329,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public bool IsResourceBackedOption(string groupId, string optionId)
     {
-        return Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
-            .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))?
-            .Assets.Count > 0;
+        var option = Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option =>
+                option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+        return option is { Assets.Count: > 0 } || option?.ManagedMonsterScene != null;
     }
 
     public string? GetRuntimeImagePath(string groupId, string optionId)
@@ -1046,7 +1048,10 @@ internal sealed partial class SkinCatalog : IDisposable
             var baseline = ResolveBaseline(sourcePath);
             var primary = selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
                 ? selectedAsset
-                : baseline;
+                : selected?.ManagedMonsterScene != null &&
+                  sourcePath.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase)
+                    ? selected.ManagedMonsterScene
+                    : baseline;
             if (primary == null)
             {
                 continue;
@@ -1494,6 +1499,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         MergeCharacterSelectIconPacks(indexes, groups);
         AddPckRuntimeProviderOptions(indexes, groups);
+        AddManagedMonsterSceneOptions(indexes, groups);
 
         foreach (var group in groups.Values)
         {
@@ -1504,6 +1510,59 @@ internal sealed partial class SkinCatalog : IDisposable
             .OrderBy(group => GroupSortOrder(group.Id))
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
+
+    private static void AddManagedMonsterSceneOptions(
+        IReadOnlyCollection<PckResourceIndex> indexes,
+        IDictionary<string, SkinGroup> groups)
+    {
+        foreach (var index in indexes.Where(index => index.Mod.HasDll))
+        {
+            var replacements = ManagedMonsterSceneScanner.Scan(
+                index.Mod.RootPath,
+                index.Mod.Id);
+            foreach (var replacement in replacements)
+            {
+                var sceneAsset = index.Assets.GetValueOrDefault(replacement.ScenePath) ??
+                                 index.TryBuildAsset(replacement.ScenePath);
+                if (sceneAsset == null)
+                {
+                    continue;
+                }
+
+                var modelToken = NormalizeResourceToken(replacement.ModelTypeName);
+                var group = groups.Values.FirstOrDefault(candidate =>
+                    NormalizeResourceToken(candidate.Id).Equals(
+                        modelToken,
+                        StringComparison.OrdinalIgnoreCase));
+                if (group == null)
+                {
+                    var groupId = replacement.ModelTypeName.ToLowerInvariant();
+                    group = new SkinGroup(groupId, DisplayName(groupId));
+                    groups.Add(groupId, group);
+                }
+
+                var existingIndex = group.Options.FindIndex(option =>
+                    option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
+                if (existingIndex >= 0)
+                {
+                    group.Options[existingIndex] = group.Options[existingIndex] with
+                    {
+                        IsRuntimeProvider = true,
+                        ManagedMonsterScene = sceneAsset
+                    };
+                }
+                else
+                {
+                    group.Options.Add(new SkinOption(
+                        index.Mod.Id,
+                        index.Mod.Name,
+                        new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                        IsRuntimeProvider: true,
+                        ManagedMonsterScene: sceneAsset));
+                }
+            }
+        }
     }
 
     private static IReadOnlyList<CardSkinGroup> BuildCardGroups(IEnumerable<PckResourceIndex> cosmeticIndexes)
@@ -2961,7 +3020,8 @@ internal sealed record SkinOption(
     string Name,
     IReadOnlyDictionary<string, ResourceAsset> Assets,
     bool IsRuntimeProvider = false,
-    string? RuntimeImagePath = null);
+    string? RuntimeImagePath = null,
+    ResourceAsset? ManagedMonsterScene = null);
 
 internal sealed class CardSkinGroup(string id, string displayName)
 {
