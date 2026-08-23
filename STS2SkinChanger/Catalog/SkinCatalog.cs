@@ -1375,7 +1375,7 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         var sourceAliases = resources.ToDictionary(
             resource => resource.SourcePath,
-            resource => $"res://sts2_skin_runtime/{aliasToken}/{resource.SourcePath[6..]}",
+            resource => BuildRuntimeSourceAlias(resource, aliasToken),
             StringComparer.OrdinalIgnoreCase);
         var payloadAliases = resources
             .SelectMany(resource => resource.PayloadFiles)
@@ -1446,6 +1446,38 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return new RuntimeResourceOverlay(aliasedResourcePaths, files, sourceAliases, payloadAliases);
+    }
+
+    private static string BuildRuntimeSourceAlias(RuntimeResource resource, string aliasToken)
+    {
+        // Text resources may reference the same PCK entry with different casing (Defect.atlas
+        // versus the exported defect.atlas.import). Godot's PCK lookup is case-sensitive even on
+        // Windows, and Spine resolves texture page names relative to the atlas path. Preserve the
+        // concrete exported path's casing so the atlas and its page use the exact names requested
+        // by the native Spine loader.
+        var concretePath = resource.DirectFile != null
+            ? NormalizeTakeoverPath(resource.DirectFile.Path)
+            : resource.RemapFile != null
+                ? StripResourceRedirectSuffix(NormalizeTakeoverPath(resource.RemapFile.Path))
+                : resource.SourcePath;
+        if (!concretePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+        {
+            concretePath = resource.SourcePath;
+        }
+
+        return $"res://sts2_skin_runtime/{aliasToken}/{concretePath[6..]}";
+    }
+
+    private static string StripResourceRedirectSuffix(string path)
+    {
+        if (path.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+        {
+            return path[..^7];
+        }
+
+        return path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)
+            ? path[..^6]
+            : path;
     }
 
     private void IncludeAtlasTexturePages(SkinOption? selected, HashSet<string> sourcePaths)
@@ -2509,7 +2541,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // 顶层目录时保持原路径，避免把普通资源目录误当成游戏入口。
         if (!IsProviderNamespacePath(sourcePath, NormalizeResourceToken(providerId)))
         {
-            return sourcePath;
+            return NormalizeRuntimeProviderCanonicalPath(sourcePath);
         }
 
         var relative = sourcePath[6..];
@@ -2521,6 +2553,45 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static string NormalizeRuntimeProviderCanonicalPath(string path)
     {
+        const string creatureTemplatePrefix = "res://scenes/creature_visuals/templates/";
+        const string creatureTemplateSuffix = "_template.tscn";
+        if (TryMapCharacterTemplatePath(
+                path,
+                creatureTemplatePrefix,
+                creatureTemplateSuffix,
+                "res://scenes/creature_visuals/",
+                ".tscn",
+                out var creaturePath))
+        {
+            return creaturePath;
+        }
+
+        const string merchantTemplatePrefix = "res://scenes/merchant/characters/templates/";
+        const string merchantTemplateSuffix = "_merchant_template.tscn";
+        if (TryMapCharacterTemplatePath(
+                path,
+                merchantTemplatePrefix,
+                merchantTemplateSuffix,
+                "res://scenes/merchant/characters/",
+                "_merchant.tscn",
+                out var merchantPath))
+        {
+            return merchantPath;
+        }
+
+        const string restTemplatePrefix = "res://scenes/rest_site/characters/templates/";
+        const string restTemplateSuffix = "_rest_site_template.tscn";
+        if (TryMapCharacterTemplatePath(
+                path,
+                restTemplatePrefix,
+                restTemplateSuffix,
+                "res://scenes/rest_site/characters/",
+                "_rest_site.tscn",
+                out var restPath))
+        {
+            return restPath;
+        }
+
         const string privateCharacterSelectPrefix = "res://scenes/character_select/";
         const string shortCharacterSelectPrefix = "res://scenes/char_select/";
         const string gameCharacterSelectPrefix = "res://scenes/screens/char_select/";
@@ -2532,6 +2603,31 @@ internal sealed partial class SkinCatalog : IDisposable
         return path.StartsWith(shortCharacterSelectPrefix, StringComparison.OrdinalIgnoreCase)
             ? gameCharacterSelectPrefix + path[shortCharacterSelectPrefix.Length..]
             : path;
+    }
+
+    private static bool TryMapCharacterTemplatePath(
+        string path,
+        string templatePrefix,
+        string templateSuffix,
+        string canonicalPrefix,
+        string canonicalSuffix,
+        out string canonicalPath)
+    {
+        canonicalPath = string.Empty;
+        if (!path.StartsWith(templatePrefix, StringComparison.OrdinalIgnoreCase) ||
+            !path.EndsWith(templateSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var characterId = path[templatePrefix.Length..^templateSuffix.Length];
+        if (string.IsNullOrWhiteSpace(characterId) || characterId.Contains('/'))
+        {
+            return false;
+        }
+
+        canonicalPath = canonicalPrefix + characterId + canonicalSuffix;
+        return true;
     }
 
     private static GroupIdentity? TryGetCharacterSupplementGroup(string sourcePath)

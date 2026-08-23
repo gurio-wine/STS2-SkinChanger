@@ -396,6 +396,28 @@ if (validateIndex >= 0)
 
         foreach (var option in group.Options)
         {
+            if (option.IsRuntimeProvider)
+            {
+                ValidateCharacterTemplateMapping(
+                    option,
+                    group.Id,
+                    $"res://scenes/creature_visuals/templates/{characterId}_template.tscn",
+                    creaturePath,
+                    failures);
+                ValidateCharacterTemplateMapping(
+                    option,
+                    group.Id,
+                    $"res://scenes/merchant/characters/templates/{characterId}_merchant_template.tscn",
+                    $"res://scenes/merchant/characters/{characterId}_merchant.tscn",
+                    failures);
+                ValidateCharacterTemplateMapping(
+                    option,
+                    group.Id,
+                    $"res://scenes/rest_site/characters/templates/{characterId}_rest_site_template.tscn",
+                    $"res://scenes/rest_site/characters/{characterId}_rest_site.tscn",
+                    failures);
+            }
+
             var selectedOverlay = catalog.BuildOverlay(
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -630,6 +652,28 @@ if (validateIndex >= 0)
                    "res://scenes/events/background_scenes/",
                    StringComparison.OrdinalIgnoreCase) &&
                path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void ValidateCharacterTemplateMapping(
+        SkinOption option,
+        string groupId,
+        string templatePath,
+        string canonicalPath,
+        ICollection<string> failures)
+    {
+        var templateAsset = option.Assets.Values.FirstOrDefault(asset =>
+            asset.SourcePath.Equals(templatePath, StringComparison.OrdinalIgnoreCase));
+        if (templateAsset == null)
+        {
+            return;
+        }
+
+        if (!option.Assets.TryGetValue(canonicalPath, out var mappedAsset) ||
+            !ReferenceEquals(mappedAsset, templateAsset))
+        {
+            failures.Add(
+                $"{groupId}/{option.Id}: character template {templatePath} was not mapped to {canonicalPath}");
+        }
     }
 
     static bool ContainsAsset(
