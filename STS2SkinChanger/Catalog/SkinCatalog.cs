@@ -21,6 +21,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
+    private readonly IReadOnlySet<string> _fullRuntimeProviders;
 
     private SkinCatalog(
         PckArchive gameArchive,
@@ -41,6 +42,30 @@ internal sealed partial class SkinCatalog : IDisposable
             .Where(index => index.Mod.HasDll && index.Archive.Paths.Any(path =>
                 path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)))
             .Select(index => index.Mod.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var visualGroupCounts = _groups
+            .SelectMany(group => group.Options.Select(option =>
+                (GroupId: group.Id, ProviderId: option.Id)))
+            .GroupBy(pair => pair.ProviderId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(pair => pair.GroupId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count(),
+                StringComparer.OrdinalIgnoreCase);
+        var cardProviderIds = _pckCardOptions
+            .Where(option => option.Assets.Count > 0 || option.CardPresentations.Count > 0)
+            .Select(option => option.ProviderId ?? option.Id)
+            .Concat(_configuredCardGroups.SelectMany(group => group.Options)
+                .Where(option => option.Assets.Count > 0 || option.CardPresentations.Count > 0)
+                .Select(option => option.ProviderId ?? option.Id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _fullRuntimeProviders = cosmeticIndexes
+            .Where(index => index.Mod.HasDll)
+            .Select(index => index.Mod.Id)
+            .Where(providerId =>
+                visualGroupCounts.GetValueOrDefault(providerId) == 1 &&
+                !cardProviderIds.Contains(providerId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -327,6 +352,15 @@ internal sealed partial class SkinCatalog : IDisposable
     public bool ProviderUsesManagedGodotScripts(string optionId) =>
         _managedGodotScriptProviders.Contains(optionId);
 
+    /// <summary>
+    /// A DLL-backed provider that owns one visual group and no independently selectable cards is
+    /// a single cosmetic bundle. Such a bundle can safely run its original visual initializer only
+    /// while selected, which preserves custom animation, VFX, room and companion behavior without
+    /// allowing one choice to force another character or card skin.
+    /// </summary>
+    public bool ProviderUsesFullRuntime(string optionId) =>
+        _fullRuntimeProviders.Contains(optionId);
+
     public bool IsResourceBackedOption(string groupId, string optionId)
     {
         var option = Groups.FirstOrDefault(group =>
@@ -428,21 +462,37 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlySet<string>? onlyGroups = null)
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
-        var selectedProviders = new List<SkinOption>();
-        foreach (var group in Groups)
-        {
-            if (onlyGroups != null && !onlyGroups.Contains(group.Id))
+        var includedGroups = Groups
+            .Where(group => onlyGroups == null || onlyGroups.Contains(group.Id))
+            .ToArray();
+        var selectedProviders = includedGroups
+            .Select(group =>
             {
-                continue;
-            }
+                selections.TryGetValue(group.Id, out var selectedId);
+                return group.Options.FirstOrDefault(option =>
+                    option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+            })
+            .Where(option => option?.IsRuntimeProvider == true)
+            .Cast<SkinOption>()
+            .DistinctBy(option => option.Id)
+            .ToArray();
 
+        // Full single-bundle providers can legitimately contain canonical support paths in
+        // addition to private files. Add the package first so the explicit group mapping below is
+        // always the final authority for every resource the catalog knows how to select.
+        foreach (var selected in selectedProviders.Where(option => ProviderUsesFullRuntime(option.Id)))
+        {
+            foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
+            {
+                files[file.Key] = file.Value;
+            }
+        }
+
+        foreach (var group in includedGroups)
+        {
             selections.TryGetValue(group.Id, out var selectedId);
             var selected = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
-            if (selected?.IsRuntimeProvider == true)
-            {
-                selectedProviders.Add(selected);
-            }
             var sourcePaths = group.Options
                 .SelectMany(option => option.Assets.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -484,7 +534,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // 代码型外观 Mod 常把场景、骨骼和贴图放在自己的 res://<ModId>/
         // 命名空间，再由 DLL 把游戏资源入口路由过去。接管 DLL 路由以后仍需把
         // 当前所选提供者的私有依赖一起挂载，否则主场景能替换但内部引用会丢失。
-        foreach (var selected in selectedProviders.DistinctBy(option => option.Id))
+        foreach (var selected in selectedProviders.Where(option => !ProviderUsesFullRuntime(option.Id)))
         {
             foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
             {
@@ -624,7 +674,21 @@ internal sealed partial class SkinCatalog : IDisposable
         var indexes = _cosmeticIndexes
             .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
             .ToArray();
-        var providerIdToken = NormalizeResourceToken(selected.Id);
+        if (ProviderUsesFullRuntime(selected.Id))
+        {
+            // A single-group DLL skin is one inseparable visual bundle. Its binary scenes can store
+            // resource paths in prefix-compressed form (for example "res://img/attack/" followed by
+            // hundreds of frame names), so text-reference walking can never reconstruct the whole
+            // dependency graph. Mount the provider package at its original paths while selected,
+            // excluding only project/editor metadata that must never replace the running game.
+            return indexes
+                .SelectMany(index => index.Archive.Paths
+                    .Where(path => !IsProviderProjectControlFile(path))
+                    .Select(path => new ResourceFile(index.Archive, path)))
+                .GroupBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+        }
+
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
         var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -634,14 +698,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 ReferenceEquals(candidate.Archive, assetFile.Archive));
             if (index != null)
             {
-                // 当前选项自身的文件也保留一份原始私有路径。许多 Spine atlas
-                // 只写同目录相对页名（silent.png），无法由 res:// 引用扫描发现；
-                // 原路径副本让 Godot 能按 atlas 所在目录自然解析贴图，同时仍然
-                // 只暴露当前所选皮肤，不会挂载同一提供者的其他外观组。
-                Enqueue(
-                    index,
-                    assetFile,
-                    includeInOverlay: IsProviderNamespacePath(assetFile.Path, providerIdToken));
+                // 当前选项自身的文件也保留一份原始路径。私有目录不一定以 Mod ID
+                // 命名，也常见 res://custom、res://assets 或非英文顶层目录。
+                Enqueue(index, assetFile, includeInOverlay: true);
             }
         }
 
@@ -656,11 +715,6 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
                 var sourcePath = match.Value;
-                if (!IsProviderNamespacePath(sourcePath, providerIdToken))
-                {
-                    continue;
-                }
-
                 var candidates = new[] { pending.Index }
                     .Concat(indexes.Where(index => !ReferenceEquals(index, pending.Index)));
                 ResourceAsset? dependency = null;
@@ -688,8 +742,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 // Spine atlas 内的页名通常只是相对文件名，不会以 res:// 形式
                 // 出现在场景或资源里，因此上面的引用扫描看不到它们。按当前已
-                // 引用 atlas 的所在目录补齐贴图资产，不依赖角色名、Mod 名或
-                // 文件名语言，也不会挂载提供者的其他目录。
+                // 引用 atlas 的所在目录补齐贴图资产，不依赖目录命名方式。
                 foreach (var textureAsset in GetSiblingAtlasTextureAssets(
                              dependencyIndex,
                              sourcePath))
@@ -717,6 +770,21 @@ internal sealed partial class SkinCatalog : IDisposable
                 queue.Enqueue((index, file));
             }
         }
+    }
+
+    private static bool IsProviderProjectControlFile(string path)
+    {
+        if (path.Equals("res://project.binary", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("res://project.godot", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("res://export_presets.cfg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".gdextension", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return path.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase) &&
+               !path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) &&
+               !path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<ResourceAsset> GetSiblingAtlasTextureAssets(
@@ -1114,7 +1182,6 @@ internal sealed partial class SkinCatalog : IDisposable
         var indexes = _cosmeticIndexes
             .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
             .ToArray();
-        var providerIdToken = NormalizeResourceToken(selected.Id);
         if (indexes.Length == 0)
         {
             return new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -1170,14 +1237,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 IncludeAsset(dependencyIndex, dependency);
-                if (IsProviderNamespacePath(sourcePath, providerIdToken))
+                foreach (var textureAsset in GetSiblingAtlasTextureAssets(
+                             dependencyIndex,
+                             sourcePath))
                 {
-                    foreach (var textureAsset in GetSiblingAtlasTextureAssets(
-                                 dependencyIndex,
-                                 sourcePath))
-                    {
-                        IncludeAsset(dependencyIndex, textureAsset);
-                    }
+                    IncludeAsset(dependencyIndex, textureAsset);
                 }
             }
         }

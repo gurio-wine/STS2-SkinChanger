@@ -30,6 +30,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IReadOnlyList<ManagedVisualPostfix>> VisualPostfixesByProvider =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ActiveProviderRuntime> ActiveProviderRuntimes =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReportedVisualPostfixes =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedVisualPostfixes =
@@ -39,6 +41,9 @@ internal static class ManagedSkinModLoader
 
     public static bool IsFirstInLoadOrder { get; private set; } = true;
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
+
+    public static bool IsProviderAssemblyActive(Assembly assembly) =>
+        ActiveProviderRuntimes.Values.Any(runtime => ReferenceEquals(runtime.Assembly, assembly));
 
     public static void Initialize()
     {
@@ -96,7 +101,7 @@ internal static class ManagedSkinModLoader
 
         ModLog.Info(
             $"托管加载模式已识别 {ProvidersByRoot.Count} 个皮肤提供者；" +
-            "其 PCK 只会按当前选择隔离读取，DLL 初始化器和全局补丁不会执行。");
+            "其 PCK 只会按当前选择隔离读取；符合单一外观整包条件的 DLL 行为仅在选中期间启用，切走即卸载。");
     }
 
     public static bool TryManage(Mod mod)
@@ -129,12 +134,13 @@ internal static class ManagedSkinModLoader
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
                 $"卡牌呈现={provider.CardPresentationCount}, 独立图片={provider.RuntimeImageCount}, " +
                 $"场景脚本={provider.ManagedScriptCount}；" +
-                "原 PCK 未全局挂载，DLL 初始化器和全局补丁均不执行；" +
+                "原 PCK 未全局挂载；" +
                 "只有选中该皮肤时，才会按需调用与模型 CreateVisuals 明确绑定的视觉后处理；" +
                 (provider.ManagedScriptCount > 0
                     ? "只有选中该皮肤时才注册场景实例化所需的 Godot 脚本类型；"
                     : string.Empty) +
-                "卡牌呈现只读取 PCK 配置并由皮肤切换器自身渲染。");
+                "单一视觉组且不含独立卡牌选择的整包会在选中期间临时启用原作者行为，" +
+                "其余卡牌呈现只读取 PCK 配置并由皮肤切换器自身渲染。");
             return true;
         }
         catch (Exception exception)
@@ -207,7 +213,7 @@ internal static class ManagedSkinModLoader
             lookupMethod.Invoke(null, [assembly]);
             ModLog.Info(
                 $"已按当前选择注册 {provider.Name} 的 Godot 场景脚本类型，" +
-                "未执行其初始化器或注册全局 Harmony 补丁。");
+                "此注册步骤本身未执行其初始化器或 Harmony 补丁。");
             return true;
         }
         catch (Exception exception)
@@ -222,10 +228,165 @@ internal static class ManagedSkinModLoader
     }
 
     /// <summary>
-    /// Runs only the selected provider's Harmony postfixes for model visual creation. The provider
-    /// assembly is never patched into Harmony globally: this preserves isolation while retaining
-    /// skin-specific transforms, removed attachment nodes and other scene finishing work that cannot
-    /// be represented by replacement textures alone.
+    /// Removes every Harmony callback installed by a managed provider that is no longer selected.
+    /// Unpatching by callback method instead of Harmony owner is important because third-party mods
+    /// sometimes reuse the same owner string; only the selected provider's assembly is touched.
+    /// </summary>
+    public static void DeactivateProvidersExcept(IEnumerable<string> selectedProviderIds)
+    {
+        var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in ActiveProviderRuntimes.Keys
+                     .Where(providerId => !selected.Contains(providerId))
+                     .ToArray())
+        {
+            DeactivateProvider(providerId);
+        }
+    }
+
+    /// <summary>
+    /// Activates the original initializer of each selected single-bundle skin after its complete
+    /// PCK has been mounted. This retains custom animation/VFX/room behavior while the provider is
+    /// selected, but unlike normal mod loading its Harmony callbacks are removed on deselection.
+    /// </summary>
+    public static void ActivateSelectedProviders(IEnumerable<string> selectedProviderIds)
+    {
+        foreach (var providerId in selectedProviderIds.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (ActiveProviderRuntimes.ContainsKey(providerId) ||
+                !ProviderAssemblies.TryGetValue(providerId, out var provider))
+            {
+                continue;
+            }
+
+            ActivateProvider(providerId, provider);
+        }
+    }
+
+    private static void ActivateProvider(string providerId, ProviderAssembly provider)
+    {
+        Assembly? assembly = null;
+        try
+        {
+            assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly == null)
+            {
+                return;
+            }
+
+            var initializerTypes = GetLoadableTypes(assembly)
+                .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
+                .Where(pair => pair.Attribute != null)
+                .ToArray();
+            if (initializerTypes.Length == 0)
+            {
+                new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                    .PatchAll(assembly);
+            }
+            else
+            {
+                foreach (var initializer in initializerTypes)
+                {
+                    var method = initializer.Type.GetMethod(
+                        initializer.Attribute!.initializerMethod,
+                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (method == null || method.GetParameters().Length != 0)
+                    {
+                        throw new MissingMethodException(
+                            initializer.Type.FullName,
+                            initializer.Attribute.initializerMethod);
+                    }
+
+                    method.Invoke(null, null);
+                }
+            }
+
+            var patches = CaptureProviderPatches(assembly);
+            ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(assembly, patches);
+            ModLog.Info(
+                $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
+                $"资源整包已隔离挂载，激活 {patches.Count} 个原作者行为补丁。切换离开后会自动卸载这些补丁。");
+        }
+        catch (Exception exception)
+        {
+            if (assembly != null)
+            {
+                UnpatchProviderCallbacks(CaptureProviderPatches(assembly));
+            }
+
+            ModLog.Warn(
+                $"启用 {provider.Name} 的完整视觉会话失败，已回滚其行为补丁并继续使用资源皮肤：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static void DeactivateProvider(string providerId)
+    {
+        if (!ActiveProviderRuntimes.Remove(providerId, out var runtime))
+        {
+            return;
+        }
+
+        UnpatchProviderCallbacks(runtime.Patches);
+        ModLog.Info($"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁。");
+    }
+
+    private static IReadOnlyList<ProviderPatch> CaptureProviderPatches(Assembly assembly) =>
+        Harmony.GetAllPatchedMethods()
+            .SelectMany(target => EnumerateProviderPatches(target, Harmony.GetPatchInfo(target), assembly))
+            .DistinctBy(patch => (patch.Target, patch.Callback))
+            .ToArray();
+
+    private static IEnumerable<ProviderPatch> EnumerateProviderPatches(
+        MethodBase target,
+        Patches? patches,
+        Assembly assembly)
+    {
+        if (patches == null)
+        {
+            yield break;
+        }
+
+        foreach (var patch in patches.Prefixes
+                     .Concat(patches.Postfixes)
+                     .Concat(patches.Transpilers)
+                     .Concat(patches.Finalizers))
+        {
+            if (ReferenceEquals(patch.PatchMethod.Module.Assembly, assembly))
+            {
+                yield return new ProviderPatch(target, patch.PatchMethod);
+            }
+        }
+    }
+
+    private static void UnpatchProviderCallbacks(IEnumerable<ProviderPatch> patches)
+    {
+        var harmony = new Harmony(Entry.ModId + ".provider_runtime");
+        foreach (var patch in patches)
+        {
+            try
+            {
+                harmony.Unpatch(patch.Target, patch.Callback);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"卸载提供者行为补丁 {patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static string NormalizeHarmonyId(string providerId) =>
+        new(providerId.Select(character =>
+            char.IsLetterOrDigit(character) || character is '.' or '-' or '_'
+                ? character
+                : '_').ToArray());
+
+    /// <summary>
+    /// Runs only the selected provider's Harmony postfixes for model visual creation when the
+    /// provider is not eligible for a full selected runtime. This preserves isolation for
+    /// multi-group providers while retaining transforms and scene finishing work that cannot be
+    /// represented by replacement textures alone.
     /// </summary>
     public static void ApplySelectedVisualPostfix(
         string providerId,
@@ -728,6 +889,12 @@ internal static class ManagedSkinModLoader
         string AssemblyPath,
         string Name,
         bool HasGodotScripts);
+
+    private sealed record ActiveProviderRuntime(
+        Assembly Assembly,
+        IReadOnlyList<ProviderPatch> Patches);
+
+    private sealed record ProviderPatch(MethodBase Target, MethodInfo Callback);
 
     private sealed record ManagedVisualPostfix(Type TargetType, MethodInfo Method);
 

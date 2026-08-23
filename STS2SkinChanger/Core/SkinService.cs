@@ -1359,6 +1359,37 @@ internal static class SkinService
     private static void MountOverlay(IReadOnlySet<string> groups)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        var selectedFullRuntimeProviders = catalog.Groups
+            .Select(group => (Group: group, Selection: Config.GetSelection(group.Id)))
+            .Where(pair =>
+                catalog.IsRuntimeProviderOption(pair.Group.Id, pair.Selection) &&
+                catalog.ProviderUsesFullRuntime(pair.Selection))
+            .Select(pair => pair.Selection)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
+        // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
+        ManagedSkinModLoader.DeactivateProvidersExcept(selectedFullRuntimeProviders);
+
+        var files = catalog.BuildOverlay(Config.Selections, groups);
+        if (files.Count > 0)
+        {
+            var overlayPath = System.IO.Path.Combine(
+                OS.GetUserDataDir(),
+                $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}.pck");
+            var sources = files.ToDictionary(
+                pair => pair.Key,
+                pair => (pair.Value.Archive, pair.Value.Path),
+                StringComparer.OrdinalIgnoreCase);
+            PckArchive.WriteFromArchives(overlayPath, sources);
+            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException("Godot 拒绝加载生成的皮肤资源包。");
+            }
+        }
+
+        // Register scripts and run third-party initializers only after every private scene, atlas,
+        // imported payload and frame directory is visible at its original res:// path. Static
+        // resource fields in provider assemblies are often initialized on their first type access.
         foreach (var group in catalog.Groups.Where(group => groups.Contains(group.Id)))
         {
             var selectedId = Config.GetSelection(group.Id);
@@ -1369,24 +1400,7 @@ internal static class SkinService
             }
         }
 
-        var files = catalog.BuildOverlay(Config.Selections, groups);
-        if (files.Count == 0)
-        {
-            return;
-        }
-
-        var overlayPath = System.IO.Path.Combine(
-            OS.GetUserDataDir(),
-            $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}.pck");
-        var sources = files.ToDictionary(
-            pair => pair.Key,
-            pair => (pair.Value.Archive, pair.Value.Path),
-            StringComparer.OrdinalIgnoreCase);
-        PckArchive.WriteFromArchives(overlayPath, sources);
-        if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
-        {
-            throw new InvalidOperationException("Godot 拒绝加载生成的皮肤资源包。");
-        }
+        ManagedSkinModLoader.ActivateSelectedProviders(selectedFullRuntimeProviders);
     }
 
     private static void MountCardOverlay(IReadOnlySet<string> groups)

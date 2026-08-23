@@ -436,6 +436,35 @@ if (validateIndex >= 0)
 
             if (option.IsRuntimeProvider)
             {
+                if (catalog.ProviderUsesFullRuntime(option.Id))
+                {
+                    var provider = descriptors.FirstOrDefault(descriptor =>
+                        descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
+                    if (provider?.PckPath != null && File.Exists(provider.PckPath))
+                    {
+                        using var providerArchive = PckArchive.Open(provider.PckPath);
+                        var expectedPackagePaths = providerArchive.Paths
+                            .Where(path => !IsProviderProjectControlFile(path))
+                            .ToArray();
+                        var missingPackagePaths = expectedPackagePaths
+                            .Where(path => !selectedOverlay.ContainsKey(path))
+                            .Take(20)
+                            .ToArray();
+                        if (missingPackagePaths.Length > 0)
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: selected full provider package is missing " +
+                                string.Join(", ", missingPackagePaths));
+                        }
+                        else
+                        {
+                            Console.WriteLine(
+                                $"validated full provider package {group.Id}/{option.Id}: " +
+                                $"{expectedPackagePaths.Length} files");
+                        }
+                    }
+                }
+
                 var privateAtlasFiles = selectedOverlay.Values
                     .Where(file =>
                         (file.Path.EndsWith(".atlas.import", StringComparison.OrdinalIgnoreCase) ||
@@ -873,6 +902,21 @@ static bool IsProviderNamespaceFile(string path, string providerId)
     return providerToken.Length > 0 &&
            (topLevelToken.Equals(providerToken, StringComparison.OrdinalIgnoreCase) ||
             topLevelToken.StartsWith(providerToken, StringComparison.OrdinalIgnoreCase));
+}
+
+static bool IsProviderProjectControlFile(string path)
+{
+    if (path.Equals("res://project.binary", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("res://project.godot", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("res://export_presets.cfg", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gdextension", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    return path.StartsWith("res://.godot/", StringComparison.OrdinalIgnoreCase) &&
+           !path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) &&
+           !path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase);
 }
 
 static IEnumerable<string> GetSiblingAtlasTextureFiles(ResourceFile atlasFile)

@@ -50,7 +50,10 @@ internal static class VisualPatchGuard
 
             var providerPatches = EnumeratePatches(patchInfo)
                 .Select(entry => (entry.Patch, entry.Kind, Root: GetProviderRoot(entry.Patch, roots)))
-                .Where(entry => entry.Root != null)
+                .Where(entry =>
+                    entry.Root != null &&
+                    !ManagedSkinModLoader.IsProviderAssemblyActive(
+                        entry.Patch.PatchMethod.Module.Assembly))
                 .DistinctBy(entry => (entry.Patch.PatchMethod, entry.Kind))
                 .ToArray();
             foreach (var entry in providerPatches)
