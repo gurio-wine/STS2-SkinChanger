@@ -376,6 +376,31 @@ if (validateIndex >= 0)
                 }
             }
 
+            if (option.IsRuntimeProvider)
+            {
+                var privateAtlasFiles = selectedOverlay.Values
+                    .Where(file =>
+                        (file.Path.EndsWith(".atlas.import", StringComparison.OrdinalIgnoreCase) ||
+                         file.Path.EndsWith(".atlas.remap", StringComparison.OrdinalIgnoreCase)) &&
+                        IsProviderNamespaceFile(
+                            file.Path.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
+                                ? file.Path[..^7]
+                                : file.Path[..^6],
+                            option.Id))
+                    .DistinctBy(file => file.Archive.Path + "\n" + file.Path);
+                foreach (var atlasFile in privateAtlasFiles)
+                {
+                    foreach (var textureFilePath in GetSiblingAtlasTextureFiles(atlasFile))
+                    {
+                        if (!selectedOverlay.ContainsKey(textureFilePath))
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: atlas texture page is missing {textureFilePath}");
+                        }
+                    }
+                }
+            }
+
             var ownPaths = group.Options
                 .SelectMany(candidate => candidate.Assets.Keys)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -714,6 +739,39 @@ static bool IsProviderNamespaceFile(string path, string providerId)
     return providerToken.Length > 0 &&
            (topLevelToken.Equals(providerToken, StringComparison.OrdinalIgnoreCase) ||
             topLevelToken.StartsWith(providerToken, StringComparison.OrdinalIgnoreCase));
+}
+
+static IEnumerable<string> GetSiblingAtlasTextureFiles(ResourceFile atlasFile)
+{
+    var atlasSourcePath = atlasFile.Path.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
+        ? atlasFile.Path[..^7]
+        : atlasFile.Path[..^6];
+    var separator = atlasSourcePath.LastIndexOf('/');
+    if (separator < 0)
+    {
+        yield break;
+    }
+
+    var directory = atlasSourcePath[..(separator + 1)];
+    foreach (var path in atlasFile.Archive.Paths)
+    {
+        var sourcePath = path.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
+            ? path[..^7]
+            : path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)
+                ? path[..^6]
+                : path;
+        if ((!sourcePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
+             !sourcePath.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) &&
+             !sourcePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) &&
+             !sourcePath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)) ||
+            !sourcePath.StartsWith(directory, StringComparison.OrdinalIgnoreCase) ||
+            sourcePath[directory.Length..].Contains('/'))
+        {
+            continue;
+        }
+
+        yield return path;
+    }
 }
 
 partial class Program

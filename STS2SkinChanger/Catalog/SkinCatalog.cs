@@ -683,6 +683,20 @@ internal sealed partial class SkinCatalog : IDisposable
                 {
                     Enqueue(dependencyIndex, dependencyFile, includeInOverlay: true);
                 }
+
+                // Spine atlas 内的页名通常只是相对文件名，不会以 res:// 形式
+                // 出现在场景或资源里，因此上面的引用扫描看不到它们。按当前已
+                // 引用 atlas 的所在目录补齐贴图资产，不依赖角色名、Mod 名或
+                // 文件名语言，也不会挂载提供者的其他目录。
+                foreach (var textureAsset in GetSiblingAtlasTextureAssets(
+                             dependencyIndex,
+                             sourcePath))
+                {
+                    foreach (var textureFile in textureAsset.Files)
+                    {
+                        Enqueue(dependencyIndex, textureFile, includeInOverlay: true);
+                    }
+                }
             }
         }
 
@@ -702,6 +716,66 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
     }
+
+    private static IEnumerable<ResourceAsset> GetSiblingAtlasTextureAssets(
+        PckResourceIndex index,
+        string atlasSourcePath)
+    {
+        if (!atlasSourcePath.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase))
+        {
+            yield break;
+        }
+
+        var separator = atlasSourcePath.LastIndexOf('/');
+        if (separator < 0)
+        {
+            yield break;
+        }
+
+        var directory = atlasSourcePath[..(separator + 1)];
+        var sourcePaths = index.Assets.Keys
+            .Concat(index.Archive.Paths.Select(NormalizeAtlasTextureCandidatePath))
+            .Where(path => path != null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var sourcePath in sourcePaths)
+        {
+            if (!IsAtlasTextureSourcePath(sourcePath) ||
+                !sourcePath.StartsWith(directory, StringComparison.OrdinalIgnoreCase) ||
+                sourcePath[directory.Length..].Contains('/'))
+            {
+                continue;
+            }
+
+            var asset = index.Assets.GetValueOrDefault(sourcePath) ??
+                        index.TryBuildAsset(sourcePath);
+            if (asset != null)
+            {
+                yield return asset;
+            }
+        }
+    }
+
+    private static string? NormalizeAtlasTextureCandidatePath(string path)
+    {
+        if (path.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+        {
+            return path[..^7];
+        }
+
+        if (path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase))
+        {
+            return path[..^6];
+        }
+
+        return IsAtlasTextureSourcePath(path) ? path : null;
+    }
+
+    private static bool IsAtlasTextureSourcePath(string path) =>
+        path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsProviderNamespacePath(string path, string idToken)
     {
@@ -1024,6 +1098,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var indexes = _cosmeticIndexes
             .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
             .ToArray();
+        var providerIdToken = NormalizeResourceToken(selected.Id);
         if (indexes.Length == 0)
         {
             return new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -1078,31 +1153,48 @@ internal sealed partial class SkinCatalog : IDisposable
                     continue;
                 }
 
-                foreach (var file in dependency.Files)
+                IncludeAsset(dependencyIndex, dependency);
+                if (IsProviderNamespacePath(sourcePath, providerIdToken))
                 {
-                    // 挂在原始路径上的依赖副本同样重写文本引用：二进制资源
-                    // (.scn/.res) 内部无法重写，其回退引用会落到这些原始路径副本，
-                    // 重写后整条链都指向别名空间的新鲜副本，避免命中游戏缓存的
-                    // 原版贴图导致预览图混用资源。
-                    var dependencyBytes = file.Archive.ReadFile(file.Path);
-                    if (IsRewritableTextResource(file.Path))
+                    foreach (var textureAsset in GetSiblingAtlasTextureAssets(
+                                 dependencyIndex,
+                                 sourcePath))
                     {
-                        dependencyBytes = RewriteTextResource(dependencyBytes, sourceAliases, payloadAliases);
+                        IncludeAsset(dependencyIndex, textureAsset);
                     }
-
-                    result[file.Path] = dependencyBytes;
-                    var takeoverPath = NormalizeTakeoverPath(file.Path);
-                    if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
-                    {
-                        result[takeoverPath] = dependencyBytes;
-                    }
-
-                    Enqueue(dependencyIndex, file);
                 }
             }
         }
 
         return result;
+
+        void IncludeAsset(PckResourceIndex index, ResourceAsset asset)
+        {
+            foreach (var file in asset.Files)
+            {
+                // 挂在原始路径上的依赖副本同样重写文本引用：二进制资源
+                // (.scn/.res) 内部无法重写，其回退引用会落到这些原始路径副本，
+                // 重写后整条链都指向别名空间的新鲜副本，避免命中游戏缓存的
+                // 原版贴图导致预览图混用资源。
+                var dependencyBytes = file.Archive.ReadFile(file.Path);
+                if (IsRewritableTextResource(file.Path))
+                {
+                    dependencyBytes = RewriteTextResource(
+                        dependencyBytes,
+                        sourceAliases,
+                        payloadAliases);
+                }
+
+                result[file.Path] = dependencyBytes;
+                var takeoverPath = NormalizeTakeoverPath(file.Path);
+                if (!takeoverPath.Equals(file.Path, StringComparison.OrdinalIgnoreCase))
+                {
+                    result[takeoverPath] = dependencyBytes;
+                }
+
+                Enqueue(index, file);
+            }
+        }
 
         void Enqueue(PckResourceIndex? index, ResourceFile file)
         {
