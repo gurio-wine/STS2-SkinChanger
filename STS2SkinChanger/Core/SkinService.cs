@@ -3,6 +3,8 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
+using System.Security.Cryptography;
+using System.Text;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
 
@@ -26,6 +28,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedAncientStyleMethods =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> MountedOverlayCache =
+        new(StringComparer.Ordinal);
     private static readonly HashSet<string> SharedCardPoolIds = new(StringComparer.OrdinalIgnoreCase)
     {
         "event",
@@ -125,6 +129,7 @@ internal static class SkinService
                 AncientStyleMethods.Clear();
                 MissingAncientStyleMethods.Clear();
                 FailedAncientStyleMethods.Clear();
+                MountedOverlayCache.Clear();
                 CleanupOldOverlays();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
@@ -1388,21 +1393,7 @@ internal static class SkinService
         ManagedSkinModLoader.DeactivateProvidersExcept(selectedFullRuntimeProviders);
 
         var files = catalog.BuildOverlay(Config.Selections, groups);
-        if (files.Count > 0)
-        {
-            var overlayPath = System.IO.Path.Combine(
-                OS.GetUserDataDir(),
-                $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}.pck");
-            var sources = files.ToDictionary(
-                pair => pair.Key,
-                pair => (pair.Value.Archive, pair.Value.Path),
-                StringComparer.OrdinalIgnoreCase);
-            PckArchive.WriteFromArchives(overlayPath, sources);
-            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
-            {
-                throw new InvalidOperationException("Godot 拒绝加载生成的皮肤资源包。");
-            }
-        }
+        MountArchiveOverlay(files, "visual", "Godot 拒绝加载生成的皮肤资源包。");
 
         // Register scripts and run third-party initializers only after every private scene, atlas,
         // imported payload and frame directory is visible at its original res:// path. Static
@@ -1429,18 +1420,63 @@ internal static class SkinService
             return;
         }
 
-        var overlayPath = System.IO.Path.Combine(
-            OS.GetUserDataDir(),
-            $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}_cards.pck");
-        var sources = files.ToDictionary(
-            pair => pair.Key,
-            pair => (pair.Value.Archive, pair.Value.Path),
-            StringComparer.OrdinalIgnoreCase);
-        PckArchive.WriteFromArchives(overlayPath, sources);
+        MountArchiveOverlay(files, "cards", "Godot 拒绝加载生成的卡牌皮肤资源包。");
+    }
+
+    private static void MountArchiveOverlay(
+        IReadOnlyDictionary<string, ResourceFile> files,
+        string category,
+        string failureMessage)
+    {
+        if (files.Count == 0)
+        {
+            return;
+        }
+
+        var signature = BuildOverlaySignature(files, category);
+        if (!MountedOverlayCache.TryGetValue(signature, out var overlayPath) || !File.Exists(overlayPath))
+        {
+            overlayPath = System.IO.Path.Combine(
+                OS.GetUserDataDir(),
+                $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}_{category}.pck");
+            var sources = files.ToDictionary(
+                pair => pair.Key,
+                pair => (pair.Value.Archive, pair.Value.Path),
+                StringComparer.OrdinalIgnoreCase);
+            PckArchive.WriteFromArchives(overlayPath, sources);
+            MountedOverlayCache[signature] = overlayPath;
+        }
+
+        // Loading the same pack again is intentional. Godot gives the most recently loaded pack
+        // priority, so an existing deterministic pack can restore paths shadowed by a temporary
+        // runtime pack without writing another multi-hundred-megabyte copy to disk.
         if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
         {
-            throw new InvalidOperationException("Godot 拒绝加载生成的卡牌皮肤资源包。");
+            MountedOverlayCache.Remove(signature);
+            throw new InvalidOperationException(failureMessage);
         }
+    }
+
+    private static string BuildOverlaySignature(
+        IReadOnlyDictionary<string, ResourceFile> files,
+        string category)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        AppendSignaturePart(hash, category);
+        foreach (var pair in files.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            AppendSignaturePart(hash, pair.Key);
+            AppendSignaturePart(hash, pair.Value.Archive.Path);
+            AppendSignaturePart(hash, pair.Value.Path);
+        }
+
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    private static void AppendSignaturePart(IncrementalHash hash, string value)
+    {
+        hash.AppendData(Encoding.UTF8.GetBytes(value));
+        hash.AppendData([0]);
     }
 
     private static void ClearRuntimeResourceCache(string groupId)

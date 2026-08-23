@@ -474,8 +474,27 @@ internal sealed partial class SkinCatalog : IDisposable
             })
             .Where(option => option?.IsRuntimeProvider == true)
             .Cast<SkinOption>()
-            .DistinctBy(option => option.Id)
+            .GroupBy(option => option.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(options =>
+            {
+                var first = options.First();
+                var assets = options
+                    .SelectMany(option => option.Assets)
+                    .GroupBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        pairs => pairs.Key,
+                        pairs => pairs.Last().Value,
+                        StringComparer.OrdinalIgnoreCase);
+                return first with { Assets = assets };
+            })
             .ToArray();
+        var selectableProviderFiles = Groups
+            .SelectMany(group => group.Options)
+            .Where(option => option.IsRuntimeProvider)
+            .SelectMany(option => option.Assets.Values)
+            .SelectMany(asset => asset.Files)
+            .Select(file => NormalizeTakeoverPath(file.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Full single-bundle providers can legitimately contain canonical support paths in
         // addition to private files. Add the package first so the explicit group mapping below is
@@ -484,6 +503,11 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
             {
+                if (!ShouldMountProviderDependency(selected, file.Key, selectableProviderFiles))
+                {
+                    continue;
+                }
+
                 files[file.Key] = file.Value;
             }
         }
@@ -538,11 +562,42 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
             {
+                if (!ShouldMountProviderDependency(selected, file.Key, selectableProviderFiles))
+                {
+                    continue;
+                }
+
                 files[file.Key] = file.Value;
             }
         }
 
         return files;
+    }
+
+    private static bool ShouldMountProviderDependency(
+        SkinOption selected,
+        string dependencyPath,
+        IReadOnlySet<string> selectableProviderFiles)
+    {
+        var takeoverPath = NormalizeTakeoverPath(dependencyPath);
+        if (AncientBackgroundSceneRegex().IsMatch(StripResourceRedirectSuffix(takeoverPath)))
+        {
+            return false;
+        }
+
+        if (!selectableProviderFiles.Contains(takeoverPath))
+        {
+            return true;
+        }
+
+        // A provider may contain many independently selectable creatures. Its scene dependency
+        // graph can also contain stale or prefix-compressed references to another creature. Never
+        // let selecting one group globally mount files owned by a different group; merged options
+        // above still allow every group from the same provider that is actually selected together.
+        return selected.Assets.Values
+            .SelectMany(asset => asset.Files)
+            .Select(file => NormalizeTakeoverPath(file.Path))
+            .Contains(takeoverPath, StringComparer.OrdinalIgnoreCase);
     }
 
     public Dictionary<string, ResourceFile> BuildCardOverlay(
