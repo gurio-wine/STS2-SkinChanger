@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.UI;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardLibrary;
@@ -164,7 +165,33 @@ internal static class CardSkinControls
 
         if (BaselineLayouts.TryGetValue(card, out var state))
         {
-            state.Restore();
+            // NCard comes from a node pool, and the beta combat queue also rebinds an existing
+            // node to the network-resolved CardModel just before execution. Never restore a
+            // previous model's portrait/frame state into the newly assigned model.
+            if (state.BelongsTo(card.Model))
+            {
+                state.Restore();
+            }
+            else
+            {
+                BaselineLayouts.Remove(card);
+            }
+        }
+    }
+
+    public static void ReapplyQueuedCardPortraits(NCardPlayQueue queue)
+    {
+        foreach (var card in queue.GetChildren().OfType<NCard>())
+        {
+            if (!GodotObject.IsInstanceValid(card) || card.Model == null)
+            {
+                continue;
+            }
+
+            // v0.111 refreshes the portrait again while cards enter and execute from the play
+            // queue. Reassert the exact per-card selection after that queue-owned refresh so a
+            // pooled TextureRect cannot keep another card's art.
+            ApplySelectedPortraitToNode(card, ExternalCardVisualBridge.GetOwnership(card.Model));
         }
     }
 
@@ -696,6 +723,7 @@ internal static class CardSkinControls
     }
 
     private sealed class CardLayoutState(
+        CardModel? model,
         IReadOnlyList<CanvasItemState> items,
         IReadOnlySet<ulong> baselineNodeIds)
     {
@@ -753,8 +781,10 @@ internal static class CardSkinControls
             var nodeIds = Descendants(card)
                 .Select(node => node.GetInstanceId())
                 .ToHashSet();
-            return new CardLayoutState(states, nodeIds);
+            return new CardLayoutState(card.Model, states, nodeIds);
         }
+
+        public bool BelongsTo(CardModel? currentModel) => ReferenceEquals(model, currentModel);
 
         public IReadOnlyList<Node> FindAddedNodes(NCard card) =>
             Descendants(card)
@@ -1119,4 +1149,20 @@ internal static class CardLayoutFinalPatch
         CardSkinControls.ApplySelectedPresentation(__instance, externalOwnership);
         CardSkinControls.ApplySelectedPortraitToNode(__instance, externalOwnership);
     }
+}
+
+[HarmonyPatch(typeof(NCardPlayQueue), nameof(NCardPlayQueue.OnLocalCardPlayed))]
+internal static class LocalCardPlayQueuePortraitPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCardPlayQueue __instance) =>
+        CardSkinControls.ReapplyQueuedCardPortraits(__instance);
+}
+
+[HarmonyPatch(typeof(NCardPlayQueue), nameof(NCardPlayQueue.UpdateCardBeforeExecution))]
+internal static class CardPlayQueueRebindPortraitPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCardPlayQueue __instance) =>
+        CardSkinControls.ReapplyQueuedCardPortraits(__instance);
 }

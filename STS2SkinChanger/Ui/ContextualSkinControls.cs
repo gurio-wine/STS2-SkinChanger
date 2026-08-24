@@ -471,19 +471,15 @@ internal static partial class ContextualSkinControls
 
         var characterId = character.Id.Entry.ToLowerInvariant();
         var characterSelectPath = CanonicalScenePath("screens/char_select/char_select_bg_" + characterId);
-        var scenePaths = new[]
-        {
-            characterSelectPath,
-            CanonicalScenePath("creature_visuals/" + characterId),
-            CanonicalScenePath("rest_site/characters/" + characterId + "_rest_site"),
-            CanonicalScenePath("merchant/characters/" + characterId + "_merchant")
-        };
         var characterSelectTextures = new[]
         {
             CanonicalImagePath("packed/character_select/char_select_" + characterId + ".png"),
             CanonicalImagePath("packed/character_select/char_select_" + characterId + "_locked.png")
         };
-        var resourcePaths = scenePaths
+        // Only the background and button textures are needed on this screen. Combat, rest-site
+        // and merchant scenes have their own lazy replacement hooks and caches; eagerly pulling
+        // all of them here made the first click decode entire animation sets for some skins.
+        var resourcePaths = new[] { characterSelectPath }
             .Concat(characterSelectTextures)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
