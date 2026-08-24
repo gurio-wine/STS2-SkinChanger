@@ -32,6 +32,14 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, string> MountedOverlayCache =
         new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, ResourceFile> ActiveLocalizationFiles =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, LocalizationCacheState> LocalizationStateCache =
+        new(StringComparer.Ordinal);
+    private static readonly System.Reflection.FieldInfo? LocTablesField =
+        AccessTools.Field(typeof(LocManager), "_tables");
+    private static readonly System.Reflection.MethodInfo? SetLanguageInternalMethod =
+        AccessTools.Method(typeof(LocManager), "SetLanguageInternal");
     private static readonly HashSet<string> SharedCardPoolIds = new(StringComparer.OrdinalIgnoreCase)
     {
         "event",
@@ -49,6 +57,7 @@ internal static class SkinService
     private static bool _configLoaded;
     private static bool _cardGroupsInitialized;
     private static string? _cardCatalogSignature;
+    private static string? _mountedLocalizationSignature;
 
     public static SkinCatalog? Catalog { get; private set; }
     public static SkinConfig Config { get; private set; } = new();
@@ -132,6 +141,9 @@ internal static class SkinService
                 MissingAncientStyleMethods.Clear();
                 FailedAncientStyleMethods.Clear();
                 MountedOverlayCache.Clear();
+                ActiveLocalizationFiles.Clear();
+                LocalizationStateCache.Clear();
+                _mountedLocalizationSignature = null;
                 CleanupOldOverlays();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
@@ -1413,6 +1425,7 @@ internal static class SkinService
 
     private static void MountOverlay(IReadOnlySet<string> groups)
     {
+        var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
         var selectedFullRuntimeProviders = catalog.GetFullySelectedFullRuntimeProviders(
             Config.Selections);
@@ -1420,9 +1433,15 @@ internal static class SkinService
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(selectedFullRuntimeProviders);
 
+        var buildStarted = Stopwatch.GetTimestamp();
         var files = catalog.BuildOverlay(Config.Selections, groups);
+        var buildElapsed = Stopwatch.GetElapsedTime(buildStarted);
+        var mountStarted = Stopwatch.GetTimestamp();
         MountArchiveOverlay(files, "visual", "Godot 拒绝加载生成的皮肤资源包。");
-        RefreshLocalizationIfNeeded(files.Keys);
+        var mountElapsed = Stopwatch.GetElapsedTime(mountStarted);
+        var localizationStarted = Stopwatch.GetTimestamp();
+        RefreshLocalizationIfNeeded(files);
+        var localizationElapsed = Stopwatch.GetElapsedTime(localizationStarted);
 
         // Register scripts and run third-party initializers only after every private scene, atlas,
         // imported payload and frame directory is visible at its original res:// path. Static
@@ -1438,15 +1457,31 @@ internal static class SkinService
         }
 
         ManagedSkinModLoader.ActivateSelectedProviders(selectedFullRuntimeProviders);
+        ModLog.Info(
+            $"已挂载 {groups.Count} 个外观分组/{files.Count} 个文件；" +
+            $"目录={buildElapsed.TotalMilliseconds:F1} ms，" +
+            $"资源包={mountElapsed.TotalMilliseconds:F1} ms，" +
+            $"本地化={localizationElapsed.TotalMilliseconds:F1} ms，" +
+            $"总计={Stopwatch.GetElapsedTime(totalStarted).TotalMilliseconds:F1} ms。");
     }
 
-    private static void RefreshLocalizationIfNeeded(IEnumerable<string> mountedPaths)
+    private static void RefreshLocalizationIfNeeded(
+        IReadOnlyDictionary<string, ResourceFile> mountedFiles)
     {
-        if (!mountedPaths.Any(path =>
-                path.Contains("/localization/", StringComparison.OrdinalIgnoreCase)))
+        var localizationFiles = mountedFiles
+            .Where(pair => pair.Key.Contains("/localization/", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (localizationFiles.Length == 0)
         {
             return;
         }
+
+        foreach (var file in localizationFiles)
+        {
+            ActiveLocalizationFiles[file.Key] = file.Value;
+        }
+
+        var signature = BuildOverlaySignature(ActiveLocalizationFiles, "localization");
 
         try
         {
@@ -1455,11 +1490,37 @@ internal static class SkinService
             {
                 // During boot LocManager initializes after Mod PCK mounting and reads the
                 // selected files itself. Only an in-session switch needs an explicit reload.
+                _mountedLocalizationSignature = signature;
                 return;
             }
 
-            manager.SetLanguage(manager.Language);
-            ModLog.Info($"已刷新 {manager.Language} 本地化缓存。");
+            if (string.Equals(_mountedLocalizationSignature, signature, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var language = manager.Language;
+            if (_mountedLocalizationSignature != null)
+            {
+                CaptureLocalizationState(manager, _mountedLocalizationSignature, language);
+            }
+
+            var cacheKey = LocalizationCacheKey(signature, language);
+            if (LocalizationStateCache.TryGetValue(cacheKey, out var cached) &&
+                SetLanguageInternalMethod != null)
+            {
+                SetLanguageInternalMethod.Invoke(
+                    manager,
+                    [language, cached.Tables, cached.OverridesActive, cached.ValidationErrors.ToList()]);
+                _mountedLocalizationSignature = signature;
+                ModLog.Info($"已复用 {language} 本地化状态缓存。");
+                return;
+            }
+
+            manager.SetLanguage(language);
+            _mountedLocalizationSignature = signature;
+            CaptureLocalizationState(manager, signature, language);
+            ModLog.Info($"已刷新 {language} 本地化缓存。");
         }
         catch (Exception exception)
         {
@@ -1467,6 +1528,25 @@ internal static class SkinService
             ModLog.Warn("刷新皮肤本地化缓存失败：" + exception.GetBaseException().Message);
         }
     }
+
+    private static void CaptureLocalizationState(
+        LocManager manager,
+        string signature,
+        string language)
+    {
+        if (LocTablesField?.GetValue(manager) is not Dictionary<string, LocTable> tables)
+        {
+            return;
+        }
+
+        LocalizationStateCache[LocalizationCacheKey(signature, language)] = new LocalizationCacheState(
+            tables,
+            manager.OverridesActive,
+            manager.ValidationErrors.ToList());
+    }
+
+    private static string LocalizationCacheKey(string signature, string language) =>
+        language + "\n" + signature;
 
     private static void MountCardOverlay(IReadOnlySet<string> groups)
     {
@@ -1529,6 +1609,11 @@ internal static class SkinService
 
         return Convert.ToHexString(hash.GetHashAndReset());
     }
+
+    private sealed record LocalizationCacheState(
+        Dictionary<string, LocTable> Tables,
+        bool OverridesActive,
+        IReadOnlyList<LocValidationError> ValidationErrors);
 
     private static void AppendSignaturePart(IncrementalHash hash, string value)
     {

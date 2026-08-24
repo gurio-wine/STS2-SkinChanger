@@ -1552,15 +1552,24 @@ internal sealed partial class SkinCatalog : IDisposable
                     }
                 }
 
-                if (dependency == null || dependencyIndex == null)
+                // A replacement pack often contains only imported Spine payloads while keeping
+                // the game's original *_skel_data.tres and scene. Those baseline bridge files are
+                // still real dependencies of the requested root and must be reloaded together
+                // with the selected provider payload. Falling back here follows only the actual
+                // reference closure; it does not pull unrelated combat/rest/merchant roots.
+                dependency ??= ResolveBaseline(sourcePath);
+                if (dependency == null)
                 {
                     continue;
                 }
 
                 IncludeAsset(dependencyIndex, dependency);
-                foreach (var textureAsset in GetSiblingAtlasTextureAssets(
-                             dependencyIndex,
-                             sourcePath))
+                if (dependencyIndex == null)
+                {
+                    continue;
+                }
+
+                foreach (var textureAsset in GetSiblingAtlasTextureAssets(dependencyIndex, sourcePath))
                 {
                     IncludeAsset(dependencyIndex, textureAsset);
                 }
@@ -1569,7 +1578,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         return result;
 
-        void IncludeAsset(PckResourceIndex index, ResourceAsset asset)
+        void IncludeAsset(PckResourceIndex? index, ResourceAsset asset)
         {
             foreach (var file in asset.Files)
             {
