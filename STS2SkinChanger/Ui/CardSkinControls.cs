@@ -77,16 +77,17 @@ internal static class CardSkinControls
         bottom.AddChild(selector);
         bottom.MoveChild(selector, 0);
 
+        NLibraryStatTickbox? availabilityFilter = null;
         var filterScene = ResourceLoader.Load<PackedScene>(
             "res://scenes/screens/card_library/card_library_tickbox.tscn");
         if (filterScene != null)
         {
-            var availabilityFilter = filterScene.Instantiate<NLibraryStatTickbox>(
+            availabilityFilter = filterScene.Instantiate<NLibraryStatTickbox>(
                 PackedScene.GenEditState.Disabled);
             availabilityFilter.Name = AvailabilityFilterName;
             bottom.AddChild(availabilityFilter);
             bottom.MoveChild(availabilityFilter, 1);
-            availabilityFilter.SetLabel("仅显示有皮肤的卡牌");
+            availabilityFilter.SetLabel(ModLocalization.Get(ModText.SkinnedCardsOnly));
             availabilityFilter.IsTicked = false;
             availabilityFilter.Connect(
                 NTickbox.SignalName.Toggled,
@@ -95,6 +96,19 @@ internal static class CardSkinControls
         }
 
         ShowFirstAvailableGroup(selector);
+        ModLocalization.Bind(screen, () =>
+        {
+            availabilityFilter?.SetLabel(ModLocalization.Get(ModText.SkinnedCardsOnly));
+            var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+            if (string.IsNullOrWhiteSpace(groupId))
+            {
+                ShowFirstAvailableGroup(selector);
+            }
+            else
+            {
+                Populate(selector, groupId);
+            }
+        });
     }
 
     public static void ShowForFilter(NCardLibrary screen, NCardPoolFilter filter)
@@ -634,13 +648,13 @@ internal static class CardSkinControls
         selector.SetMeta(UpdatingMeta, true);
         selector.SetMeta(GroupMeta, group.Id);
         dropdown.Clear();
-        dropdown.TooltipText = group.DisplayName + "卡牌皮肤";
-        dropdown.AddItem("游戏默认");
+        dropdown.TooltipText = ModLocalization.Get(ModText.CardCategorySkinTooltip);
+        dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
         foreach (var option in group.Options)
         {
             var index = dropdown.ItemCount;
-            dropdown.AddItem(option.Name);
+            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
             dropdown.SetItemMetadata(index, option.Id);
         }
 
@@ -920,7 +934,7 @@ internal static class CardInspectSkinControls
             checked((int)index));
         selector.AddChild(dropdown);
         screen.AddChild(selector);
-        Sync(screen);
+        ModLocalization.Bind(screen, () => Sync(screen));
     }
 
     public static void Sync(NInspectCardScreen screen)
@@ -943,15 +957,15 @@ internal static class CardInspectSkinControls
 
         selector.SetMeta(UpdatingMeta, true);
         dropdown.Clear();
-        dropdown.TooltipText = "为这张卡单独选择卡图；跟随分类时使用卡牌总览中的设置";
-        dropdown.AddItem("跟随分类");
+        dropdown.TooltipText = ModLocalization.Get(ModText.IndividualCardTooltip);
+        dropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
         dropdown.SetItemMetadata(0, SkinService.InheritCardSelectionId);
-        dropdown.AddItem("游戏原版");
+        dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
         dropdown.SetItemMetadata(1, SkinCatalog.BaseOptionId);
         foreach (var option in options)
         {
             var index = dropdown.ItemCount;
-            dropdown.AddItem(option.Name);
+            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
             dropdown.SetItemMetadata(index, option.Id);
         }
 

@@ -39,7 +39,7 @@ internal static class AncientCompendiumEntry
         var bottomRow = compendium.GetNodeOrNull<HBoxContainer>("MarginContainer/VBoxContainer/BottomRow");
         if (bottomRow == null)
         {
-            ModLog.Error("图鉴底部缺少按钮行节点，远古图鉴入口未添加。");
+            ModLog.Error("图鉴底部缺少按钮行节点，先古图鉴入口未添加。");
             return;
         }
 
@@ -51,7 +51,13 @@ internal static class AncientCompendiumEntry
             bottomRow.MoveChild(button, statistics.GetIndex() + 1);
         }
 
-        button.GetNodeOrNull<MegaLabel>("Label")?.SetTextAutoSize("远古图鉴");
+        var buttonLabel = button.GetNodeOrNull<MegaLabel>("Label");
+        buttonLabel?.SetTextAutoSize(ModLocalization.Get(ModText.AncientCompendium));
+        if (buttonLabel != null)
+        {
+            ModLocalization.Bind(button, () =>
+                buttonLabel.SetTextAutoSize(ModLocalization.Get(ModText.AncientCompendium)));
+        }
         var icon = button.GetNodeOrNull<TextureRect>("Icon");
         if (icon != null)
         {
@@ -95,7 +101,7 @@ internal static class AncientCompendiumEntry
     {
         if (StackField.GetValue(compendium) is not NSubmenuStack stack)
         {
-            ModLog.Error("无法取得图鉴菜单栈，远古图鉴未打开。");
+            ModLog.Error("无法取得图鉴菜单栈，先古图鉴未打开。");
             return;
         }
 
@@ -167,11 +173,11 @@ internal static class AncientCompendiumEntry
             }
 
             result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as Texture2D ??
-                     throw new InvalidOperationException($"独立远古皮肤资源不是贴图：{resourcePath}");
+                     throw new InvalidOperationException($"独立先古皮肤资源不是贴图：{resourcePath}");
         }
         catch (Exception exception)
         {
-            ModLog.Error($"最终接管远古头像 {resourcePath} 失败：{exception}");
+            ModLog.Error($"最终接管先古头像 {resourcePath} 失败：{exception}");
         }
     }
 
@@ -203,6 +209,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private VBoxContainer _entryList = null!;
     private Label _nameLabel = null!;
     private Label _epithetLabel = null!;
+    private Label _headingLabel = null!;
     private HBoxContainer _skinSelector = null!;
     private OptionButton _skinDropdown = null!;
     private SubViewport _previewViewport = null!;
@@ -327,10 +334,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
         sidebarContent.AddThemeConstantOverride("separation", 22);
         sidebar.AddChild(sidebarContent);
 
-        var heading = BuildLabel(34, new Color("efc850"));
-        heading.Text = "远古图鉴";
-        heading.CustomMinimumSize = new Vector2(0, 54);
-        sidebarContent.AddChild(heading);
+        _headingLabel = BuildLabel(30, new Color("efc850"));
+        _headingLabel.Text = ModLocalization.Get(ModText.AncientCompendium);
+        _headingLabel.CustomMinimumSize = new Vector2(0, 54);
+        sidebarContent.AddChild(_headingLabel);
 
         var divider = new HSeparator();
         divider.AddThemeConstantOverride("separation", 12);
@@ -356,6 +363,23 @@ internal partial class AncientCompendiumScreen : NSubmenu
             .Instantiate<NBackButton>(PackedScene.GenEditState.Disabled);
         backButton.Name = "BackButton";
         AddChild(backButton);
+        ModLocalization.Bind(this, RefreshLocalizedText);
+    }
+
+    private void RefreshLocalizedText()
+    {
+        _headingLabel.Text = ModLocalization.Get(ModText.AncientCompendium);
+        if (_selectedAncient == null && _entryButtons.Count == 0)
+        {
+            _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
+        }
+
+        var groupId = _skinDropdown.GetMeta("sts2_skin_group", string.Empty).AsString();
+        if (!string.IsNullOrWhiteSpace(groupId))
+        {
+            PopulateSkinDropdown(SkinService.Catalog?.Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase)));
+        }
     }
 
     private void RefreshAncients()
@@ -385,7 +409,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         if (ancients.Length == 0)
         {
-            _nameLabel.Text = "没有可预览的远古者";
+            _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
             _epithetLabel.Text = string.Empty;
             _skinSelector.Visible = false;
             ClearPreview();
@@ -431,12 +455,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
             return;
         }
 
-        _skinDropdown.AddItem("游戏默认");
+        _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         _skinDropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
         foreach (var option in group.Options)
         {
             var index = _skinDropdown.ItemCount;
-            _skinDropdown.AddItem(option.Name);
+            _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
             _skinDropdown.SetItemMetadata(index, option.Id);
         }
 
@@ -460,7 +484,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var optionId = _skinDropdown.GetItemMetadata(index).AsString();
         if (!SkinService.ApplySelection(groupId, optionId))
         {
-            ModLog.Error($"远古皮肤切换失败：{SkinService.LastError}");
+            ModLog.Error($"先古皮肤切换失败：{SkinService.LastError}");
             PopulateSkinDropdown(AncientCompendiumEntry.FindGroup(_selectedAncient.Id.Entry));
             return;
         }
@@ -489,7 +513,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             else
             {
                 scene = ResourceLoader.Load<PackedScene>(scenePath, null, ResourceLoader.CacheMode.IgnoreDeep)
-                        ?? throw new InvalidOperationException($"无法加载远古场景：{scenePath}");
+                        ?? throw new InvalidOperationException($"无法加载先古场景：{scenePath}");
             }
 
             var preview = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
@@ -504,11 +528,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
             previewHost.AddChild(preview);
             ManagedAncientLayeredImage.TryApply(group?.Id, preview);
             ManagedAncientSceneAnimation.TryStart(group?.Id, preview);
-            ModLog.Info($"远古图鉴已展示 {ancient.Id.Entry}。");
+            ModLog.Info($"先古图鉴已展示 {ancient.Id.Entry}。");
         }
         catch (Exception exception)
         {
-            ModLog.Error($"远古图鉴预览 {ancient.Id.Entry} 失败：{exception}");
+            ModLog.Error($"先古图鉴预览 {ancient.Id.Entry} 失败：{exception}");
         }
     }
 
@@ -533,7 +557,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         root.Free();
         if (error != Error.Ok)
         {
-            throw new InvalidOperationException($"无法创建远古图片场景：{error}");
+            throw new InvalidOperationException($"无法创建先古图片场景：{error}");
         }
 
         return scene;
@@ -642,7 +666,7 @@ internal static class ManagedAncientLayeredImage
                         StringComparison.OrdinalIgnoreCase) == true);
             if (target?.GetParent() is not Node parent)
             {
-                ModLog.Warn($"远古图层皮肤 {groupId} 找不到原场景占位图。");
+                ModLog.Warn($"先古图层皮肤 {groupId} 找不到原场景占位图。");
                 return;
             }
 
@@ -673,11 +697,11 @@ internal static class ManagedAncientLayeredImage
 
             parent.AddChild(character);
             parent.MoveChild(character, insertIndex);
-            ModLog.Info($"已应用 {groupId} 的代码型远古图层皮肤。");
+            ModLog.Info($"已应用 {groupId} 的代码型先古图层皮肤。");
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"应用 {groupId} 的远古图层皮肤失败：{exception.Message}");
+            ModLog.Warn($"应用 {groupId} 的先古图层皮肤失败：{exception.Message}");
         }
     }
 
@@ -687,7 +711,7 @@ internal static class ManagedAncientLayeredImage
         Texture2D texture)
     {
         var layer = source.Duplicate() as TextureRect ??
-                    throw new InvalidOperationException("无法复制远古场景占位图节点。");
+                    throw new InvalidOperationException("无法复制先古场景占位图节点。");
         layer.Name = name;
         layer.Texture = texture;
         return layer;
@@ -737,7 +761,7 @@ internal static class ManagedAncientSceneAnimation
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"准备 {groupId} 的远古 Spine 动画失败：{exception.Message}");
+            ModLog.Warn($"准备 {groupId} 的先古 Spine 动画失败：{exception.Message}");
         }
     }
 
@@ -776,7 +800,7 @@ internal static class ManagedAncientSceneAnimation
                     AddAnimationCompat(animationState, idle, delay: 0f, loop: true);
                 }
 
-                ModLog.Info($"已启动 {groupId} 的远古 Spine 动画：{intro}" +
+                ModLog.Info($"已启动 {groupId} 的先古 Spine 动画：{intro}" +
                             (idle == null ? string.Empty : $" -> {idle}"));
                 return;
             }
@@ -793,11 +817,11 @@ internal static class ManagedAncientSceneAnimation
             }
 
             SetAnimationCompat(animationState, loopAnimation, loop: true);
-            ModLog.Info($"已启动 {groupId} 的远古 Spine 循环动画：{loopAnimation}");
+            ModLog.Info($"已启动 {groupId} 的先古 Spine 循环动画：{loopAnimation}");
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"启动 {groupId} 的远古 Spine 动画失败：{exception.Message}");
+            ModLog.Warn($"启动 {groupId} 的先古 Spine 动画失败：{exception.Message}");
         }
     }
 
@@ -856,7 +880,7 @@ internal static class ManagedAncientSceneAnimationPatch
         }
         catch (Exception exception)
         {
-            ModLog.Warn("在游戏内启动远古 Spine 动画失败：" + exception.Message);
+            ModLog.Warn("在游戏内启动先古 Spine 动画失败：" + exception.Message);
         }
     }
 }
@@ -898,7 +922,7 @@ internal static class AncientSceneResultPatch
         }
         catch (Exception exception)
         {
-            ModLog.Error($"最终应用 {ancient.Id.Entry} 的远古皮肤失败：{exception}");
+            ModLog.Error($"最终应用 {ancient.Id.Entry} 的先古皮肤失败：{exception}");
         }
     }
 }

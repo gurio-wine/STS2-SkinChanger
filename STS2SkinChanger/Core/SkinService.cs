@@ -14,8 +14,8 @@ namespace STS2SkinChanger.Core;
 
 internal static class SkinService
 {
-    public const float MinimumMonsterScale = 0.5f;
-    public const float MaximumMonsterScale = 2f;
+    public const float MinimumMonsterScale = 0.2f;
+    public const float MaximumMonsterScale = 5f;
     public const float MonsterScaleStep = 0.05f;
     public const string InheritCardSelectionId = "__inherit__";
 
@@ -177,7 +177,7 @@ internal static class SkinService
                 _initialized = true;
                 ModLog.Info(
                     $"发现 {Catalog.Groups.Count} 个生物外观组和 {Catalog.CardGroups.Count} 个卡牌外观组。" +
-                    "角色、怪物、远古者与卡牌选项已接入对应界面。");
+                    "角色、怪物、先古之民与卡牌选项已接入对应界面。");
             }
             catch (Exception exception)
             {
@@ -1053,7 +1053,7 @@ internal static class SkinService
             // 反射调用失败时每次渲染都会重复触发，只警告一次避免刷日志。
             if (FailedAncientStyleMethods.Add(option.Id))
             {
-                ModLog.Warn($"读取 {option.Id} 的远古卡图样式设置失败：{exception.Message}");
+                ModLog.Warn($"读取 {option.Id} 的先古卡图样式设置失败：{exception.Message}");
             }
 
             return true;
@@ -1269,7 +1269,7 @@ internal static class SkinService
 
             Texture2D Required(string path) =>
                 resources.GetValueOrDefault(path) as Texture2D ??
-                throw new InvalidOperationException($"远古图层资源不是贴图：{path}");
+                throw new InvalidOperationException($"先古图层资源不是贴图：{path}");
             Texture2D? Optional(string? path) =>
                 path == null ? null : Required(path);
 

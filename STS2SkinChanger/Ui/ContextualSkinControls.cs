@@ -20,6 +20,8 @@ internal static partial class ContextualSkinControls
     private const string DropdownName = "SkinDropdown";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
+    private const string MonsterScaleLabelName = "MonsterScaleLabel";
+    private const string MonsterScaleResetName = "MonsterScaleReset";
     private const string CharacterRefreshGenerationMeta = "sts2_skin_character_refresh_generation";
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
@@ -132,6 +134,7 @@ internal static partial class ContextualSkinControls
         selector.OffsetRight = 122;
         selector.OffsetBottom = -36;
         infoPanel.AddChild(selector);
+        ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
         return selector;
     }
 
@@ -147,17 +150,19 @@ internal static partial class ContextualSkinControls
         AddMonsterScaleControls(screen, selector);
         selector.AnchorLeft = 0.5f;
         selector.AnchorRight = 0.5f;
-        selector.OffsetLeft = -292;
+        selector.OffsetLeft = -350;
         selector.OffsetTop = 168;
-        selector.OffsetRight = 292;
+        selector.OffsetRight = 350;
         selector.OffsetBottom = 212;
         screen.AddChild(selector);
+        ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
         return selector;
     }
 
     private static void AddMonsterScaleControls(NBestiary screen, HBoxContainer selector)
     {
-        var label = BuildCompactLabel("大小", 50);
+        var label = BuildCompactLabel(ModLocalization.Get(ModText.MonsterSize), 60);
+        label.Name = MonsterScaleLabelName;
         var slider = new HSlider
         {
             Name = MonsterScaleSliderName,
@@ -165,15 +170,16 @@ internal static partial class ContextualSkinControls
             MaxValue = SkinService.MaximumMonsterScale,
             Step = SkinService.MonsterScaleStep,
             Value = 1d,
-            CustomMinimumSize = new Vector2(150, 36),
+            CustomMinimumSize = new Vector2(160, 36),
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter
         };
         var valueLabel = BuildCompactLabel("100%", 62);
         valueLabel.Name = MonsterScaleValueName;
         var reset = new Button
         {
-            Text = "重置",
-            CustomMinimumSize = new Vector2(62, 38),
+            Name = MonsterScaleResetName,
+            Text = ModLocalization.Get(ModText.Reset),
+            CustomMinimumSize = new Vector2(108, 38),
             FocusMode = Control.FocusModeEnum.None,
             MouseDefaultCursorShape = Control.CursorShape.PointingHand
         };
@@ -185,6 +191,28 @@ internal static partial class ContextualSkinControls
         selector.AddChild(slider);
         selector.AddChild(valueLabel);
         selector.AddChild(reset);
+    }
+
+    private static void RefreshLocalizedText(HBoxContainer selector)
+    {
+        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+        var group = string.IsNullOrWhiteSpace(groupId) ? null : FindGroup(groupId);
+        if (group != null)
+        {
+            Populate(selector, group);
+        }
+
+        var scaleLabel = selector.GetNodeOrNull<Label>(MonsterScaleLabelName);
+        if (scaleLabel != null)
+        {
+            scaleLabel.Text = ModLocalization.Get(ModText.MonsterSize);
+        }
+
+        var reset = selector.GetNodeOrNull<Button>(MonsterScaleResetName);
+        if (reset != null)
+        {
+            reset.Text = ModLocalization.Get(ModText.Reset);
+        }
     }
 
     private static Label BuildCompactLabel(string text, float width)
@@ -336,12 +364,12 @@ internal static partial class ContextualSkinControls
         selector.SetMeta(UpdatingMeta, true);
         selector.SetMeta(GroupMeta, group.Id);
         dropdown.Clear();
-        dropdown.AddItem("游戏默认");
+        dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
         foreach (var option in group.Options)
         {
             var index = dropdown.ItemCount;
-            dropdown.AddItem(option.Name);
+            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
             dropdown.SetItemMetadata(index, option.Id);
         }
 

@@ -712,9 +712,9 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var sourcePath in sourcePaths)
             {
-                // 远古事件会在线程预加载阶段先验证原背景场景。复杂皮肤场景若直接
+                // 先古事件会在线程预加载阶段先验证原背景场景。复杂皮肤场景若直接
                 // 覆盖这个路径，任何脚本或 Spine 依赖加载失败都会中断整个事件
-                // 布局，连玩法选项也无法创建。远古场景已有独立运行时加载与最终
+                // 布局，连玩法选项也无法创建。先古场景已有独立运行时加载与最终
                 // 结果接管，因此这里始终保留游戏原场景供预加载使用。
                 var takeoverSourcePath = NormalizeTakeoverPath(sourcePath);
                 if (AncientBackgroundSceneRegex().IsMatch(takeoverSourcePath))
@@ -2728,7 +2728,7 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         if (variant.Length == 0)
         {
-            return "默认";
+            return "{skin-changer-default}";
         }
 
         return variant
@@ -3332,8 +3332,8 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
-        // 有些代码型远古皮肤不提供替换场景，而是在运行时把完整画布图层
-        // 叠到原场景的占位图上。按通用的 <远古 ID>_character 等资源约定
+        // 有些代码型先古皮肤不提供替换场景，而是在运行时把完整画布图层
+        // 叠到原场景的占位图上。按通用的 <先古 ID>_character 等资源约定
         // 归组，随后由本 Mod 自己完成图层合成，无需执行提供者 DLL。
         var ancientLayer = AncientLayerImageRegex().Match(NormalizeTakeoverPath(sourcePath));
         if (ancientLayer.Success)
@@ -3558,7 +3558,7 @@ internal sealed partial class SkinCatalog : IDisposable
         "defect" => "故障机器人",
         "watcher" => "观者",
         "colorless" => "无色",
-        "ancients" => "远古",
+        "ancients" => "先古",
         "misc" => "其他",
         "neow" => "涅奥",
         "merchant" => "商人",

@@ -78,11 +78,10 @@ internal static class LoadOrderWarningController
             }
 
             verticalPopup.SetText(
-                "皮肤切换器-Skin Changer 加载顺序",
-                "本 Mod 当前不在 Mod 加载顺序第一位。排在它前面的皮肤 Mod 会先加载自己的 DLL/PCK，" +
-                "因此无法被完整接管。可以立即置顶并重启，也可以稍后在 Mod 管理界面手动调整。");
-            verticalPopup.YesButton.SetText("知道了");
-            verticalPopup.NoButton.SetText("不再提示");
+                ModLocalization.Get(ModText.LoadOrderTitle),
+                ModLocalization.Get(ModText.LoadOrderMessage));
+            verticalPopup.YesButton.SetText(ModLocalization.Get(ModText.Acknowledge));
+            verticalPopup.NoButton.SetText(ModLocalization.Get(ModText.DoNotShowAgain));
             AddPrioritizeAndRestartButton(verticalPopup);
             _shownThisSession = true;
             ModLog.Info("已显示加载顺序提示框。");
@@ -133,7 +132,7 @@ internal static class LoadOrderWarningController
         button.GrowHorizontal = Control.GrowDirection.Both;
         button.GrowVertical = Control.GrowDirection.Begin;
         popup.AddChild(button);
-        button.SetText("置顶并重启");
+        button.SetText(ModLocalization.Get(ModText.PrioritizeAndRestart));
         button.DisconnectHotkeys();
         button.GetNodeOrNull<CanvasItem>("%HotkeyIcon")?.Hide();
         button.Connect(
@@ -165,8 +164,8 @@ internal static class LoadOrderWarningController
         {
             ModLog.Error("置顶并重启失败：" + exception.GetBaseException().Message);
             popup.SetText(
-                "皮肤切换器-Skin Changer 加载顺序",
-                "自动置顶或重启失败，设置没有被静默忽略。请在 Mod 管理界面手动把皮肤切换器-Skin Changer 移到第一位并重启游戏。\n\n" +
+                ModLocalization.Get(ModText.LoadOrderTitle),
+                ModLocalization.Get(ModText.LoadOrderFailure) + "\n\n" +
                 exception.GetBaseException().Message);
         }
     }
