@@ -56,6 +56,8 @@ internal static partial class ContextualSkinControls
         AccessTools.Field(typeof(NCharacterSelectScreen), "_relicIcon");
     private static readonly System.Reflection.FieldInfo CharacterRelicIconOutlineField =
         AccessTools.Field(typeof(NCharacterSelectScreen), "_relicIconOutline");
+    private static readonly System.Reflection.MethodInfo? CharacterBackgroundWindowChangeMethod =
+        AccessTools.Method(typeof(NCharacterSelectScreenBg), "OnWindowChange");
 
     // These paths are inputs to our isolated overlay and must not pass through another Mod's Harmony redirect.
     internal static string CanonicalScenePath(string innerPath) =>
@@ -512,18 +514,61 @@ internal static partial class ContextualSkinControls
             .Concat(characterSelectTextures)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        // A complete DLL skin is mounted at its original game-facing paths while it is selected.
+        // Loading it through the per-resource alias layer changes the path context used by
+        // exported scenes and lets a later AssetCache factory instantiate it after that layer has
+        // been restored. Keep this branch on the canonical path for every full runtime provider;
+        // it is intentionally not tied to a particular mod.
+        if (SkinService.GetSelectedFullRuntimeProvider(groupId) != null)
+        {
+            RebuildMountedFullRuntimeCharacterDisplay(screen, character, characterSelectPath);
+            ReplaySelectedCharacterPresentation(screen, character, groupId);
+            return;
+        }
+
         // 需要包含提供者依赖：DLL 提供者的场景可能引用其 PCK 里的编译脚本(.gdc)、导出场景(.scn)等。
-        var resources = SkinService.LoadRuntimeResources(
+        SkinService.WithRuntimeResources(
             groupId,
             resourcePaths,
+            resources =>
+            {
+                var scene = resources[characterSelectPath] as PackedScene ??
+                            throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
+                // The scene must be instantiated before WithRuntimeResources restores canonical
+                // dependency paths; otherwise a skeleton/animation resource can come from the
+                // previous character skin even though the PackedScene itself loaded correctly.
+                ReplaceCharacterBackground(screen, character, scene);
+                RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
+                return true;
+            },
             includeProviderDependencies: true);
-
-        var scene = resources[characterSelectPath] as PackedScene ??
-                    throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
-        ReplaceCharacterBackground(screen, character, scene);
-        RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
         ReplaySelectedCharacterPresentation(screen, character, groupId);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    private static void RebuildMountedFullRuntimeCharacterDisplay(
+        NCharacterSelectScreen screen,
+        CharacterModel character,
+        string scenePath)
+    {
+        var scene = ResourceLoader.Load<PackedScene>(
+            scenePath,
+            null,
+            ResourceLoader.CacheMode.IgnoreDeep) ??
+            PreloadManager.Cache.GetScene(scenePath);
+        PreloadManager.Cache.SetAsset(scenePath, scene);
+        ReplaceCharacterBackground(screen, character, scene);
+
+        var button = FindCharacterButton(screen, character);
+        if (button != null)
+        {
+            button.GetNode<TextureRect>("%Icon").Texture = button.IsLocked
+                ? character.CharacterSelectLockedIcon
+                : character.CharacterSelectIcon;
+        }
+
+        ModLog.Info($"已从原始游戏路径重建完整 DLL 皮肤 {character.Id.Entry} 的选角展示。");
     }
 
     private static void RestoreCharacterInfoText(
@@ -672,13 +717,77 @@ internal static partial class ContextualSkinControls
 
         foreach (var child in container.GetChildren())
         {
-            container.RemoveChild(child);
-            child.QueueFree();
+            container.RemoveChildSafely(child);
+            child.QueueFreeSafely();
         }
 
         var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         background.Name = character.Id.Entry + "_bg";
-        container.AddChild(background);
+        container.AddChildSafely(background);
+
+        if (background.IsInsideTree())
+        {
+            RefreshCharacterBackgroundLayout(container, background);
+        }
+
+        // NCharacterSelectScreenBg only subscribes to SizeChanged in _Ready; it does not run
+        // that layout calculation for a scene added after the viewport was already sized. The
+        // game therefore leaves hot-swapped backgrounds at their default scale. Replay the
+        // game's own private layout method after _Ready, without imposing any skin-authored
+        // position or scale on the child scene.
+        Callable.From(() =>
+        {
+            if (GodotObject.IsInstanceValid(container) &&
+                GodotObject.IsInstanceValid(background))
+            {
+                RefreshCharacterBackgroundLayout(container, background);
+            }
+        }).CallDeferred();
+    }
+
+    private static void RefreshCharacterBackgroundLayout(Control container, Control background)
+    {
+        if (CharacterBackgroundWindowChangeMethod == null)
+        {
+            return;
+        }
+
+        foreach (var node in EnumerateNodes(container)
+                     .Concat(EnumerateNodes(background))
+                     .DistinctBy(node => node.GetInstanceId()))
+        {
+            if (node is not NCharacterSelectScreenBg gameBackground ||
+                !GodotObject.IsInstanceValid(gameBackground))
+            {
+                continue;
+            }
+
+            try
+            {
+                CharacterBackgroundWindowChangeMethod.Invoke(gameBackground, null);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn($"刷新选角背景的宽高比布局失败：{exception.GetBaseException().Message}");
+            }
+        }
+
+        if (GodotObject.IsInstanceValid(background))
+        {
+            background.QueueRedraw();
+        }
+    }
+
+    private static IEnumerable<Node> EnumerateNodes(Node root)
+    {
+        yield return root;
+        foreach (var child in root.GetChildren())
+        {
+            foreach (var descendant in EnumerateNodes(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static void RefreshCharacterButtonIcon(
@@ -935,7 +1044,14 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCachedScene(string resourcePath, ref PackedScene result)
     {
         var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-        if (groupId == null || SkinService.IsExternalRuntimeProviderSelected(groupId))
+        // Character-select scenes are instantiated by the game (and by a few compatibility
+        // libraries) immediately after AssetCache.GetScene returns. Returning a temporary alias
+        // here makes their PackedScene resolve external skeleton/layout resources after the alias
+        // pack has already been restored. The deferred character-screen rebuild owns this path,
+        // so leave the cache result alone and let it replace the child under the correct mount.
+        if (groupId == null ||
+            IsCharacterSelectBackgroundPath(resourcePath) ||
+            SkinService.IsExternalRuntimeProviderSelected(groupId))
         {
             return;
         }
@@ -948,6 +1064,12 @@ internal static partial class ContextualSkinControls
         {
             ModLog.Error($"最终接管场景 {resourcePath} 失败：{exception}");
         }
+    }
+
+    private static bool IsCharacterSelectBackgroundPath(string resourcePath)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(resourcePath);
+        return fileName.StartsWith("char_select_bg_", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static void ReplaceCachedTexture(string resourcePath, ref Texture2D result)

@@ -35,6 +35,12 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, ActiveProviderRuntime> ActiveProviderRuntimes =
         new(StringComparer.OrdinalIgnoreCase);
+    // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
+    // remove the provider's patches when it is deselected, but it cannot undo a direct C# event
+    // subscription. Remember successful initializers so a hot re-selection does not register the
+    // same signal twice (or throw before the scene can be rebuilt).
+    private static readonly HashSet<string> InvokedProviderInitializers =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ReportedVisualPostfixes =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedVisualPostfixes =
@@ -287,6 +293,7 @@ internal static class ManagedSkinModLoader
             }
             else
             {
+                var skippedInitializer = false;
                 foreach (var initializer in initializerTypes)
                 {
                     var method = initializer.Type.GetMethod(
@@ -299,7 +306,32 @@ internal static class ManagedSkinModLoader
                             initializer.Attribute.initializerMethod);
                     }
 
+                    var initializerKey = BuildInitializerKey(
+                        providerId,
+                        assembly,
+                        initializer.Type,
+                        method);
+                    if (InvokedProviderInitializers.Contains(initializerKey))
+                    {
+                        skippedInitializer = true;
+                        ModLog.Info(
+                            $"已跳过 {provider.Name} 的重复初始化器 " +
+                            $"{initializer.Type.FullName}.{method.Name}。");
+                        continue;
+                    }
+
                     method.Invoke(null, null);
+                    InvokedProviderInitializers.Add(initializerKey);
+                }
+
+                // The first run may install Harmony patches from inside a custom initializer.
+                // After deselection those callbacks have been removed, so restore attribute-based
+                // patches without invoking the initializer (and its non-Harmony subscriptions)
+                // for a second time.
+                if (skippedInitializer)
+                {
+                    new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                        .PatchAll(assembly);
                 }
             }
 
@@ -347,6 +379,16 @@ internal static class ManagedSkinModLoader
                 exception.GetBaseException().Message);
         }
     }
+
+    private static string BuildInitializerKey(
+        string providerId,
+        Assembly assembly,
+        Type initializerType,
+        MethodInfo method) =>
+        providerId + "|" +
+        (assembly.FullName ?? assembly.GetName().Name ?? string.Empty) + "|" +
+        initializerType.FullName + "|" +
+        method.Name;
 
     private static void DeactivateProvider(string providerId)
     {

@@ -1432,11 +1432,42 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+            _ = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
             if (TryGetCachedRuntimeResources(groupId, resourcePaths, out var cached))
             {
                 return cached;
             }
+
+            // Keep the fast cache path above, but do the first load through the callback form so
+            // callers that need to instantiate a PackedScene can run that instantiation while
+            // the temporary dependency pack is still mounted.
+            return WithRuntimeResources(
+                groupId,
+                resourcePaths,
+                resources => resources,
+                includeProviderDependencies);
+        }
+    }
+
+    /// <summary>
+    /// Loads a selected skin's resources and executes <paramref name="callback">callback</paramref>
+    /// before the temporary resource overlay is restored.  A PackedScene is not fully resolved
+    /// when ResourceLoader.Load returns: its external resources are often looked up when the
+    /// scene is instantiated.  Keeping this operation inside the mount scope prevents a hot
+    /// character-select switch from binding a skeleton or layout resource from the previously
+    /// selected skin.
+    /// </summary>
+    public static T WithRuntimeResources<T>(
+        string groupId,
+        IReadOnlyCollection<string> resourcePaths,
+        Func<IReadOnlyDictionary<string, Resource>, T> callback,
+        bool includeProviderDependencies = false)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+
+        lock (Sync)
+        {
+            var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
 
             var loadStarted = Stopwatch.GetTimestamp();
             var generation = ++_overlayGeneration;
@@ -1477,6 +1508,7 @@ internal static class SkinService
             }
 
             var resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
+            T callbackResult;
             try
             {
                 foreach (var pair in overlay.ResourcePaths)
@@ -1493,6 +1525,8 @@ internal static class SkinService
                     resources[pair.Key] = resource;
                     RuntimeResourceCache[RuntimeResourceKey(groupId, pair.Key)] = resource;
                 }
+
+                callbackResult = callback(resources);
             }
             finally
             {
@@ -1511,7 +1545,7 @@ internal static class SkinService
                 $"已从独立路径加载 {groupId} 的 {resources.Count} 个资源；" +
                 $"运行包={overlay.Files.Count} 个文件/{overlaySize / 1024d:F1} KiB，" +
                 $"耗时={elapsedMs:F1} ms：{aliasToken}");
-            return resources;
+            return callbackResult;
         }
     }
 
