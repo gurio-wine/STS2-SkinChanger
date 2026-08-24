@@ -1382,6 +1382,37 @@ internal sealed partial class SkinCatalog : IDisposable
         return affected;
     }
 
+    public IReadOnlySet<string> GetRuntimeDependencyRestoreGroups(
+        string loadedGroupId,
+        IEnumerable<string> dependencyPaths)
+    {
+        var mountedPaths = dependencyPaths
+            .Select(NormalizeTakeoverPath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (mountedPaths.Count == 0)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var affectedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in Groups.Where(group =>
+                     !group.Id.Equals(loadedGroupId, StringComparison.OrdinalIgnoreCase)))
+        {
+            var overlaps = group.Options
+                .SelectMany(option => option.Assets)
+                .Any(pair =>
+                    mountedPaths.Contains(NormalizeTakeoverPath(pair.Key)) ||
+                    pair.Value.Files.Any(file =>
+                        mountedPaths.Contains(NormalizeTakeoverPath(file.Path))));
+            if (overlaps)
+            {
+                affectedGroups.Add(group.Id);
+            }
+        }
+
+        return affectedGroups;
+    }
+
     public RuntimeResourceOverlay BuildRuntimeResourceOverlay(
         string groupId,
         string selectionId,
@@ -1392,8 +1423,11 @@ internal sealed partial class SkinCatalog : IDisposable
         var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         var selected = group.Options.FirstOrDefault(option =>
             option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
-        var sourcePaths = GetAffectedSourcePaths(groupId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        sourcePaths.UnionWith(resourcePaths);
+        // Runtime callers ask for the exact resources needed by the current screen/context.
+        // Pulling every asset in the group made a character-select icon request also copy the
+        // combat, merchant and rest-site scenes into a new PCK. Dependencies of the requested
+        // roots are collected below, so unrelated top-level assets must stay lazy.
+        var sourcePaths = resourcePaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
         IncludeAtlasTexturePages(selected, sourcePaths);
 
         var resources = new List<RuntimeResource>();
@@ -1456,7 +1490,8 @@ internal sealed partial class SkinCatalog : IDisposable
             overlay.ResourcePaths,
             files,
             overlay.SourceAliases,
-            overlay.PayloadAliases);
+            overlay.PayloadAliases,
+            dependencyFiles.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
     private Dictionary<string, byte[]> CollectSelectedProviderDependencies(
@@ -1731,7 +1766,12 @@ internal sealed partial class SkinCatalog : IDisposable
             aliasedResourcePaths[resourcePath] = aliasedResourcePath;
         }
 
-        return new RuntimeResourceOverlay(aliasedResourcePaths, files, sourceAliases, payloadAliases);
+        return new RuntimeResourceOverlay(
+            aliasedResourcePaths,
+            files,
+            sourceAliases,
+            payloadAliases,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
     }
 
     private static string BuildRuntimeSourceAlias(RuntimeResource resource, string aliasToken)
@@ -3683,7 +3723,8 @@ internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> ResourcePaths,
     IReadOnlyDictionary<string, byte[]> Files,
     IReadOnlyDictionary<string, string> SourceAliases,
-    IReadOnlyDictionary<string, string> PayloadAliases);
+    IReadOnlyDictionary<string, string> PayloadAliases,
+    IReadOnlySet<string> CanonicalDependencyPaths);
 
 internal sealed class ResourceAsset(string sourcePath)
 {

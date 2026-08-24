@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using STS2SkinChanger.Catalog;
@@ -1289,6 +1290,7 @@ internal static class SkinService
                 return cached;
             }
 
+            var loadStarted = Stopwatch.GetTimestamp();
             var generation = ++_overlayGeneration;
             var aliasToken = $"{_sessionId}/{generation:D3}";
             var overlay = catalog.BuildRuntimeResourceOverlay(
@@ -1297,6 +1299,9 @@ internal static class SkinService
                 resourcePaths,
                 aliasToken,
                 includeProviderDependencies);
+            var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
+                groupId,
+                overlay.CanonicalDependencyPaths);
             var overlayPath = System.IO.Path.Combine(
                 OS.GetUserDataDir(),
                 $"sts2_skin_overlay_{_sessionId}_{generation:D3}_runtime.pck");
@@ -1307,10 +1312,6 @@ internal static class SkinService
             }
 
             var resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
-            var restoreGlobalSelections = includeProviderDependencies &&
-                                          catalog.IsResourceBackedOption(
-                                              groupId,
-                                              Config.GetSelection(groupId));
             try
             {
                 foreach (var pair in overlay.ResourcePaths)
@@ -1330,18 +1331,21 @@ internal static class SkinService
             }
             finally
             {
-                if (restoreGlobalSelections)
+                if (restoreGroups.Count > 0)
                 {
-                    // 二进制场景无法改写其内部路径，加载时可能临时挂载同一提供者的
-                    // 其它分组依赖。资源对象创建后立即重新覆盖全部当前选择，避免这些
-                    // 临时依赖继续占用其它角色、怪物或远古的全局路径。
-                    MountOverlay(catalog.Groups
-                        .Select(group => group.Id)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase));
+                    // Binary resources cannot rewrite all of their internal paths. Restore only
+                    // the other catalog groups that the temporary dependency pack actually
+                    // touched; rebuilding every skin group here caused a full localization reload
+                    // on the first character click.
+                    MountOverlay(restoreGroups);
                 }
             }
 
-            ModLog.Info($"已从独立路径加载 {groupId} 的骨骼、图集、贴图与 {resources.Count} 个资源：{aliasToken}");
+            var elapsedMs = Stopwatch.GetElapsedTime(loadStarted).TotalMilliseconds;
+            ModLog.Info(
+                $"已从独立路径加载 {groupId} 的 {resources.Count} 个资源；" +
+                $"运行包={overlay.Files.Count} 个文件/{new FileInfo(overlayPath).Length / 1024d:F1} KiB，" +
+                $"耗时={elapsedMs:F1} ms：{aliasToken}");
             return resources;
         }
     }
