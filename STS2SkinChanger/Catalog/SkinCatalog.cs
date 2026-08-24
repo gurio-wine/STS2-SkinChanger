@@ -1413,6 +1413,37 @@ internal sealed partial class SkinCatalog : IDisposable
         return affectedGroups;
     }
 
+    public Dictionary<string, ResourceFile> BuildBaselineDependencyOverlay(
+        IEnumerable<string> dependencyPaths)
+    {
+        var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        var sourcePaths = dependencyPaths
+            .Select(NormalizeTakeoverPath)
+            .Select(StripResourceRedirectSuffix)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var sourcePath in sourcePaths)
+        {
+            var baseline = ResolveBaseline(sourcePath);
+            if (baseline == null)
+            {
+                continue;
+            }
+
+            foreach (var file in baseline.Files)
+            {
+                var targetPath = MapAssetFilePath(sourcePath, baseline.SourcePath, file.Path);
+                files[targetPath] = file;
+                var takeoverPath = NormalizeTakeoverPath(targetPath);
+                if (!takeoverPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    files[takeoverPath] = file;
+                }
+            }
+        }
+
+        return files;
+    }
+
     public RuntimeResourceOverlay BuildRuntimeResourceOverlay(
         string groupId,
         string selectionId,
@@ -1445,20 +1476,12 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var directFile = FindDirectFile(primary, sourcePath);
-            var remapFile = FindRemapFile(primary, sourcePath);
-            var payloadFiles = GetImportedPayloadFiles(primary, sourcePath);
-            if (directFile == null && remapFile == null && baseline != null && !ReferenceEquals(primary, baseline))
-            {
-                directFile = FindDirectFile(baseline, sourcePath);
-                remapFile = FindRemapFile(baseline, sourcePath);
-                if (payloadFiles.Length == 0)
-                {
-                    payloadFiles = GetImportedPayloadFiles(baseline, sourcePath);
-                }
-            }
+            resources.Add(CreateRuntimeResource(sourcePath, primary, baseline));
+        }
 
-            resources.Add(new RuntimeResource(sourcePath, directFile, remapFile, payloadFiles));
+        if (selected != null)
+        {
+            IncludeAliasedSelectedDependencyChain(selected, resources);
         }
 
         var overlay = BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
@@ -1493,6 +1516,212 @@ internal sealed partial class SkinCatalog : IDisposable
             overlay.PayloadAliases,
             dependencyFiles.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
+
+    private RuntimeResource CreateRuntimeResource(
+        string sourcePath,
+        ResourceAsset primary,
+        ResourceAsset? baseline = null)
+    {
+        baseline ??= ResolveBaseline(sourcePath);
+        var directFile = FindDirectFile(primary, sourcePath);
+        var remapFile = FindRemapFile(primary, sourcePath);
+        var payloadFiles = GetImportedPayloadFiles(primary, sourcePath);
+        if (directFile == null && remapFile == null && baseline != null && !ReferenceEquals(primary, baseline))
+        {
+            directFile = FindDirectFile(baseline, sourcePath);
+            remapFile = FindRemapFile(baseline, sourcePath);
+            if (payloadFiles.Length == 0)
+            {
+                payloadFiles = GetImportedPayloadFiles(baseline, sourcePath);
+            }
+        }
+
+        return new RuntimeResource(sourcePath, directFile, remapFile, payloadFiles);
+    }
+
+    private void IncludeAliasedSelectedDependencyChain(
+        SkinOption selected,
+        List<RuntimeResource> resources)
+    {
+        var indexes = _cosmeticIndexes
+            .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (indexes.Length == 0)
+        {
+            return;
+        }
+
+        var resourcesByPath = resources.ToDictionary(
+            resource => resource.SourcePath,
+            StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<RuntimeResource>(resources);
+        var dependencyMemo = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var dependencyStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        while (queue.TryDequeue(out var resource))
+        {
+            foreach (var sourcePath in EnumerateDependencyPaths(resource.DirectFile))
+            {
+                if (resourcesByPath.ContainsKey(sourcePath) || !CanAliasDependency(sourcePath))
+                {
+                    continue;
+                }
+
+                if (TryResolveSelected(sourcePath, out var selectedAsset, out var selectedIndex))
+                {
+                    IncludeResource(sourcePath, selectedAsset, selectedIndex);
+                    continue;
+                }
+
+                var baseline = ResolveBaseline(sourcePath);
+                if (baseline != null && HasSelectedDescendant(baseline))
+                {
+                    // Keep a baseline scene/tres only when it is the bridge to a resource that the
+                    // selected skin actually replaces. Both the bridge and the replacement are
+                    // then rewritten into this runtime pack's private namespace.
+                    IncludeResource(sourcePath, baseline, null);
+                }
+            }
+        }
+
+        return;
+
+        void IncludeResource(
+            string sourcePath,
+            ResourceAsset asset,
+            PckResourceIndex? index)
+        {
+            if (resourcesByPath.ContainsKey(sourcePath))
+            {
+                return;
+            }
+
+            var runtimeResource = CreateRuntimeResource(sourcePath, asset);
+            if (runtimeResource.DirectFile == null && runtimeResource.RemapFile == null)
+            {
+                return;
+            }
+
+            resourcesByPath[sourcePath] = runtimeResource;
+            resources.Add(runtimeResource);
+            queue.Enqueue(runtimeResource);
+
+            if (index == null)
+            {
+                return;
+            }
+
+            foreach (var textureAsset in GetSiblingAtlasTextureAssets(index, sourcePath))
+            {
+                IncludeResource(textureAsset.SourcePath, textureAsset, index);
+            }
+        }
+
+        bool HasSelectedDescendant(ResourceAsset asset)
+        {
+            var firstFile = asset.Files.FirstOrDefault();
+            var key = (firstFile?.Archive.Path ?? string.Empty) + "\n" + asset.SourcePath;
+            if (dependencyMemo.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            if (!dependencyStack.Add(key))
+            {
+                return false;
+            }
+
+            var found = false;
+            foreach (var sourcePath in EnumerateDependencyPaths(asset))
+            {
+                if (!CanAliasDependency(sourcePath))
+                {
+                    continue;
+                }
+
+                if (TryResolveSelected(sourcePath, out _, out _))
+                {
+                    found = true;
+                    break;
+                }
+
+                var baseline = ResolveBaseline(sourcePath);
+                if (baseline != null && HasSelectedDescendant(baseline))
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            dependencyStack.Remove(key);
+            dependencyMemo[key] = found;
+            return found;
+        }
+
+        bool TryResolveSelected(
+            string sourcePath,
+            out ResourceAsset asset,
+            out PckResourceIndex? index)
+        {
+            if (selected.Assets.TryGetValue(sourcePath, out var configured))
+            {
+                asset = configured;
+                index = indexes.FirstOrDefault(candidate => configured.Files.Any(file =>
+                    ReferenceEquals(candidate.Archive, file.Archive)));
+                return true;
+            }
+
+            foreach (var candidate in indexes)
+            {
+                var dependency = candidate.Assets.GetValueOrDefault(sourcePath) ??
+                                 candidate.TryBuildAsset(sourcePath);
+                if (dependency == null)
+                {
+                    continue;
+                }
+
+                asset = dependency;
+                index = candidate;
+                return true;
+            }
+
+            asset = null!;
+            index = null;
+            return false;
+        }
+    }
+
+    private static IEnumerable<string> EnumerateDependencyPaths(ResourceAsset asset) =>
+        asset.Files
+            .Where(file => IsDependencyGraphTextResource(file.Path))
+            .SelectMany(EnumerateDependencyPaths)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> EnumerateDependencyPaths(ResourceFile? file)
+    {
+        if (file == null || !IsDependencyGraphTextResource(file.Path))
+        {
+            return [];
+        }
+
+        var text = Encoding.UTF8.GetString(file.Archive.ReadFile(file.Path));
+        return EmbeddedResourcePathRegex()
+            .Matches(text)
+            .Select(match => match.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsDependencyGraphTextResource(string path) =>
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".gdshader", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CanAliasDependency(string path) =>
+        !path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) &&
+        !path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) &&
+        !path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
 
     private Dictionary<string, byte[]> CollectSelectedProviderDependencies(
         SkinOption selected,
@@ -1536,6 +1765,11 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
                 var sourcePath = match.Value;
+                if (sourceAliases.ContainsKey(sourcePath) || payloadAliases.ContainsKey(sourcePath))
+                {
+                    continue;
+                }
+
                 PckResourceIndex? dependencyIndex = null;
                 ResourceAsset? dependency = null;
                 var candidates = pending.Index == null
@@ -1552,23 +1786,12 @@ internal sealed partial class SkinCatalog : IDisposable
                     }
                 }
 
-                // A replacement pack often contains only imported Spine payloads while keeping
-                // the game's original *_skel_data.tres and scene. Those baseline bridge files are
-                // still real dependencies of the requested root and must be reloaded together
-                // with the selected provider payload. Falling back here follows only the actual
-                // reference closure; it does not pull unrelated combat/rest/merchant roots.
-                dependency ??= ResolveBaseline(sourcePath);
-                if (dependency == null)
+                if (dependency == null || dependencyIndex == null)
                 {
                     continue;
                 }
 
                 IncludeAsset(dependencyIndex, dependency);
-                if (dependencyIndex == null)
-                {
-                    continue;
-                }
-
                 foreach (var textureAsset in GetSiblingAtlasTextureAssets(dependencyIndex, sourcePath))
                 {
                     IncludeAsset(dependencyIndex, textureAsset);
@@ -1578,7 +1801,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         return result;
 
-        void IncludeAsset(PckResourceIndex? index, ResourceAsset asset)
+        void IncludeAsset(PckResourceIndex index, ResourceAsset asset)
         {
             foreach (var file in asset.Files)
             {

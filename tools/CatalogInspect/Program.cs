@@ -690,6 +690,45 @@ if (validateIndex >= 0)
                 if (provider?.PckPath != null && File.Exists(provider.PckPath))
                 {
                     using var providerArchive = PckArchive.Open(provider.PckPath);
+                    var providerCanonicalPaths = providerArchive.Paths
+                        .Select(SkinCatalog.NormalizeTakeoverPath)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    foreach (var canonicalDependencyPath in overlay.CanonicalDependencyPaths)
+                    {
+                        if (!providerArchive.Contains(canonicalDependencyPath) &&
+                            !providerCanonicalPaths.Contains(
+                                SkinCatalog.NormalizeTakeoverPath(canonicalDependencyPath)))
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: runtime overlay mounted a non-provider " +
+                                $"dependency at canonical path {canonicalDependencyPath}");
+                        }
+                    }
+
+                    var baselineDependencyOverlay = catalog.BuildBaselineDependencyOverlay(
+                        overlay.CanonicalDependencyPaths);
+                    foreach (var canonicalDependencyPath in overlay.CanonicalDependencyPaths)
+                    {
+                        var sourcePath = StripRedirectSuffix(
+                            SkinCatalog.NormalizeTakeoverPath(canonicalDependencyPath));
+                        var baseline = catalog.ResolveBaseline(sourcePath);
+                        if (baseline == null)
+                        {
+                            continue;
+                        }
+
+                        var missingBaselineFile = baseline.Files.FirstOrDefault(file =>
+                            baselineDependencyOverlay.Values.All(restored =>
+                                !ReferenceEquals(restored.Archive, file.Archive) ||
+                                !restored.Path.Equals(file.Path, StringComparison.OrdinalIgnoreCase)));
+                        if (missingBaselineFile != null)
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: runtime dependency restoration omitted " +
+                                missingBaselineFile.Path);
+                        }
+                    }
+
                     foreach (var file in overlay.Files.Where(pair => MayContainReferences(pair.Key)))
                     {
                         var textResource = Encoding.UTF8.GetString(file.Value);
@@ -849,6 +888,18 @@ if (validateIndex >= 0)
         path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
+
+    static string StripRedirectSuffix(string path)
+    {
+        if (path.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+        {
+            return path[..^7];
+        }
+
+        return path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)
+            ? path[..^6]
+            : path;
+    }
 
 }
 

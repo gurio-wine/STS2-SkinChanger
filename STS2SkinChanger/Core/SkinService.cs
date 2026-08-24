@@ -32,6 +32,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, string> MountedOverlayCache =
         new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, HashSet<string>> RuntimeCanonicalDependencyPaths =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, ResourceFile> ActiveLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LocalizationCacheState> LocalizationStateCache =
@@ -141,6 +143,7 @@ internal static class SkinService
                 MissingAncientStyleMethods.Clear();
                 FailedAncientStyleMethods.Clear();
                 MountedOverlayCache.Clear();
+                RuntimeCanonicalDependencyPaths.Clear();
                 ActiveLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
                 _mountedLocalizationSignature = null;
@@ -1314,13 +1317,30 @@ internal static class SkinService
             var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
                 groupId,
                 overlay.CanonicalDependencyPaths);
-            var overlayPath = System.IO.Path.Combine(
-                OS.GetUserDataDir(),
-                $"sts2_skin_overlay_{_sessionId}_{generation:D3}_runtime.pck");
-            PckArchive.Write(overlayPath, overlay.Files);
-            if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+            long overlaySize = 0;
+            if (overlay.Files.Count > 0)
             {
-                throw new InvalidOperationException("Godot 拒绝加载独立皮肤场景资源包。");
+                var overlayPath = System.IO.Path.Combine(
+                    OS.GetUserDataDir(),
+                    $"sts2_skin_overlay_{_sessionId}_{generation:D3}_runtime.pck");
+                PckArchive.Write(overlayPath, overlay.Files);
+                if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+                {
+                    throw new InvalidOperationException("Godot 拒绝加载独立皮肤场景资源包。");
+                }
+
+                overlaySize = new FileInfo(overlayPath).Length;
+            }
+
+            if (overlay.CanonicalDependencyPaths.Count > 0)
+            {
+                if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
+                {
+                    trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
+                }
+
+                trackedPaths.UnionWith(overlay.CanonicalDependencyPaths);
             }
 
             var resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
@@ -1356,7 +1376,7 @@ internal static class SkinService
             var elapsedMs = Stopwatch.GetElapsedTime(loadStarted).TotalMilliseconds;
             ModLog.Info(
                 $"已从独立路径加载 {groupId} 的 {resources.Count} 个资源；" +
-                $"运行包={overlay.Files.Count} 个文件/{new FileInfo(overlayPath).Length / 1024d:F1} KiB，" +
+                $"运行包={overlay.Files.Count} 个文件/{overlaySize / 1024d:F1} KiB，" +
                 $"耗时={elapsedMs:F1} ms：{aliasToken}");
             return resources;
         }
@@ -1434,10 +1454,25 @@ internal static class SkinService
         ManagedSkinModLoader.DeactivateProvidersExcept(selectedFullRuntimeProviders);
 
         var buildStarted = Stopwatch.GetTimestamp();
-        var files = catalog.BuildOverlay(Config.Selections, groups);
+        var staleCanonicalPaths = groups
+            .Where(RuntimeCanonicalDependencyPaths.ContainsKey)
+            .SelectMany(group => RuntimeCanonicalDependencyPaths[group])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var files = catalog.BuildBaselineDependencyOverlay(staleCanonicalPaths);
+        foreach (var selectedFile in catalog.BuildOverlay(Config.Selections, groups))
+        {
+            // Baseline dependency restoration must happen before the current selection is applied.
+            // The current provider therefore remains authoritative for paths it still owns.
+            files[selectedFile.Key] = selectedFile.Value;
+        }
         var buildElapsed = Stopwatch.GetElapsedTime(buildStarted);
         var mountStarted = Stopwatch.GetTimestamp();
         MountArchiveOverlay(files, "visual", "Godot 拒绝加载生成的皮肤资源包。");
+        foreach (var group in groups)
+        {
+            RuntimeCanonicalDependencyPaths.Remove(group);
+        }
         var mountElapsed = Stopwatch.GetElapsedTime(mountStarted);
         var localizationStarted = Stopwatch.GetTimestamp();
         RefreshLocalizationIfNeeded(files);
