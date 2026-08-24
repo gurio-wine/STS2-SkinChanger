@@ -17,6 +17,12 @@ internal static class SkinService
     public const float MinimumMonsterScale = 0.2f;
     public const float MaximumMonsterScale = 5f;
     public const float MonsterScaleStep = 0.05f;
+    public const float MinimumCharacterScale = 0.2f;
+    public const float MaximumCharacterScale = 5f;
+    public const float CharacterScaleStep = 0.05f;
+    public const float MinimumCharacterOffset = -1000f;
+    public const float MaximumCharacterOffset = 1000f;
+    public const float CharacterOffsetStep = 1f;
     public const string InheritCardSelectionId = "__inherit__";
 
     private static readonly object Sync = new();
@@ -312,7 +318,8 @@ internal static class SkinService
                 group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
             if (group == null ||
                 (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-                 group.Options.All(option => !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
+                 group.Options.All(option =>
+                     !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
             {
                 LastError = $"未知的卡牌皮肤选择：{groupId}/{optionId}";
                 return false;
@@ -1183,7 +1190,10 @@ internal static class SkinService
         }
     }
 
-    public static void SetSelectedMonsterScale(string groupId, float scale)
+    public static float SetSelectedMonsterScale(
+        string groupId,
+        float scale,
+        bool save = true)
     {
         lock (Sync)
         {
@@ -1214,9 +1224,132 @@ internal static class SkinService
                 options[optionId] = normalized;
             }
 
-            Config.Save(ConfigPath);
+            if (save)
+            {
+                Config.Save(ConfigPath);
+            }
+
+            return normalized;
         }
     }
+
+    public static CharacterCombatTransform GetCharacterCombatTransform(
+        string groupId,
+        string? optionId = null)
+    {
+        lock (Sync)
+        {
+            var selectedOptionId = optionId ?? Config.GetSelection(groupId);
+            if (!Config.CharacterCombatTransforms.TryGetValue(groupId, out var options) ||
+                !options.TryGetValue(selectedOptionId, out var value))
+            {
+                return new CharacterCombatTransform();
+            }
+
+            return NormalizeCharacterCombatTransform(value);
+        }
+    }
+
+    public static CharacterCombatTransform SetCharacterCombatTransform(
+        string groupId,
+        string optionId,
+        CharacterCombatTransform value,
+        bool save = true)
+    {
+        lock (Sync)
+        {
+            var normalized = NormalizeCharacterCombatTransform(value);
+            if (IsDefaultCharacterCombatTransform(normalized))
+            {
+                if (Config.CharacterCombatTransforms.TryGetValue(groupId, out var existing))
+                {
+                    existing.Remove(optionId);
+                    if (existing.Count == 0)
+                    {
+                        Config.CharacterCombatTransforms.Remove(groupId);
+                    }
+                }
+            }
+            else
+            {
+                if (!Config.CharacterCombatTransforms.TryGetValue(groupId, out var options))
+                {
+                    options = new Dictionary<string, CharacterCombatTransform>(StringComparer.OrdinalIgnoreCase);
+                    Config.CharacterCombatTransforms[groupId] = options;
+                }
+
+                options[optionId] = normalized;
+            }
+
+            if (save)
+            {
+                Config.Save(ConfigPath);
+            }
+
+            return normalized;
+        }
+    }
+
+    private static CharacterCombatTransform NormalizeCharacterCombatTransform(
+        CharacterCombatTransform value) =>
+        new CharacterCombatTransform(
+            Mathf.Clamp(
+                Mathf.Round(value.Scale / CharacterScaleStep) * CharacterScaleStep,
+                MinimumCharacterScale,
+                MaximumCharacterScale),
+            Mathf.Clamp(
+                Mathf.Round(value.OffsetX / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset),
+            Mathf.Clamp(
+                Mathf.Round(value.OffsetY / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset))
+        {
+            HealthBarScale = Mathf.Clamp(
+                Mathf.Round(value.HealthBarScale / CharacterScaleStep) * CharacterScaleStep,
+                MinimumCharacterScale,
+                MaximumCharacterScale),
+            HealthBarOffsetX = Mathf.Clamp(
+                Mathf.Round(value.HealthBarOffsetX / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset),
+            HealthBarOffsetY = Mathf.Clamp(
+                Mathf.Round(value.HealthBarOffsetY / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset),
+            HealthBarFollowsModelScale = value.HealthBarFollowsModelScale,
+            HealthBarFollowsModelMovement = value.HealthBarFollowsModelMovement,
+            IntentScale = Mathf.Clamp(
+                Mathf.Round(value.IntentScale / CharacterScaleStep) * CharacterScaleStep,
+                MinimumCharacterScale,
+                MaximumCharacterScale),
+            IntentOffsetX = Mathf.Clamp(
+                Mathf.Round(value.IntentOffsetX / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset),
+            IntentOffsetY = Mathf.Clamp(
+                Mathf.Round(value.IntentOffsetY / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset),
+            IntentFollowsModelScale = value.IntentFollowsModelScale,
+            IntentFollowsModelMovement = value.IntentFollowsModelMovement
+        };
+
+    private static bool IsDefaultCharacterCombatTransform(CharacterCombatTransform value) =>
+        Mathf.IsEqualApprox(value.Scale, 1f) &&
+        Mathf.IsZeroApprox(value.OffsetX) &&
+        Mathf.IsZeroApprox(value.OffsetY) &&
+        Mathf.IsEqualApprox(value.HealthBarScale, 1f) &&
+        Mathf.IsZeroApprox(value.HealthBarOffsetX) &&
+        Mathf.IsZeroApprox(value.HealthBarOffsetY) &&
+        !value.HealthBarFollowsModelScale &&
+        value.HealthBarFollowsModelMovement &&
+        Mathf.IsEqualApprox(value.IntentScale, 1f) &&
+        Mathf.IsZeroApprox(value.IntentOffsetX) &&
+        Mathf.IsZeroApprox(value.IntentOffsetY) &&
+        !value.IntentFollowsModelScale &&
+        value.IntentFollowsModelMovement;
 
     public static Texture2D GetSelectedRuntimeImageTexture(string groupId)
     {
@@ -1765,10 +1898,6 @@ internal static class SkinService
                 Config.Selections[key] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             }
         }
-
-        // Never erase explicit choices merely because a provider is temporarily unavailable
-        // or its catalog was incomplete during this startup. Runtime lookup falls back safely,
-        // and the stored choice becomes active again when the provider returns.
     }
 
     private static void CleanupOldOverlays()

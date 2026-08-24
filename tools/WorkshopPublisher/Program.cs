@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Steamworks;
 
 if (args.Length != 1)
@@ -29,6 +30,34 @@ if (!Directory.Exists(contentFolder))
     throw new DirectoryNotFoundException(contentFolder);
 if (!File.Exists(previewFile))
     throw new FileNotFoundException("Workshop preview image not found.", previewFile);
+
+List<WorkshopLocalization> localizations = [];
+if (!string.IsNullOrWhiteSpace(config.LocalizationsFile))
+{
+    var localizationsPath = Path.GetFullPath(
+        Path.Combine(configDir, config.LocalizationsFile));
+    localizations = JsonSerializer.Deserialize<List<WorkshopLocalization>>(
+        File.ReadAllText(localizationsPath), jsonOptions)
+        ?? throw new InvalidDataException("Workshop localizations are empty.");
+}
+
+// Validate every generated description before making the first Steam update so a
+// malformed localization cannot leave the Workshop item only partly updated.
+_ = ComposeDescription(
+    config.Description,
+    config.StatementHeading,
+    config.Limitations,
+    config.Version,
+    config.FeatureUpdate);
+foreach (var localization in localizations)
+{
+    _ = ComposeDescription(
+        localization.Description,
+        localization.StatementHeading,
+        localization.Limitations,
+        localization.Version,
+        localization.FeatureUpdate);
+}
 
 Environment.SetEnvironmentVariable("SteamAppId", config.AppId.ToString());
 Environment.SetEnvironmentVariable("SteamGameId", config.AppId.ToString());
@@ -73,7 +102,9 @@ try
             ComposeDescription(
                 config.Description,
                 config.StatementHeading,
-                config.Limitations)),
+                config.Limitations,
+                config.Version,
+                config.FeatureUpdate)),
         "SetItemDescription");
     Require(SteamUGC.SetItemVisibility(update, config.Visibility), "SetItemVisibility");
     Require(SteamUGC.SetItemContent(update, contentFolder), "SetItemContent");
@@ -84,16 +115,8 @@ try
     if (result.m_eResult != EResult.k_EResultOK)
         throw new InvalidOperationException($"SubmitItemUpdate failed: {result.m_eResult}");
 
-    if (!string.IsNullOrWhiteSpace(config.LocalizationsFile))
-    {
-        var localizationsPath = Path.GetFullPath(
-            Path.Combine(configDir, config.LocalizationsFile));
-        var localizations = JsonSerializer.Deserialize<List<WorkshopLocalization>>(
-            File.ReadAllText(localizationsPath), jsonOptions)
-            ?? throw new InvalidDataException("Workshop localizations are empty.");
-        foreach (var localization in localizations)
-            PublishLocalization(appId, publishedFileId, localization);
-    }
+    foreach (var localization in localizations)
+        PublishLocalization(appId, publishedFileId, localization);
 
     Console.WriteLine($"PUBLISHED_FILE_ID={publishedFileId.m_PublishedFileId}");
     Console.WriteLine($"LEGAL_AGREEMENT_REQUIRED={result.m_bUserNeedsToAcceptWorkshopLegalAgreement}");
@@ -137,7 +160,9 @@ static void PublishLocalization(
             ComposeDescription(
                 localization.Description,
                 localization.StatementHeading,
-                localization.Limitations)),
+                localization.Limitations,
+                localization.Version,
+                localization.FeatureUpdate)),
         $"SetItemDescription({localization.Language})");
 
     var result = WaitForCallResult<SubmitItemUpdateResult_t>(
@@ -180,9 +205,50 @@ static T WaitForCallResult<T>(SteamAPICall_t call) where T : struct
 static string ComposeDescription(
     string description,
     string? statementHeading,
-    string? limitations)
+    string? limitations,
+    string? version,
+    string? featureUpdate)
 {
     var composed = description.TrimEnd();
+    if (!string.IsNullOrWhiteSpace(version))
+    {
+        var versionPattern = new Regex(
+            @"(?m)^\d+\.\d+\.\d+$",
+            RegexOptions.CultureInvariant);
+        if (versionPattern.Matches(composed).Count != 1)
+            throw new InvalidDataException(
+                "The Workshop description must contain exactly one standalone semantic version line.");
+
+        composed = versionPattern.Replace(composed, version.Trim(), 1);
+    }
+
+    if (!string.IsNullOrWhiteSpace(featureUpdate))
+    {
+        const string sectionMarker = "\n\n[h2]";
+        var firstSection = composed.IndexOf(sectionMarker, StringComparison.Ordinal);
+        var insertionPoint = firstSection < 0
+            ? -1
+            : composed.IndexOf(
+                sectionMarker,
+                firstSection + sectionMarker.Length,
+                StringComparison.Ordinal);
+        if (insertionPoint < 0)
+        {
+            insertionPoint = !string.IsNullOrWhiteSpace(statementHeading)
+                ? composed.LastIndexOf("\n\n", StringComparison.Ordinal)
+                : composed.Length;
+        }
+
+        if (insertionPoint < 0)
+            throw new InvalidDataException(
+                "Could not find a safe insertion point for the Workshop feature description.");
+
+        composed = composed[..insertionPoint]
+            + "\n\n"
+            + featureUpdate.Trim()
+            + composed[insertionPoint..];
+    }
+
     if (!string.IsNullOrWhiteSpace(statementHeading))
     {
         var statementStart = composed.LastIndexOf("\n\n", StringComparison.Ordinal);
@@ -214,6 +280,8 @@ internal sealed class WorkshopConfig
     public string? StatementHeading { get; init; }
     public required string Description { get; init; }
     public string? Limitations { get; init; }
+    public string? Version { get; init; }
+    public string? FeatureUpdate { get; init; }
     public ERemoteStoragePublishedFileVisibility Visibility { get; init; }
     public required string ContentFolder { get; init; }
     public required string PreviewFile { get; init; }
@@ -228,4 +296,6 @@ internal sealed class WorkshopLocalization
     public string? StatementHeading { get; init; }
     public required string Description { get; init; }
     public string? Limitations { get; init; }
+    public string? Version { get; init; }
+    public string? FeatureUpdate { get; init; }
 }

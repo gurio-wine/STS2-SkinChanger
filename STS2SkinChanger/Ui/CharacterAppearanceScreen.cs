@@ -1,0 +1,1605 @@
+using System.Reflection;
+using Godot;
+using HarmonyLib;
+using MegaCrit.Sts2.addons.mega_text;
+using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.Events;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
+using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
+using MegaCrit.Sts2.Core.Runs;
+using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Core;
+
+namespace STS2SkinChanger.Ui;
+
+internal enum CharacterAppearanceDragTarget
+{
+    None,
+    Model,
+    HealthBar,
+    Intent
+}
+
+internal partial class CharacterAppearanceScreen : NSubmenu
+{
+    private const string BackButtonScenePath = "res://scenes/ui/back_button.tscn";
+
+    private OptionButton _skinDropdown = null!;
+    private HSlider _scaleSlider = null!;
+    private Label _scaleValue = null!;
+    private SpinBox _offsetX = null!;
+    private SpinBox _offsetY = null!;
+    private HSlider _healthBarScaleSlider = null!;
+    private Label _healthBarScaleValue = null!;
+    private SpinBox _healthBarOffsetX = null!;
+    private SpinBox _healthBarOffsetY = null!;
+    private CheckButton _healthBarFollowScale = null!;
+    private CheckButton _healthBarFollowMovement = null!;
+    private HSlider _intentScaleSlider = null!;
+    private Label _intentScaleValue = null!;
+    private SpinBox _intentOffsetX = null!;
+    private SpinBox _intentOffsetY = null!;
+    private CheckButton _intentFollowScale = null!;
+    private CheckButton _intentFollowMovement = null!;
+    private Button _compareButton = null!;
+    private Button _skinResetButton = null!;
+    private Button _modelResetButton = null!;
+    private Button _healthBarResetButton = null!;
+    private Button _intentResetButton = null!;
+    private Label _title = null!;
+    private Label _skinLabel = null!;
+    private Label _modelSectionLabel = null!;
+    private Label _scaleLabel = null!;
+    private Label _offsetXLabel = null!;
+    private Label _offsetYLabel = null!;
+    private Label _healthBarSectionLabel = null!;
+    private Label _healthBarScaleLabel = null!;
+    private Label _healthBarOffsetXLabel = null!;
+    private Label _healthBarOffsetYLabel = null!;
+    private Label _intentSectionLabel = null!;
+    private Label _intentScaleLabel = null!;
+    private Label _intentOffsetXLabel = null!;
+    private Label _intentOffsetYLabel = null!;
+    private Label _hint = null!;
+    private Label _selectionHint = null!;
+    private Label _status = null!;
+    private CharacterDragSurface _dragSurface = null!;
+    private CanvasLayer _hintLayer = null!;
+    private PanelContainer _panel = null!;
+    private NBackButton _backButton = null!;
+    private Control _modelSpacer = null!;
+    private readonly List<CanvasItem> _skinControls = [];
+    private readonly List<CanvasItem> _creatureOnlyControls = [];
+    private readonly List<CanvasItem> _intentOnlyControls = [];
+    private NCreature? _targetCreature;
+    private AncientEventModel? _targetAncient;
+    private SkinGroup? _group;
+    private string? _transformKey;
+    private bool _selectionMode = true;
+    private bool _updating;
+    private bool _comparing;
+    private CharacterAppearanceDragTarget _dragTarget;
+    private Vector2 _dragStartPosition;
+    private Vector2 _dragStartOffset;
+
+    protected override Control? InitialFocusedControl =>
+        _selectionMode ? _backButton : GetTargetInitialFocus();
+
+    public override void _Ready()
+    {
+        SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        MouseFilter = MouseFilterEnum.Stop;
+        BuildInterface();
+        ConnectSignals();
+        ModLocalization.Bind(this, RefreshLocalizedText);
+    }
+
+    protected override void ConnectSignals()
+    {
+        _backButton.Connect(
+            NClickableControl.SignalName.Released,
+            Callable.From<NButton>(OnBackPressed));
+        _backButton.Disable();
+        VisibilityChanged += OnScreenVisibilityChanged;
+    }
+
+    private void OnBackPressed(NButton _)
+    {
+        if (!_selectionMode)
+        {
+            EnterSelectionMode();
+            return;
+        }
+
+        _stack.Pop();
+    }
+
+    private void OnScreenVisibilityChanged()
+    {
+        if (Visible)
+        {
+            _backButton.MoveToHidePosition();
+            _backButton.Enable();
+            OnSubmenuShown();
+            (_selectionMode ? (Control)_backButton : GetTargetInitialFocus()).TryGrabFocus();
+            return;
+        }
+
+        _lastFocusedControl = GetViewport()?.GuiGetFocusOwner();
+        _backButton.Disable();
+        OnSubmenuHidden();
+    }
+
+    internal void Initialize(Player _)
+    {
+        EnterSelectionMode();
+    }
+
+    public override void OnSubmenuOpened()
+    {
+        CharacterAppearanceRuntime.QueuedSelectionFinished += OnQueuedSelectionFinished;
+        NCapstoneContainer.Instance?.DisableBackstopInstantly();
+        _hintLayer.Visible = true;
+        EnterSelectionMode();
+    }
+
+    public override void OnSubmenuClosed()
+    {
+        FinishDrag(save: true);
+        EndComparison();
+        CharacterAppearanceRuntime.QueuedSelectionFinished -= OnQueuedSelectionFinished;
+        _hintLayer.Visible = false;
+        NCapstoneContainer.Instance?.EnableBackstopInstantly();
+        base.OnSubmenuClosed();
+    }
+
+    protected override void OnSubmenuShown()
+    {
+        _hintLayer.Visible = true;
+        UpdateDragSurfaceCreature();
+        base.OnSubmenuShown();
+    }
+
+    protected override void OnSubmenuHidden()
+    {
+        FinishDrag(save: true);
+        EndComparison();
+        _hintLayer.Visible = false;
+        base.OnSubmenuHidden();
+    }
+
+    private void BuildInterface()
+    {
+        _dragSurface = new CharacterDragSurface
+        {
+            Name = "CharacterDragSurface",
+            MouseFilter = MouseFilterEnum.Stop,
+            MouseDefaultCursorShape = CursorShape.Move,
+            ProcessMode = ProcessModeEnum.Always,
+            ZIndex = 5
+        };
+        AddChild(_dragSurface);
+        _dragSurface.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        _dragSurface.GuiInput += OnDragSurfaceInput;
+
+        // CanvasLayer keeps the instruction above the paused combat scene without putting the input
+        // surface above the settings panel.
+        _hintLayer = new CanvasLayer
+        {
+            Name = "CharacterAppearanceHintLayer",
+            Layer = 100,
+            Visible = false
+        };
+        AddChild(_hintLayer);
+
+        _hint = new PulsingDragHintLabel
+        {
+            Name = "DragHint",
+            Position = new Vector2(34f, 28f),
+            Size = new Vector2(760f, 64f),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            MouseFilter = MouseFilterEnum.Ignore,
+            ProcessMode = ProcessModeEnum.Always
+        };
+        ApplyTextTheme(_hint, 22);
+        _hint.AddThemeColorOverride("font_color", new Color("efc850"));
+        _hint.AddThemeColorOverride("font_outline_color", new Color("241d12"));
+        _hint.AddThemeConstantOverride("outline_size", 6);
+        _hintLayer.AddChild(_hint);
+
+        _selectionHint = new PulsingDragHintLabel
+        {
+            Name = "SelectionHint",
+            AnchorLeft = 0.15f,
+            AnchorTop = 0f,
+            AnchorRight = 0.85f,
+            AnchorBottom = 0f,
+            OffsetTop = 24f,
+            OffsetBottom = 94f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            MouseFilter = MouseFilterEnum.Ignore,
+            ProcessMode = ProcessModeEnum.Always
+        };
+        ApplyTextTheme(_selectionHint, 28);
+        _selectionHint.AddThemeColorOverride("font_color", new Color("efc850"));
+        _selectionHint.AddThemeColorOverride("font_outline_color", new Color("241d12"));
+        _selectionHint.AddThemeConstantOverride("outline_size", 7);
+        _hintLayer.AddChild(_selectionHint);
+
+        _panel = new PanelContainer
+        {
+            Name = "AppearancePanel",
+            AnchorLeft = 0.61f,
+            AnchorTop = 0.075f,
+            AnchorRight = 0.98f,
+            AnchorBottom = 0.075f,
+            OffsetLeft = -10f,
+            OffsetRight = 0f,
+            GrowVertical = GrowDirection.End,
+            MouseFilter = MouseFilterEnum.Stop,
+            ZIndex = 10,
+            Visible = false
+        };
+        _panel.AddThemeStyleboxOverride(
+            "panel",
+            ContextualSkinControls.CreateStyleBox(
+                new Color(0.10f, 0.16f, 0.22f, 0.94f),
+                new Color("7394ad"),
+                2));
+        AddChild(_panel);
+
+        var margin = new MarginContainer();
+        margin.AddThemeConstantOverride("margin_left", 28);
+        margin.AddThemeConstantOverride("margin_top", 24);
+        margin.AddThemeConstantOverride("margin_right", 28);
+        margin.AddThemeConstantOverride("margin_bottom", 24);
+        _panel.AddChild(margin);
+
+        var content = new VBoxContainer
+        {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(460f, 0f)
+        };
+        content.AddThemeConstantOverride("separation", 7);
+        margin.AddChild(content);
+
+        _title = BuildLabel(string.Empty, 31, HorizontalAlignment.Center);
+        _title.CustomMinimumSize = new Vector2(0f, 46f);
+        content.AddChild(_title);
+        content.AddChild(BuildVerticalSpacer(12f));
+
+        var skinHeader = BuildSectionHeader(out _skinLabel, out _skinResetButton);
+        content.AddChild(skinHeader);
+        _skinResetButton.Pressed += ResetSkin;
+        _skinDropdown = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(0f, 50f),
+            FitToLongestItem = false,
+            ClipText = true,
+            Alignment = HorizontalAlignment.Center,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        ContextualSkinControls.ApplyGameTheme(_skinDropdown);
+        _skinDropdown.ItemSelected += index => OnSkinSelected(checked((int)index));
+        content.AddChild(_skinDropdown);
+        _skinControls.AddRange([skinHeader, _skinDropdown]);
+        _modelSpacer = BuildVerticalSpacer(15f);
+        content.AddChild(_modelSpacer);
+
+        var modelHeader = BuildSectionHeader(out _modelSectionLabel, out _modelResetButton);
+        content.AddChild(modelHeader);
+        _modelResetButton.Pressed += ResetModelTransform;
+
+        var scaleRow = new HBoxContainer();
+        scaleRow.AddThemeConstantOverride("separation", 12);
+        _scaleLabel = BuildLabel(string.Empty, 21);
+        _scaleLabel.CustomMinimumSize = new Vector2(74f, 44f);
+        scaleRow.AddChild(_scaleLabel);
+        _scaleSlider = new HSlider
+        {
+            MinValue = SkinService.MinimumCharacterScale,
+            MaxValue = SkinService.MaximumCharacterScale,
+            Step = SkinService.CharacterScaleStep,
+            Value = 1d,
+            CustomMinimumSize = new Vector2(230f, 44f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        _scaleSlider.ValueChanged += _ => OnTransformChanged();
+        scaleRow.AddChild(_scaleSlider);
+        _scaleValue = BuildLabel("100%", 21, HorizontalAlignment.Right);
+        _scaleValue.CustomMinimumSize = new Vector2(82f, 44f);
+        scaleRow.AddChild(_scaleValue);
+        content.AddChild(scaleRow);
+
+        var offsetRow = new HBoxContainer();
+        offsetRow.AddThemeConstantOverride("separation", 10);
+        _offsetXLabel = BuildLabel(string.Empty, 21);
+        _offsetYLabel = BuildLabel(string.Empty, 21);
+        _offsetXLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _offsetYLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _offsetX = BuildOffsetSpinBox();
+        _offsetY = BuildOffsetSpinBox();
+        _offsetX.ValueChanged += _ => OnTransformChanged();
+        _offsetY.ValueChanged += _ => OnTransformChanged();
+        offsetRow.AddChild(_offsetXLabel);
+        offsetRow.AddChild(_offsetX);
+        offsetRow.AddChild(_offsetYLabel);
+        offsetRow.AddChild(_offsetY);
+        content.AddChild(offsetRow);
+        var healthBarSpacer = BuildVerticalSpacer(15f);
+        content.AddChild(healthBarSpacer);
+
+        var healthBarHeader = BuildSectionHeader(
+            out _healthBarSectionLabel,
+            out _healthBarResetButton);
+        content.AddChild(healthBarHeader);
+        _healthBarResetButton.Pressed += ResetHealthBarTransform;
+
+        var healthScaleRow = new HBoxContainer();
+        healthScaleRow.AddThemeConstantOverride("separation", 12);
+        _healthBarScaleLabel = BuildLabel(string.Empty, 21);
+        _healthBarScaleLabel.CustomMinimumSize = new Vector2(74f, 44f);
+        healthScaleRow.AddChild(_healthBarScaleLabel);
+        _healthBarScaleSlider = new HSlider
+        {
+            MinValue = SkinService.MinimumCharacterScale,
+            MaxValue = SkinService.MaximumCharacterScale,
+            Step = SkinService.CharacterScaleStep,
+            Value = 1d,
+            CustomMinimumSize = new Vector2(230f, 44f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        _healthBarScaleSlider.ValueChanged += _ => OnTransformChanged();
+        healthScaleRow.AddChild(_healthBarScaleSlider);
+        _healthBarScaleValue = BuildLabel("100%", 21, HorizontalAlignment.Right);
+        _healthBarScaleValue.CustomMinimumSize = new Vector2(82f, 44f);
+        healthScaleRow.AddChild(_healthBarScaleValue);
+        content.AddChild(healthScaleRow);
+
+        var healthOffsetRow = new HBoxContainer();
+        healthOffsetRow.AddThemeConstantOverride("separation", 10);
+        _healthBarOffsetXLabel = BuildLabel(string.Empty, 21);
+        _healthBarOffsetYLabel = BuildLabel(string.Empty, 21);
+        _healthBarOffsetXLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _healthBarOffsetYLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _healthBarOffsetX = BuildOffsetSpinBox();
+        _healthBarOffsetY = BuildOffsetSpinBox();
+        _healthBarOffsetX.ValueChanged += _ => OnTransformChanged();
+        _healthBarOffsetY.ValueChanged += _ => OnTransformChanged();
+        healthOffsetRow.AddChild(_healthBarOffsetXLabel);
+        healthOffsetRow.AddChild(_healthBarOffsetX);
+        healthOffsetRow.AddChild(_healthBarOffsetYLabel);
+        healthOffsetRow.AddChild(_healthBarOffsetY);
+        content.AddChild(healthOffsetRow);
+
+        var followRow = new HBoxContainer();
+        followRow.AddThemeConstantOverride("separation", 12);
+        _healthBarFollowScale = BuildCheckButton();
+        _healthBarFollowScale.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _healthBarFollowScale.Toggled += _ => OnTransformChanged();
+        followRow.AddChild(_healthBarFollowScale);
+        _healthBarFollowMovement = BuildCheckButton();
+        _healthBarFollowMovement.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _healthBarFollowMovement.Toggled += _ => OnTransformChanged();
+        followRow.AddChild(_healthBarFollowMovement);
+        content.AddChild(followRow);
+
+        var intentSpacer = BuildVerticalSpacer(15f);
+        content.AddChild(intentSpacer);
+        var intentHeader = BuildSectionHeader(
+            out _intentSectionLabel,
+            out _intentResetButton);
+        content.AddChild(intentHeader);
+        _intentResetButton.Pressed += ResetIntentTransform;
+
+        var intentScaleRow = new HBoxContainer();
+        intentScaleRow.AddThemeConstantOverride("separation", 12);
+        _intentScaleLabel = BuildLabel(string.Empty, 21);
+        _intentScaleLabel.CustomMinimumSize = new Vector2(74f, 44f);
+        intentScaleRow.AddChild(_intentScaleLabel);
+        _intentScaleSlider = new HSlider
+        {
+            MinValue = SkinService.MinimumCharacterScale,
+            MaxValue = SkinService.MaximumCharacterScale,
+            Step = SkinService.CharacterScaleStep,
+            Value = 1d,
+            CustomMinimumSize = new Vector2(230f, 44f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        _intentScaleSlider.ValueChanged += _ => OnTransformChanged();
+        intentScaleRow.AddChild(_intentScaleSlider);
+        _intentScaleValue = BuildLabel("100%", 21, HorizontalAlignment.Right);
+        _intentScaleValue.CustomMinimumSize = new Vector2(82f, 44f);
+        intentScaleRow.AddChild(_intentScaleValue);
+        content.AddChild(intentScaleRow);
+
+        var intentOffsetRow = new HBoxContainer();
+        intentOffsetRow.AddThemeConstantOverride("separation", 10);
+        _intentOffsetXLabel = BuildLabel(string.Empty, 21);
+        _intentOffsetYLabel = BuildLabel(string.Empty, 21);
+        _intentOffsetXLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _intentOffsetYLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _intentOffsetX = BuildOffsetSpinBox();
+        _intentOffsetY = BuildOffsetSpinBox();
+        _intentOffsetX.ValueChanged += _ => OnTransformChanged();
+        _intentOffsetY.ValueChanged += _ => OnTransformChanged();
+        intentOffsetRow.AddChild(_intentOffsetXLabel);
+        intentOffsetRow.AddChild(_intentOffsetX);
+        intentOffsetRow.AddChild(_intentOffsetYLabel);
+        intentOffsetRow.AddChild(_intentOffsetY);
+        content.AddChild(intentOffsetRow);
+
+        var intentFollowRow = new HBoxContainer();
+        intentFollowRow.AddThemeConstantOverride("separation", 12);
+        _intentFollowScale = BuildCheckButton();
+        _intentFollowScale.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _intentFollowScale.Toggled += _ => OnTransformChanged();
+        intentFollowRow.AddChild(_intentFollowScale);
+        _intentFollowMovement = BuildCheckButton();
+        _intentFollowMovement.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _intentFollowMovement.Toggled += _ => OnTransformChanged();
+        intentFollowRow.AddChild(_intentFollowMovement);
+        content.AddChild(intentFollowRow);
+
+        var compareSpacer = BuildVerticalSpacer(8f);
+        content.AddChild(compareSpacer);
+
+        _compareButton = BuildButton(string.Empty);
+        _compareButton.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _compareButton.ButtonDown += BeginComparison;
+        _compareButton.ButtonUp += EndComparison;
+        content.AddChild(_compareButton);
+
+        _status = BuildLabel(string.Empty, 19, HorizontalAlignment.Center);
+        _status.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _status.Visible = false;
+        content.AddChild(_status);
+
+        _creatureOnlyControls.AddRange([
+            modelHeader,
+            scaleRow,
+            offsetRow,
+            healthBarSpacer,
+            healthBarHeader,
+            healthScaleRow,
+            healthOffsetRow,
+            followRow,
+            compareSpacer,
+            _compareButton
+        ]);
+        _intentOnlyControls.AddRange([
+            intentSpacer,
+            intentHeader,
+            intentScaleRow,
+            intentOffsetRow,
+            intentFollowRow
+        ]);
+
+        var backScene = ResourceLoader.Load<PackedScene>(BackButtonScenePath) ??
+                        throw new InvalidOperationException("无法加载游戏返回按钮场景。");
+        _backButton = backScene.Instantiate<NBackButton>(PackedScene.GenEditState.Disabled);
+        _backButton.Name = "BackButton";
+        _backButton.ZIndex = 20;
+        AddChild(_backButton);
+    }
+
+    private void RefreshLocalizedText()
+    {
+        RefreshTargetTitle();
+        _skinLabel.Text = ModLocalization.Get(ModText.Skin);
+        _modelSectionLabel.Text = ModLocalization.Get(ModText.ModelTransform);
+        _scaleLabel.Text = ModLocalization.Get(ModText.CharacterScale);
+        _healthBarSectionLabel.Text = ModLocalization.Get(ModText.HealthBarTransform);
+        _healthBarScaleLabel.Text = ModLocalization.Get(ModText.CharacterScale);
+        _intentSectionLabel.Text = ModLocalization.Get(ModText.IntentTransform);
+        _intentScaleLabel.Text = ModLocalization.Get(ModText.CharacterScale);
+        _offsetXLabel.Text = "X";
+        _offsetYLabel.Text = "Y";
+        _healthBarOffsetXLabel.Text = "X";
+        _healthBarOffsetYLabel.Text = "Y";
+        _intentOffsetXLabel.Text = "X";
+        _intentOffsetYLabel.Text = "Y";
+        _offsetX.TooltipText = ModLocalization.Get(ModText.HorizontalOffset);
+        _offsetY.TooltipText = ModLocalization.Get(ModText.VerticalOffset);
+        _healthBarOffsetX.TooltipText = ModLocalization.Get(ModText.HorizontalOffset);
+        _healthBarOffsetY.TooltipText = ModLocalization.Get(ModText.VerticalOffset);
+        _intentOffsetX.TooltipText = ModLocalization.Get(ModText.HorizontalOffset);
+        _intentOffsetY.TooltipText = ModLocalization.Get(ModText.VerticalOffset);
+        _healthBarFollowScale.Text = ModLocalization.Get(ModText.FollowModelScale);
+        _healthBarFollowMovement.Text = ModLocalization.Get(ModText.FollowModelMovement);
+        _healthBarFollowScale.TooltipText = _healthBarFollowScale.Text;
+        _healthBarFollowMovement.TooltipText = _healthBarFollowMovement.Text;
+        _intentFollowScale.Text = ModLocalization.Get(ModText.FollowModelScale);
+        _intentFollowMovement.Text = ModLocalization.Get(ModText.FollowModelMovement);
+        _intentFollowScale.TooltipText = _intentFollowScale.Text;
+        _intentFollowMovement.TooltipText = _intentFollowMovement.Text;
+        _compareButton.Text = ModLocalization.Get(ModText.HoldToCompare);
+        _skinResetButton.Text = ModLocalization.Get(ModText.Reset);
+        _modelResetButton.Text = ModLocalization.Get(ModText.Reset);
+        _healthBarResetButton.Text = ModLocalization.Get(ModText.Reset);
+        _intentResetButton.Text = ModLocalization.Get(ModText.Reset);
+        RefreshDragHint();
+        _selectionHint.Text = ModLocalization.Get(ModText.SelectAppearanceTarget);
+        PopulateSkinDropdown();
+        RefreshStatusForCurrentContext();
+    }
+
+    private void PopulateSkinDropdown()
+    {
+        if (_skinDropdown == null)
+        {
+            return;
+        }
+
+        if (!_skinDropdown.Visible)
+        {
+            _skinDropdown.Disabled = true;
+            return;
+        }
+
+        _updating = true;
+        _skinDropdown.Clear();
+        if (_group == null)
+        {
+            _skinDropdown.Disabled = true;
+            _updating = false;
+            return;
+        }
+
+        _skinDropdown.Disabled = false;
+        _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
+        _skinDropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
+        foreach (var option in _group.Options)
+        {
+            var index = _skinDropdown.ItemCount;
+            _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
+            _skinDropdown.SetItemMetadata(index, option.Id);
+        }
+
+        var selection = CharacterAppearanceRuntime.GetRequestedOption(_group.Id) ??
+                        SkinService.Config.GetSelection(_group.Id);
+        var selectedIndex = Enumerable.Range(0, _skinDropdown.ItemCount)
+            .FirstOrDefault(index =>
+                _skinDropdown.GetItemMetadata(index).AsString()
+                    .Equals(selection, StringComparison.OrdinalIgnoreCase));
+        _skinDropdown.Select(selectedIndex);
+        _updating = false;
+    }
+
+    private void OnSkinSelected(int index)
+    {
+        if (_updating || _group == null || index < 0 || index >= _skinDropdown.ItemCount)
+        {
+            return;
+        }
+
+        var optionId = _skinDropdown.GetItemMetadata(index).AsString();
+        RequestSkinSelection(optionId);
+    }
+
+    private void ResetSkin()
+    {
+        if (_group != null)
+        {
+            RequestSkinSelection(SkinCatalog.BaseOptionId);
+        }
+    }
+
+    private void RequestSkinSelection(string optionId)
+    {
+        if (_group == null)
+        {
+            return;
+        }
+
+        EndComparison();
+        if (_targetAncient != null)
+        {
+            if (!SkinService.ApplySelection(_group.Id, optionId))
+            {
+                PopulateSkinDropdown();
+                SetStatus(
+                    ModLocalization.Get(ModText.AppearanceFailed) + ": " + SkinService.LastError,
+                    warning: true);
+                return;
+            }
+
+            PopulateSkinDropdown();
+            if (!AncientRuntimeAppearance.TryRefresh(_group.Id, out var ancientError))
+            {
+                SetStatus(
+                    ModLocalization.Get(ModText.AppearanceFailed) + ": " + ancientError,
+                    warning: true);
+                return;
+            }
+
+            SetAppliedStatus(null);
+            return;
+        }
+
+        var result = CharacterAppearanceRuntime.RequestSelection(_group.Id, optionId);
+        switch (result.State)
+        {
+            case AppearanceSelectionRequestState.Applied:
+                PopulateSkinDropdown();
+                RefreshTargetTitle();
+                SetTransformControlsEnabled(true);
+                SyncTransformControls();
+                UpdateDragSurfaceCreature();
+                SetAppliedStatus(result.Error);
+                break;
+            case AppearanceSelectionRequestState.Queued:
+                PopulateSkinDropdown();
+                SetTransformControlsEnabled(false);
+                SetStatus(ModLocalization.Get(ModText.AppearanceQueued), warning: true);
+                break;
+            case AppearanceSelectionRequestState.Failed:
+                PopulateSkinDropdown();
+                SetStatus(
+                    ModLocalization.Get(ModText.AppearanceFailed) +
+                    (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : ": " + result.Error),
+                    warning: true);
+                break;
+        }
+    }
+
+    private void OnQueuedSelectionFinished(string groupId, bool success, string? error)
+    {
+        if (_group == null || !groupId.Equals(_group.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (success)
+        {
+            PopulateSkinDropdown();
+            RefreshTargetTitle();
+            SyncTransformControls();
+            SetTransformControlsEnabled(true);
+            UpdateDragSurfaceCreature();
+            SetAppliedStatus(error);
+        }
+        else
+        {
+            PopulateSkinDropdown();
+            SetTransformControlsEnabled(true);
+            SetStatus(
+                ModLocalization.Get(ModText.AppearanceFailed) +
+                (string.IsNullOrWhiteSpace(error) ? string.Empty : ": " + error),
+                warning: true);
+        }
+    }
+
+    private void SyncTransformControls()
+    {
+        if (_targetCreature == null || _scaleSlider == null)
+        {
+            return;
+        }
+
+        SetTransformControlValues(
+            CharacterAppearanceRuntime.GetCreatureCombatTransform(_targetCreature));
+    }
+
+    private void RefreshTargetTitle()
+    {
+        if (_targetCreature != null && GodotObject.IsInstanceValid(_targetCreature))
+        {
+            _title.Text = _targetCreature.Entity.Name;
+            return;
+        }
+
+        if (_targetAncient != null)
+        {
+            _title.Text = AncientCompendiumEntry.GetTitle(_targetAncient);
+            return;
+        }
+
+        _title.Text = ModLocalization.Get(ModText.CharacterAppearance);
+    }
+
+    private void OnTransformChanged(bool save = true)
+    {
+        _scaleValue.Text = $"{Mathf.RoundToInt((float)_scaleSlider.Value * 100f)}%";
+        _healthBarScaleValue.Text =
+            $"{Mathf.RoundToInt((float)_healthBarScaleSlider.Value * 100f)}%";
+        _intentScaleValue.Text =
+            $"{Mathf.RoundToInt((float)_intentScaleSlider.Value * 100f)}%";
+        if (_updating || _group == null || _targetCreature == null ||
+            CharacterAppearanceRuntime.GetRequestedOption(_group.Id) != null)
+        {
+            return;
+        }
+
+        try
+        {
+            var normalized = CharacterAppearanceRuntime.SetCreatureCombatTransform(
+                _targetCreature,
+                ReadTransformControls(),
+                save);
+            SetTransformControlValues(normalized);
+            if (_transformKey != null)
+            {
+                CharacterAppearanceRuntime.ApplyTransformToKey(_transformKey);
+            }
+        }
+        catch (Exception exception)
+        {
+            SetStatus(
+                ModLocalization.Get(ModText.AppearanceFailed) + ": " +
+                exception.GetBaseException().Message,
+                warning: true);
+        }
+    }
+
+    private CharacterCombatTransform ReadTransformControls() =>
+        new CharacterCombatTransform(
+            (float)_scaleSlider.Value,
+            (float)_offsetX.Value,
+            (float)_offsetY.Value)
+        {
+            HealthBarScale = (float)_healthBarScaleSlider.Value,
+            HealthBarOffsetX = (float)_healthBarOffsetX.Value,
+            HealthBarOffsetY = (float)_healthBarOffsetY.Value,
+            HealthBarFollowsModelScale = _healthBarFollowScale.ButtonPressed,
+            HealthBarFollowsModelMovement = _healthBarFollowMovement.ButtonPressed,
+            IntentScale = (float)_intentScaleSlider.Value,
+            IntentOffsetX = (float)_intentOffsetX.Value,
+            IntentOffsetY = (float)_intentOffsetY.Value,
+            IntentFollowsModelScale = _intentFollowScale.ButtonPressed,
+            IntentFollowsModelMovement = _intentFollowMovement.ButtonPressed
+        };
+
+    private void SetTransformControlValues(CharacterCombatTransform value)
+    {
+        var wasUpdating = _updating;
+        _updating = true;
+        _scaleSlider.Value = value.Scale;
+        _offsetX.Value = value.OffsetX;
+        _offsetY.Value = value.OffsetY;
+        _healthBarScaleSlider.Value = value.HealthBarScale;
+        _healthBarOffsetX.Value = value.HealthBarOffsetX;
+        _healthBarOffsetY.Value = value.HealthBarOffsetY;
+        _healthBarFollowScale.ButtonPressed = value.HealthBarFollowsModelScale;
+        _healthBarFollowMovement.ButtonPressed = value.HealthBarFollowsModelMovement;
+        _intentScaleSlider.Value = value.IntentScale;
+        _intentOffsetX.Value = value.IntentOffsetX;
+        _intentOffsetY.Value = value.IntentOffsetY;
+        _intentFollowScale.ButtonPressed = value.IntentFollowsModelScale;
+        _intentFollowMovement.ButtonPressed = value.IntentFollowsModelMovement;
+        _scaleValue.Text = $"{Mathf.RoundToInt(value.Scale * 100f)}%";
+        _healthBarScaleValue.Text = $"{Mathf.RoundToInt(value.HealthBarScale * 100f)}%";
+        _intentScaleValue.Text = $"{Mathf.RoundToInt(value.IntentScale * 100f)}%";
+        _updating = wasUpdating;
+    }
+
+    private void EnterSelectionMode()
+    {
+        FinishDrag(save: true);
+        EndComparison();
+        _selectionMode = true;
+        _targetCreature = null;
+        _targetAncient = null;
+        _group = null;
+        _transformKey = null;
+        _panel.Visible = false;
+        SetStatus(string.Empty, warning: false);
+        UpdateDragSurfaceCreature();
+        _backButton?.TryGrabFocus();
+    }
+
+    private bool TrySelectTarget(Vector2 localPosition)
+    {
+        var creatureTarget = NCombatRoom.Instance?.CreatureNodes
+            .Where(creature =>
+                GodotObject.IsInstanceValid(creature) &&
+                creature.IsVisibleInTree() &&
+                !creature.IsPlayingDeathAnimation &&
+                CharacterAppearanceRuntime.TryGetCreatureAppearance(creature, out _))
+            .Select(creature => new
+            {
+                Creature = creature,
+                HasRect = _dragSurface.TryGetCreatureTargetRect(creature, out var rect),
+                Rect = rect
+            })
+            .Where(candidate => candidate.HasRect && candidate.Rect.HasPoint(localPosition))
+            .OrderBy(candidate => candidate.Rect.Size.X * candidate.Rect.Size.Y)
+            .ThenBy(candidate => candidate.Rect.GetCenter().DistanceSquaredTo(localPosition))
+            .FirstOrDefault();
+        if (creatureTarget != null)
+        {
+            return SelectCreatureTarget(creatureTarget.Creature, creatureTarget.Rect.GetCenter());
+        }
+
+        if (!AncientRuntimeAppearance.TryGetCurrent(
+                out var ancient,
+                out var layout,
+                out var ancientGroup))
+        {
+            return false;
+        }
+
+        var background = AncientRuntimeAppearance.GetBackgroundTarget(layout);
+        if (background == null ||
+            !_dragSurface.TryGetCanvasRect(background, 0f, out var ancientRect) ||
+            !ancientRect.HasPoint(localPosition))
+        {
+            return false;
+        }
+
+        _selectionMode = false;
+        _targetAncient = ancient;
+        _group = ancientGroup;
+        _transformKey = null;
+        SetTargetControlsVisible(
+            isCreature: false,
+            canSelectSkin: true,
+            supportsIntent: false);
+        PositionPanelAwayFrom(localPosition);
+        _panel.Visible = true;
+        RefreshTargetTitle();
+        PopulateSkinDropdown();
+        SetTransformControlsEnabled(true);
+        UpdateDragSurfaceCreature();
+        SetStatus(string.Empty, warning: false);
+        GetTargetInitialFocus().TryGrabFocus();
+        return true;
+    }
+
+    private bool SelectCreatureTarget(NCreature creature, Vector2 targetCenter)
+    {
+        if (!CharacterAppearanceRuntime.TryGetCreatureAppearance(creature, out var binding))
+        {
+            return false;
+        }
+
+        _selectionMode = false;
+        _targetCreature = creature;
+        _targetAncient = null;
+        _group = binding.Group;
+        _transformKey = binding.TransformKey;
+        SetTargetControlsVisible(
+            isCreature: true,
+            canSelectSkin: binding.CanSelectSkin,
+            supportsIntent: binding.SupportsIntent);
+        PositionPanelAwayFrom(targetCenter);
+        _panel.Visible = true;
+        RefreshTargetTitle();
+        PopulateSkinDropdown();
+        SyncTransformControls();
+        SetTransformControlsEnabled(true);
+        UpdateDragSurfaceCreature();
+        RefreshStatusForCurrentContext();
+        GetTargetInitialFocus().TryGrabFocus();
+        return true;
+    }
+
+    private void SetTargetControlsVisible(
+        bool isCreature,
+        bool canSelectSkin,
+        bool supportsIntent)
+    {
+        foreach (var control in _skinControls)
+        {
+            control.Visible = canSelectSkin;
+        }
+
+        foreach (var control in _creatureOnlyControls)
+        {
+            control.Visible = isCreature;
+        }
+
+        foreach (var control in _intentOnlyControls)
+        {
+            control.Visible = isCreature && supportsIntent;
+        }
+
+        _modelSpacer.Visible = isCreature && canSelectSkin;
+        _panel.ResetSize();
+    }
+
+    private Control GetTargetInitialFocus() =>
+        _skinDropdown.Visible ? _skinDropdown : _scaleSlider;
+
+    private void PositionPanelAwayFrom(Vector2 targetCenter)
+    {
+        var putOnRight = targetCenter.X <= Math.Max(1f, _dragSurface.Size.X) * 0.5f;
+        _panel.AnchorLeft = putOnRight ? 0.61f : 0.02f;
+        _panel.AnchorRight = putOnRight ? 0.98f : 0.39f;
+        _panel.OffsetLeft = putOnRight ? -10f : 0f;
+        _panel.OffsetRight = putOnRight ? 0f : 10f;
+        _panel.AnchorTop = 0.075f;
+        _panel.AnchorBottom = 0.075f;
+        _panel.GrowVertical = GrowDirection.End;
+    }
+
+    private void ResetModelTransform()
+    {
+        if (_targetCreature == null)
+        {
+            return;
+        }
+
+        EndComparison();
+        var value = ReadTransformControls() with
+        {
+            Scale = 1f,
+            OffsetX = 0f,
+            OffsetY = 0f
+        };
+        SetTransformControlValues(value);
+        OnTransformChanged();
+    }
+
+    private void ResetHealthBarTransform()
+    {
+        if (_targetCreature == null)
+        {
+            return;
+        }
+
+        EndComparison();
+        var value = ReadTransformControls() with
+        {
+            HealthBarScale = 1f,
+            HealthBarOffsetX = 0f,
+            HealthBarOffsetY = 0f,
+            HealthBarFollowsModelScale = false,
+            HealthBarFollowsModelMovement = true
+        };
+        SetTransformControlValues(value);
+        OnTransformChanged();
+    }
+
+    private void ResetIntentTransform()
+    {
+        if (_targetCreature == null)
+        {
+            return;
+        }
+
+        EndComparison();
+        var value = ReadTransformControls() with
+        {
+            IntentScale = 1f,
+            IntentOffsetX = 0f,
+            IntentOffsetY = 0f,
+            IntentFollowsModelScale = false,
+            IntentFollowsModelMovement = true
+        };
+        SetTransformControlValues(value);
+        OnTransformChanged();
+    }
+
+    private void BeginComparison()
+    {
+        if (_comparing)
+        {
+            return;
+        }
+
+        if (_targetCreature == null || !GodotObject.IsInstanceValid(_targetCreature))
+        {
+            return;
+        }
+
+        _comparing = true;
+        CharacterAppearanceRuntime.ApplyPreviewTransform(
+            _targetCreature,
+            new CharacterCombatTransform());
+    }
+
+    private void EndComparison()
+    {
+        if (!_comparing)
+        {
+            return;
+        }
+
+        _comparing = false;
+        if (_targetCreature != null && GodotObject.IsInstanceValid(_targetCreature))
+        {
+            CharacterAppearanceRuntime.ApplyStoredTransform(_targetCreature);
+        }
+
+    }
+
+    private void UpdateDragSurfaceCreature()
+    {
+        var creature = !_selectionMode &&
+                       _targetCreature != null &&
+                       GodotObject.IsInstanceValid(_targetCreature)
+            ? _targetCreature
+            : null;
+        _dragSurface.SetCreature(creature);
+        _dragSurface.SetSelectionMode(_selectionMode);
+        _dragSurface.SetDragEnabled(creature != null);
+        _selectionHint.Visible = _selectionMode;
+        _hint.Visible = creature != null;
+        _compareButton.Disabled = creature == null;
+        RefreshDragHint();
+    }
+
+    private void RefreshDragHint()
+    {
+        var text = CharacterAppearanceRuntime.SupportsIntentAppearance(_targetCreature)
+            ? ModText.DirectDragIntentHint
+            : ModText.DirectDragHint;
+        _hint.Text = ModLocalization.Get(text);
+    }
+
+    private void OnDragSurfaceInput(InputEvent inputEvent)
+    {
+        if (inputEvent is InputEventMouseButton button &&
+            button.ButtonIndex == MouseButton.Left)
+        {
+            if (button.Pressed)
+            {
+                if (_selectionMode)
+                {
+                    if (TrySelectTarget(button.Position))
+                    {
+                        _dragSurface.AcceptEvent();
+                    }
+
+                    return;
+                }
+
+                if (!_dragSurface.DragEnabled)
+                {
+                    return;
+                }
+
+                var target = _dragSurface.HitTest(button.Position);
+                if (target == CharacterAppearanceDragTarget.None)
+                {
+                    return;
+                }
+
+                EndComparison();
+                _dragTarget = target;
+                _dragStartPosition = button.Position;
+                _dragStartOffset = target switch
+                {
+                    CharacterAppearanceDragTarget.Model =>
+                        new Vector2((float)_offsetX.Value, (float)_offsetY.Value),
+                    CharacterAppearanceDragTarget.HealthBar =>
+                        new Vector2(
+                            (float)_healthBarOffsetX.Value,
+                            (float)_healthBarOffsetY.Value),
+                    CharacterAppearanceDragTarget.Intent =>
+                        new Vector2((float)_intentOffsetX.Value, (float)_intentOffsetY.Value),
+                    _ => Vector2.Zero
+                };
+                _dragSurface.GrabClickFocus();
+                _dragSurface.AcceptEvent();
+                return;
+            }
+
+            if (_dragTarget != CharacterAppearanceDragTarget.None)
+            {
+                FinishDrag(save: true);
+                _dragSurface.AcceptEvent();
+            }
+
+            return;
+        }
+
+        if (inputEvent is not InputEventMouseMotion motion ||
+            _dragTarget == CharacterAppearanceDragTarget.None)
+        {
+            return;
+        }
+
+        var delta = _dragSurface.GetCreatureLocalDelta(_dragStartPosition, motion.Position);
+        _updating = true;
+        switch (_dragTarget)
+        {
+            case CharacterAppearanceDragTarget.Model:
+                _offsetX.Value = _dragStartOffset.X + delta.X;
+                _offsetY.Value = _dragStartOffset.Y + delta.Y;
+                break;
+            case CharacterAppearanceDragTarget.HealthBar:
+                _healthBarOffsetX.Value = _dragStartOffset.X + delta.X;
+                _healthBarOffsetY.Value = _dragStartOffset.Y + delta.Y;
+                break;
+            case CharacterAppearanceDragTarget.Intent:
+                _intentOffsetX.Value = _dragStartOffset.X + delta.X;
+                _intentOffsetY.Value = _dragStartOffset.Y + delta.Y;
+                break;
+        }
+
+        _updating = false;
+        OnTransformChanged(save: false);
+        _dragSurface.AcceptEvent();
+    }
+
+    private void FinishDrag(bool save)
+    {
+        if (_dragTarget == CharacterAppearanceDragTarget.None)
+        {
+            return;
+        }
+
+        _dragTarget = CharacterAppearanceDragTarget.None;
+        if (save)
+        {
+            OnTransformChanged(save: true);
+        }
+
+    }
+
+    private void RefreshStatusForCurrentContext()
+    {
+        if (_status == null)
+        {
+            return;
+        }
+
+        if (!_selectionMode &&
+            _targetCreature != null &&
+            _group != null &&
+            CharacterAppearanceRuntime.GetRequestedOption(_group.Id) != null)
+        {
+            SetTransformControlsEnabled(false);
+            SetStatus(ModLocalization.Get(ModText.AppearanceQueued), warning: true);
+            return;
+        }
+
+        SetTransformControlsEnabled(!_selectionMode);
+        SetStatus(string.Empty, warning: false);
+    }
+
+    private void SetTransformControlsEnabled(bool enabled)
+    {
+        _scaleSlider.Editable = enabled;
+        _offsetX.Editable = enabled;
+        _offsetY.Editable = enabled;
+        _healthBarScaleSlider.Editable = enabled;
+        _healthBarOffsetX.Editable = enabled;
+        _healthBarOffsetY.Editable = enabled;
+        _healthBarFollowScale.Disabled = !enabled;
+        _healthBarFollowMovement.Disabled = !enabled;
+        _intentScaleSlider.Editable = enabled;
+        _intentOffsetX.Editable = enabled;
+        _intentOffsetY.Editable = enabled;
+        _intentFollowScale.Disabled = !enabled;
+        _intentFollowMovement.Disabled = !enabled;
+        _skinDropdown.Disabled = !enabled || _group == null || !_skinDropdown.Visible;
+        _dragSurface.SetDragEnabled(enabled && _targetCreature != null);
+        _skinResetButton.Disabled = !enabled || !_skinResetButton.Visible;
+        _modelResetButton.Disabled = !enabled;
+        _healthBarResetButton.Disabled = !enabled;
+        _intentResetButton.Disabled = !enabled || !_intentResetButton.Visible;
+        _compareButton.Disabled = !enabled || _targetCreature == null;
+    }
+
+    private void SetStatus(string text, bool warning)
+    {
+        _status.Text = text;
+        _status.Visible = !string.IsNullOrWhiteSpace(text);
+        _status.Modulate = warning ? new Color("efc850") : new Color("b8e6c0");
+    }
+
+    private void SetAppliedStatus(string? liveRefreshError)
+    {
+        if (string.IsNullOrWhiteSpace(liveRefreshError))
+        {
+            SetStatus(string.Empty, warning: false);
+            return;
+        }
+
+        SetStatus(
+            ModLocalization.Get(ModText.AppearanceFailed) + ": " + liveRefreshError,
+            warning: true);
+    }
+
+    private static SpinBox BuildOffsetSpinBox()
+    {
+        var spinBox = new SpinBox
+        {
+            MinValue = SkinService.MinimumCharacterOffset,
+            MaxValue = SkinService.MaximumCharacterOffset,
+            Step = SkinService.CharacterOffsetStep,
+            CustomMinimumSize = new Vector2(125f, 44f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            AllowGreater = false,
+            AllowLesser = false,
+            UpdateOnTextChanged = true,
+            Suffix = " px"
+        };
+        ApplyTextTheme(spinBox.GetLineEdit(), 20);
+        return spinBox;
+    }
+
+    private static Label BuildSectionLabel()
+    {
+        var label = BuildLabel(string.Empty, 23);
+        label.CustomMinimumSize = new Vector2(0f, 38f);
+        label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        label.Modulate = new Color("efc850");
+        return label;
+    }
+
+    private static HBoxContainer BuildSectionHeader(
+        out Label label,
+        out Button resetButton)
+    {
+        var row = new HBoxContainer
+        {
+            CustomMinimumSize = new Vector2(0f, 40f)
+        };
+        row.AddThemeConstantOverride("separation", 12);
+        label = BuildSectionLabel();
+        resetButton = BuildButton(string.Empty);
+        resetButton.CustomMinimumSize = new Vector2(78f, 34f);
+        resetButton.SizeFlagsHorizontal = SizeFlags.ShrinkEnd;
+        resetButton.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        ApplyTextTheme(resetButton, 16);
+        row.AddChild(label);
+        row.AddChild(resetButton);
+        return row;
+    }
+
+    private static Control BuildVerticalSpacer(float height) => new()
+    {
+        CustomMinimumSize = new Vector2(0f, height),
+        MouseFilter = MouseFilterEnum.Ignore
+    };
+
+    private static CheckButton BuildCheckButton()
+    {
+        var button = new CheckButton
+        {
+            CustomMinimumSize = new Vector2(0f, 40f),
+            MouseDefaultCursorShape = CursorShape.PointingHand
+        };
+        ApplyTextTheme(button, 18);
+        return button;
+    }
+
+    private static Label BuildLabel(
+        string text,
+        int fontSize,
+        HorizontalAlignment alignment = HorizontalAlignment.Left)
+    {
+        var label = new Label
+        {
+            Text = text,
+            HorizontalAlignment = alignment,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = MouseFilterEnum.Ignore
+        };
+        ApplyTextTheme(label, fontSize);
+        return label;
+    }
+
+    private static Button BuildButton(string text)
+    {
+        var button = new Button
+        {
+            Text = text,
+            CustomMinimumSize = new Vector2(0f, 48f),
+            MouseDefaultCursorShape = CursorShape.PointingHand
+        };
+        ApplyTextTheme(button, 19);
+        button.AddThemeStyleboxOverride(
+            "normal",
+            ContextualSkinControls.CreateStyleBox(new Color("3c5f82"), new Color("7394ad")));
+        button.AddThemeStyleboxOverride(
+            "hover",
+            ContextualSkinControls.CreateStyleBox(new Color("4b7392"), new Color("afcdde")));
+        button.AddThemeStyleboxOverride(
+            "pressed",
+            ContextualSkinControls.CreateStyleBox(new Color("45104e"), new Color("efc850"), 2));
+        return button;
+    }
+
+    private static void ApplyTextTheme(Control control, int fontSize)
+    {
+        control.AddThemeColorOverride("font_color", new Color("fff6e2"));
+        control.AddThemeColorOverride("font_hover_color", Colors.White);
+        control.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
+        control.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+        control.AddThemeConstantOverride("outline_size", 4);
+        control.AddThemeFontSizeOverride("font_size", fontSize);
+        if (ContextualSkinControls.GameFont != null)
+        {
+            control.AddThemeFontOverride("font", ContextualSkinControls.GameFont);
+        }
+    }
+}
+
+internal partial class PulsingDragHintLabel : Label
+{
+    private double _elapsed;
+
+    public override void _Ready()
+    {
+        SetProcess(true);
+        PivotOffset = Size * 0.5f;
+    }
+
+    public override void _Process(double delta)
+    {
+        _elapsed += delta;
+        PivotOffset = Size * 0.5f;
+        var pulse = (Mathf.Sin((float)_elapsed * 3f) + 1f) * 0.5f;
+        Modulate = new Color(1f, 1f, 1f, 0.25f + pulse * 0.75f);
+        Scale = Vector2.One * (0.95f + pulse * 0.05f);
+    }
+}
+
+internal partial class CharacterDragSurface : Control
+{
+    private NCreature? _creature;
+
+    public bool DragEnabled { get; private set; }
+
+    public bool SelectionMode { get; private set; }
+
+    public void SetCreature(NCreature? creature)
+    {
+        _creature = creature;
+    }
+
+    public void SetDragEnabled(bool enabled)
+    {
+        DragEnabled = enabled;
+        RefreshCursor();
+    }
+
+    public void SetSelectionMode(bool enabled)
+    {
+        SelectionMode = enabled;
+        RefreshCursor();
+    }
+
+    private void RefreshCursor()
+    {
+        MouseDefaultCursorShape = SelectionMode
+            ? CursorShape.PointingHand
+            : DragEnabled
+                ? CursorShape.Move
+                : CursorShape.Arrow;
+    }
+
+    public CharacterAppearanceDragTarget HitTest(Vector2 localPosition)
+    {
+        if (!DragEnabled)
+        {
+            return CharacterAppearanceDragTarget.None;
+        }
+
+        var healthBar = CharacterAppearanceRuntime.GetHealthBarBounds(_creature);
+        if (healthBar != null && TryGetCanvasRect(healthBar, 12f, out var healthRect) &&
+            healthRect.HasPoint(localPosition))
+        {
+            return CharacterAppearanceDragTarget.HealthBar;
+        }
+
+        if (CharacterAppearanceRuntime.SupportsIntentAppearance(_creature) &&
+            TryGetIntentTargetRect(out var intentRect) &&
+            intentRect.HasPoint(localPosition))
+        {
+            return CharacterAppearanceDragTarget.Intent;
+        }
+
+        if (_creature != null && GodotObject.IsInstanceValid(_creature.Hitbox) &&
+            TryGetCanvasRect(_creature.Hitbox, 8f, out var modelRect) &&
+            modelRect.HasPoint(localPosition))
+        {
+            return CharacterAppearanceDragTarget.Model;
+        }
+
+        return CharacterAppearanceDragTarget.None;
+    }
+
+    private bool TryGetIntentTargetRect(out Rect2 rect)
+    {
+        rect = default;
+        if (_creature == null ||
+            !GodotObject.IsInstanceValid(_creature) ||
+            !GodotObject.IsInstanceValid(_creature.IntentContainer))
+        {
+            return false;
+        }
+
+        var found = false;
+        var minimum = Vector2.Zero;
+        var maximum = Vector2.Zero;
+        foreach (var intent in _creature.IntentContainer.GetChildren()
+                     .OfType<Control>()
+                     .Where(control => control.IsVisibleInTree()))
+        {
+            if (!TryGetCanvasRect(intent, 10f, out var intentRect))
+            {
+                continue;
+            }
+
+            if (!found)
+            {
+                minimum = intentRect.Position;
+                maximum = intentRect.End;
+                found = true;
+                continue;
+            }
+
+            minimum = new Vector2(
+                Math.Min(minimum.X, intentRect.Position.X),
+                Math.Min(minimum.Y, intentRect.Position.Y));
+            maximum = new Vector2(
+                Math.Max(maximum.X, intentRect.End.X),
+                Math.Max(maximum.Y, intentRect.End.Y));
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        rect = new Rect2(minimum, maximum - minimum);
+        return true;
+    }
+
+    public Vector2 GetCreatureLocalDelta(Vector2 from, Vector2 to)
+    {
+        if (_creature == null || !GodotObject.IsInstanceValid(_creature))
+        {
+            return Vector2.Zero;
+        }
+
+        var surfaceTransform = GetGlobalTransformWithCanvas();
+        var creatureInverse = _creature.GetGlobalTransformWithCanvas().AffineInverse();
+        return creatureInverse * (surfaceTransform * to) -
+               creatureInverse * (surfaceTransform * from);
+    }
+
+    public bool TryGetCreatureTargetRect(NCreature creature, out Rect2 rect)
+    {
+        rect = default;
+        return GodotObject.IsInstanceValid(creature.Hitbox) &&
+               TryGetCanvasRect(creature.Hitbox, 8f, out rect);
+    }
+
+    public bool TryGetCanvasRect(Control control, float padding, out Rect2 rect)
+    {
+        rect = default;
+        if (!GodotObject.IsInstanceValid(control))
+        {
+            return false;
+        }
+
+        var inverse = GetGlobalTransformWithCanvas().AffineInverse();
+        var transform = control.GetGlobalTransformWithCanvas();
+        var first = inverse * (transform * Vector2.Zero);
+        var second = inverse * (transform * new Vector2(control.Size.X, 0f));
+        var third = inverse * (transform * control.Size);
+        var fourth = inverse * (transform * new Vector2(0f, control.Size.Y));
+        var minimum = new Vector2(
+            Math.Min(Math.Min(first.X, second.X), Math.Min(third.X, fourth.X)),
+            Math.Min(Math.Min(first.Y, second.Y), Math.Min(third.Y, fourth.Y)));
+        var maximum = new Vector2(
+            Math.Max(Math.Max(first.X, second.X), Math.Max(third.X, fourth.X)),
+            Math.Max(Math.Max(first.Y, second.Y), Math.Max(third.Y, fourth.Y)));
+        var margin = Vector2.One * padding;
+        rect = new Rect2(minimum - margin, maximum - minimum + margin * 2f);
+        return rect.Size.X > 0f && rect.Size.Y > 0f;
+    }
+}
+
+internal static class CharacterAppearancePauseMenu
+{
+    private const string ButtonName = "SkinChangerCharacterAppearance";
+    private const string ScreenName = "SkinChangerCharacterAppearanceScreen";
+    private const string PauseButtonScenePath = "res://scenes/pause_menu/pause_menu_button.tscn";
+    private static readonly FieldInfo? RunStateField =
+        AccessTools.Field(typeof(NPauseMenu), "_runState");
+
+    internal static void Attach(NPauseMenu pauseMenu)
+    {
+        try
+        {
+            var container = pauseMenu.GetNode<Control>("%ButtonContainer");
+            if (container.GetNodeOrNull<NPauseMenuButton>(ButtonName) != null)
+            {
+                return;
+            }
+
+            var scene = ResourceLoader.Load<PackedScene>(PauseButtonScenePath) ??
+                        throw new InvalidOperationException("无法加载暂停菜单按钮场景。");
+            var button = scene.Instantiate<NPauseMenuButton>(PackedScene.GenEditState.Disabled);
+            button.Name = ButtonName;
+            container.AddChild(button);
+            var compendium = container.GetNodeOrNull<NPauseMenuButton>("Compendium");
+            if (compendium != null)
+            {
+                container.MoveChild(button, compendium.GetIndex() + 1);
+            }
+
+            button.Connect(
+                NClickableControl.SignalName.Released,
+                Callable.From<NButton>(_ => Open(pauseMenu)));
+            ModLocalization.Bind(button, () =>
+                button.GetNode<MegaLabel>("Label")
+                    .SetTextAutoSize(ModLocalization.Get(ModText.CharacterAppearance)));
+            RebuildFocusNeighbors(container);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("添加游戏内角色外观入口失败：" + exception);
+        }
+    }
+
+    private static void Open(NPauseMenu pauseMenu)
+    {
+        try
+        {
+            if (RunStateField?.GetValue(pauseMenu) is not IRunState runState)
+            {
+                throw new InvalidOperationException("暂停菜单尚未绑定当前游戏。");
+            }
+
+            var player = LocalContext.GetMe(runState) ??
+                         throw new InvalidOperationException("找不到当前玩家。");
+            if (pauseMenu.GetParent() is not NSubmenuStack stack)
+            {
+                throw new InvalidOperationException("找不到游戏内子菜单容器。");
+            }
+
+            var screen = stack.GetNodeOrNull<CharacterAppearanceScreen>(ScreenName);
+            if (screen == null)
+            {
+                screen = new CharacterAppearanceScreen
+                {
+                    Name = ScreenName,
+                    Visible = false,
+                    MouseFilter = Control.MouseFilterEnum.Ignore
+                };
+                stack.AddChild(screen);
+            }
+
+            screen.Initialize(player);
+            stack.Push(screen);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("打开游戏内角色外观界面失败：" + exception);
+        }
+    }
+
+    private static void RebuildFocusNeighbors(Control container)
+    {
+        var buttons = container.GetChildren()
+            .OfType<NPauseMenuButton>()
+            .Where(button => button.Visible)
+            .ToArray();
+        for (var index = 0; index < buttons.Length; index++)
+        {
+            var button = buttons[index];
+            button.FocusNeighborLeft = button.GetPath();
+            button.FocusNeighborRight = button.GetPath();
+            button.FocusNeighborTop = buttons[(index - 1 + buttons.Length) % buttons.Length].GetPath();
+            button.FocusNeighborBottom = buttons[(index + 1) % buttons.Length].GetPath();
+        }
+    }
+}
+
+[HarmonyPatch(typeof(NPauseMenu), nameof(NPauseMenu._Ready))]
+internal static class CharacterAppearancePauseMenuPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NPauseMenu __instance) =>
+        CharacterAppearancePauseMenu.Attach(__instance);
+}

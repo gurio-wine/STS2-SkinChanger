@@ -28,6 +28,7 @@ internal static partial class ContextualSkinControls
     private const string MonsterScaleGroupMeta = "sts2_skin_monster_scale_group";
     private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
+    private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
@@ -774,7 +775,7 @@ internal static partial class ContextualSkinControls
         return CanonicalScenePath("creature_visuals/" + monster.Id.Entry.ToLowerInvariant());
     }
 
-    private static SkinGroup? FindGroup(string modelId, string? modelTypeName = null)
+    internal static SkinGroup? FindGroup(string modelId, string? modelTypeName = null)
     {
         var tokens = new[] { modelId, modelTypeName }
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -867,6 +868,33 @@ internal static partial class ContextualSkinControls
         ApplyStoredMonsterScale(visuals, groupId);
     }
 
+    internal static float GetAppliedMonsterScaleFactor(NCreatureVisuals visuals)
+    {
+        if (!visuals.HasMeta(MonsterScaleGroupMeta))
+        {
+            return 1f;
+        }
+
+        return visuals.GetMeta(MonsterAppliedScaleMeta, 1f).AsSingle();
+    }
+
+    internal static bool IsMonsterScaleManaged(NCreatureVisuals visuals) =>
+        visuals.HasMeta(MonsterScaleGroupMeta);
+
+    internal static void ApplyMonsterScalePreview(NCreatureVisuals visuals, float factor)
+    {
+        if (!visuals.HasMeta(MonsterScaleGroupMeta))
+        {
+            return;
+        }
+
+        var normalized = Mathf.Clamp(
+            Mathf.Round(factor / SkinService.MonsterScaleStep) * SkinService.MonsterScaleStep,
+            SkinService.MinimumMonsterScale,
+            SkinService.MaximumMonsterScale);
+        ApplyMonsterScaleFactor(visuals, normalized);
+    }
+
     private static void CaptureMonsterBaseScale(NCreatureVisuals visuals)
     {
         visuals.SetMeta(MonsterBaseScaleMeta, visuals.Scale);
@@ -875,13 +903,18 @@ internal static partial class ContextualSkinControls
 
     private static void ApplyStoredMonsterScale(NCreatureVisuals visuals, string groupId)
     {
-        var factor = SkinService.GetSelectedMonsterScale(groupId);
+        ApplyMonsterScaleFactor(visuals, SkinService.GetSelectedMonsterScale(groupId));
+    }
+
+    private static void ApplyMonsterScaleFactor(NCreatureVisuals visuals, float factor)
+    {
         var baseScale = visuals.GetMeta(MonsterBaseScaleMeta, visuals.Scale).AsVector2();
         var baseDefaultScale = visuals
             .GetMeta(MonsterBaseDefaultScaleMeta, visuals.DefaultScale)
             .AsSingle();
         visuals.Scale = baseScale * factor;
         visuals.DefaultScale = baseDefaultScale * factor;
+        visuals.SetMeta(MonsterAppliedScaleMeta, factor);
     }
 
     private static void ApplyMonsterScaleToDescendants(Node root, string groupId)
@@ -1026,12 +1059,8 @@ internal static partial class ContextualSkinControls
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
 internal static class CharacterSelectionSkinPatch
 {
-    // Refresh the selector before unmanaged third-party postfixes get a chance to throw. Managed
-    // cosmetic presentation postfixes are isolated and safely replayed after the scene rebuild.
     [HarmonyPriority(Priority.First)]
-    private static void Postfix(
-        NCharacterSelectScreen __instance,
-        CharacterModel characterModel) =>
+    private static void Postfix(NCharacterSelectScreen __instance, CharacterModel characterModel) =>
         ContextualSkinControls.ShowCharacter(__instance, characterModel);
 }
 

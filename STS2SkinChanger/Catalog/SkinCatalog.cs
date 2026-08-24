@@ -837,6 +837,7 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
         var selectedProviderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var group in CardGroups)
         {
             if (onlyGroups != null && !onlyGroups.Contains(group.Id))
@@ -867,8 +868,6 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 foreach (var file in asset.Files)
                 {
-                    // 与 BuildOverlay 一致：把文件映射到请求的源路径名下，保证基线回退时
-                    // 文件仍出现在游戏实际加载的路径上。
                     var targetPath = MapAssetFilePath(sourcePath, asset.SourcePath, file.Path);
                     files[targetPath] = file;
                     var takeoverPath = NormalizeTakeoverPath(targetPath);

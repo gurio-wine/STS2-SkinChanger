@@ -2,6 +2,32 @@ using System.Text.Json;
 
 namespace STS2SkinChanger.Core;
 
+internal sealed record CharacterCombatTransform(
+    float Scale = 1f,
+    float OffsetX = 0f,
+    float OffsetY = 0f)
+{
+    public float HealthBarScale { get; init; } = 1f;
+
+    public float HealthBarOffsetX { get; init; }
+
+    public float HealthBarOffsetY { get; init; }
+
+    public bool HealthBarFollowsModelScale { get; init; }
+
+    public bool HealthBarFollowsModelMovement { get; init; } = true;
+
+    public float IntentScale { get; init; } = 1f;
+
+    public float IntentOffsetX { get; init; }
+
+    public float IntentOffsetY { get; init; }
+
+    public bool IntentFollowsModelScale { get; init; }
+
+    public bool IntentFollowsModelMovement { get; init; } = true;
+}
+
 internal sealed class SkinConfig
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -15,6 +41,9 @@ internal sealed class SkinConfig
     public Dictionary<string, Dictionary<string, float>> MonsterScales { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
+    public Dictionary<string, Dictionary<string, CharacterCombatTransform>> CharacterCombatTransforms { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public bool SuppressLoadOrderWarning { get; set; }
 
     public bool? LastKnownFirstInLoadOrder { get; set; }
@@ -26,7 +55,6 @@ internal sealed class SkinConfig
             if (File.Exists(path))
             {
                 var config = JsonSerializer.Deserialize<SkinConfig>(File.ReadAllText(path), JsonOptions) ?? new SkinConfig();
-                // JSON 中显式的 null 会覆盖属性初始化器，反序列化后兜底一次。
                 config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 config.MonsterScales ??=
                     new Dictionary<string, Dictionary<string, float>>(StringComparer.OrdinalIgnoreCase);
@@ -34,6 +62,17 @@ internal sealed class SkinConfig
                     pair => pair.Key,
                     pair => new Dictionary<string, float>(
                         pair.Value ?? new Dictionary<string, float>(),
+                        StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
+                config.CharacterCombatTransforms ??=
+                    new Dictionary<string, Dictionary<string, CharacterCombatTransform>>(
+                        StringComparer.OrdinalIgnoreCase);
+                config.CharacterCombatTransforms = config.CharacterCombatTransforms.ToDictionary(
+                    pair => pair.Key,
+                    pair => new Dictionary<string, CharacterCombatTransform>(
+                        (pair.Value ?? new Dictionary<string, CharacterCombatTransform>())
+                        .Where(option => option.Value != null)
+                        .ToDictionary(option => option.Key, option => option.Value),
                         StringComparer.OrdinalIgnoreCase),
                     StringComparer.OrdinalIgnoreCase);
                 return config;

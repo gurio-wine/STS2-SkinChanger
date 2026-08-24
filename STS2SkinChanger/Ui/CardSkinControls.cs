@@ -74,6 +74,7 @@ internal static class CardSkinControls
             dropdown,
             checked((int)index));
         selector.AddChild(dropdown);
+
         bottom.AddChild(selector);
         bottom.MoveChild(selector, 0);
 

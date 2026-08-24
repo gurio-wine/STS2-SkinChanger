@@ -501,6 +501,54 @@ internal static class ManagedSkinModLoader
         }
     }
 
+    /// <summary>
+    /// A few complete character skins attach their rendered actor or companion from an NCreature._Ready postfix
+    /// instead of returning it from CharacterModel.CreateVisuals. Live replacement creates a fresh visuals tree but
+    /// deliberately does not call NCreature._Ready again, because the game's own method would duplicate combat state,
+    /// signals, health bars and orb managers. Replay only the selected provider's parameter-compatible postfixes so
+    /// those cosmetic children receive the same setup as a creature created after the skin was selected.
+    /// </summary>
+    public static void ReplaySelectedCreatureReady(string providerId, NCreature creature)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime))
+        {
+            return;
+        }
+
+        var replayed = 0;
+        foreach (var patch in runtime.Patches.Where(patch =>
+                     patch.Kind == ProviderPatchKind.Postfix &&
+                     patch.Target.Name.Equals(nameof(NCreature._Ready), StringComparison.Ordinal) &&
+                     patch.Target.DeclaringType?.IsInstanceOfType(creature) == true))
+        {
+            if (!TryBuildCreatureReadyArguments(
+                    patch.Callback,
+                    patch.Target,
+                    creature,
+                    out var arguments))
+            {
+                continue;
+            }
+
+            try
+            {
+                patch.Callback.Invoke(null, arguments);
+                replayed++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重放 {providerId} 的实战外观初始化 {patch.Callback.DeclaringType?.FullName}." +
+                    $"{patch.Callback.Name} 失败：{exception.GetBaseException().Message}");
+            }
+        }
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已为 {creature.Entity.ModelId.Entry} 重放 {providerId} 的 {replayed} 个实战外观初始化步骤。");
+        }
+    }
+
     private static bool IsCharacterPresentationTarget(MethodBase target) =>
         target.DeclaringType != null &&
         ((typeof(NCharacterSelectScreen).IsAssignableFrom(target.DeclaringType) &&
@@ -540,6 +588,45 @@ internal static class ManagedSkinModLoader
                     break;
                 case "characterModel" or "character" or "model" when parameterType.IsInstanceOfType(character):
                     arguments[index] = character;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryBuildCreatureReadyArguments(
+        MethodInfo callback,
+        MethodBase target,
+        NCreature creature,
+        out object?[] arguments)
+    {
+        var parameters = callback.GetParameters();
+        arguments = new object?[parameters.Length];
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(creature):
+                    arguments[index] = creature;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = target;
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
                     break;
                 default:
                     if (parameter.HasDefaultValue)

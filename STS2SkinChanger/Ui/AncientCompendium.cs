@@ -9,6 +9,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
@@ -854,28 +855,140 @@ internal static class ManagedAncientSceneAnimation
             name.Equals(expectedName, StringComparison.OrdinalIgnoreCase));
 }
 
-[HarmonyPatch(typeof(NAncientEventLayout), "InitializeVisuals")]
-internal static class ManagedAncientSceneAnimationPatch
+internal static class AncientRuntimeAppearance
 {
     private static readonly System.Reflection.FieldInfo AncientEventField =
         AccessTools.Field(typeof(NAncientEventLayout), "_ancientEvent");
 
+    internal static bool TryGetCurrent(
+        out AncientEventModel ancient,
+        out NAncientEventLayout layout,
+        out SkinGroup group)
+    {
+        ancient = null!;
+        layout = null!;
+        group = null!;
+        if (NEventRoom.Instance?.Layout is not NAncientEventLayout currentLayout ||
+            !TryGet(currentLayout, out var currentAncient, out var currentGroup))
+        {
+            return false;
+        }
+
+        ancient = currentAncient;
+        layout = currentLayout;
+        group = currentGroup;
+        return true;
+    }
+
+    internal static bool TryGet(
+        NAncientEventLayout layout,
+        out AncientEventModel ancient,
+        out SkinGroup group)
+    {
+        ancient = null!;
+        group = null!;
+        if (AncientEventField.GetValue(layout) is not AncientEventModel currentAncient)
+        {
+            return false;
+        }
+
+        var currentGroup = AncientCompendiumEntry.FindGroup(currentAncient.Id.Entry);
+        if (currentGroup == null)
+        {
+            return false;
+        }
+
+        ancient = currentAncient;
+        group = currentGroup;
+        return true;
+    }
+
+    internal static Control? GetBackgroundTarget(NAncientEventLayout layout) =>
+        layout.GetNodeOrNull<Control>("%AncientBgContainer");
+
+    internal static bool TryRefresh(string groupId, out string? error)
+    {
+        error = null;
+        if (!TryGetCurrent(out var ancient, out var layout, out var group) ||
+            !group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var container = layout.GetNodeOrNull<Node>("%AncientBgContainer");
+        if (container == null)
+        {
+            error = "Ancient background container is unavailable";
+            return false;
+        }
+
+        var oldRoots = container.GetChildren().Cast<Node>().ToArray();
+        Node? newRoot = null;
+        try
+        {
+            newRoot = ancient.CreateBackgroundScene()
+                .Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            if (oldRoots.Length > 0)
+            {
+                newRoot.Name = oldRoots[0].Name;
+            }
+
+            foreach (var oldRoot in oldRoots)
+            {
+                container.RemoveChild(oldRoot);
+            }
+
+            container.AddChild(newRoot);
+            ManagedAncientLayeredImage.TryApply(group.Id, newRoot);
+            ManagedAncientSceneAnimation.TryStart(group.Id, newRoot);
+            foreach (var oldRoot in oldRoots)
+            {
+                oldRoot.QueueFree();
+            }
+
+            return true;
+        }
+        catch (Exception exception)
+        {
+            if (newRoot != null && GodotObject.IsInstanceValid(newRoot))
+            {
+                newRoot.GetParent()?.RemoveChild(newRoot);
+                newRoot.QueueFree();
+            }
+
+            foreach (var oldRoot in oldRoots.Where(GodotObject.IsInstanceValid))
+            {
+                if (oldRoot.GetParent() == null)
+                {
+                    container.AddChild(oldRoot);
+                }
+            }
+
+            error = exception.GetBaseException().Message;
+            ModLog.Error("热重载当前先古场景失败：" + exception);
+            return false;
+        }
+    }
+}
+
+[HarmonyPatch(typeof(NAncientEventLayout), "InitializeVisuals")]
+internal static class ManagedAncientSceneAnimationPatch
+{
     private static void Postfix(NAncientEventLayout __instance)
     {
         try
         {
-            if (AncientEventField.GetValue(__instance) is not AncientEventModel ancient)
+            if (!AncientRuntimeAppearance.TryGet(__instance, out _, out var group))
             {
                 return;
             }
 
-            var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
             var container = __instance.GetNodeOrNull<Node>("%AncientBgContainer");
             var sceneRoot = container?.GetChildCount() > 0 ? container.GetChild(0) : null;
             if (sceneRoot != null)
             {
-                ManagedAncientLayeredImage.TryApply(group?.Id, sceneRoot);
-                ManagedAncientSceneAnimation.TryStart(group?.Id, sceneRoot);
+                ManagedAncientLayeredImage.TryApply(group.Id, sceneRoot);
+                ManagedAncientSceneAnimation.TryStart(group.Id, sceneRoot);
             }
         }
         catch (Exception exception)
