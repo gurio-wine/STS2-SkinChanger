@@ -394,6 +394,33 @@ if (validateIndex >= 0)
             continue;
         }
 
+        var baselineResourcePaths = resourcePaths
+            .Where(path => catalog.ResolveBaseline(path) != null)
+            .ToArray();
+        if (baselineResourcePaths.Length > 0)
+        {
+            try
+            {
+                var baselineRuntimeOverlay = catalog.BuildRuntimeResourceOverlay(
+                    group.Id,
+                    SkinCatalog.BaseOptionId,
+                    baselineResourcePaths,
+                    $"validate/base/{validated:D4}");
+                ValidatePrivateBaselineReferences(
+                    catalog,
+                    baselineRuntimeOverlay,
+                    $"{group.Id}/base",
+                    failures);
+                validated++;
+                Console.WriteLine(
+                    $"validated {group.Id}/base: {baselineRuntimeOverlay.Files.Count} files");
+            }
+            catch (Exception exception)
+            {
+                failures.Add($"{group.Id}/base: {exception.Message}");
+            }
+        }
+
         foreach (var option in group.Options)
         {
             if (option.IsRuntimeProvider)
@@ -679,6 +706,11 @@ if (validateIndex >= 0)
                     resourcePaths,
                     $"validate/{validated:D4}",
                     includeProviderDependencies: true);
+                ValidatePrivateBaselineReferences(
+                    catalog,
+                    overlay,
+                    $"{group.Id}/{option.Id}",
+                    failures);
                 if (option.ManagedMonsterScene != null &&
                     !overlay.ResourcePaths.ContainsKey(creaturePath))
                 {
@@ -899,6 +931,43 @@ if (validateIndex >= 0)
         return path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)
             ? path[..^6]
             : path;
+    }
+
+    static void ValidatePrivateBaselineReferences(
+        SkinCatalog catalog,
+        RuntimeResourceOverlay overlay,
+        string context,
+        ICollection<string> failures)
+    {
+        foreach (var file in overlay.Files.Where(pair =>
+                     pair.Key.StartsWith(
+                         "res://sts2_skin_runtime/",
+                         StringComparison.OrdinalIgnoreCase) &&
+                     MayContainReferences(pair.Key)))
+        {
+            var textResource = Encoding.UTF8.GetString(file.Value);
+            foreach (Match reference in ResourceReferenceRegex().Matches(textResource))
+            {
+                var referencedPath = reference.Value;
+                if (referencedPath.StartsWith(
+                        "res://sts2_skin_runtime/",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    referencedPath.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
+                    referencedPath.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
+                    referencedPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var sourcePath = StripRedirectSuffix(
+                    SkinCatalog.NormalizeTakeoverPath(referencedPath));
+                if (catalog.ResolveBaseline(sourcePath) != null)
+                {
+                    failures.Add(
+                        $"{context}: private resource {file.Key} still references public baseline {referencedPath}");
+                }
+            }
+        }
     }
 
 }

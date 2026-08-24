@@ -3,7 +3,7 @@
   "name": "皮肤切换器-Skin Changer",
   "author": "Gurio",
   "description": "在选角界面、卡牌总览、单卡预览、怪物图鉴和远古图鉴中切换已安装的皮肤，并调整怪物皮肤大小，无需重启游戏。 Switch installed skins from character select, card compendium, enlarged card previews, monster compendium, and Ancient compendium, and adjust monster skin scale without restarting the game.",
-  "version": "0.9.48",
+  "version": "0.9.49",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

@@ -1479,10 +1479,7 @@ internal sealed partial class SkinCatalog : IDisposable
             resources.Add(CreateRuntimeResource(sourcePath, primary, baseline));
         }
 
-        if (selected != null)
-        {
-            IncludeAliasedSelectedDependencyChain(selected, resources);
-        }
+        IncludeAliasedDependencyChain(selected, resources);
 
         var overlay = BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
         if (selected == null || !includeProviderDependencies)
@@ -1539,24 +1536,20 @@ internal sealed partial class SkinCatalog : IDisposable
         return new RuntimeResource(sourcePath, directFile, remapFile, payloadFiles);
     }
 
-    private void IncludeAliasedSelectedDependencyChain(
-        SkinOption selected,
+    private void IncludeAliasedDependencyChain(
+        SkinOption? selected,
         List<RuntimeResource> resources)
     {
-        var indexes = _cosmeticIndexes
-            .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (indexes.Length == 0)
-        {
-            return;
-        }
+        var selectedIndexes = selected == null
+            ? []
+            : _cosmeticIndexes
+                .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
 
         var resourcesByPath = resources.ToDictionary(
             resource => resource.SourcePath,
             StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<RuntimeResource>(resources);
-        var dependencyMemo = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        var dependencyStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         while (queue.TryDequeue(out var resource))
         {
@@ -1574,12 +1567,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 var baseline = ResolveBaseline(sourcePath);
-                if (baseline != null && HasSelectedDescendant(baseline))
+                if (baseline != null)
                 {
-                    // Keep a baseline scene/tres only when it is the bridge to a resource that the
-                    // selected skin actually replaces. Both the bridge and the replacement are
-                    // then rewritten into this runtime pack's private namespace.
-                    IncludeResource(sourcePath, baseline, null);
+                    IncludeResource(sourcePath, baseline, FindOwningIndex(baseline));
                 }
             }
         }
@@ -1617,45 +1607,12 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
-        bool HasSelectedDescendant(ResourceAsset asset)
+        PckResourceIndex? FindOwningIndex(ResourceAsset asset)
         {
-            var firstFile = asset.Files.FirstOrDefault();
-            var key = (firstFile?.Archive.Path ?? string.Empty) + "\n" + asset.SourcePath;
-            if (dependencyMemo.TryGetValue(key, out var cached))
-            {
-                return cached;
-            }
-
-            if (!dependencyStack.Add(key))
-            {
-                return false;
-            }
-
-            var found = false;
-            foreach (var sourcePath in EnumerateDependencyPaths(asset))
-            {
-                if (!CanAliasDependency(sourcePath))
-                {
-                    continue;
-                }
-
-                if (TryResolveSelected(sourcePath, out _, out _))
-                {
-                    found = true;
-                    break;
-                }
-
-                var baseline = ResolveBaseline(sourcePath);
-                if (baseline != null && HasSelectedDescendant(baseline))
-                {
-                    found = true;
-                    break;
-                }
-            }
-
-            dependencyStack.Remove(key);
-            dependencyMemo[key] = found;
-            return found;
+            return _cosmeticIndexes
+                       .Concat(_baselineIndexes)
+                       .FirstOrDefault(candidate => asset.Files.Any(file =>
+                           ReferenceEquals(candidate.Archive, file.Archive)));
         }
 
         bool TryResolveSelected(
@@ -1663,15 +1620,15 @@ internal sealed partial class SkinCatalog : IDisposable
             out ResourceAsset asset,
             out PckResourceIndex? index)
         {
-            if (selected.Assets.TryGetValue(sourcePath, out var configured))
+            if (selected != null && selected.Assets.TryGetValue(sourcePath, out var configured))
             {
                 asset = configured;
-                index = indexes.FirstOrDefault(candidate => configured.Files.Any(file =>
+                index = selectedIndexes.FirstOrDefault(candidate => configured.Files.Any(file =>
                     ReferenceEquals(candidate.Archive, file.Archive)));
                 return true;
             }
 
-            foreach (var candidate in indexes)
+            foreach (var candidate in selectedIndexes)
             {
                 var dependency = candidate.Assets.GetValueOrDefault(sourcePath) ??
                                  candidate.TryBuildAsset(sourcePath);
