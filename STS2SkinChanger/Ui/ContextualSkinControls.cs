@@ -724,6 +724,7 @@ internal static partial class ContextualSkinControls
         }
 
         RestoreCharacterBackgroundContainerLayout(container);
+        LogCharacterBackgroundLayout("before_replace", character, container, null, scene);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChildSafely(child);
@@ -734,6 +735,7 @@ internal static partial class ContextualSkinControls
         background.Name = character.Id.Entry + "_bg";
         container.AddChildSafely(background);
         RestoreCharacterBackgroundContainerLayout(container);
+        LogCharacterBackgroundLayout("after_add", character, container, background, scene);
 
         if (background.IsInsideTree())
         {
@@ -755,8 +757,36 @@ internal static partial class ContextualSkinControls
                 // so a callback cannot move the whole background for the next skin.
                 RestoreCharacterBackgroundContainerLayout(container);
                 RefreshCharacterBackgroundLayout(container, background);
+                LogCharacterBackgroundLayout("deferred", character, container, background, scene);
             }
         }).CallDeferred();
+    }
+
+    private static void LogCharacterBackgroundLayout(
+        string phase,
+        CharacterModel character,
+        Control container,
+        Control? background,
+        PackedScene scene)
+    {
+        try
+        {
+            var spine = background?.GetNodeOrNull<Node2D>("SpineSprite");
+            var viewportSize = container.GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero;
+            ModLog.Info(
+                $"选角背景布局[{phase}] {character.Id.Entry}: " +
+                $"scene={scene.ResourcePath}; viewport={viewportSize}; " +
+                $"parentPos={container.Position}; parentSize={container.Size}; " +
+                $"parentScale={container.Scale}; parentPivot={container.PivotOffset}; " +
+                $"parentOffsets=({container.OffsetLeft},{container.OffsetTop},{container.OffsetRight},{container.OffsetBottom}); " +
+                (spine == null
+                    ? "spine=<none>"
+                    : $"spinePos={spine.Position}; spineScale={spine.Scale}; spineGlobal={spine.GlobalPosition}"));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"记录选角背景布局失败：{exception.GetBaseException().Message}");
+        }
     }
 
     private static void RestoreCharacterBackgroundContainerLayout(Control container)
