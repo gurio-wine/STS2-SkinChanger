@@ -523,14 +523,19 @@ internal static partial class ContextualSkinControls
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        // A complete DLL skin is mounted at its original game-facing paths while it is selected.
-        // Loading it through the per-resource alias layer changes the path context used by
-        // exported scenes and lets a later AssetCache factory instantiate it after that layer has
-        // been restored. Keep this branch on the canonical path for every full runtime provider;
-        // it is intentionally not tied to a particular mod.
+        // A complete DLL skin is mounted at its original game-facing paths while it is selected,
+        // but that is not enough for a hot switch: Godot may already have the canonical scene,
+        // skeleton or atlas cached from the skin that was active at startup. Instantiate the
+        // display through the same isolated alias overlay used by resource skins so the whole
+        // dependency graph is loaded from the selected provider's files as one coherent set.
         if (SkinService.GetSelectedFullRuntimeProvider(groupId) != null)
         {
-            RebuildMountedFullRuntimeCharacterDisplay(screen, character, characterSelectPath);
+            RebuildMountedFullRuntimeCharacterDisplay(
+                screen,
+                character,
+                groupId,
+                characterSelectPath,
+                characterSelectTextures);
             ReplaySelectedCharacterPresentation(screen, character, groupId);
             return;
         }
@@ -558,25 +563,31 @@ internal static partial class ContextualSkinControls
     private static void RebuildMountedFullRuntimeCharacterDisplay(
         NCharacterSelectScreen screen,
         CharacterModel character,
-        string scenePath)
+        string groupId,
+        string scenePath,
+        IReadOnlyCollection<string> texturePaths)
     {
-        var scene = ResourceLoader.Load<PackedScene>(
-            scenePath,
-            null,
-            ResourceLoader.CacheMode.IgnoreDeep) ??
-            PreloadManager.Cache.GetScene(scenePath);
-        PreloadManager.Cache.SetAsset(scenePath, scene);
-        ReplaceCharacterBackground(screen, character, scene);
+        var resourcePaths = new[] { scenePath }
+            .Concat(texturePaths)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        SkinService.WithRuntimeResources(
+            groupId,
+            resourcePaths,
+            resources =>
+            {
+                var scene = resources[scenePath] as PackedScene ??
+                            throw new InvalidOperationException($"完整运行时皮肤的选角资源不是场景：{scenePath}");
+                // Instantiate while the alias pack is mounted. PackedScene external resources
+                // are often resolved at Instantiate(), not at Load(), so loading only the scene
+                // object is insufficient to prevent a previous skin's skeleton/atlas binding.
+                ReplaceCharacterBackground(screen, character, scene);
+                RefreshCharacterButtonIcon(screen, character, texturePaths, resources);
+                return true;
+            },
+            includeProviderDependencies: true);
 
-        var button = FindCharacterButton(screen, character);
-        if (button != null)
-        {
-            button.GetNode<TextureRect>("%Icon").Texture = button.IsLocked
-                ? character.CharacterSelectLockedIcon
-                : character.CharacterSelectIcon;
-        }
-
-        ModLog.Info($"已从原始游戏路径重建完整 DLL 皮肤 {character.Id.Entry} 的选角展示。");
+        ModLog.Info($"已从隔离依赖路径重建完整 DLL 皮肤 {character.Id.Entry} 的选角展示。");
     }
 
     private static void RestoreCharacterInfoText(
