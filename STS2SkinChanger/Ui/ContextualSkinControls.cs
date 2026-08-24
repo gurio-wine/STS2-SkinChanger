@@ -29,6 +29,14 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
+    // These are the values authored by the game's character_select_screen.tscn.  A skin
+    // provider can legitimately change the background child, but it must not leave its parent
+    // container's transform behind when another skin is selected.
+    private const float CharacterBackgroundOffsetLeft = -388f;
+    private const float CharacterBackgroundOffsetTop = -80f;
+    private const float CharacterBackgroundOffsetRight = 252f;
+    private const float CharacterBackgroundOffsetBottom = 40f;
+    private static readonly Vector2 CharacterBackgroundPivot = new(1280f, 600f);
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
@@ -715,6 +723,7 @@ internal static partial class ContextualSkinControls
             return;
         }
 
+        RestoreCharacterBackgroundContainerLayout(container);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChildSafely(child);
@@ -724,6 +733,7 @@ internal static partial class ContextualSkinControls
         var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         background.Name = character.Id.Entry + "_bg";
         container.AddChildSafely(background);
+        RestoreCharacterBackgroundContainerLayout(container);
 
         if (background.IsInsideTree())
         {
@@ -740,9 +750,40 @@ internal static partial class ContextualSkinControls
             if (GodotObject.IsInstanceValid(container) &&
                 GodotObject.IsInstanceValid(background))
             {
+                // A provider may run a deferred presentation callback during _Ready.  Restore
+                // the parent once more immediately before the game's aspect-ratio calculation
+                // so a callback cannot move the whole background for the next skin.
+                RestoreCharacterBackgroundContainerLayout(container);
                 RefreshCharacterBackgroundLayout(container, background);
             }
         }).CallDeferred();
+    }
+
+    private static void RestoreCharacterBackgroundContainerLayout(Control container)
+    {
+        if (!GodotObject.IsInstanceValid(container))
+        {
+            return;
+        }
+
+        container.AnchorLeft = 0f;
+        container.AnchorTop = 0f;
+        container.AnchorRight = 1f;
+        container.AnchorBottom = 1f;
+        container.OffsetLeft = CharacterBackgroundOffsetLeft;
+        container.OffsetTop = CharacterBackgroundOffsetTop;
+        container.OffsetRight = CharacterBackgroundOffsetRight;
+        container.OffsetBottom = CharacterBackgroundOffsetBottom;
+        container.GrowHorizontal = Control.GrowDirection.Both;
+        container.GrowVertical = Control.GrowDirection.Both;
+        container.PivotOffset = CharacterBackgroundPivot;
+        container.Rotation = 0f;
+        container.Visible = true;
+
+        // _Ready only connects SizeChanged and does not calculate the initial scale.  The
+        // game's private callback is invoked below; 1.1 is its 16:9 fallback if reflection is
+        // unavailable on a future game build.
+        container.Scale = Vector2.One * 1.1f;
     }
 
     private static void RefreshCharacterBackgroundLayout(Control container, Control background)
