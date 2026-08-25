@@ -185,7 +185,8 @@ internal static class CardSkinControls
         var signature = ModLocalization.CurrentLanguage + "\n" +
                         string.Join("\n", sources.Select(source =>
                             $"{source.OptionId}:{source.Enabled}:{source.ColorIndex}:{source.IsCurrent}"));
-        var existing = card.GetNodeOrNull<Control>(SourceIndicatorName);
+        var indicatorParent = card.GetNodeOrNull<Control>("%CardContainer") ?? card;
+        var existing = indicatorParent.GetNodeOrNull<Control>(SourceIndicatorName);
         if (existing != null &&
             existing.GetMeta(SourceSignatureMeta, string.Empty).AsString() == signature)
         {
@@ -195,9 +196,8 @@ internal static class CardSkinControls
         RemoveSourceIndicators(card);
         var tooltip = BuildSourceTooltip(sources);
         const float tabHeight = 12f;
-        const float tabSeparation = 3f;
         const float tabBottomInset = 36f;
-        var height = sources.Count * tabHeight + (sources.Count - 1) * tabSeparation;
+        var height = sources.Count * tabHeight;
         var bottom = CardVisualBottomEdge - tabBottomInset;
         var indicator = new VBoxContainer
         {
@@ -208,12 +208,12 @@ internal static class CardSkinControls
             AnchorTop = 0f,
             AnchorRight = 0f,
             AnchorBottom = 0f,
-            OffsetLeft = CardVisualRightEdge - 8,
+            OffsetLeft = CardVisualRightEdge - 4,
             OffsetTop = bottom - height,
             OffsetRight = CardVisualRightEdge + 36,
             OffsetBottom = bottom
         };
-        indicator.AddThemeConstantOverride("separation", (int)tabSeparation);
+        indicator.AddThemeConstantOverride("separation", 0);
         indicator.SetMeta(SourceSignatureMeta, signature);
 
         foreach (var source in sources.Reverse())
@@ -222,7 +222,7 @@ internal static class CardSkinControls
             color.A = source.Enabled || source.IsCurrent ? 1f : 0.45f;
             var tab = new Panel
             {
-                CustomMinimumSize = new Vector2(source.IsCurrent ? 44 : 30, tabHeight),
+                CustomMinimumSize = new Vector2(source.IsCurrent ? 22 : 15, tabHeight),
                 SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin,
                 MouseFilter = Control.MouseFilterEnum.Stop,
                 TooltipText = tooltip
@@ -231,7 +231,12 @@ internal static class CardSkinControls
             indicator.AddChild(tab);
         }
 
-        card.AddChild(indicator);
+        indicatorParent.AddChild(indicator);
+        var shadow = indicatorParent.GetNodeOrNull<CanvasItem>("Shadow");
+        if (shadow != null)
+        {
+            indicatorParent.MoveChild(indicator, shadow.GetIndex() + 1);
+        }
     }
 
     private static string BuildSourceTooltip(IReadOnlyList<CardSkinSourceState> sources)
@@ -270,7 +275,8 @@ internal static class CardSkinControls
 
     private static void RemoveSourceIndicators(NCard card)
     {
-        var indicator = card.GetNodeOrNull<Control>(SourceIndicatorName);
+        var indicatorParent = card.GetNodeOrNull<Control>("%CardContainer") ?? card;
+        var indicator = indicatorParent.GetNodeOrNull<Control>(SourceIndicatorName);
         if (indicator == null)
         {
             return;
@@ -816,6 +822,20 @@ internal static class CardSkinControls
             Color = new Color(0f, 0f, 0f, 0.68f),
             MouseFilter = Control.MouseFilterEnum.Stop
         };
+        mask.GuiInput += input =>
+        {
+            if (input is not InputEventMouseButton
+                {
+                    Pressed: true,
+                    ButtonIndex: MouseButton.Left
+                })
+            {
+                return;
+            }
+
+            overlay.Visible = false;
+            mask.AcceptEvent();
+        };
         overlay.AddChild(mask);
         mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
@@ -828,9 +848,9 @@ internal static class CardSkinControls
             AnchorRight = 0.5f,
             AnchorBottom = 0.5f,
             OffsetLeft = -360,
-            OffsetTop = -280,
+            OffsetTop = -240,
             OffsetRight = 360,
-            OffsetBottom = 280
+            OffsetBottom = 240
         };
         panel.AddThemeStyleboxOverride(
             "panel",
@@ -889,17 +909,6 @@ internal static class CardSkinControls
         title.AddThemeFontSizeOverride("font_size", 25);
         title.AddThemeColorOverride("font_color", new Color("efc850"));
         content.AddChild(title);
-
-        var hint = new Label
-        {
-            Text = ModLocalization.Get(ModText.CardPriorityTooltip),
-            AutowrapMode = TextServer.AutowrapMode.WordSmart,
-            CustomMinimumSize = new Vector2(660, 48),
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        hint.AddThemeFontSizeOverride("font_size", 17);
-        hint.AddThemeColorOverride("font_color", new Color("fff6e2"));
-        content.AddChild(hint);
 
         var scroll = new ScrollContainer
         {
@@ -965,11 +974,8 @@ internal static class CardSkinControls
 
             var coverage = new Label
             {
-                Text = string.Format(
-                    ModLocalization.Get(ModText.CardArtCoverage),
-                    option.Coverage,
-                    option.TotalCards),
-                CustomMinimumSize = new Vector2(100, 36),
+                Text = $"{option.Coverage}/{option.TotalCards}",
+                CustomMinimumSize = new Vector2(70, 36),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
                 MouseFilter = Control.MouseFilterEnum.Ignore
