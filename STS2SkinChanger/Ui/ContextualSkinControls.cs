@@ -328,6 +328,7 @@ internal static partial class ContextualSkinControls
         button.AddThemeColorOverride("font_color", ivory);
         button.AddThemeColorOverride("font_hover_color", Colors.White);
         button.AddThemeColorOverride("font_pressed_color", gold);
+        button.AddThemeColorOverride("font_hover_pressed_color", Colors.White);
         button.AddThemeColorOverride("font_focus_color", Colors.White);
         button.AddThemeFontSizeOverride("font_size", 21);
         if (font != null)
@@ -338,6 +339,7 @@ internal static partial class ContextualSkinControls
         button.AddThemeStyleboxOverride("normal", CreateStyleBox(new Color("3c5f82"), new Color("7394ad")));
         button.AddThemeStyleboxOverride("hover", CreateStyleBox(new Color("4b7392"), new Color("afcdde")));
         button.AddThemeStyleboxOverride("pressed", CreateStyleBox(new Color("45104e"), gold));
+        button.AddThemeStyleboxOverride("hover_pressed", CreateStyleBox(new Color("58205f"), gold, 2));
         button.AddThemeStyleboxOverride("focus", CreateStyleBox(new Color("3c5f82"), gold, 2));
         button.AddThemeStyleboxOverride("disabled", CreateStyleBox(new Color("293b4c"), new Color("50606b")));
     }

@@ -28,6 +28,7 @@ internal enum ModText
     CurrentCardSource,
     AvailableCardSources,
     EnabledForCategory,
+    Close,
     CharacterAppearance,
     SelectAppearanceTarget,
     Skin,
@@ -137,7 +138,8 @@ internal static class ModLocalization
         string CardPriorityTooltip,
         string CardArtCoverage,
         string CurrentCardSource,
-        string AvailableCardSources)
+        string AvailableCardSources,
+        string Close)
     {
         public string Get(ModText text) => text switch
         {
@@ -147,6 +149,7 @@ internal static class ModLocalization
             ModText.CurrentCardSource => CurrentCardSource,
             ModText.AvailableCardSources => AvailableCardSources,
             ModText.EnabledForCategory => EnabledForCategory,
+            ModText.Close => Close,
             _ => throw new ArgumentOutOfRangeException(nameof(text), text, null)
         };
     }
@@ -566,63 +569,63 @@ internal static class ModLocalization
             ["eng"] = new(
                 "Enabled", "Skin priority ({0})",
                 "Enable card-skin mods and adjust priority. Higher entries win; lower entries fill missing card art.",
-                "Art {0}/{1}", "Current: {0}", "Available: {0}"),
+                "Art {0}/{1}", "Current: {0}", "Available: {0}", "Close"),
             ["zhs"] = new(
                 "启用", "皮肤优先级（{0}）",
                 "勾选“启用”决定 Mod 是否作用于当前分类；上方优先，缺少的卡图由下方补充。",
-                "卡图 {0}/{1}", "当前：{0}", "可用：{0}"),
+                "卡图 {0}/{1}", "当前：{0}", "可用：{0}", "关闭"),
             ["zht"] = new(
                 "啟用", "外觀優先順序（{0}）",
                 "勾選「啟用」決定 Mod 是否作用於目前分類；上方優先，缺少的卡圖由下方補充。",
-                "卡圖 {0}/{1}", "目前：{0}", "可用：{0}"),
+                "卡圖 {0}/{1}", "目前：{0}", "可用：{0}", "關閉"),
             ["deu"] = new(
                 "Aktiv", "Skin-Priorität ({0})",
                 "Aktiviere Karten-Skin-Mods und ordne sie. Höhere Einträge gewinnen; niedrigere füllen fehlende Kartenbilder.",
-                "Bilder {0}/{1}", "Aktuell: {0}", "Verfügbar: {0}"),
+                "Bilder {0}/{1}", "Aktuell: {0}", "Verfügbar: {0}", "Schließen"),
             ["esp"] = new(
                 "Activo", "Prioridad de aspectos ({0})",
                 "Activa mods de aspectos y ordénalos. Los superiores tienen prioridad; los inferiores completan imágenes faltantes.",
-                "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}"),
+                "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}", "Cerrar"),
             ["fra"] = new(
                 "Activé", "Priorité des skins ({0})",
                 "Activez et classez les mods de skins. Le haut est prioritaire ; le bas complète les illustrations manquantes.",
-                "Images {0}/{1}", "Actuel : {0}", "Disponibles : {0}"),
+                "Images {0}/{1}", "Actuel : {0}", "Disponibles : {0}", "Fermer"),
             ["ita"] = new(
                 "Attivo", "Priorità skin ({0})",
                 "Attiva e ordina i mod delle skin. Quelli in alto hanno priorità; quelli sotto completano le immagini mancanti.",
-                "Immagini {0}/{1}", "Attuale: {0}", "Disponibili: {0}"),
+                "Immagini {0}/{1}", "Attuale: {0}", "Disponibili: {0}", "Chiudi"),
             ["jpn"] = new(
                 "有効", "スキン優先順位（{0}）",
                 "カードスキンModを有効化して並べ替えます。上が優先され、ないカード画像は下から補われます。",
-                "画像 {0}/{1}", "現在：{0}", "利用可能：{0}"),
+                "画像 {0}/{1}", "現在：{0}", "利用可能：{0}", "閉じる"),
             ["kor"] = new(
                 "사용", "스킨 우선순위 ({0})",
                 "카드 스킨 Mod를 켜고 순서를 조정합니다. 위 항목이 우선하며 없는 카드 그림은 아래 항목이 채웁니다.",
-                "그림 {0}/{1}", "현재: {0}", "사용 가능: {0}"),
+                "그림 {0}/{1}", "현재: {0}", "사용 가능: {0}", "닫기"),
             ["pol"] = new(
                 "Włączona", "Priorytet skórek ({0})",
                 "Włącz i uporządkuj mody skórek kart. Wyższe mają pierwszeństwo, a niższe uzupełniają brakujące grafiki.",
-                "Grafiki {0}/{1}", "Bieżąca: {0}", "Dostępne: {0}"),
+                "Grafiki {0}/{1}", "Bieżąca: {0}", "Dostępne: {0}", "Zamknij"),
             ["ptb"] = new(
                 "Ativo", "Prioridade dos visuais ({0})",
                 "Ative e ordene os mods de visuais. Os itens acima vencem; os abaixo completam artes ausentes.",
-                "Artes {0}/{1}", "Atual: {0}", "Disponíveis: {0}"),
+                "Artes {0}/{1}", "Atual: {0}", "Disponíveis: {0}", "Fechar"),
             ["rus"] = new(
                 "Включено", "Приоритет обликов ({0})",
                 "Включайте и упорядочивайте моды обликов. Верхние важнее, нижние дополняют отсутствующие изображения.",
-                "Изображения {0}/{1}", "Текущий: {0}", "Доступны: {0}"),
+                "Изображения {0}/{1}", "Текущий: {0}", "Доступны: {0}", "Закрыть"),
             ["spa"] = new(
                 "Activo", "Prioridad de aspectos ({0})",
                 "Activa mods de aspectos y ordénalos. Los superiores tienen prioridad; los inferiores completan imágenes faltantes.",
-                "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}"),
+                "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}", "Cerrar"),
             ["tha"] = new(
                 "เปิดใช้", "ลำดับสกิน ({0})",
                 "เปิดใช้และจัดลำดับ Mod สกินการ์ด รายการด้านบนมีสิทธิ์ก่อน และด้านล่างเติมภาพที่ขาด",
-                "ภาพ {0}/{1}", "ปัจจุบัน: {0}", "มีให้ใช้: {0}"),
+                "ภาพ {0}/{1}", "ปัจจุบัน: {0}", "มีให้ใช้: {0}", "ปิด"),
             ["tur"] = new(
                 "Etkin", "Görünüm önceliği ({0})",
                 "Kart görünümü Modlarını etkinleştirip sırala. Üsttekiler önceliklidir; alttakiler eksik kart görsellerini tamamlar.",
-                "Görsel {0}/{1}", "Geçerli: {0}", "Mevcut: {0}")
+                "Görsel {0}/{1}", "Geçerli: {0}", "Mevcut: {0}", "Kapat")
         };
 
     private static readonly IReadOnlyDictionary<string, AdjustmentLanguagePack> AdjustmentPacks =

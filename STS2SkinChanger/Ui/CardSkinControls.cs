@@ -19,8 +19,9 @@ internal static class CardSkinControls
 {
     private const string SelectorName = "STS2CardSkinSelector";
     private const string PriorityButtonName = "CardSkinPriorityButton";
-    private const string PriorityPopupName = "STS2CardSkinPriorityPopup";
-    private const string PriorityPopupMarginName = "Margin";
+    private const string PriorityOverlayName = "STS2CardSkinPriorityOverlay";
+    private const string PriorityPanelName = "Panel";
+    private const string PriorityPanelMarginName = "Margin";
     private const string PriorityContentName = "PriorityContent";
     private const string AvailabilityFilterName = "STS2SkinnedCardsOnly";
     private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
@@ -62,8 +63,9 @@ internal static class CardSkinControls
             MouseFilter = Control.MouseFilterEnum.Stop,
             Visible = false
         };
-        var priorityPopup = CreatePriorityPopup();
-        screen.AddChild(priorityPopup);
+        var priorityOverlay = CreatePriorityOverlay();
+        screen.AddChild(priorityOverlay);
+        priorityOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
         var priorityButton = new Button
         {
@@ -74,7 +76,7 @@ internal static class CardSkinControls
         };
         ContextualSkinControls.ApplyGameTheme(priorityButton);
         priorityButton.AddThemeFontSizeOverride("font_size", 19);
-        priorityButton.Pressed += () => OpenPriorityPopup(screen, selector, priorityPopup);
+        priorityButton.Pressed += () => OpenPriorityOverlay(screen, selector, priorityOverlay);
         selector.AddChild(priorityButton);
 
         bottom.AddChild(selector);
@@ -112,9 +114,9 @@ internal static class CardSkinControls
                 Populate(selector, groupId);
             }
 
-            if (priorityPopup.Visible)
+            if (priorityOverlay.Visible)
             {
-                BuildPriorityPopup(screen, selector, priorityPopup);
+                BuildPriorityOverlay(screen, selector, priorityOverlay);
             }
 
             RefreshSourceIndicators(screen);
@@ -192,54 +194,40 @@ internal static class CardSkinControls
 
         RemoveSourceIndicators(card);
         var tooltip = BuildSourceTooltip(sources);
-        var height = 18 + sources.Count * 8;
+        const float tabHeight = 12f;
+        const float tabSeparation = 3f;
+        const float tabBottomInset = 36f;
+        var height = sources.Count * tabHeight + (sources.Count - 1) * tabSeparation;
+        var bottom = CardVisualBottomEdge - tabBottomInset;
         var indicator = new VBoxContainer
         {
             Name = SourceIndicatorName,
             MouseFilter = Control.MouseFilterEnum.Stop,
             TooltipText = tooltip,
-            ZIndex = 1000,
             AnchorLeft = 0f,
             AnchorTop = 0f,
             AnchorRight = 0f,
             AnchorBottom = 0f,
-            OffsetLeft = CardVisualRightEdge + 4,
-            OffsetTop = CardVisualBottomEdge - height,
-            OffsetRight = CardVisualRightEdge + 42,
-            OffsetBottom = CardVisualBottomEdge
+            OffsetLeft = CardVisualRightEdge - 8,
+            OffsetTop = bottom - height,
+            OffsetRight = CardVisualRightEdge + 36,
+            OffsetBottom = bottom
         };
-        indicator.AddThemeConstantOverride("separation", 2);
+        indicator.AddThemeConstantOverride("separation", (int)tabSeparation);
         indicator.SetMeta(SourceSignatureMeta, signature);
-
-        var badge = new Label
-        {
-            Text = sources.Count.ToString(),
-            CustomMinimumSize = new Vector2(22, 18),
-            SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-            TooltipText = tooltip
-        };
-        badge.AddThemeFontSizeOverride("font_size", 13);
-        badge.AddThemeColorOverride("font_color", Colors.White);
-        badge.AddThemeStyleboxOverride(
-            "normal",
-            ContextualSkinControls.CreateStyleBox(new Color("34203f"), new Color("efc850"), 1));
-        indicator.AddChild(badge);
 
         foreach (var source in sources.Reverse())
         {
             var color = SourceColor(source.ColorIndex);
             color.A = source.Enabled || source.IsCurrent ? 1f : 0.45f;
-            var tab = new ColorRect
+            var tab = new Panel
             {
-                Color = color,
-                CustomMinimumSize = new Vector2(source.IsCurrent ? 32 : 20, 6),
+                CustomMinimumSize = new Vector2(source.IsCurrent ? 44 : 30, tabHeight),
                 SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin,
                 MouseFilter = Control.MouseFilterEnum.Stop,
                 TooltipText = tooltip
             };
+            tab.AddThemeStyleboxOverride("panel", CreateSourceTabStyle(color));
             indicator.AddChild(tab);
         }
 
@@ -270,6 +258,15 @@ internal static class CardSkinControls
         var hue = (0.12f + index * goldenRatioConjugate) % 1f;
         return Color.FromHsv(hue, 0.72f, 0.96f);
     }
+
+    private static StyleBoxFlat CreateSourceTabStyle(Color color) => new()
+    {
+        BgColor = color,
+        CornerRadiusTopLeft = 6,
+        CornerRadiusTopRight = 6,
+        CornerRadiusBottomRight = 6,
+        CornerRadiusBottomLeft = 6
+    };
 
     private static void RemoveSourceIndicators(NCard card)
     {
@@ -804,47 +801,72 @@ internal static class CardSkinControls
         selector.Visible = true;
     }
 
-    private static PopupPanel CreatePriorityPopup()
+    private static Control CreatePriorityOverlay()
     {
-        var popup = new PopupPanel
+        var overlay = new Control
         {
-            Name = PriorityPopupName,
-            MinSize = new Vector2I(720, 480)
+            Name = PriorityOverlayName,
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 2000
         };
-        popup.AddThemeStyleboxOverride(
+        var mask = new ColorRect
+        {
+            Name = "Mask",
+            Color = new Color(0f, 0f, 0f, 0.68f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        overlay.AddChild(mask);
+        mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        var panel = new PanelContainer
+        {
+            Name = PriorityPanelName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -360,
+            OffsetTop = -280,
+            OffsetRight = 360,
+            OffsetBottom = 280
+        };
+        panel.AddThemeStyleboxOverride(
             "panel",
             ContextualSkinControls.CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
-        var margin = new MarginContainer { Name = PriorityPopupMarginName };
+        overlay.AddChild(panel);
+        var margin = new MarginContainer { Name = PriorityPanelMarginName };
         margin.AddThemeConstantOverride("margin_left", 20);
         margin.AddThemeConstantOverride("margin_top", 18);
         margin.AddThemeConstantOverride("margin_right", 20);
         margin.AddThemeConstantOverride("margin_bottom", 18);
-        popup.AddChild(margin);
-        margin.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        panel.AddChild(margin);
         var content = new VBoxContainer { Name = PriorityContentName };
         content.AddThemeConstantOverride("separation", 10);
         margin.AddChild(content);
-        return popup;
+        return overlay;
     }
 
-    private static void OpenPriorityPopup(
+    private static void OpenPriorityOverlay(
         NCardLibrary screen,
         HBoxContainer selector,
-        PopupPanel popup)
+        Control overlay)
     {
-        BuildPriorityPopup(screen, selector, popup);
-        popup.PopupCentered(new Vector2I(720, 520));
+        BuildPriorityOverlay(screen, selector, overlay);
+        overlay.Visible = true;
+        overlay.MoveToFront();
     }
 
-    private static void BuildPriorityPopup(
+    private static void BuildPriorityOverlay(
         NCardLibrary screen,
         HBoxContainer selector,
-        PopupPanel popup)
+        Control overlay)
     {
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var group = FindGroup(groupId);
-        var content = popup.GetNode<VBoxContainer>(
-            $"{PriorityPopupMarginName}/{PriorityContentName}");
+        var content = overlay.GetNode<VBoxContainer>(
+            $"{PriorityPanelName}/{PriorityPanelMarginName}/{PriorityContentName}");
         foreach (var child in content.GetChildren())
         {
             content.RemoveChild(child);
@@ -923,7 +945,7 @@ internal static class CardSkinControls
             enabled.Toggled += value => QueuePriorityChange(
                 screen,
                 selector,
-                popup,
+                overlay,
                 groupId,
                 () => SkinService.SetCardPriorityEnabled(groupId, option.OptionId, value));
             row.AddChild(enabled);
@@ -967,7 +989,7 @@ internal static class CardSkinControls
             up.Pressed += () => QueuePriorityChange(
                 screen,
                 selector,
-                popup,
+                overlay,
                 groupId,
                 () => SkinService.MoveCardPriority(groupId, option.OptionId, -1));
             row.AddChild(up);
@@ -983,17 +1005,28 @@ internal static class CardSkinControls
             down.Pressed += () => QueuePriorityChange(
                 screen,
                 selector,
-                popup,
+                overlay,
                 groupId,
                 () => SkinService.MoveCardPriority(groupId, option.OptionId, 1));
             row.AddChild(down);
         }
+
+        var close = new Button
+        {
+            Text = ModLocalization.Get(ModText.Close),
+            CustomMinimumSize = new Vector2(180, 42),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter
+        };
+        ContextualSkinControls.ApplyGameTheme(close);
+        close.AddThemeFontSizeOverride("font_size", 19);
+        close.Pressed += () => overlay.Visible = false;
+        content.AddChild(close);
     }
 
     private static void QueuePriorityChange(
         NCardLibrary screen,
         HBoxContainer selector,
-        PopupPanel popup,
+        Control overlay,
         string groupId,
         Func<bool> change)
     {
@@ -1006,7 +1039,7 @@ internal static class CardSkinControls
             }
 
             Populate(selector, groupId);
-            BuildPriorityPopup(screen, selector, popup);
+            BuildPriorityOverlay(screen, selector, overlay);
             RefreshVisibleCards(screen, groupId);
         }).CallDeferred();
     }
