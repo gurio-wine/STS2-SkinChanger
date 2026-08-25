@@ -3,7 +3,7 @@
   "publishedFileId": 3787302680,
   "title": "Skin Changer",
   "statementHeading": "Statement",
-  "version": "0.9.57",
+  "version": "0.9.58",
   "featureUpdate": "[h2]In-game Appearance[/h2]\n[list]\n[*]During combat, open Appearance from the pause menu and click a character, monster, Ancient, or companion. The panel opens on the opposite side of the selected target.\n[*]Characters and monsters can hot-swap skins and adjust or drag their model and health bar. Ancients only show a skin selector. Osty's skin follows the Necrobinder, while its model and health bar remain independently adjustable.\n[*]Monster intents have independent scale and position controls, plus options to follow model scale and movement.\n[/list]",
   "cardPriorityUpdate": "[h2]Card Skin Priorities[/h2]\n[list]\n[*]Each card category can enable multiple skin Mods and order their priority. Higher entries are used first, while lower entries fill cards or frame styles that are not replaced above.\n[*]The Card Compendium shows colored source tabs beside each card, so available sources and the currently selected source can be compared at a glance.\n[/list]",
   "limitations": "[h2]Limitations[/h2]\n[list]\n[*]Most mods that simply replace pictures, models, or animations should work. A skin may not appear or may only work partly if its mod also adds gameplay, uses its own settings, or builds the appearance with special code while the game is running.\n[*]A skin may not be found automatically if its files are protected, packed in an unusual way, or use unusual names and folders.\n[*]Skins with special models, skeletons, animations, materials, or visual effects may be misplaced, invisible, static, or look different between the Compendium and actual gameplay.\n[*]Please keep Skin Changer first in the load order. Outdated skin mods, missing required mods, duplicate mod information, or conflicts between skin mods can also cause a skin to be missing or display incorrectly.\n[*]Game and skin-mod updates may temporarily break compatibility. If you find a problem, please report the skin-mod name, what character, card, monster, or Ancient is affected, what went wrong, and attach the game log if possible.\n[/list]",
@@ -11,6 +11,6 @@
   "visibility": 0,
   "contentFolder": "content",
   "previewFile": "preview.jpg",
-  "changeNote": "Add per-category multi-Mod card skin priorities, layered fallback, and card source labels / 新增按卡牌分类设置多 Mod 优先级、逐层补全与卡牌来源标签",
+  "changeNote": "Fix full character skin hot-swapping in combat, including skeleton payloads, initialization, and player/companion positioning / 修复完整角色皮肤局内热切换，包括骨骼资源、初始化与玩家/同伴位置",
   "localizationsFile": "localizations.json"
 }
