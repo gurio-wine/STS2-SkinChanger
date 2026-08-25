@@ -831,6 +831,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public Dictionary<string, ResourceFile> BuildCardOverlay(
         IReadOnlyDictionary<string, string> selections,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> priorityStacks,
         IReadOnlySet<string>? onlyGroups = null)
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
@@ -843,10 +844,26 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            selections.TryGetValue("cards:" + group.Id, out var selectedId);
-            var selected = group.Options.FirstOrDefault(option =>
-                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
-            if (selected != null)
+            var selectedOptions = priorityStacks.TryGetValue(group.Id, out var priorityIds)
+                ? priorityIds
+                    .Select(id => group.Options.FirstOrDefault(option =>
+                        option.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                    .Where(option => option != null)
+                    .Cast<CardSkinOption>()
+                    .ToArray()
+                : [];
+            if (selectedOptions.Length == 0 &&
+                selections.TryGetValue("cards:" + group.Id, out var selectedId))
+            {
+                var legacySelected = group.Options.FirstOrDefault(option =>
+                    option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+                if (legacySelected != null)
+                {
+                    selectedOptions = [legacySelected];
+                }
+            }
+
+            foreach (var selected in selectedOptions)
             {
                 selectedProviderIds.Add(selected.ProviderId ?? selected.Id);
             }
@@ -856,9 +873,10 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Distinct(StringComparer.OrdinalIgnoreCase);
             foreach (var sourcePath in sourcePaths)
             {
-                var asset = selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
-                    ? selectedAsset
-                    : ResolveBaseline(sourcePath);
+                var asset = selectedOptions
+                                .Select(option => option.Assets.GetValueOrDefault(sourcePath))
+                                .FirstOrDefault(candidate => candidate != null) ??
+                            ResolveBaseline(sourcePath);
                 if (asset == null)
                 {
                     continue;

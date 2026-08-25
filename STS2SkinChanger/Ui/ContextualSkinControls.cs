@@ -320,6 +320,28 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static void ApplyGameTheme(Button button)
+    {
+        var font = GameFont;
+        var ivory = new Color("fff6e2");
+        var gold = new Color("efc850");
+        button.AddThemeColorOverride("font_color", ivory);
+        button.AddThemeColorOverride("font_hover_color", Colors.White);
+        button.AddThemeColorOverride("font_pressed_color", gold);
+        button.AddThemeColorOverride("font_focus_color", Colors.White);
+        button.AddThemeFontSizeOverride("font_size", 21);
+        if (font != null)
+        {
+            button.AddThemeFontOverride("font", font);
+        }
+
+        button.AddThemeStyleboxOverride("normal", CreateStyleBox(new Color("3c5f82"), new Color("7394ad")));
+        button.AddThemeStyleboxOverride("hover", CreateStyleBox(new Color("4b7392"), new Color("afcdde")));
+        button.AddThemeStyleboxOverride("pressed", CreateStyleBox(new Color("45104e"), gold));
+        button.AddThemeStyleboxOverride("focus", CreateStyleBox(new Color("3c5f82"), gold, 2));
+        button.AddThemeStyleboxOverride("disabled", CreateStyleBox(new Color("293b4c"), new Color("50606b")));
+    }
+
     internal static void HideCharacterSelector(NCharacterSelectScreen screen)
     {
         var selector = screen.GetNodeOrNull<Control>($"InfoPanel/{SelectorName}");

@@ -31,6 +31,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> CardPortraitCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, CardCoverageState> CardCoverageCache =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IsolatedCardOverlayState> IsolatedCardOverlayCache =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, System.Reflection.MethodInfo> AncientStyleMethods =
@@ -222,6 +224,7 @@ internal static class SkinService
 
                 Catalog.FinalizeCardGroups(entries);
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
+                CardCoverageCache.Clear();
                 SanitizeCardSelections();
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
@@ -320,26 +323,15 @@ internal static class SkinService
                 return false;
             }
 
-            var selectionKey = CardSelectionKey(groupId);
-            var hadPrevious = Config.Selections.TryGetValue(selectionKey, out var previous);
-            try
-            {
-                Config.Selections[selectionKey] = optionId;
-                ClearCardPortraitCache(groupId);
-                MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
-                Config.Save(ConfigPath);
-                LastError = null;
-                return true;
-            }
-            catch (Exception exception)
-            {
-                RestoreSelection(selectionKey, previous, hadPrevious);
-                ClearCardPortraitCache(groupId);
-                TryRestoreOverlay(groupId, cardOverlay: true);
-                LastError = exception.Message;
-                ModLog.Error($"切换 {groupId} 卡牌皮肤失败：{exception}");
-                return false;
-            }
+            var entries = GetCardPriorityEntriesInternal(group)
+                .Select(entry => entry with
+                {
+                    Enabled = !optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                              entry.OptionId.Equals(optionId, StringComparison.OrdinalIgnoreCase)
+                })
+                .OrderByDescending(entry => entry.Enabled)
+                .ToArray();
+            return ApplyCardPriority(groupId, entries);
         }
     }
 
@@ -347,6 +339,177 @@ internal static class SkinService
     // LastError 用 volatile 保证异常路径下的可见性。
     public static string GetCardSelection(string groupId) =>
         Config.GetSelection(CardSelectionKey(groupId));
+
+    public static IReadOnlyList<CardPriorityOptionState> GetCardPriorityOptions(string groupId)
+    {
+        lock (Sync)
+        {
+            var group = Catalog?.CardGroups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (group == null)
+            {
+                return [];
+            }
+
+            var entries = GetCardPriorityEntriesInternal(group);
+            var coverage = GetCardCoverage(group);
+            return entries.Select((entry, colorIndex) =>
+                {
+                    var option = group.Options.First(candidate =>
+                        candidate.Id.Equals(entry.OptionId, StringComparison.OrdinalIgnoreCase));
+                    return new CardPriorityOptionState(
+                        option.Id,
+                        option.Name,
+                        entry.Enabled,
+                        colorIndex,
+                        coverage.ByOption.GetValueOrDefault(entry.OptionId),
+                        coverage.TotalCards);
+                })
+                .ToArray();
+        }
+    }
+
+    public static IReadOnlyList<CardSkinSourceState> GetCardSkinSources(CardModel card)
+    {
+        lock (Sync)
+        {
+            var lookup = GetCardLookup(card);
+            if (lookup.Group == null)
+            {
+                return [];
+            }
+
+            var current = GetEffectiveCardSelection(card, lookup, CardVisualLayer.Portrait);
+            return GetCardPriorityEntriesInternal(lookup.Group)
+                .Select((entry, colorIndex) => (Entry: entry, ColorIndex: colorIndex))
+                .Where(pair =>
+                    lookup.OptionsById.TryGetValue(pair.Entry.OptionId, out var option) &&
+                    HasCardPortrait(option, lookup.CardType))
+                .Select(pair =>
+                {
+                    var option = lookup.OptionsById[pair.Entry.OptionId].Option;
+                    return new CardSkinSourceState(
+                        option.Id,
+                        option.Name,
+                        pair.Entry.Enabled,
+                        pair.ColorIndex,
+                        option.Id.Equals(current, StringComparison.OrdinalIgnoreCase));
+                })
+                .ToArray();
+        }
+    }
+
+    public static int GetCardSkinSourceCount(CardModel card) =>
+        GetCardSkinSources(card).Count;
+
+    public static bool SetCardPriorityEnabled(string groupId, string optionId, bool enabled)
+    {
+        lock (Sync)
+        {
+            var group = Catalog?.CardGroups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (group == null)
+            {
+                LastError = $"未知的卡牌皮肤分类：{groupId}";
+                return false;
+            }
+
+            var entries = GetCardPriorityEntriesInternal(group)
+                .Select(entry => entry.OptionId.Equals(optionId, StringComparison.OrdinalIgnoreCase)
+                    ? entry with { Enabled = enabled }
+                    : entry)
+                .ToArray();
+            return ApplyCardPriority(groupId, entries);
+        }
+    }
+
+    public static bool MoveCardPriority(string groupId, string optionId, int offset)
+    {
+        lock (Sync)
+        {
+            var group = Catalog?.CardGroups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (group == null)
+            {
+                LastError = $"未知的卡牌皮肤分类：{groupId}";
+                return false;
+            }
+
+            var entries = GetCardPriorityEntriesInternal(group).ToList();
+            var index = entries.FindIndex(entry =>
+                entry.OptionId.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+            var target = Math.Clamp(index + offset, 0, entries.Count - 1);
+            if (index < 0 || target == index)
+            {
+                return index >= 0;
+            }
+
+            var moved = entries[index];
+            entries.RemoveAt(index);
+            entries.Insert(target, moved);
+            return ApplyCardPriority(groupId, entries);
+        }
+    }
+
+    private static bool ApplyCardPriority(
+        string groupId,
+        IReadOnlyList<CardSkinPriorityEntry> requestedEntries)
+    {
+        var group = Catalog?.CardGroups.FirstOrDefault(candidate =>
+            candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+        if (group == null)
+        {
+            LastError = $"未知的卡牌皮肤分类：{groupId}";
+            return false;
+        }
+
+        var knownIds = group.Options.Select(option => option.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var entries = requestedEntries
+            .Where(entry => knownIds.Contains(entry.OptionId))
+            .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var option in group.Options.Where(option => entries.All(entry =>
+                     !entry.OptionId.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
+        {
+            entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: false));
+        }
+
+        var previousEntries = Config.CardSkinPriorities.TryGetValue(group.Id, out var configured)
+            ? configured.ToList()
+            : null;
+        var selectionKey = CardSelectionKey(group.Id);
+        var hadPreviousSelection = Config.Selections.TryGetValue(selectionKey, out var previousSelection);
+        try
+        {
+            Config.CardSkinPriorities[group.Id] = entries;
+            Config.Selections[selectionKey] = entries.FirstOrDefault(entry => entry.Enabled)?.OptionId ??
+                                             SkinCatalog.BaseOptionId;
+            ClearCardPortraitCache(group.Id);
+            MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id });
+            Config.Save(ConfigPath);
+            LastError = null;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            if (previousEntries == null)
+            {
+                Config.CardSkinPriorities.Remove(group.Id);
+            }
+            else
+            {
+                Config.CardSkinPriorities[group.Id] = previousEntries;
+            }
+
+            RestoreSelection(selectionKey, previousSelection, hadPreviousSelection);
+            ClearCardPortraitCache(group.Id);
+            TryRestoreOverlay(group.Id, cardOverlay: true);
+            LastError = exception.Message;
+            ModLog.Error($"调整 {group.Id} 卡牌皮肤优先级失败：{exception}");
+            return false;
+        }
+    }
 
     public static bool ShouldDriveManagedCharacterAnimations(string groupId)
     {
@@ -400,17 +563,43 @@ internal static class SkinService
     }
 
     private static string GetEffectiveCardSelection(CardModel card, CardLookup lookup)
+        => GetEffectiveCardSelection(card, lookup, CardVisualLayer.Portrait);
+
+    private static string GetEffectiveCardSelection(
+        CardModel card,
+        CardLookup lookup,
+        CardVisualLayer layer)
     {
         var individual = Config.Selections.GetValueOrDefault(
             IndividualCardSelectionKey(card),
             InheritCardSelectionId);
-        if (individual.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
-            lookup.OptionsById.ContainsKey(individual))
+        if (individual.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
             return individual;
         }
 
-        return Config.GetSelection(CardSelectionKey(lookup.GroupId));
+        if (lookup.OptionsById.TryGetValue(individual, out var individualOption))
+        {
+            return OptionSuppliesLayer(individualOption, lookup.CardType, layer)
+                ? individual
+                : SkinCatalog.BaseOptionId;
+        }
+
+        if (lookup.Group == null)
+        {
+            return SkinCatalog.BaseOptionId;
+        }
+
+        foreach (var entry in GetCardPriorityEntriesInternal(lookup.Group).Where(entry => entry.Enabled))
+        {
+            if (lookup.OptionsById.TryGetValue(entry.OptionId, out var option) &&
+                OptionSuppliesLayer(option, lookup.CardType, layer))
+            {
+                return option.Option.Id;
+            }
+        }
+
+        return SkinCatalog.BaseOptionId;
     }
 
     public static CardPresentationDefinition? GetCardPresentation(CardModel card)
@@ -418,7 +607,7 @@ internal static class SkinService
         lock (Sync)
         {
             var lookup = GetCardLookup(card);
-            var selection = GetEffectiveCardSelection(card, lookup);
+            var selection = GetEffectiveCardSelection(card, lookup, CardVisualLayer.Presentation);
             return lookup.OptionsById.TryGetValue(selection, out var option)
                 ? option.Option.CardPresentations.GetValueOrDefault(lookup.CardType)
                 : null;
@@ -436,7 +625,7 @@ internal static class SkinService
         lock (Sync)
         {
             var lookup = GetCardLookup(card);
-            var selection = GetEffectiveCardSelection(card, lookup);
+            var selection = GetEffectiveCardSelection(card, lookup, CardVisualLayer.Presentation);
             lookup.OptionsById.TryGetValue(selection, out var optionLookup);
             var option = optionLookup?.Option;
             var cacheKey =
@@ -865,6 +1054,41 @@ internal static class SkinService
 
     private static bool CardOptionAffectsCardUncached(CardSkinOption option, CardModel card) =>
         BuildCardOptionLookup(option, card) != null;
+
+    private static bool HasCardPortrait(CardOptionLookup option, string cardType) =>
+        option.Option.NormalPortraits.ContainsKey(cardType) ||
+        option.Option.AncientPortraits.ContainsKey(cardType) ||
+        option.MatchedAssetPaths.Count > 0;
+
+    private static bool OptionSuppliesLayer(
+        CardOptionLookup option,
+        string cardType,
+        CardVisualLayer layer) =>
+        layer == CardVisualLayer.Portrait
+            ? HasCardPortrait(option, cardType)
+            : option.Option.CardPresentations.ContainsKey(cardType);
+
+    private static CardCoverageState GetCardCoverage(CardSkinGroup group)
+    {
+        if (CardCoverageCache.TryGetValue(group.Id, out var cached))
+        {
+            return cached;
+        }
+
+        var cards = ModelDb.AllCards
+            .Select(card => GetCardLookup(card))
+            .Where(lookup => lookup.GroupId.Equals(group.Id, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var byOption = group.Options.ToDictionary(
+            option => option.Id,
+            option => cards.Count(lookup =>
+                lookup.OptionsById.TryGetValue(option.Id, out var optionLookup) &&
+                HasCardPortrait(optionLookup, lookup.CardType)),
+            StringComparer.OrdinalIgnoreCase);
+        cached = new CardCoverageState(cards.Length, byOption);
+        CardCoverageCache[group.Id] = cached;
+        return cached;
+    }
 
     private static string GetCardPoolGroupId(CardModel card) =>
         (card.Pool?.Title ?? string.Empty).ToLowerInvariant();
@@ -1930,7 +2154,14 @@ internal static class SkinService
     private static void MountCardOverlay(IReadOnlySet<string> groups)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-        var files = catalog.BuildCardOverlay(Config.Selections, groups);
+        var priorityStacks = catalog.CardGroups.ToDictionary(
+            group => group.Id,
+            group => (IReadOnlyList<string>)GetCardPriorityEntriesInternal(group)
+                .Where(entry => entry.Enabled)
+                .Select(entry => entry.OptionId)
+                .ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+        var files = catalog.BuildCardOverlay(Config.Selections, priorityStacks, groups);
         if (files.Count == 0)
         {
             return;
@@ -1999,6 +2230,16 @@ internal static class SkinService
     private sealed record CardOptionLookup(
         CardSkinOption Option,
         IReadOnlyList<string> MatchedAssetPaths);
+
+    private sealed record CardCoverageState(
+        int TotalCards,
+        IReadOnlyDictionary<string, int> ByOption);
+
+    private enum CardVisualLayer
+    {
+        Portrait,
+        Presentation
+    }
 
     private sealed record CardPortraitRequest(
         string GroupId,
@@ -2134,12 +2375,48 @@ internal static class SkinService
     {
         foreach (var group in Catalog!.CardGroups)
         {
-            var key = CardSelectionKey(group.Id);
-            if (!Config.Selections.ContainsKey(key))
+            GetCardPriorityEntriesInternal(group);
+        }
+    }
+
+    private static IReadOnlyList<CardSkinPriorityEntry> GetCardPriorityEntriesInternal(
+        CardSkinGroup group)
+    {
+        var knownIds = group.Options
+            .Select(option => option.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        List<CardSkinPriorityEntry> entries;
+        if (Config.CardSkinPriorities.TryGetValue(group.Id, out var configured))
+        {
+            entries = configured
+                .Where(entry => knownIds.Contains(entry.OptionId))
+                .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach (var option in group.Options.Where(option => entries.All(entry =>
+                         !entry.OptionId.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
             {
-                Config.Selections[key] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+                entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: false));
             }
         }
+        else
+        {
+            var selectionKey = CardSelectionKey(group.Id);
+            var hasLegacySelection = Config.Selections.TryGetValue(selectionKey, out var legacySelection);
+            var selectedId = hasLegacySelection
+                ? legacySelection!
+                : group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+            entries = group.Options
+                .OrderByDescending(option => option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase))
+                .Select(option => new CardSkinPriorityEntry(
+                    option.Id,
+                    option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+        }
+
+        Config.CardSkinPriorities[group.Id] = entries;
+        Config.Selections[CardSelectionKey(group.Id)] =
+            entries.FirstOrDefault(entry => entry.Enabled)?.OptionId ?? SkinCatalog.BaseOptionId;
+        return entries;
     }
 
     private static void CleanupOldOverlays()
@@ -2164,3 +2441,18 @@ internal sealed record AncientLayeredImageTextures(
     Texture2D? BackgroundCover,
     Texture2D? Mask,
     Texture2D? SleepingCharacter);
+
+internal sealed record CardPriorityOptionState(
+    string OptionId,
+    string Name,
+    bool Enabled,
+    int ColorIndex,
+    int Coverage,
+    int TotalCards);
+
+internal sealed record CardSkinSourceState(
+    string OptionId,
+    string Name,
+    bool Enabled,
+    int ColorIndex,
+    bool IsCurrent);

@@ -28,6 +28,10 @@ internal sealed record CharacterCombatTransform(
     public bool IntentFollowsModelMovement { get; init; } = true;
 }
 
+internal sealed record CardSkinPriorityEntry(
+    string OptionId,
+    bool Enabled);
+
 internal sealed class SkinConfig
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -37,6 +41,9 @@ internal sealed class SkinConfig
     };
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, List<CardSkinPriorityEntry>> CardSkinPriorities { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public Dictionary<string, Dictionary<string, float>> MonsterScales { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
@@ -56,6 +63,14 @@ internal sealed class SkinConfig
             {
                 var config = JsonSerializer.Deserialize<SkinConfig>(File.ReadAllText(path), JsonOptions) ?? new SkinConfig();
                 config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                config.CardSkinPriorities ??=
+                    new Dictionary<string, List<CardSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
+                config.CardSkinPriorities = config.CardSkinPriorities.ToDictionary(
+                    pair => pair.Key,
+                    pair => (pair.Value ?? [])
+                        .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
+                        .ToList(),
+                    StringComparer.OrdinalIgnoreCase);
                 config.MonsterScales ??=
                     new Dictionary<string, Dictionary<string, float>>(StringComparer.OrdinalIgnoreCase);
                 config.MonsterScales = config.MonsterScales.ToDictionary(

@@ -18,11 +18,17 @@ namespace STS2SkinChanger.Ui;
 internal static class CardSkinControls
 {
     private const string SelectorName = "STS2CardSkinSelector";
-    private const string DropdownName = "CardSkinDropdown";
+    private const string PriorityButtonName = "CardSkinPriorityButton";
+    private const string PriorityPopupName = "STS2CardSkinPriorityPopup";
+    private const string PriorityPopupMarginName = "Margin";
+    private const string PriorityContentName = "PriorityContent";
     private const string AvailabilityFilterName = "STS2SkinnedCardsOnly";
+    private const string MultipleAvailabilityFilterName = "STS2MultipleSkinnedCardsOnly";
     private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
+    private const string MultipleAvailabilityFilterMeta = "sts2_multiple_skinned_cards_only";
     private const string GroupMeta = "sts2_card_skin_group";
-    private const string UpdatingMeta = "sts2_card_skin_updating";
+    private const string SourceIndicatorName = "STS2CardSkinSources";
+    private const string SourceSignatureMeta = "sts2_card_skin_source_signature";
     private const string NormalTextBackgroundOverlayName = "STS2ManagedNormalTextBackgroundOverlay";
     private const string AncientBorderPath =
         "res://images/atlases/compressed.sprites/card_template/ancient_card_border.tres";
@@ -56,29 +62,26 @@ internal static class CardSkinControls
             MouseFilter = Control.MouseFilterEnum.Stop,
             Visible = false
         };
-        var dropdown = new OptionButton
+        var priorityPopup = CreatePriorityPopup();
+        screen.AddChild(priorityPopup);
+
+        var priorityButton = new Button
         {
-            Name = DropdownName,
+            Name = PriorityButtonName,
             CustomMinimumSize = new Vector2(256, 40),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            FitToLongestItem = false,
-            ClipText = true,
             Alignment = HorizontalAlignment.Center
         };
-        ContextualSkinControls.ApplyGameTheme(dropdown);
-        dropdown.AddThemeFontSizeOverride("font_size", 19);
-        dropdown.GetPopup().AddThemeFontSizeOverride("font_size", 19);
-        dropdown.ItemSelected += index => ApplySelection(
-            screen,
-            selector,
-            dropdown,
-            checked((int)index));
-        selector.AddChild(dropdown);
+        ContextualSkinControls.ApplyGameTheme(priorityButton);
+        priorityButton.AddThemeFontSizeOverride("font_size", 19);
+        priorityButton.Pressed += () => OpenPriorityPopup(screen, selector, priorityPopup);
+        selector.AddChild(priorityButton);
 
         bottom.AddChild(selector);
         bottom.MoveChild(selector, 0);
 
         NLibraryStatTickbox? availabilityFilter = null;
+        NLibraryStatTickbox? multipleAvailabilityFilter = null;
         var filterScene = ResourceLoader.Load<PackedScene>(
             "res://scenes/screens/card_library/card_library_tickbox.tscn");
         if (filterScene != null)
@@ -93,13 +96,26 @@ internal static class CardSkinControls
             availabilityFilter.Connect(
                 NTickbox.SignalName.Toggled,
                 Callable.From<NTickbox>(tickbox =>
-                    SetAvailabilityFilter(screen, tickbox.IsTicked)));
+                    SetAvailabilityFilter(screen, AvailabilityFilterMeta, tickbox.IsTicked)));
+
+            multipleAvailabilityFilter = filterScene.Instantiate<NLibraryStatTickbox>(
+                PackedScene.GenEditState.Disabled);
+            multipleAvailabilityFilter.Name = MultipleAvailabilityFilterName;
+            bottom.AddChild(multipleAvailabilityFilter);
+            bottom.MoveChild(multipleAvailabilityFilter, 2);
+            multipleAvailabilityFilter.SetLabel(ModLocalization.Get(ModText.MultipleCardSkinsOnly));
+            multipleAvailabilityFilter.IsTicked = false;
+            multipleAvailabilityFilter.Connect(
+                NTickbox.SignalName.Toggled,
+                Callable.From<NTickbox>(tickbox =>
+                    SetAvailabilityFilter(screen, MultipleAvailabilityFilterMeta, tickbox.IsTicked)));
         }
 
         ShowFirstAvailableGroup(selector);
         ModLocalization.Bind(screen, () =>
         {
             availabilityFilter?.SetLabel(ModLocalization.Get(ModText.SkinnedCardsOnly));
+            multipleAvailabilityFilter?.SetLabel(ModLocalization.Get(ModText.MultipleCardSkinsOnly));
             var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
             if (string.IsNullOrWhiteSpace(groupId))
             {
@@ -109,6 +125,13 @@ internal static class CardSkinControls
             {
                 Populate(selector, groupId);
             }
+
+            if (priorityPopup.Visible)
+            {
+                BuildPriorityPopup(screen, selector, priorityPopup);
+            }
+
+            RefreshSourceIndicators(screen);
         });
     }
 
@@ -153,6 +176,140 @@ internal static class CardSkinControls
 
     public static void ReplacePortrait(CardModel card, ref Texture2D result) =>
         SkinService.ReplaceCardPortrait(card, ref result);
+
+    public static void UpdateLibrarySourceIndicators(NCard card)
+    {
+        if (card.Model == null ||
+            HasAncestor<NInspectCardScreen>(card) ||
+            !HasAncestor<NCardLibrary>(card))
+        {
+            RemoveSourceIndicators(card);
+            return;
+        }
+
+        var sources = SkinService.GetCardSkinSources(card.Model);
+        if (sources.Count == 0)
+        {
+            RemoveSourceIndicators(card);
+            return;
+        }
+
+        var signature = ModLocalization.CurrentLanguage + "\n" +
+                        string.Join("\n", sources.Select(source =>
+                            $"{source.OptionId}:{source.Enabled}:{source.ColorIndex}:{source.IsCurrent}"));
+        var existing = card.GetNodeOrNull<Control>(SourceIndicatorName);
+        if (existing != null &&
+            existing.GetMeta(SourceSignatureMeta, string.Empty).AsString() == signature)
+        {
+            return;
+        }
+
+        RemoveSourceIndicators(card);
+        var tooltip = BuildSourceTooltip(sources);
+        var height = 22 + sources.Count * 8;
+        var indicator = new VBoxContainer
+        {
+            Name = SourceIndicatorName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            TooltipText = tooltip,
+            ZIndex = 1000,
+            AnchorLeft = 1f,
+            AnchorTop = 1f,
+            AnchorRight = 1f,
+            AnchorBottom = 1f,
+            OffsetLeft = 4,
+            OffsetTop = -height,
+            OffsetRight = 42,
+            OffsetBottom = 0
+        };
+        indicator.AddThemeConstantOverride("separation", 2);
+        indicator.SetMeta(SourceSignatureMeta, signature);
+
+        var badge = new Label
+        {
+            Text = sources.Count.ToString(),
+            CustomMinimumSize = new Vector2(22, 18),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            TooltipText = tooltip
+        };
+        badge.AddThemeFontSizeOverride("font_size", 13);
+        badge.AddThemeColorOverride("font_color", Colors.White);
+        badge.AddThemeStyleboxOverride(
+            "normal",
+            ContextualSkinControls.CreateStyleBox(new Color("34203f"), new Color("efc850"), 1));
+        indicator.AddChild(badge);
+
+        foreach (var source in sources.Reverse())
+        {
+            var color = SourceColor(source.ColorIndex);
+            color.A = source.Enabled || source.IsCurrent ? 1f : 0.45f;
+            var tab = new ColorRect
+            {
+                Color = color,
+                CustomMinimumSize = new Vector2(source.IsCurrent ? 32 : 20, 6),
+                SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin,
+                MouseFilter = Control.MouseFilterEnum.Stop,
+                TooltipText = tooltip
+            };
+            indicator.AddChild(tab);
+        }
+
+        card.AddChild(indicator);
+    }
+
+    private static string BuildSourceTooltip(IReadOnlyList<CardSkinSourceState> sources)
+    {
+        var lines = new List<string>();
+        var current = sources.FirstOrDefault(source => source.IsCurrent);
+        if (current != null)
+        {
+            lines.Add(string.Format(
+                ModLocalization.Get(ModText.CurrentCardSource),
+                ModLocalization.DisplayOptionName(current.Name)));
+        }
+
+        lines.Add(string.Format(
+            ModLocalization.Get(ModText.AvailableCardSources),
+            string.Join(" · ", sources.Select(source =>
+                ModLocalization.DisplayOptionName(source.Name)))));
+        return string.Join("\n", lines);
+    }
+
+    private static Color SourceColor(int index)
+    {
+        const float goldenRatioConjugate = 0.61803398875f;
+        var hue = (0.12f + index * goldenRatioConjugate) % 1f;
+        return Color.FromHsv(hue, 0.72f, 0.96f);
+    }
+
+    private static void RemoveSourceIndicators(NCard card)
+    {
+        var indicator = card.GetNodeOrNull<Control>(SourceIndicatorName);
+        if (indicator == null)
+        {
+            return;
+        }
+
+        indicator.GetParent()?.RemoveChild(indicator);
+        indicator.QueueFree();
+    }
+
+    private static bool HasAncestor<T>(Node node)
+        where T : Node
+    {
+        for (var current = node.GetParent(); current != null; current = current.GetParent())
+        {
+            if (current is T)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public static void CaptureBaselineLayout(NCard card)
     {
@@ -588,11 +745,19 @@ internal static class CardSkinControls
     public static void ResetAvailabilityFilter(NCardLibrary screen)
     {
         screen.SetMeta(AvailabilityFilterMeta, false);
-        var filter = screen.GetNodeOrNull<NLibraryStatTickbox>(
+        screen.SetMeta(MultipleAvailabilityFilterMeta, false);
+        var availabilityFilter = screen.GetNodeOrNull<NLibraryStatTickbox>(
             $"Sidebar/MarginContainer/BottomVBox/{AvailabilityFilterName}");
-        if (filter != null)
+        if (availabilityFilter != null)
         {
-            filter.IsTicked = false;
+            availabilityFilter.IsTicked = false;
+        }
+
+        var multipleFilter = screen.GetNodeOrNull<NLibraryStatTickbox>(
+            $"Sidebar/MarginContainer/BottomVBox/{MultipleAvailabilityFilterName}");
+        if (multipleFilter != null)
+        {
+            multipleFilter.IsTicked = false;
         }
     }
 
@@ -606,19 +771,27 @@ internal static class CardSkinControls
             current = current.GetParent();
         }
 
-        if (current is not NCardLibrary library ||
-            !library.GetMeta(AvailabilityFilterMeta, false).AsBool())
+        if (current is not NCardLibrary library)
+        {
+            return;
+        }
+
+        var skinsOnly = library.GetMeta(AvailabilityFilterMeta, false).AsBool();
+        var multipleOnly = library.GetMeta(MultipleAvailabilityFilterMeta, false).AsBool();
+        if (!skinsOnly && !multipleOnly)
         {
             return;
         }
 
         var original = filter;
-        filter = card => original(card) && SkinService.HasCardSkin(card);
+        filter = card => original(card) &&
+                         (!skinsOnly || SkinService.HasCardSkin(card)) &&
+                         (!multipleOnly || SkinService.GetCardSkinSourceCount(card) > 1);
     }
 
-    private static void SetAvailabilityFilter(NCardLibrary screen, bool enabled)
+    private static void SetAvailabilityFilter(NCardLibrary screen, string meta, bool enabled)
     {
-        screen.SetMeta(AvailabilityFilterMeta, enabled);
+        screen.SetMeta(meta, enabled);
         try
         {
             UpdateLibraryFilterMethod.Invoke(screen, [false]);
@@ -637,57 +810,224 @@ internal static class CardSkinControls
 
     private static void Populate(HBoxContainer selector, string? groupId)
     {
-        var dropdown = selector.GetNode<OptionButton>(DropdownName);
+        var button = selector.GetNode<Button>(PriorityButtonName);
         var group = groupId == null ? null : FindGroup(groupId);
         if (group == null || group.Options.Count == 0)
         {
             selector.Visible = false;
-            dropdown.Clear();
+            button.Text = string.Empty;
             return;
         }
 
-        selector.SetMeta(UpdatingMeta, true);
         selector.SetMeta(GroupMeta, group.Id);
-        dropdown.Clear();
-        dropdown.TooltipText = ModLocalization.Get(ModText.CardCategorySkinTooltip);
-        dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
-        dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
-        foreach (var option in group.Options)
-        {
-            var index = dropdown.ItemCount;
-            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
-            dropdown.SetItemMetadata(index, option.Id);
-        }
-
-        var selected = SkinService.GetCardSelection(group.Id);
-        var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
-            .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString() == selected);
-        dropdown.Select(selectedIndex);
-        selector.SetMeta(UpdatingMeta, false);
+        var options = SkinService.GetCardPriorityOptions(group.Id);
+        button.Text = string.Format(
+            ModLocalization.Get(ModText.CardSkinPriority),
+            options.Count(option => option.Enabled));
+        button.TooltipText = ModLocalization.Get(ModText.CardPriorityTooltip);
         selector.Visible = true;
     }
 
-    private static void ApplySelection(
+    private static PopupPanel CreatePriorityPopup()
+    {
+        var popup = new PopupPanel
+        {
+            Name = PriorityPopupName,
+            MinSize = new Vector2I(620, 480)
+        };
+        popup.AddThemeStyleboxOverride(
+            "panel",
+            ContextualSkinControls.CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        var margin = new MarginContainer { Name = PriorityPopupMarginName };
+        margin.AddThemeConstantOverride("margin_left", 20);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_right", 20);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
+        popup.AddChild(margin);
+        margin.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        var content = new VBoxContainer { Name = PriorityContentName };
+        content.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(content);
+        return popup;
+    }
+
+    private static void OpenPriorityPopup(
         NCardLibrary screen,
         HBoxContainer selector,
-        OptionButton dropdown,
-        int index)
+        PopupPanel popup)
     {
-        if (selector.GetMeta(UpdatingMeta, false).AsBool())
-        {
-            return;
-        }
+        BuildPriorityPopup(screen, selector, popup);
+        popup.PopupCentered(new Vector2I(620, 520));
+    }
 
+    private static void BuildPriorityPopup(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        PopupPanel popup)
+    {
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
-        var optionId = dropdown.GetItemMetadata(index).AsString();
-        if (!SkinService.ApplyCardSelection(groupId, optionId))
+        var group = FindGroup(groupId);
+        var content = popup.GetNode<VBoxContainer>(
+            $"{PriorityPopupMarginName}/{PriorityContentName}");
+        foreach (var child in content.GetChildren())
         {
-            ModLog.Error($"卡牌皮肤界面切换失败：{SkinService.LastError}");
-            Populate(selector, groupId);
+            content.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        if (group == null)
+        {
             return;
         }
 
-        Callable.From(() => RefreshVisibleCards(screen, groupId)).CallDeferred();
+        var title = new Label
+        {
+            Text = string.Format(
+                ModLocalization.Get(ModText.CardSkinPriority),
+                SkinService.GetCardPriorityOptions(groupId).Count(option => option.Enabled)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        title.AddThemeFontSizeOverride("font_size", 25);
+        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        content.AddChild(title);
+
+        var hint = new Label
+        {
+            Text = ModLocalization.Get(ModText.CardPriorityTooltip),
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            CustomMinimumSize = new Vector2(560, 48),
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        hint.AddThemeFontSizeOverride("font_size", 17);
+        hint.AddThemeColorOverride("font_color", new Color("fff6e2"));
+        content.AddChild(hint);
+
+        var scroll = new ScrollContainer
+        {
+            CustomMinimumSize = new Vector2(570, 350),
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        content.AddChild(scroll);
+        var rows = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        rows.AddThemeConstantOverride("separation", 6);
+        scroll.AddChild(rows);
+
+        var options = SkinService.GetCardPriorityOptions(groupId);
+        foreach (var option in options)
+        {
+            var row = new HBoxContainer
+            {
+                CustomMinimumSize = new Vector2(550, 42),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            row.AddThemeConstantOverride("separation", 8);
+            rows.AddChild(row);
+
+            row.AddChild(new ColorRect
+            {
+                Color = SourceColor(option.ColorIndex),
+                CustomMinimumSize = new Vector2(13, 32),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            });
+            var enabled = new CheckBox
+            {
+                ButtonPressed = option.Enabled,
+                CustomMinimumSize = new Vector2(32, 32),
+                TooltipText = ModLocalization.DisplayOptionName(option.Name)
+            };
+            enabled.Toggled += value => QueuePriorityChange(
+                screen,
+                selector,
+                popup,
+                groupId,
+                () => SkinService.SetCardPriorityEnabled(groupId, option.OptionId, value));
+            row.AddChild(enabled);
+
+            var name = new Label
+            {
+                Text = ModLocalization.DisplayOptionName(option.Name),
+                ClipText = true,
+                CustomMinimumSize = new Vector2(270, 36),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                VerticalAlignment = VerticalAlignment.Center,
+                TooltipText = ModLocalization.DisplayOptionName(option.Name)
+            };
+            name.AddThemeFontSizeOverride("font_size", 18);
+            name.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            row.AddChild(name);
+
+            var coverage = new Label
+            {
+                Text = string.Format(
+                    ModLocalization.Get(ModText.CardArtCoverage),
+                    option.Coverage,
+                    option.TotalCards),
+                CustomMinimumSize = new Vector2(100, 36),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
+            coverage.AddThemeFontSizeOverride("font_size", 16);
+            coverage.AddThemeColorOverride("font_color", new Color("afcdde"));
+            row.AddChild(coverage);
+
+            var up = new Button
+            {
+                Text = "↑",
+                Disabled = option == options[0],
+                CustomMinimumSize = new Vector2(42, 34)
+            };
+            ContextualSkinControls.ApplyGameTheme(up);
+            up.AddThemeFontSizeOverride("font_size", 18);
+            up.Pressed += () => QueuePriorityChange(
+                screen,
+                selector,
+                popup,
+                groupId,
+                () => SkinService.MoveCardPriority(groupId, option.OptionId, -1));
+            row.AddChild(up);
+
+            var down = new Button
+            {
+                Text = "↓",
+                Disabled = option == options[^1],
+                CustomMinimumSize = new Vector2(42, 34)
+            };
+            ContextualSkinControls.ApplyGameTheme(down);
+            down.AddThemeFontSizeOverride("font_size", 18);
+            down.Pressed += () => QueuePriorityChange(
+                screen,
+                selector,
+                popup,
+                groupId,
+                () => SkinService.MoveCardPriority(groupId, option.OptionId, 1));
+            row.AddChild(down);
+        }
+    }
+
+    private static void QueuePriorityChange(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        PopupPanel popup,
+        string groupId,
+        Func<bool> change)
+    {
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !change())
+            {
+                ModLog.Error($"调整卡牌皮肤优先级失败：{SkinService.LastError}");
+                return;
+            }
+
+            Populate(selector, groupId);
+            BuildPriorityPopup(screen, selector, popup);
+            RefreshVisibleCards(screen, groupId);
+        }).CallDeferred();
     }
 
     private static void RefreshVisibleCards(NCardLibrary screen, string groupId)
@@ -708,6 +1048,14 @@ internal static class CardSkinControls
         catch (Exception exception)
         {
             ModLog.Error("刷新卡牌总览皮肤失败：" + exception);
+        }
+    }
+
+    private static void RefreshSourceIndicators(NCardLibrary screen)
+    {
+        foreach (var card in Descendants(screen).OfType<NCard>())
+        {
+            UpdateLibrarySourceIndicators(card);
         }
     }
 
@@ -1179,6 +1527,7 @@ internal static class CardLayoutFinalPatch
             : ExternalCardVisualBridge.GetOwnership(__instance.Model);
         CardSkinControls.ApplySelectedPresentation(__instance, externalOwnership);
         CardSkinControls.ApplySelectedPortraitToNode(__instance, externalOwnership);
+        CardSkinControls.UpdateLibrarySourceIndicators(__instance);
     }
 }
 
