@@ -4019,7 +4019,7 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("(?:^|/)card_portraits/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardPortraitGroupRegex();
 
-    [GeneratedRegex("/(?:card_portraits|[^/]*cards?\\.sprites|cards?|card_art|cardart)/", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("/(?:card_portraits|[^/]*card[^/]*\\.sprites|cards?|card_art|cardart)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardArtPathRegex();
 
     [GeneratedRegex("/(?:card_portraits|[^/]*cards?\\.sprites|cards?|card_art|cardart)/([^/]+)/", RegexOptions.IgnoreCase)]
