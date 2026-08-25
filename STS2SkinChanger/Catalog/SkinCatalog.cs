@@ -1502,15 +1502,22 @@ internal sealed partial class SkinCatalog : IDisposable
             StringComparer.OrdinalIgnoreCase);
         foreach (var dependency in dependencyFiles)
         {
-            files[dependency.Key] = dependency.Value;
+            // Canonical redirect files emitted by the alias overlay deliberately point binary
+            // scene dependencies at their fresh payload aliases. Do not replace those bridges
+            // with the provider's original .remap/.import file.
+            files.TryAdd(dependency.Key, dependency.Value);
         }
+
+        var canonicalDependencyPaths = overlay.CanonicalDependencyPaths
+            .Concat(dependencyFiles.Keys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return new RuntimeResourceOverlay(
             overlay.ResourcePaths,
             files,
             overlay.SourceAliases,
             overlay.PayloadAliases,
-            dependencyFiles.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
+            canonicalDependencyPaths);
     }
 
     private RuntimeResource CreateRuntimeResource(
@@ -1552,7 +1559,16 @@ internal sealed partial class SkinCatalog : IDisposable
 
         while (queue.TryDequeue(out var resource))
         {
-            foreach (var sourcePath in EnumerateDependencyPaths(resource.DirectFile))
+            // Exported Godot scenes/resources are commonly binary .scn/.res payloads behind a
+            // text .remap file. Their external resource paths remain readable in the binary
+            // string table, so scan both the source and every payload instead of stopping at the
+            // outer .tscn/.tres entry. Otherwise only the scene name is isolated while its Spine
+            // skeleton/atlas silently binds to the skin that occupied the canonical cache first.
+            var dependencyFiles = new[] { resource.DirectFile, resource.RemapFile }
+                .Where(file => file != null)
+                .Cast<ResourceFile>()
+                .Concat(resource.PayloadFiles);
+            foreach (var sourcePath in dependencyFiles.SelectMany(EnumerateDependencyPaths))
             {
                 if (resourcesByPath.ContainsKey(sourcePath) || !CanAliasDependency(sourcePath))
                 {
@@ -1671,10 +1687,16 @@ internal sealed partial class SkinCatalog : IDisposable
     private static bool IsDependencyGraphTextResource(string path) =>
         path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".res", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".import", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".gdshader", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
 
     private static bool CanAliasDependency(string path) =>
+        !path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) &&
+        !path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase) &&
         !path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) &&
         !path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) &&
         !path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
@@ -1895,6 +1917,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 StringComparer.OrdinalIgnoreCase);
 
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        var canonicalRedirectPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var resource in resources)
         {
             if (resource.DirectFile != null)
@@ -1936,12 +1959,26 @@ internal sealed partial class SkinCatalog : IDisposable
             var remapSuffix = resource.RemapFile.Path.EndsWith(".import", StringComparison.OrdinalIgnoreCase)
                 ? ".import"
                 : ".remap";
-            files[sourceAliases[resource.SourcePath] + remapSuffix] =
+            var rewrittenRemap =
                 RewriteTextResource(Encoding.UTF8.GetBytes(remapText), replacements, null);
+            files[sourceAliases[resource.SourcePath] + remapSuffix] = rewrittenRemap;
+
+            // Binary .scn/.res payloads keep canonical external-resource strings internally and
+            // cannot be safely rewritten byte-for-byte. While this runtime overlay is active,
+            // make those canonical source paths resolve to the aliased payloads as well. This is
+            // what makes the dependency isolation real when a different skin populated Godot's
+            // cache before the hot switch.
+            var canonicalRemapPath = resource.SourcePath + remapSuffix;
+            files[canonicalRemapPath] = rewrittenRemap;
+            canonicalRedirectPaths.Add(canonicalRemapPath);
         }
 
+        // Return every discovered logical dependency, not just the requested roots. Runtime
+        // callers can then explicitly rebind native resources (notably SpineSkeletonDataResource)
+        // before a hot-swapped node enters the tree. Binary PackedScenes cannot have those paths
+        // rewritten safely in-place.
         var aliasedResourcePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var resourcePath in resourcePaths)
+        foreach (var resourcePath in sourceAliases.Keys)
         {
             if (!sourceAliases.TryGetValue(resourcePath, out var aliasedResourcePath) ||
                 (!files.ContainsKey(aliasedResourcePath) &&
@@ -1959,7 +1996,7 @@ internal sealed partial class SkinCatalog : IDisposable
             files,
             sourceAliases,
             payloadAliases,
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            canonicalRedirectPaths);
     }
 
     private static string BuildRuntimeSourceAlias(RuntimeResource resource, string aliasToken)
@@ -3479,7 +3516,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private static bool IsImportedPayloadPath(string path) =>
         path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".spskel", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".ctex", StringComparison.OrdinalIgnoreCase);
+        path.EndsWith(".ctex", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase) &&
+        (path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
+         path.EndsWith(".res", StringComparison.OrdinalIgnoreCase));
 
     internal static string NormalizeTakeoverPath(string path)
     {

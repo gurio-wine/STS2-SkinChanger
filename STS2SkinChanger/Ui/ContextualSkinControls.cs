@@ -29,14 +29,6 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
-    // These are the values authored by the game's character_select_screen.tscn.  A skin
-    // provider can legitimately change the background child, but it must not leave its parent
-    // container's transform behind when another skin is selected.
-    private const float CharacterBackgroundOffsetLeft = -388f;
-    private const float CharacterBackgroundOffsetTop = -80f;
-    private const float CharacterBackgroundOffsetRight = 252f;
-    private const float CharacterBackgroundOffsetBottom = 40f;
-    private static readonly Vector2 CharacterBackgroundPivot = new(1280f, 600f);
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
@@ -551,7 +543,7 @@ internal static partial class ContextualSkinControls
                 // The scene must be instantiated before WithRuntimeResources restores canonical
                 // dependency paths; otherwise a skeleton/animation resource can come from the
                 // previous character skin even though the PackedScene itself loaded correctly.
-                ReplaceCharacterBackground(screen, character, scene);
+                ReplaceCharacterBackground(screen, character, scene, resources);
                 RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
                 return true;
             },
@@ -581,7 +573,7 @@ internal static partial class ContextualSkinControls
                 // Instantiate while the alias pack is mounted. PackedScene external resources
                 // are often resolved at Instantiate(), not at Load(), so loading only the scene
                 // object is insufficient to prevent a previous skin's skeleton/atlas binding.
-                ReplaceCharacterBackground(screen, character, scene);
+                ReplaceCharacterBackground(screen, character, scene, resources);
                 RefreshCharacterButtonIcon(screen, character, texturePaths, resources);
                 return true;
             },
@@ -725,7 +717,8 @@ internal static partial class ContextualSkinControls
     private static void ReplaceCharacterBackground(
         NCharacterSelectScreen screen,
         CharacterModel character,
-        PackedScene scene)
+        PackedScene scene,
+        IReadOnlyDictionary<string, Resource>? isolatedResources = null)
     {
         var container = screen.GetNodeOrNull<Control>("AnimatedBg");
         if (container == null)
@@ -734,8 +727,6 @@ internal static partial class ContextualSkinControls
             return;
         }
 
-        RestoreCharacterBackgroundContainerLayout(container);
-        LogCharacterBackgroundLayout("before_replace", character, container, null, scene);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChildSafely(child);
@@ -743,10 +734,13 @@ internal static partial class ContextualSkinControls
         }
 
         var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        if (isolatedResources != null)
+        {
+            RebindCharacterSceneResources(background, isolatedResources);
+        }
+
         background.Name = character.Id.Entry + "_bg";
         container.AddChildSafely(background);
-        RestoreCharacterBackgroundContainerLayout(container);
-        LogCharacterBackgroundLayout("after_add", character, container, background, scene);
 
         if (background.IsInsideTree())
         {
@@ -763,68 +757,44 @@ internal static partial class ContextualSkinControls
             if (GodotObject.IsInstanceValid(container) &&
                 GodotObject.IsInstanceValid(background))
             {
-                // A provider may run a deferred presentation callback during _Ready.  Restore
-                // the parent once more immediately before the game's aspect-ratio calculation
-                // so a callback cannot move the whole background for the next skin.
-                RestoreCharacterBackgroundContainerLayout(container);
                 RefreshCharacterBackgroundLayout(container, background);
-                LogCharacterBackgroundLayout("deferred", character, container, background, scene);
             }
         }).CallDeferred();
     }
 
-    private static void LogCharacterBackgroundLayout(
-        string phase,
-        CharacterModel character,
-        Control container,
-        Control? background,
-        PackedScene scene)
+    private static void RebindCharacterSceneResources(
+        Node background,
+        IReadOnlyDictionary<string, Resource> isolatedResources)
     {
-        try
+        var rebound = 0;
+        foreach (var node in EnumerateNodes(background))
         {
-            var spine = background?.GetNodeOrNull<Node2D>("SpineSprite");
-            var viewportSize = container.GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero;
-            ModLog.Info(
-                $"选角背景布局[{phase}] {character.Id.Entry}: " +
-                $"scene={scene.ResourcePath}; viewport={viewportSize}; " +
-                $"parentPos={container.Position}; parentSize={container.Size}; " +
-                $"parentScale={container.Scale}; parentPivot={container.PivotOffset}; " +
-                $"parentOffsets=({container.OffsetLeft},{container.OffsetTop},{container.OffsetRight},{container.OffsetBottom}); " +
-                (spine == null
-                    ? "spine=<none>"
-                    : $"spinePos={spine.Position}; spineScale={spine.Scale}; spineGlobal={spine.GlobalPosition}"));
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"记录选角背景布局失败：{exception.GetBaseException().Message}");
-        }
-    }
+            // SpineSprite is a native extension class, so use its stable Godot method instead of
+            // depending on a concrete managed node type. The property currently contains the
+            // canonical resource chosen while PackedScene was decoded; replace it before _Ready
+            // initializes the skeleton.
+            if (!node.HasMethod("set_skeleton_data_res"))
+            {
+                continue;
+            }
 
-    private static void RestoreCharacterBackgroundContainerLayout(Control container)
-    {
-        if (!GodotObject.IsInstanceValid(container))
-        {
-            return;
+            var current = node.Get("skeleton_data_res").AsGodotObject() as Resource;
+            if (current == null ||
+                string.IsNullOrWhiteSpace(current.ResourcePath) ||
+                !isolatedResources.TryGetValue(current.ResourcePath, out var replacement) ||
+                ReferenceEquals(current, replacement))
+            {
+                continue;
+            }
+
+            node.Call("set_skeleton_data_res", replacement);
+            rebound++;
         }
 
-        container.AnchorLeft = 0f;
-        container.AnchorTop = 0f;
-        container.AnchorRight = 1f;
-        container.AnchorBottom = 1f;
-        container.OffsetLeft = CharacterBackgroundOffsetLeft;
-        container.OffsetTop = CharacterBackgroundOffsetTop;
-        container.OffsetRight = CharacterBackgroundOffsetRight;
-        container.OffsetBottom = CharacterBackgroundOffsetBottom;
-        container.GrowHorizontal = Control.GrowDirection.Both;
-        container.GrowVertical = Control.GrowDirection.Both;
-        container.PivotOffset = CharacterBackgroundPivot;
-        container.Rotation = 0f;
-        container.Visible = true;
-
-        // _Ready only connects SizeChanged and does not calculate the initial scale.  The
-        // game's private callback is invoked below; 1.1 is its 16:9 fallback if reflection is
-        // unavailable on a future game build.
-        container.Scale = Vector2.One * 1.1f;
+        if (rebound > 0)
+        {
+            ModLog.Info($"选角场景已在进树前重新绑定 {rebound} 个隔离骨骼资源。");
+        }
     }
 
     private static void RefreshCharacterBackgroundLayout(Control container, Control background)

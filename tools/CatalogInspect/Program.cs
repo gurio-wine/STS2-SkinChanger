@@ -727,9 +727,15 @@ if (validateIndex >= 0)
                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
                     foreach (var canonicalDependencyPath in overlay.CanonicalDependencyPaths)
                     {
+                        var isPrivateRuntimeRedirect =
+                            overlay.Files.TryGetValue(canonicalDependencyPath, out var redirectBytes) &&
+                            Encoding.UTF8.GetString(redirectBytes).Contains(
+                                "res://sts2_skin_runtime/",
+                                StringComparison.OrdinalIgnoreCase);
                         if (!providerArchive.Contains(canonicalDependencyPath) &&
                             !providerCanonicalPaths.Contains(
-                                SkinCatalog.NormalizeTakeoverPath(canonicalDependencyPath)))
+                                SkinCatalog.NormalizeTakeoverPath(canonicalDependencyPath)) &&
+                            !isPrivateRuntimeRedirect)
                         {
                             failures.Add(
                                 $"{group.Id}/{option.Id}: runtime overlay mounted a non-provider " +
@@ -961,6 +967,18 @@ if (validateIndex >= 0)
 
                 var sourcePath = StripRedirectSuffix(
                     SkinCatalog.NormalizeTakeoverPath(referencedPath));
+                var redirectedToPrivatePayload = new[] { ".remap", ".import" }
+                    .Select(suffix => sourcePath + suffix)
+                    .Any(redirectPath =>
+                        overlay.Files.TryGetValue(redirectPath, out var redirectBytes) &&
+                        Encoding.UTF8.GetString(redirectBytes).Contains(
+                            "res://sts2_skin_runtime/",
+                            StringComparison.OrdinalIgnoreCase));
+                if (redirectedToPrivatePayload)
+                {
+                    continue;
+                }
+
                 if (catalog.ResolveBaseline(sourcePath) != null)
                 {
                     failures.Add(
