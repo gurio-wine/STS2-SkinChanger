@@ -10,5 +10,6 @@
     <Compile Include="../../STS2SkinChanger/Catalog/SkinCatalog.cs" Link="SkinCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPresentationScanner.cs" Link="ManagedCardPresentationScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedMonsterSceneScanner.cs" Link="ManagedMonsterSceneScanner.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/RuntimeMonsterVisualModeScanner.cs" Link="RuntimeMonsterVisualModeScanner.cs" />
   </ItemGroup>
 </Project>

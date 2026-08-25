@@ -109,7 +109,12 @@ foreach (var group in catalog.Groups)
     Console.WriteLine($"{group.Id}\t{group.DisplayName}");
     foreach (var option in group.Options)
     {
-        Console.WriteLine($"  {option.Id}\t{option.Name}\t{option.Assets.Count} assets");
+        var modeResources = option.RuntimeMonsterVisualMode?.ResourcePaths.Count ?? 0;
+        Console.WriteLine(
+            $"  {option.Id}\t{option.Name}\t{option.Assets.Count} assets" +
+            (option.RuntimeMonsterVisualMode == null
+                ? string.Empty
+                : $", mode={option.RuntimeMonsterVisualMode.ModeName}, {modeResources} mode resources"));
     }
 }
 
@@ -700,10 +705,14 @@ if (validateIndex >= 0)
 
             try
             {
+                var selectedResourcePaths = resourcePaths
+                    .Concat(option.RuntimeMonsterVisualMode?.ResourcePaths ?? [])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 var overlay = catalog.BuildRuntimeResourceOverlay(
                     group.Id,
                     option.Id,
-                    resourcePaths,
+                    selectedResourcePaths,
                     $"validate/{validated:D4}",
                     includeProviderDependencies: true);
                 ValidatePrivateBaselineReferences(

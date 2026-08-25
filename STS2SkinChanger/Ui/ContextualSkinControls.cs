@@ -972,13 +972,13 @@ internal static partial class ContextualSkinControls
         try
         {
             var scene = SkinService.GetOrLoadRuntimeScene(group.Id, visualsPath);
+            RuntimeMonsterVisualModeBridge.ApplySelected(group.Id);
             var replacement = scene.Instantiate<NCreatureVisuals>(PackedScene.GenEditState.Disabled);
             var copied = ManagedSceneCompatibility.CopyMissingUniqueNodes(result, replacement);
             if (copied > 0)
             {
                 ModLog.Info($"已为 {modelId} 的替换场景补齐 {copied} 个游戏必需节点。");
             }
-
             result?.QueueFree();
             result = replacement;
         }

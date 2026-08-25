@@ -538,6 +538,13 @@ internal sealed partial class SkinCatalog : IDisposable
             .RuntimeImagePath;
     }
 
+    public RuntimeMonsterVisualMode? GetRuntimeMonsterVisualMode(string groupId, string optionId)
+    {
+        return Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))?
+            .RuntimeMonsterVisualMode;
+    }
+
     public AncientLayeredImagePaths? GetAncientLayeredImagePaths(string groupId, string optionId)
     {
         var option = Groups.FirstOrDefault(group =>
@@ -2173,6 +2180,7 @@ internal sealed partial class SkinCatalog : IDisposable
         MergeCharacterSelectIconPacks(indexes, groups);
         AddPckRuntimeProviderOptions(indexes, groups);
         AddManagedMonsterSceneOptions(indexes, groups);
+        AddRuntimeMonsterVisualModeOptions(indexes, groups);
 
         foreach (var group in groups.Values)
         {
@@ -2233,6 +2241,69 @@ internal sealed partial class SkinCatalog : IDisposable
                         new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
                         IsRuntimeProvider: true,
                         ManagedMonsterScene: sceneAsset));
+                }
+            }
+        }
+    }
+
+    private static void AddRuntimeMonsterVisualModeOptions(
+        IReadOnlyCollection<PckResourceIndex> indexes,
+        IDictionary<string, SkinGroup> groups)
+    {
+        var indexesByProvider = indexes.ToDictionary(
+            index => index.Mod.Id,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var group in groups.Values)
+        {
+            for (var optionIndex = group.Options.Count - 1; optionIndex >= 0; optionIndex--)
+            {
+                var option = group.Options[optionIndex];
+                if (!indexesByProvider.TryGetValue(option.Id, out var index))
+                {
+                    continue;
+                }
+
+                var modes = RuntimeMonsterVisualModeScanner.Scan(
+                    index,
+                    index.Mod.Id,
+                    option);
+                if (modes.Count < 2)
+                {
+                    continue;
+                }
+
+                var defaultMode = modes.FirstOrDefault(mode =>
+                                      mode.ModeName.Contains("Default", StringComparison.OrdinalIgnoreCase) ||
+                                      mode.ModeName.Contains("Performance", StringComparison.OrdinalIgnoreCase)) ??
+                                  modes[0];
+                group.Options.RemoveAt(optionIndex);
+                for (var modeIndex = modes.Count - 1; modeIndex >= 0; modeIndex--)
+                {
+                    var mode = modes[modeIndex];
+                    var modeAssets = new Dictionary<string, ResourceAsset>(
+                        option.Assets,
+                        StringComparer.OrdinalIgnoreCase);
+                    foreach (var resourcePath in mode.ResourcePaths)
+                    {
+                        var asset = index.TryBuildAsset(resourcePath);
+                        if (asset != null)
+                        {
+                            modeAssets[resourcePath] = asset;
+                        }
+                    }
+
+                    // Keep the original provider id for the provider's default/performance mode so existing
+                    // selections remain valid. Other modes are independent persistent choices.
+                    var id = mode == defaultMode
+                        ? option.Id
+                        : $"{option.Id}::visual-mode:{mode.ModeName.ToLowerInvariant()}";
+                    group.Options.Insert(optionIndex, option with
+                    {
+                        Id = id,
+                        Name = option.Name + " · " + mode.DisplayName,
+                        Assets = modeAssets,
+                        RuntimeMonsterVisualMode = mode
+                    });
                 }
             }
         }
@@ -3910,7 +3981,20 @@ internal sealed record SkinOption(
     IReadOnlyDictionary<string, ResourceAsset> Assets,
     bool IsRuntimeProvider = false,
     string? RuntimeImagePath = null,
-    ResourceAsset? ManagedMonsterScene = null);
+    ResourceAsset? ManagedMonsterScene = null,
+    RuntimeMonsterVisualMode? RuntimeMonsterVisualMode = null);
+
+internal sealed record RuntimeMonsterVisualMode(
+    string ProviderId,
+    string AssemblyPath,
+    string ServiceTypeName,
+    string EnumTypeName,
+    string SetterName,
+    string ModeName,
+    string DisplayName)
+{
+    public IReadOnlyList<string> ResourcePaths { get; init; } = [];
+}
 
 internal sealed class CardSkinGroup(string id, string displayName)
 {

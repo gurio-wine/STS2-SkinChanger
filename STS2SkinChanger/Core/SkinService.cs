@@ -1206,16 +1206,36 @@ internal static class SkinService
 
     public static PackedScene LoadRuntimeScene(string groupId, string scenePath)
     {
-        return LoadRuntimeScenes(groupId, [scenePath])[scenePath];
+        var resourcePaths = RuntimeSceneResourcePaths(groupId, scenePath);
+        return LoadRuntimeResources(
+                   groupId,
+                   resourcePaths,
+                   includeProviderDependencies: true)
+               .GetValueOrDefault(scenePath) as PackedScene ??
+               throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
     }
 
     public static PackedScene GetOrLoadRuntimeScene(string groupId, string scenePath)
     {
-        return GetOrLoadRuntimeResource(
+        var resourcePaths = RuntimeSceneResourcePaths(groupId, scenePath);
+        return LoadRuntimeResources(
                    groupId,
-                   scenePath,
-                   includeProviderDependencies: true) as PackedScene ??
+                   resourcePaths,
+                   includeProviderDependencies: true)
+               .GetValueOrDefault(scenePath) as PackedScene ??
                throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
+    }
+
+    private static IReadOnlyList<string> RuntimeSceneResourcePaths(string groupId, string scenePath)
+    {
+        lock (Sync)
+        {
+            var mode = Catalog?.GetRuntimeMonsterVisualMode(groupId, Config.GetSelection(groupId));
+            return new[] { scenePath }
+                .Concat(mode?.ResourcePaths ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
     }
 
     public static Resource GetOrLoadRuntimeResource(
@@ -1508,6 +1528,14 @@ internal static class SkinService
             var texture = ImageTexture.CreateFromImage(image);
             RuntimeResourceCache[cacheKey] = texture;
             return texture;
+        }
+    }
+
+    public static RuntimeMonsterVisualMode? GetSelectedRuntimeMonsterVisualMode(string groupId)
+    {
+        lock (Sync)
+        {
+            return Catalog?.GetRuntimeMonsterVisualMode(groupId, Config.GetSelection(groupId));
         }
     }
 
