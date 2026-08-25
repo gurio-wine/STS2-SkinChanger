@@ -48,7 +48,7 @@ _ = ComposeDescription(
     config.StatementHeading,
     config.Limitations,
     config.Version,
-    config.FeatureUpdate);
+    JoinFeatureUpdates(config.FeatureUpdate, config.CardPriorityUpdate));
 foreach (var localization in localizations)
 {
     _ = ComposeDescription(
@@ -56,7 +56,7 @@ foreach (var localization in localizations)
         localization.StatementHeading,
         localization.Limitations,
         localization.Version,
-        localization.FeatureUpdate);
+        JoinFeatureUpdates(localization.FeatureUpdate, localization.CardPriorityUpdate));
 }
 
 Environment.SetEnvironmentVariable("SteamAppId", config.AppId.ToString());
@@ -104,7 +104,7 @@ try
                 config.StatementHeading,
                 config.Limitations,
                 config.Version,
-                config.FeatureUpdate)),
+                JoinFeatureUpdates(config.FeatureUpdate, config.CardPriorityUpdate))),
         "SetItemDescription");
     Require(SteamUGC.SetItemVisibility(update, config.Visibility), "SetItemVisibility");
     Require(SteamUGC.SetItemContent(update, contentFolder), "SetItemContent");
@@ -162,7 +162,7 @@ static void PublishLocalization(
                 localization.StatementHeading,
                 localization.Limitations,
                 localization.Version,
-                localization.FeatureUpdate)),
+                JoinFeatureUpdates(localization.FeatureUpdate, localization.CardPriorityUpdate))),
         $"SetItemDescription({localization.Language})");
 
     var result = WaitForCallResult<SubmitItemUpdateResult_t>(
@@ -266,6 +266,15 @@ static string ComposeDescription(
         : composed + "\n\n" + limitations.Trim();
 }
 
+static string? JoinFeatureUpdates(params string?[] sections)
+{
+    var populated = sections
+        .Where(section => !string.IsNullOrWhiteSpace(section))
+        .Select(section => section!.Trim())
+        .ToArray();
+    return populated.Length == 0 ? null : string.Join("\n\n", populated);
+}
+
 static void Require(bool success, string operation)
 {
     if (!success)
@@ -282,6 +291,7 @@ internal sealed class WorkshopConfig
     public string? Limitations { get; init; }
     public string? Version { get; init; }
     public string? FeatureUpdate { get; init; }
+    public string? CardPriorityUpdate { get; init; }
     public ERemoteStoragePublishedFileVisibility Visibility { get; init; }
     public required string ContentFolder { get; init; }
     public required string PreviewFile { get; init; }
@@ -298,4 +308,5 @@ internal sealed class WorkshopLocalization
     public string? Limitations { get; init; }
     public string? Version { get; init; }
     public string? FeatureUpdate { get; init; }
+    public string? CardPriorityUpdate { get; init; }
 }
