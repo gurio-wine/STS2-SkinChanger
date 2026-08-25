@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
 using System.Reflection;
@@ -557,16 +558,19 @@ internal static class ManagedSkinModLoader
             return;
         }
 
+        var room = NCombatRoom.Instance;
         var replayed = 0;
         foreach (var patch in runtime.Patches.Where(patch =>
-                     patch.Kind == ProviderPatchKind.Postfix &&
-                     patch.Target.Name.Equals(nameof(NCreature._Ready), StringComparison.Ordinal) &&
-                     patch.Target.DeclaringType?.IsInstanceOfType(creature) == true))
+                     patch.Kind == ProviderPatchKind.Postfix && IsLiveCreatureInitializationPatch(
+                         patch.Target,
+                         creature,
+                         room)))
         {
-            if (!TryBuildCreatureReadyArguments(
+            if (!TryBuildCreatureInitializationArguments(
                     patch.Callback,
                     patch.Target,
                     creature,
+                    room,
                     out var arguments))
             {
                 continue;
@@ -580,15 +584,36 @@ internal static class ManagedSkinModLoader
             catch (Exception exception)
             {
                 ModLog.Warn(
-                    $"重放 {providerId} 的实战外观初始化 {patch.Callback.DeclaringType?.FullName}." +
+                    $"重放 {providerId} 的实战生物初始化 {patch.Callback.DeclaringType?.FullName}." +
                     $"{patch.Callback.Name} 失败：{exception.GetBaseException().Message}");
             }
         }
 
         if (replayed > 0)
         {
-            ModLog.Info($"已为 {creature.Entity.ModelId.Entry} 重放 {providerId} 的 {replayed} 个实战外观初始化步骤。");
+            ModLog.Info($"已为 {creature.Entity.ModelId.Entry} 重放 {providerId} 的 {replayed} 个实战生物初始化步骤。");
         }
+    }
+
+    private static bool IsLiveCreatureInitializationPatch(
+        MethodBase target,
+        NCreature creature,
+        NCombatRoom? room)
+    {
+        if (target.Name.Equals(nameof(NCreature._Ready), StringComparison.Ordinal) &&
+            target.DeclaringType?.IsInstanceOfType(creature) == true)
+        {
+            return true;
+        }
+
+        // Full presentation packs sometimes add attachment markers, prewarm their VFX, or bind
+        // auxiliary visuals from NCombatRoom.AddCreature instead of NCreature._Ready. A hot swap
+        // does not add the Creature model again, so replay only compatible postfixes after the new
+        // NCreatureVisuals has been installed. Unsupported callbacks are skipped by the argument
+        // builder below rather than being invoked with fabricated state.
+        return room != null &&
+               target.Name.Equals("AddCreature", StringComparison.Ordinal) &&
+               target.DeclaringType?.IsInstanceOfType(room) == true;
     }
 
     private static bool IsCharacterPresentationTarget(MethodBase target) =>
@@ -645,10 +670,11 @@ internal static class ManagedSkinModLoader
         return true;
     }
 
-    private static bool TryBuildCreatureReadyArguments(
+    private static bool TryBuildCreatureInitializationArguments(
         MethodInfo callback,
         MethodBase target,
         NCreature creature,
+        NCombatRoom? room,
         out object?[] arguments)
     {
         var parameters = callback.GetParameters();
@@ -663,6 +689,12 @@ internal static class ManagedSkinModLoader
             {
                 case "__instance" when parameterType.IsInstanceOfType(creature):
                     arguments[index] = creature;
+                    break;
+                case "__instance" when room != null && parameterType.IsInstanceOfType(room):
+                    arguments[index] = room;
+                    break;
+                case "creature" when parameterType.IsInstanceOfType(creature.Entity):
+                    arguments[index] = creature.Entity;
                     break;
                 case "__originalMethod" when parameterType == typeof(MethodBase):
                     arguments[index] = target;

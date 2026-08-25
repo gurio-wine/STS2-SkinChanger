@@ -90,6 +90,9 @@ internal static class CharacterAppearanceRuntime
         AccessTools.Method(typeof(NCreature), "SetOrbManagerPosition");
 
     private static PendingSelection? _pendingSelection;
+    private static WeakReference<NCombatRoom>? _playerLayoutRoom;
+    private static float _playerLayoutScaling = 1f;
+    private static bool _fullyCenterPlayers;
 
     internal static event Action<string, bool, string?>? QueuedSelectionFinished;
 
@@ -621,6 +624,7 @@ internal static class CharacterAppearanceRuntime
         }
 
         var creatures = room.CreatureNodes.ToArray();
+        var rebuiltPlayerOrPet = false;
         var affectedPlayers = creatures
             .Where(creature => creature.Entity.Player != null)
             .Where(creature =>
@@ -658,9 +662,68 @@ internal static class CharacterAppearanceRuntime
             {
                 errors.Add(modelId + ": " + error);
             }
+            else if (creature.Entity.IsPlayer || creature.Entity.PetOwner != null)
+            {
+                rebuiltPlayerOrPet = true;
+            }
+        }
+
+        if (rebuiltPlayerOrPet)
+        {
+            RefreshPlayerAndPetLayout(room);
         }
 
         return errors;
+    }
+
+    internal static void CapturePlayerAndPetLayout(float scaling, bool fullyCenterPlayers)
+    {
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return;
+        }
+
+        _playerLayoutRoom = new WeakReference<NCombatRoom>(room);
+        _playerLayoutScaling = scaling;
+        _fullyCenterPlayers = fullyCenterPlayers;
+    }
+
+    private static void RefreshPlayerAndPetLayout(NCombatRoom room)
+    {
+        try
+        {
+            if (_playerLayoutRoom == null ||
+                !_playerLayoutRoom.TryGetTarget(out var capturedRoom) ||
+                !ReferenceEquals(capturedRoom, room))
+            {
+                return;
+            }
+
+            var playersAndPets = room.CreatureNodes
+                .Where(creature => creature.Entity.IsPlayer || creature.Entity.PetOwner != null)
+                .ToList();
+            if (playersAndPets.Count == 0)
+            {
+                return;
+            }
+
+            // Re-run the game's canonical layout first. This removes position offsets left by the
+            // previously selected provider; Harmony then naturally runs only the newly selected
+            // provider's current positioning postfixes (and keeps player/pet offsets coherent).
+            NCombatRoom.PositionPlayersAndPets(
+                playersAndPets,
+                _playerLayoutScaling,
+                _fullyCenterPlayers);
+            foreach (var creature in playersAndPets)
+            {
+                RefreshCreatureAnchors(creature);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新实战玩家与宠物位置失败：" + exception.GetBaseException().Message);
+        }
     }
 
     private static bool TryRebuildCreatureVisuals(NCreature creature, out string? error)
@@ -1234,6 +1297,14 @@ internal static class CharacterAppearanceCreatureReadyPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCreature __instance) =>
         CharacterAppearanceRuntime.OnCreatureReady(__instance);
+}
+
+[HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom.PositionPlayersAndPets))]
+internal static class CharacterAppearancePlayerLayoutPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(float scaling, bool fullyCenterPlayers) =>
+        CharacterAppearanceRuntime.CapturePlayerAndPetLayout(scaling, fullyCenterPlayers);
 }
 
 [HarmonyPatch]
