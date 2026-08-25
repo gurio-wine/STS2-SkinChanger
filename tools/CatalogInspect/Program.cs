@@ -1056,6 +1056,21 @@ static IReadOnlyList<CardCatalogEntry> BuildValidationCardEntries(IEnumerable<st
 
 static void RunCardExportSelfTest(string gamePckPath)
 {
+    // Imported textures, binary scenes and other compiled resources can appear as direct
+    // dependency nodes. They must be copied byte-for-byte; decoding them as UTF-8 inserts
+    // replacement characters into headers and can crash Godot's native texture loader.
+    byte[] binaryResource = [0x47, 0x53, 0x54, 0x32, 0xff, 0x00, 0x80, 0x7f];
+    var untouchedBinary = SkinCatalog.RewriteAliasedResourceBytes(
+        "res://Provider/_imported/example.ctex",
+        binaryResource,
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+    if (!ReferenceEquals(binaryResource, untouchedBinary) ||
+        !binaryResource.AsSpan().SequenceEqual(untouchedBinary))
+    {
+        throw new InvalidOperationException("binary runtime alias rewriting corrupted the payload");
+    }
+
     var testRoot = System.IO.Path.Combine(
         System.IO.Path.GetTempPath(),
         "skin-changer-card-export-" + Guid.NewGuid().ToString("N"));

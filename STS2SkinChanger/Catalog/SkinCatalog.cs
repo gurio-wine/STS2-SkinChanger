@@ -1980,15 +1980,23 @@ internal sealed partial class SkinCatalog : IDisposable
             if (resource.DirectFile != null)
             {
                 var bytes = resource.DirectFile.Archive.ReadFile(resource.DirectFile.Path);
-                files[sourceAliases[resource.SourcePath]] = RewriteTextResource(bytes, sourceAliases, payloadAliases);
+                files[sourceAliases[resource.SourcePath]] = RewriteAliasedResourceBytes(
+                    resource.DirectFile.Path,
+                    bytes,
+                    sourceAliases,
+                    payloadAliases);
             }
 
             foreach (var payloadFile in resource.PayloadFiles)
             {
                 var bytes = payloadFile.Archive.ReadFile(payloadFile.Path);
-                files[payloadAliases[payloadFile.Path]] = payloadFile.Path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase)
-                    ? RewriteTextResource(bytes, sourceAliases, payloadAliases, stripUids: false)
-                    : bytes;
+                files[payloadAliases[payloadFile.Path]] = RewriteAliasedResourceBytes(
+                    payloadFile.Path,
+                    bytes,
+                    sourceAliases,
+                    payloadAliases,
+                    rewriteOnlySpineAtlas: true,
+                    stripUids: false);
             }
 
             if (resource.RemapFile == null)
@@ -2054,6 +2062,22 @@ internal sealed partial class SkinCatalog : IDisposable
             sourceAliases,
             payloadAliases,
             canonicalRedirectPaths);
+    }
+
+    internal static byte[] RewriteAliasedResourceBytes(
+        string path,
+        byte[] bytes,
+        IReadOnlyDictionary<string, string> sourceAliases,
+        IReadOnlyDictionary<string, string> payloadAliases,
+        bool rewriteOnlySpineAtlas = false,
+        bool stripUids = true)
+    {
+        var shouldRewrite = rewriteOnlySpineAtlas
+            ? path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase)
+            : IsRewritableTextResource(path);
+        return shouldRewrite
+            ? RewriteTextResource(bytes, sourceAliases, payloadAliases, stripUids)
+            : bytes;
     }
 
     private static string BuildRuntimeSourceAlias(RuntimeResource resource, string aliasToken)
