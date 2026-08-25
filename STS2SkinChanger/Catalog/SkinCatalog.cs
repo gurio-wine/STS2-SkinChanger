@@ -14,6 +14,9 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         PropertyNameCaseInsensitive = true
     };
+    private static readonly object RuntimeAncientImageCacheSync = new();
+    private static readonly Dictionary<string, RuntimeAncientImageCacheEntry> RuntimeAncientImageCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly PckArchive _gameArchive;
     private readonly List<PckResourceIndex> _baselineIndexes;
@@ -227,23 +230,11 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var runtimeImages = 0;
-            if (mod.HasDll && mod.RootPath != null)
+            if (mod.RootPath != null)
             {
-                var imageDirectory = System.IO.Path.Combine(mod.RootPath, "images");
-                if (Directory.Exists(imageDirectory))
-                {
-                    runtimeImages = Directory.EnumerateFiles(
-                            imageDirectory,
-                            "*",
-                            SearchOption.TopDirectoryOnly)
-                        .Count(path =>
-                            System.IO.Path.GetExtension(path).Equals(
-                                ".png", StringComparison.OrdinalIgnoreCase) &&
-                            KnownAncientIds.Contains(
-                                System.IO.Path.GetFileNameWithoutExtension(path)));
-                }
+                runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
 
-                if (visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
+                if (mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
                     LooksLikeDllSkinProvider(mod))
                 {
                     // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
@@ -3069,23 +3060,110 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private void AddImageRuntimeProviderOptions(IEnumerable<SkinModDescriptor> mods)
     {
-        foreach (var mod in mods.Where(mod => mod.HasDll && !mod.AffectsGameplay && mod.RootPath != null))
+        foreach (var mod in mods.Where(mod => !mod.AffectsGameplay && mod.RootPath != null))
         {
-            var imageDirectory = System.IO.Path.Combine(mod.RootPath!, "images");
-            if (!Directory.Exists(imageDirectory))
+            var imagesByGroup = DiscoverRuntimeAncientImages(mod)
+                .GroupBy(image => image.GroupId, StringComparer.OrdinalIgnoreCase);
+            foreach (var groupImages in imagesByGroup)
             {
-                continue;
+                var images = groupImages
+                    .OrderByDescending(image =>
+                        image.Name.Equals("default", StringComparison.OrdinalIgnoreCase))
+                    .ThenBy(image => image.Name, StringComparer.CurrentCultureIgnoreCase)
+                    .ThenBy(image => image.RelativePath, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                for (var index = 0; index < images.Length; index++)
+                {
+                    var image = images[index];
+                    // Keep the original provider ID for the preferred/only image so selections
+                    // written by older SkinChanger builds remain valid. Additional images receive
+                    // path-qualified IDs, allowing any number of variants in the same provider.
+                    var optionId = index == 0
+                        ? mod.Id
+                        : $"{mod.Id}:image:{image.RelativePath.ToLowerInvariant()}";
+                    var optionName = images.Length == 1
+                        ? mod.Name
+                        : $"{mod.Name} · {image.Name.Replace('_', ' ')}";
+                    AddRuntimeProviderOption(image.GroupId, optionId, optionName, image.Path);
+                }
+            }
+        }
+    }
+
+    private static IReadOnlyList<RuntimeAncientImage> DiscoverRuntimeAncientImages(SkinModDescriptor mod)
+    {
+        if (mod.RootPath == null || !Directory.Exists(mod.RootPath))
+        {
+            return [];
+        }
+
+        try
+        {
+            var rootPath = System.IO.Path.GetFullPath(mod.RootPath);
+            var rootWriteTimeUtc = Directory.GetLastWriteTimeUtc(rootPath);
+            lock (RuntimeAncientImageCacheSync)
+            {
+                if (RuntimeAncientImageCache.TryGetValue(rootPath, out var cached) &&
+                    cached.RootWriteTimeUtc == rootWriteTimeUtc)
+                {
+                    return cached.Images;
+                }
             }
 
-            var images = Directory.EnumerateFiles(imageDirectory, "*", SearchOption.TopDirectoryOnly)
-                .Where(path => System.IO.Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase))
-                .Select(path => (Path: path, Id: System.IO.Path.GetFileNameWithoutExtension(path)!))
-                .Where(image => KnownAncientIds.Contains(image.Id))
-                .DistinctBy(image => image.Id, StringComparer.OrdinalIgnoreCase);
-            foreach (var image in images)
+            var images = new List<RuntimeAncientImage>();
+            foreach (var path in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories))
             {
-                AddRuntimeProviderOption(image.Id, mod.Id, mod.Name, image.Path);
+                var extension = System.IO.Path.GetExtension(path);
+                if (!extension.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
+                    !extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) &&
+                    !extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
+                    !extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var relativePath = System.IO.Path.GetRelativePath(rootPath, path)
+                    .Replace('\\', '/');
+                var segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                var name = System.IO.Path.GetFileNameWithoutExtension(path);
+                var groupId = segments
+                    .Reverse()
+                    .Skip(1)
+                    .FirstOrDefault(segment => KnownAncientIds.Contains(segment));
+                if (groupId == null && KnownAncientIds.Contains(name))
+                {
+                    groupId = name;
+                }
+
+                if (groupId == null || name.Equals("vanilla", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                images.Add(new RuntimeAncientImage(
+                    groupId.ToLowerInvariant(),
+                    path,
+                    relativePath,
+                    name));
             }
+
+            var discovered = images
+                .DistinctBy(image => image.Path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            lock (RuntimeAncientImageCacheSync)
+            {
+                RuntimeAncientImageCache[rootPath] = new RuntimeAncientImageCacheEntry(
+                    rootWriteTimeUtc,
+                    discovered);
+            }
+
+            return discovered;
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"无法扫描外置先古图库 {mod.Id}: {exception.Message}");
+            return [];
         }
     }
 
@@ -3403,6 +3481,24 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        // Some data-only Ancient skins replace the game's static placeholder directly instead
+        // of supplying a scene or animation directory. These are ordinary canonical resources
+        // and should be isolated/selected like every other PCK-backed skin.
+        var ancientStaticImage = AncientStaticImageRegex().Match(NormalizeTakeoverPath(sourcePath));
+        if (ancientStaticImage.Success)
+        {
+            var id = ancientStaticImage.Groups["id"].Value.ToLowerInvariant();
+            if (id.EndsWith("_placeholder", StringComparison.OrdinalIgnoreCase))
+            {
+                id = id[..^12];
+            }
+
+            if (KnownAncientIds.Contains(id))
+            {
+                return new GroupIdentity(id, DisplayName(id));
+            }
+        }
+
         // 有些代码型先古皮肤不提供替换场景，而是在运行时把完整画布图层
         // 叠到原场景的占位图上。按通用的 <先古 ID>_character 等资源约定
         // 归组，随后由本 Mod 自己完成图层合成，无需执行提供者 DLL。
@@ -3692,6 +3788,11 @@ internal sealed partial class SkinCatalog : IDisposable
         RegexOptions.IgnoreCase)]
     private static partial Regex AncientLayerImageRegex();
 
+    [GeneratedRegex(
+        "^res://images/(?:ancients/)?(?<id>[^/.]+?)(?:_placeholder)?\\.(?:png|webp|jpe?g|svg)$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex AncientStaticImageRegex();
+
     [GeneratedRegex("^res://images/packed/character_select/char_select_([^/.]+?)(?:_locked)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterSelectIconRegex();
 
@@ -3785,6 +3886,16 @@ internal sealed record AncientLayeredImagePaths(
     string? BackgroundCover,
     string? Mask,
     string? SleepingCharacter);
+
+internal sealed record RuntimeAncientImage(
+    string GroupId,
+    string Path,
+    string RelativePath,
+    string Name);
+
+internal sealed record RuntimeAncientImageCacheEntry(
+    DateTime RootWriteTimeUtc,
+    IReadOnlyList<RuntimeAncientImage> Images);
 
 internal sealed class SkinGroup(string id, string displayName)
 {
