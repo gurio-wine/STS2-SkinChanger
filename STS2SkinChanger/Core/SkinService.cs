@@ -1555,11 +1555,23 @@ internal static class SkinService
         string groupId,
         IReadOnlyCollection<string> scenePaths)
     {
-        return LoadRuntimeResources(groupId, scenePaths, includeProviderDependencies: true).ToDictionary(
-            pair => pair.Key,
-            pair => pair.Value as PackedScene ??
-                    throw new InvalidOperationException($"独立皮肤资源不是场景：{pair.Key}"),
-            StringComparer.OrdinalIgnoreCase);
+        var resources = LoadRuntimeResources(
+            groupId,
+            scenePaths,
+            includeProviderDependencies: true);
+        // Runtime resource loading deliberately returns the requested roots together with every
+        // discovered dependency so native resources (for example Spine skeleton data) can be
+        // rebound after a hot swap. Only the caller-requested roots are scenes; attempting to cast
+        // the dependency textures/materials as PackedScene makes every resource-backed preview
+        // fail while image-only providers appear to work.
+        return scenePaths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                scenePath => scenePath,
+                scenePath => resources.GetValueOrDefault(scenePath) as PackedScene ??
+                             throw new InvalidOperationException(
+                                 $"独立皮肤资源不是场景：{scenePath}"),
+                StringComparer.OrdinalIgnoreCase);
     }
 
     public static IReadOnlyDictionary<string, Resource> LoadRuntimeResources(
