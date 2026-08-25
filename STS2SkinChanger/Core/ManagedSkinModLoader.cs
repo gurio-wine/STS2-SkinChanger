@@ -409,6 +409,7 @@ internal static class ManagedSkinModLoader
             return;
         }
 
+        RestoreCharacterPresentations(runtime);
         UnpatchProviderCallbacks(runtime.Patches);
         ModLog.Info($"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁。");
     }
@@ -519,6 +520,12 @@ internal static class ManagedSkinModLoader
             return;
         }
 
+        // Some providers create a separate full-screen layer and hide AnimatedBg instead of
+        // replacing the game's character-select scene. Their own "not selected" cleanup cannot
+        // run after Skin Changer has isolated the Harmony postfix, so remember exactly what the
+        // selected presentation callback changes and undo it before the next replay.
+        RestoreCharacterPresentation(runtime, screen);
+        var baseline = CaptureCharacterPresentationState(screen);
         var replayed = 0;
         foreach (var patch in runtime.CharacterPresentationPatches)
         {
@@ -549,9 +556,152 @@ internal static class ManagedSkinModLoader
             }
         }
 
+        TrackCharacterPresentationMutation(runtime, screen, baseline);
+
         if (replayed > 0)
         {
             ModLog.Info($"已在恢复游戏基线后重放 {providerId} 的 {replayed} 个选角呈现步骤。");
+        }
+    }
+
+    public static void RestoreCharacterPresentation(NCharacterSelectScreen screen)
+    {
+        foreach (var runtime in ActiveProviderRuntimes.Values)
+        {
+            RestoreCharacterPresentation(runtime, screen);
+        }
+    }
+
+    private static Dictionary<ulong, CharacterPresentationNodeState> CaptureCharacterPresentationState(
+        NCharacterSelectScreen screen)
+    {
+        var result = new Dictionary<ulong, CharacterPresentationNodeState>();
+        foreach (var node in EnumerateNodeTree(screen))
+        {
+            result[node.GetInstanceId()] = new CharacterPresentationNodeState(
+                node,
+                node is CanvasItem canvasItem ? canvasItem.Visible : null);
+        }
+
+        return result;
+    }
+
+    private static void TrackCharacterPresentationMutation(
+        ActiveProviderRuntime runtime,
+        NCharacterSelectScreen screen,
+        IReadOnlyDictionary<ulong, CharacterPresentationNodeState> baseline)
+    {
+        var addedRoots = new List<WeakReference<Node>>();
+        foreach (var node in EnumerateNodeTree(screen))
+        {
+            var instanceId = node.GetInstanceId();
+            if (baseline.ContainsKey(instanceId))
+            {
+                continue;
+            }
+
+            var parent = node.GetParent();
+            if (parent == null || baseline.ContainsKey(parent.GetInstanceId()))
+            {
+                addedRoots.Add(new WeakReference<Node>(node));
+            }
+        }
+
+        var visibilityChanges = new List<CharacterPresentationVisibilityChange>();
+        foreach (var state in baseline.Values)
+        {
+            if (state.Visible is not { } originalVisibility ||
+                state.Node is not CanvasItem canvasItem ||
+                !GodotObject.IsInstanceValid(canvasItem) ||
+                canvasItem.Visible == originalVisibility)
+            {
+                continue;
+            }
+
+            visibilityChanges.Add(new CharacterPresentationVisibilityChange(
+                new WeakReference<CanvasItem>(canvasItem),
+                originalVisibility));
+        }
+
+        if (addedRoots.Count == 0 && visibilityChanges.Count == 0)
+        {
+            return;
+        }
+
+        runtime.CharacterPresentationMutations[screen.GetInstanceId()] =
+            new CharacterPresentationMutation(
+                new WeakReference<NCharacterSelectScreen>(screen),
+                addedRoots,
+                visibilityChanges);
+    }
+
+    private static IEnumerable<Node> EnumerateNodeTree(Node root)
+    {
+        yield return root;
+        foreach (var child in root.GetChildren())
+        {
+            foreach (var descendant in EnumerateNodeTree(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private static void RestoreCharacterPresentations(ActiveProviderRuntime runtime)
+    {
+        foreach (var mutation in runtime.CharacterPresentationMutations.Values.ToArray())
+        {
+            RestoreCharacterPresentationMutation(mutation);
+        }
+
+        runtime.CharacterPresentationMutations.Clear();
+    }
+
+    private static void RestoreCharacterPresentation(
+        ActiveProviderRuntime runtime,
+        NCharacterSelectScreen screen)
+    {
+        var instanceId = screen.GetInstanceId();
+        if (!runtime.CharacterPresentationMutations.Remove(instanceId, out var mutation))
+        {
+            return;
+        }
+
+        if (!mutation.Screen.TryGetTarget(out var trackedScreen) ||
+            !ReferenceEquals(trackedScreen, screen))
+        {
+            return;
+        }
+
+        RestoreCharacterPresentationMutation(mutation);
+    }
+
+    private static void RestoreCharacterPresentationMutation(CharacterPresentationMutation mutation)
+    {
+        foreach (var addedNodeReference in mutation.AddedRoots)
+        {
+            if (!addedNodeReference.TryGetTarget(out var addedNode) ||
+                !GodotObject.IsInstanceValid(addedNode))
+            {
+                continue;
+            }
+
+            var parent = addedNode.GetParent();
+            if (parent != null && GodotObject.IsInstanceValid(parent))
+            {
+                parent.RemoveChildSafely(addedNode);
+            }
+
+            addedNode.QueueFreeSafely();
+        }
+
+        foreach (var visibilityChange in mutation.VisibilityChanges)
+        {
+            if (visibilityChange.Node.TryGetTarget(out var canvasItem) &&
+                GodotObject.IsInstanceValid(canvasItem))
+            {
+                canvasItem.Visible = visibilityChange.OriginalVisibility;
+            }
         }
     }
 
@@ -1263,7 +1413,21 @@ internal static class ManagedSkinModLoader
     private sealed record ActiveProviderRuntime(
         Assembly Assembly,
         IReadOnlyList<ProviderPatch> Patches,
-        IReadOnlyList<ProviderPatch> CharacterPresentationPatches);
+        IReadOnlyList<ProviderPatch> CharacterPresentationPatches)
+    {
+        public Dictionary<ulong, CharacterPresentationMutation> CharacterPresentationMutations { get; } = [];
+    }
+
+    private sealed record CharacterPresentationNodeState(Node Node, bool? Visible);
+
+    private sealed record CharacterPresentationMutation(
+        WeakReference<NCharacterSelectScreen> Screen,
+        IReadOnlyList<WeakReference<Node>> AddedRoots,
+        IReadOnlyList<CharacterPresentationVisibilityChange> VisibilityChanges);
+
+    private sealed record CharacterPresentationVisibilityChange(
+        WeakReference<CanvasItem> Node,
+        bool OriginalVisibility);
 
     private sealed record ProviderPatch(
         MethodBase Target,

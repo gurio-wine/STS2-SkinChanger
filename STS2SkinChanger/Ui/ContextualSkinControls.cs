@@ -515,6 +515,7 @@ internal static partial class ContextualSkinControls
         // A behavior-driven provider can replace the title/description and hide the original
         // background without changing a canonical scene. Always restore the game presentation
         // first so switching *away* from such a provider is just as complete as switching to it.
+        ManagedSkinModLoader.RestoreCharacterPresentation(screen);
         RestoreCharacterInfoText(screen, character);
 
         if (SkinService.IsExternalRuntimeProviderSelected(groupId))
@@ -750,6 +751,10 @@ internal static partial class ContextualSkinControls
             ModLog.Error("选角界面缺少 AnimatedBg 节点，无法替换角色背景。");
             return;
         }
+
+        // Provider presentation callbacks are allowed to temporarily hide this host while their
+        // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
+        container.Visible = true;
 
         foreach (var child in container.GetChildren())
         {
