@@ -522,7 +522,7 @@ if (validateIndex >= 0)
                 }
 
                 var provider = descriptors.FirstOrDefault(descriptor =>
-                    descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
+                    descriptor.Id.Equals(option.EffectiveProviderId, StringComparison.OrdinalIgnoreCase));
                 if (provider?.PckPath != null && File.Exists(provider.PckPath))
                 {
                     var deselectedOverlay = catalog.BuildOverlay(
@@ -532,7 +532,7 @@ if (validateIndex >= 0)
                     var baselineCollisions = providerArchive.Paths
                         .Where(path => !IsProviderProjectControlFile(path))
                         .Select(SkinCatalog.NormalizeTakeoverPath)
-                        .Where(path => !IsProviderNamespaceFile(path, option.Id))
+                        .Where(path => !IsProviderNamespaceFile(path, option.EffectiveProviderId))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .Where(path => catalog.ResolveBaseline(path) != null)
                         .ToArray();
@@ -568,7 +568,7 @@ if (validateIndex >= 0)
                 if (option.IsRuntimeProvider)
                 {
                     foreach (var privateFile in asset.Value.Files.Where(file =>
-                                 IsProviderNamespaceFile(file.Path, option.Id)))
+                                 IsProviderNamespaceFile(file.Path, option.EffectiveProviderId)))
                     {
                         if (!selectedOverlay.ContainsKey(privateFile.Path))
                         {
@@ -584,7 +584,7 @@ if (validateIndex >= 0)
                 if (isFullRuntimeProvider)
                 {
                     var provider = descriptors.FirstOrDefault(descriptor =>
-                        descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
+                        descriptor.Id.Equals(option.EffectiveProviderId, StringComparison.OrdinalIgnoreCase));
                     if (provider?.PckPath != null && File.Exists(provider.PckPath))
                     {
                         using var providerArchive = PckArchive.Open(provider.PckPath);
@@ -727,7 +727,7 @@ if (validateIndex >= 0)
                         $"{group.Id}/{option.Id}: private monster scene was not mapped to {creaturePath}");
                 }
                 var provider = descriptors.FirstOrDefault(descriptor =>
-                    descriptor.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase));
+                    descriptor.Id.Equals(option.EffectiveProviderId, StringComparison.OrdinalIgnoreCase));
                 if (provider?.PckPath != null && File.Exists(provider.PckPath))
                 {
                     using var providerArchive = PckArchive.Open(provider.PckPath);

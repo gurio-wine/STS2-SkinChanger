@@ -955,7 +955,9 @@ internal sealed partial class SkinCatalog : IDisposable
         SkinOption selected)
     {
         var indexes = _cosmeticIndexes
-            .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
+            .Where(index => index.Mod.Id.Equals(
+                selected.EffectiveProviderId,
+                StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (ProviderUsesFullRuntime(selected.Id))
         {
@@ -1547,7 +1549,9 @@ internal sealed partial class SkinCatalog : IDisposable
         var selectedIndexes = selected == null
             ? []
             : _cosmeticIndexes
-                .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
+                .Where(index => index.Mod.Id.Equals(
+                    selected.EffectiveProviderId,
+                    StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
         var resourcesByPath = resources.ToDictionary(
@@ -1706,7 +1710,9 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyDictionary<string, string> payloadAliases)
     {
         var indexes = _cosmeticIndexes
-            .Where(index => index.Mod.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase))
+            .Where(index => index.Mod.Id.Equals(
+                selected.EffectiveProviderId,
+                StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (indexes.Length == 0)
         {
@@ -2302,7 +2308,8 @@ internal sealed partial class SkinCatalog : IDisposable
                         Id = id,
                         Name = option.Name + " · " + mode.DisplayName,
                         Assets = modeAssets,
-                        RuntimeMonsterVisualMode = mode
+                        RuntimeMonsterVisualMode = mode,
+                        ProviderId = mode.ProviderId
                     });
                 }
             }
@@ -3982,7 +3989,12 @@ internal sealed record SkinOption(
     bool IsRuntimeProvider = false,
     string? RuntimeImagePath = null,
     ResourceAsset? ManagedMonsterScene = null,
-    RuntimeMonsterVisualMode? RuntimeMonsterVisualMode = null);
+    RuntimeMonsterVisualMode? RuntimeMonsterVisualMode = null,
+    string? ProviderId = null)
+{
+    public string EffectiveProviderId =>
+        ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;
+}
 
 internal sealed record RuntimeMonsterVisualMode(
     string ProviderId,
