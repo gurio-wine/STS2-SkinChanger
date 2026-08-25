@@ -22,12 +22,12 @@ internal enum ModText
     PrioritizeAndRestart,
     LoadOrderFailure,
     DefaultVariant,
-    MultipleCardSkinsOnly,
     CardSkinPriority,
     CardPriorityTooltip,
     CardArtCoverage,
     CurrentCardSource,
     AvailableCardSources,
+    EnabledForCategory,
     CharacterAppearance,
     SelectAppearanceTarget,
     Skin,
@@ -132,7 +132,7 @@ internal static class ModLocalization
     }
 
     private sealed record CardPriorityLanguagePack(
-        string MultipleCardSkinsOnly,
+        string EnabledForCategory,
         string CardSkinPriority,
         string CardPriorityTooltip,
         string CardArtCoverage,
@@ -141,12 +141,12 @@ internal static class ModLocalization
     {
         public string Get(ModText text) => text switch
         {
-            ModText.MultipleCardSkinsOnly => MultipleCardSkinsOnly,
             ModText.CardSkinPriority => CardSkinPriority,
             ModText.CardPriorityTooltip => CardPriorityTooltip,
             ModText.CardArtCoverage => CardArtCoverage,
             ModText.CurrentCardSource => CurrentCardSource,
             ModText.AvailableCardSources => AvailableCardSources,
+            ModText.EnabledForCategory => EnabledForCategory,
             _ => throw new ArgumentOutOfRangeException(nameof(text), text, null)
         };
     }
@@ -183,7 +183,7 @@ internal static class ModLocalization
                 "No Ancients available to preview",
                 "Game default",
                 "Original game",
-                "Only cards with skins",
+                "Cards with skins",
                 "Card skins for this category",
                 "Choose art for this card; Follow category uses the Card Compendium setting",
                 "Follow category",
@@ -201,7 +201,7 @@ internal static class ModLocalization
                 "没有可预览的先古之民",
                 "游戏默认",
                 "游戏原版",
-                "仅显示有皮肤的卡牌",
+                "有皮肤卡牌",
                 "此分类的卡牌皮肤",
                 "为这张卡单独选择卡图；“跟随分类”会使用卡牌总览中的设置",
                 "跟随分类",
@@ -219,7 +219,7 @@ internal static class ModLocalization
                 "沒有可預覽的先古之民",
                 "遊戲預設",
                 "遊戲原版",
-                "僅顯示有外觀的卡牌",
+                "有外觀卡牌",
                 "此分類的卡牌外觀",
                 "為這張卡單獨選擇卡圖；「跟隨分類」會使用卡牌圖鑑中的設定",
                 "跟隨分類",
@@ -237,7 +237,7 @@ internal static class ModLocalization
                 "Keine Ahnen für die Vorschau verfügbar",
                 "Spielstandard",
                 "Originalspiel",
-                "Nur Karten mit Skins",
+                "Karten mit Skins",
                 "Karten-Skins für diese Kategorie",
                 "Wähle das Bild dieser Karte; Kategorie folgen nutzt die Einstellung im Kartenkompendium",
                 "Kategorie folgen",
@@ -255,7 +255,7 @@ internal static class ModLocalization
                 "No hay Antiguos disponibles para previsualizar",
                 "Predeterminado del juego",
                 "Juego original",
-                "Solo cartas con aspectos",
+                "Cartas con aspectos",
                 "Aspectos de cartas para esta categoría",
                 "Elige el arte de esta carta; Seguir categoría usa el ajuste del compendio de cartas",
                 "Seguir categoría",
@@ -273,7 +273,7 @@ internal static class ModLocalization
                 "Aucun Ancien disponible pour l’aperçu",
                 "Réglage du jeu",
                 "Jeu d’origine",
-                "Cartes avec skins uniquement",
+                "Cartes avec skins",
                 "Skins de cartes pour cette catégorie",
                 "Choisissez l’image de cette carte ; Suivre la catégorie utilise le réglage du compendium des cartes",
                 "Suivre la catégorie",
@@ -291,7 +291,7 @@ internal static class ModLocalization
                 "Nessun Antico disponibile per l’anteprima",
                 "Predefinito del gioco",
                 "Gioco originale",
-                "Solo carte con skin",
+                "Carte con skin",
                 "Skin delle carte per questa categoria",
                 "Scegli l’immagine di questa carta; Segui categoria usa l’impostazione del compendio carte",
                 "Segui categoria",
@@ -309,7 +309,7 @@ internal static class ModLocalization
                 "プレビューできるエンシェントがありません",
                 "ゲーム標準",
                 "ゲーム原版",
-                "スキンのあるカードのみ",
+                "スキン付きカード",
                 "この分類のカードスキン",
                 "このカードの画像を個別に選択。「分類に従う」はカード図鑑の設定を使用します",
                 "分類に従う",
@@ -327,7 +327,7 @@ internal static class ModLocalization
                 "미리 볼 수 있는 고대인이 없습니다",
                 "게임 기본",
                 "게임 원본",
-                "스킨이 있는 카드만",
+                "스킨 카드",
                 "이 분류의 카드 스킨",
                 "이 카드의 그림을 따로 선택합니다. 분류 따르기는 카드 도감 설정을 사용합니다",
                 "분류 따르기",
@@ -345,7 +345,7 @@ internal static class ModLocalization
                 "Brak Pradawnych do podglądu",
                 "Domyślne gry",
                 "Oryginalna gra",
-                "Tylko karty ze skórkami",
+                "Karty ze skórkami",
                 "Skórki kart dla tej kategorii",
                 "Wybierz grafikę tej karty; Podążaj za kategorią używa ustawienia z kompendium kart",
                 "Podążaj za kategorią",
@@ -363,7 +363,7 @@ internal static class ModLocalization
                 "Nenhum Ancião disponível para prévia",
                 "Padrão do jogo",
                 "Jogo original",
-                "Somente cartas com visuais",
+                "Cartas com visuais",
                 "Visuais de cartas desta categoria",
                 "Escolha a arte desta carta; Seguir categoria usa a configuração do compêndio de cartas",
                 "Seguir categoria",
@@ -381,7 +381,7 @@ internal static class ModLocalization
                 "Нет Древних для предпросмотра",
                 "По умолчанию игры",
                 "Оригинальная игра",
-                "Только карты с обликами",
+                "Карты с обликами",
                 "Облики карт для этой категории",
                 "Выберите изображение этой карты; Следовать категории использует настройку энциклопедии карт",
                 "Следовать категории",
@@ -399,7 +399,7 @@ internal static class ModLocalization
                 "No hay Antiguos disponibles para previsualizar",
                 "Predeterminado del juego",
                 "Juego original",
-                "Solo cartas con aspectos",
+                "Cartas con aspectos",
                 "Aspectos de cartas para esta categoría",
                 "Elige la ilustración de esta carta; Seguir categoría usa el ajuste del compendio de cartas",
                 "Seguir categoría",
@@ -417,7 +417,7 @@ internal static class ModLocalization
                 "ไม่มี Ancient ที่พร้อมให้ดูตัวอย่าง",
                 "ค่าเริ่มต้นของเกม",
                 "เกมต้นฉบับ",
-                "เฉพาะการ์ดที่มีสกิน",
+                "การ์ดที่มีสกิน",
                 "สกินการ์ดสำหรับหมวดนี้",
                 "เลือกภาพของการ์ดใบนี้โดยเฉพาะ; ตามหมวดจะใช้ค่าจากสารานุกรมการ์ด",
                 "ตามหมวด",
@@ -435,7 +435,7 @@ internal static class ModLocalization
                 "Önizlenecek Kadim yok",
                 "Oyun varsayılanı",
                 "Orijinal oyun",
-                "Yalnızca görünümlü kartlar",
+                "Görünümlü kartlar",
                 "Bu kategori için kart görünümleri",
                 "Bu kartın görselini seç; Kategoriyi izle, kart külliyatındaki ayarı kullanır",
                 "Kategoriyi izle",
@@ -564,63 +564,63 @@ internal static class ModLocalization
         new Dictionary<string, CardPriorityLanguagePack>(StringComparer.OrdinalIgnoreCase)
         {
             ["eng"] = new(
-                "Only cards with multiple skins", "Skin priority ({0})",
+                "Enabled", "Skin priority ({0})",
                 "Enable card-skin mods and adjust priority. Higher entries win; lower entries fill missing card art.",
                 "Art {0}/{1}", "Current: {0}", "Available: {0}"),
             ["zhs"] = new(
-                "仅显示有多个皮肤的卡牌", "皮肤优先级（{0}）",
-                "启用卡牌皮肤 Mod 并调整优先级；上方优先，缺少的卡图由下方补充。",
+                "启用", "皮肤优先级（{0}）",
+                "勾选“启用”决定 Mod 是否作用于当前分类；上方优先，缺少的卡图由下方补充。",
                 "卡图 {0}/{1}", "当前：{0}", "可用：{0}"),
             ["zht"] = new(
-                "僅顯示有多個外觀的卡牌", "外觀優先順序（{0}）",
-                "啟用卡牌外觀 Mod 並調整優先順序；上方優先，缺少的卡圖由下方補充。",
+                "啟用", "外觀優先順序（{0}）",
+                "勾選「啟用」決定 Mod 是否作用於目前分類；上方優先，缺少的卡圖由下方補充。",
                 "卡圖 {0}/{1}", "目前：{0}", "可用：{0}"),
             ["deu"] = new(
-                "Nur Karten mit mehreren Skins", "Skin-Priorität ({0})",
+                "Aktiv", "Skin-Priorität ({0})",
                 "Aktiviere Karten-Skin-Mods und ordne sie. Höhere Einträge gewinnen; niedrigere füllen fehlende Kartenbilder.",
                 "Bilder {0}/{1}", "Aktuell: {0}", "Verfügbar: {0}"),
             ["esp"] = new(
-                "Solo cartas con varios aspectos", "Prioridad de aspectos ({0})",
+                "Activo", "Prioridad de aspectos ({0})",
                 "Activa mods de aspectos y ordénalos. Los superiores tienen prioridad; los inferiores completan imágenes faltantes.",
                 "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}"),
             ["fra"] = new(
-                "Cartes avec plusieurs skins uniquement", "Priorité des skins ({0})",
+                "Activé", "Priorité des skins ({0})",
                 "Activez et classez les mods de skins. Le haut est prioritaire ; le bas complète les illustrations manquantes.",
                 "Images {0}/{1}", "Actuel : {0}", "Disponibles : {0}"),
             ["ita"] = new(
-                "Solo carte con più skin", "Priorità skin ({0})",
+                "Attivo", "Priorità skin ({0})",
                 "Attiva e ordina i mod delle skin. Quelli in alto hanno priorità; quelli sotto completano le immagini mancanti.",
                 "Immagini {0}/{1}", "Attuale: {0}", "Disponibili: {0}"),
             ["jpn"] = new(
-                "複数スキンのあるカードのみ", "スキン優先順位（{0}）",
+                "有効", "スキン優先順位（{0}）",
                 "カードスキンModを有効化して並べ替えます。上が優先され、ないカード画像は下から補われます。",
                 "画像 {0}/{1}", "現在：{0}", "利用可能：{0}"),
             ["kor"] = new(
-                "스킨이 여러 개인 카드만", "스킨 우선순위 ({0})",
+                "사용", "스킨 우선순위 ({0})",
                 "카드 스킨 Mod를 켜고 순서를 조정합니다. 위 항목이 우선하며 없는 카드 그림은 아래 항목이 채웁니다.",
                 "그림 {0}/{1}", "현재: {0}", "사용 가능: {0}"),
             ["pol"] = new(
-                "Tylko karty z wieloma skórkami", "Priorytet skórek ({0})",
+                "Włączona", "Priorytet skórek ({0})",
                 "Włącz i uporządkuj mody skórek kart. Wyższe mają pierwszeństwo, a niższe uzupełniają brakujące grafiki.",
                 "Grafiki {0}/{1}", "Bieżąca: {0}", "Dostępne: {0}"),
             ["ptb"] = new(
-                "Somente cartas com vários visuais", "Prioridade dos visuais ({0})",
+                "Ativo", "Prioridade dos visuais ({0})",
                 "Ative e ordene os mods de visuais. Os itens acima vencem; os abaixo completam artes ausentes.",
                 "Artes {0}/{1}", "Atual: {0}", "Disponíveis: {0}"),
             ["rus"] = new(
-                "Только карты с несколькими обликами", "Приоритет обликов ({0})",
+                "Включено", "Приоритет обликов ({0})",
                 "Включайте и упорядочивайте моды обликов. Верхние важнее, нижние дополняют отсутствующие изображения.",
                 "Изображения {0}/{1}", "Текущий: {0}", "Доступны: {0}"),
             ["spa"] = new(
-                "Solo cartas con varios aspectos", "Prioridad de aspectos ({0})",
+                "Activo", "Prioridad de aspectos ({0})",
                 "Activa mods de aspectos y ordénalos. Los superiores tienen prioridad; los inferiores completan imágenes faltantes.",
                 "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}"),
             ["tha"] = new(
-                "เฉพาะการ์ดที่มีหลายสกิน", "ลำดับสกิน ({0})",
+                "เปิดใช้", "ลำดับสกิน ({0})",
                 "เปิดใช้และจัดลำดับ Mod สกินการ์ด รายการด้านบนมีสิทธิ์ก่อน และด้านล่างเติมภาพที่ขาด",
                 "ภาพ {0}/{1}", "ปัจจุบัน: {0}", "มีให้ใช้: {0}"),
             ["tur"] = new(
-                "Yalnızca birden çok görünümlü kartlar", "Görünüm önceliği ({0})",
+                "Etkin", "Görünüm önceliği ({0})",
                 "Kart görünümü Modlarını etkinleştirip sırala. Üsttekiler önceliklidir; alttakiler eksik kart görsellerini tamamlar.",
                 "Görsel {0}/{1}", "Geçerli: {0}", "Mevcut: {0}")
         };
@@ -712,7 +712,7 @@ internal static class ModLocalization
             ? AdjustmentPacks[CurrentLanguage].Get(text)
             : text >= ModText.CharacterAppearance
             ? AppearancePacks[CurrentLanguage].Get(text)
-            : text >= ModText.MultipleCardSkinsOnly
+            : text >= ModText.CardSkinPriority
             ? CardPriorityPacks[CurrentLanguage].Get(text)
             : Packs[CurrentLanguage].Get(text);
 

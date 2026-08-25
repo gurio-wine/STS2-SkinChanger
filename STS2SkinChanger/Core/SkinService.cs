@@ -472,7 +472,7 @@ internal static class SkinService
         foreach (var option in group.Options.Where(option => entries.All(entry =>
                      !entry.OptionId.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
         {
-            entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: false));
+            entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: true));
         }
 
         var previousEntries = Config.CardSkinPriorities.TryGetValue(group.Id, out var configured)
@@ -2373,14 +2373,18 @@ internal static class SkinService
 
     private static void SanitizeCardSelections()
     {
+        var enableAllByDefault = Config.CardPriorityDefaultsVersion < 1;
         foreach (var group in Catalog!.CardGroups)
         {
-            GetCardPriorityEntriesInternal(group);
+            GetCardPriorityEntriesInternal(group, enableAllByDefault);
         }
+
+        Config.CardPriorityDefaultsVersion = 1;
     }
 
     private static IReadOnlyList<CardSkinPriorityEntry> GetCardPriorityEntriesInternal(
-        CardSkinGroup group)
+        CardSkinGroup group,
+        bool enableAllByDefault = false)
     {
         var knownIds = group.Options
             .Select(option => option.Id)
@@ -2390,12 +2394,13 @@ internal static class SkinService
         {
             entries = configured
                 .Where(entry => knownIds.Contains(entry.OptionId))
+                .Select(entry => enableAllByDefault ? entry with { Enabled = true } : entry)
                 .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             foreach (var option in group.Options.Where(option => entries.All(entry =>
                          !entry.OptionId.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
             {
-                entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: false));
+                entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: true));
             }
         }
         else
@@ -2409,7 +2414,7 @@ internal static class SkinService
                 .OrderByDescending(option => option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase))
                 .Select(option => new CardSkinPriorityEntry(
                     option.Id,
-                    option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase)))
+                    Enabled: true))
                 .ToList();
         }
 

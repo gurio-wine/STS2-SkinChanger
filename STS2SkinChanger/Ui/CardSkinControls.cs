@@ -23,12 +23,12 @@ internal static class CardSkinControls
     private const string PriorityPopupMarginName = "Margin";
     private const string PriorityContentName = "PriorityContent";
     private const string AvailabilityFilterName = "STS2SkinnedCardsOnly";
-    private const string MultipleAvailabilityFilterName = "STS2MultipleSkinnedCardsOnly";
     private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
-    private const string MultipleAvailabilityFilterMeta = "sts2_multiple_skinned_cards_only";
     private const string GroupMeta = "sts2_card_skin_group";
     private const string SourceIndicatorName = "STS2CardSkinSources";
     private const string SourceSignatureMeta = "sts2_card_skin_source_signature";
+    private const float CardVisualRightEdge = 150f;
+    private const float CardVisualBottomEdge = 211f;
     private const string NormalTextBackgroundOverlayName = "STS2ManagedNormalTextBackgroundOverlay";
     private const string AncientBorderPath =
         "res://images/atlases/compressed.sprites/card_template/ancient_card_border.tres";
@@ -81,7 +81,6 @@ internal static class CardSkinControls
         bottom.MoveChild(selector, 0);
 
         NLibraryStatTickbox? availabilityFilter = null;
-        NLibraryStatTickbox? multipleAvailabilityFilter = null;
         var filterScene = ResourceLoader.Load<PackedScene>(
             "res://scenes/screens/card_library/card_library_tickbox.tscn");
         if (filterScene != null)
@@ -97,25 +96,12 @@ internal static class CardSkinControls
                 NTickbox.SignalName.Toggled,
                 Callable.From<NTickbox>(tickbox =>
                     SetAvailabilityFilter(screen, AvailabilityFilterMeta, tickbox.IsTicked)));
-
-            multipleAvailabilityFilter = filterScene.Instantiate<NLibraryStatTickbox>(
-                PackedScene.GenEditState.Disabled);
-            multipleAvailabilityFilter.Name = MultipleAvailabilityFilterName;
-            bottom.AddChild(multipleAvailabilityFilter);
-            bottom.MoveChild(multipleAvailabilityFilter, 2);
-            multipleAvailabilityFilter.SetLabel(ModLocalization.Get(ModText.MultipleCardSkinsOnly));
-            multipleAvailabilityFilter.IsTicked = false;
-            multipleAvailabilityFilter.Connect(
-                NTickbox.SignalName.Toggled,
-                Callable.From<NTickbox>(tickbox =>
-                    SetAvailabilityFilter(screen, MultipleAvailabilityFilterMeta, tickbox.IsTicked)));
         }
 
         ShowFirstAvailableGroup(selector);
         ModLocalization.Bind(screen, () =>
         {
             availabilityFilter?.SetLabel(ModLocalization.Get(ModText.SkinnedCardsOnly));
-            multipleAvailabilityFilter?.SetLabel(ModLocalization.Get(ModText.MultipleCardSkinsOnly));
             var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
             if (string.IsNullOrWhiteSpace(groupId))
             {
@@ -206,21 +192,21 @@ internal static class CardSkinControls
 
         RemoveSourceIndicators(card);
         var tooltip = BuildSourceTooltip(sources);
-        var height = 22 + sources.Count * 8;
+        var height = 18 + sources.Count * 8;
         var indicator = new VBoxContainer
         {
             Name = SourceIndicatorName,
             MouseFilter = Control.MouseFilterEnum.Stop,
             TooltipText = tooltip,
             ZIndex = 1000,
-            AnchorLeft = 1f,
-            AnchorTop = 1f,
-            AnchorRight = 1f,
-            AnchorBottom = 1f,
-            OffsetLeft = 4,
-            OffsetTop = -height,
-            OffsetRight = 42,
-            OffsetBottom = 0
+            AnchorLeft = 0f,
+            AnchorTop = 0f,
+            AnchorRight = 0f,
+            AnchorBottom = 0f,
+            OffsetLeft = CardVisualRightEdge + 4,
+            OffsetTop = CardVisualBottomEdge - height,
+            OffsetRight = CardVisualRightEdge + 42,
+            OffsetBottom = CardVisualBottomEdge
         };
         indicator.AddThemeConstantOverride("separation", 2);
         indicator.SetMeta(SourceSignatureMeta, signature);
@@ -745,7 +731,6 @@ internal static class CardSkinControls
     public static void ResetAvailabilityFilter(NCardLibrary screen)
     {
         screen.SetMeta(AvailabilityFilterMeta, false);
-        screen.SetMeta(MultipleAvailabilityFilterMeta, false);
         var availabilityFilter = screen.GetNodeOrNull<NLibraryStatTickbox>(
             $"Sidebar/MarginContainer/BottomVBox/{AvailabilityFilterName}");
         if (availabilityFilter != null)
@@ -753,12 +738,6 @@ internal static class CardSkinControls
             availabilityFilter.IsTicked = false;
         }
 
-        var multipleFilter = screen.GetNodeOrNull<NLibraryStatTickbox>(
-            $"Sidebar/MarginContainer/BottomVBox/{MultipleAvailabilityFilterName}");
-        if (multipleFilter != null)
-        {
-            multipleFilter.IsTicked = false;
-        }
     }
 
     public static void ApplyAvailabilityFilter(
@@ -777,16 +756,13 @@ internal static class CardSkinControls
         }
 
         var skinsOnly = library.GetMeta(AvailabilityFilterMeta, false).AsBool();
-        var multipleOnly = library.GetMeta(MultipleAvailabilityFilterMeta, false).AsBool();
-        if (!skinsOnly && !multipleOnly)
+        if (!skinsOnly)
         {
             return;
         }
 
         var original = filter;
-        filter = card => original(card) &&
-                         (!skinsOnly || SkinService.HasCardSkin(card)) &&
-                         (!multipleOnly || SkinService.GetCardSkinSourceCount(card) > 1);
+        filter = card => original(card) && SkinService.HasCardSkin(card);
     }
 
     private static void SetAvailabilityFilter(NCardLibrary screen, string meta, bool enabled)
@@ -833,7 +809,7 @@ internal static class CardSkinControls
         var popup = new PopupPanel
         {
             Name = PriorityPopupName,
-            MinSize = new Vector2I(620, 480)
+            MinSize = new Vector2I(720, 480)
         };
         popup.AddThemeStyleboxOverride(
             "panel",
@@ -857,7 +833,7 @@ internal static class CardSkinControls
         PopupPanel popup)
     {
         BuildPriorityPopup(screen, selector, popup);
-        popup.PopupCentered(new Vector2I(620, 520));
+        popup.PopupCentered(new Vector2I(720, 520));
     }
 
     private static void BuildPriorityPopup(
@@ -896,7 +872,7 @@ internal static class CardSkinControls
         {
             Text = ModLocalization.Get(ModText.CardPriorityTooltip),
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
-            CustomMinimumSize = new Vector2(560, 48),
+            CustomMinimumSize = new Vector2(660, 48),
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         hint.AddThemeFontSizeOverride("font_size", 17);
@@ -905,7 +881,7 @@ internal static class CardSkinControls
 
         var scroll = new ScrollContainer
         {
-            CustomMinimumSize = new Vector2(570, 350),
+            CustomMinimumSize = new Vector2(670, 350),
             SizeFlagsVertical = Control.SizeFlags.ExpandFill
         };
         content.AddChild(scroll);
@@ -921,7 +897,7 @@ internal static class CardSkinControls
         {
             var row = new HBoxContainer
             {
-                CustomMinimumSize = new Vector2(550, 42),
+                CustomMinimumSize = new Vector2(650, 42),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };
             row.AddThemeConstantOverride("separation", 8);
@@ -936,9 +912,14 @@ internal static class CardSkinControls
             var enabled = new CheckBox
             {
                 ButtonPressed = option.Enabled,
-                CustomMinimumSize = new Vector2(32, 32),
+                Text = ModLocalization.Get(ModText.EnabledForCategory),
+                CustomMinimumSize = new Vector2(88, 32),
                 TooltipText = ModLocalization.DisplayOptionName(option.Name)
             };
+            ContextualSkinControls.ApplyGameTheme(enabled);
+            enabled.AddThemeFontSizeOverride("font_size", 17);
+            enabled.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            enabled.AddThemeColorOverride("font_hover_color", Colors.White);
             enabled.Toggled += value => QueuePriorityChange(
                 screen,
                 selector,

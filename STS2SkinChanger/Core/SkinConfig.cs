@@ -45,6 +45,8 @@ internal sealed class SkinConfig
     public Dictionary<string, List<CardSkinPriorityEntry>> CardSkinPriorities { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
+    public int CardPriorityDefaultsVersion { get; set; }
+
     public Dictionary<string, Dictionary<string, float>> MonsterScales { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
