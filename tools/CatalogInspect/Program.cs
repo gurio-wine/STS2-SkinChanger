@@ -226,6 +226,26 @@ if (validateIndex >= 0)
                 continue;
             }
 
+            var textureDependencies = sample.Value.Files
+                .SelectMany(file => ResourceReferenceRegex()
+                    .Matches(Encoding.UTF8.GetString(file.Archive.ReadFile(file.Path)))
+                    .Select(match => match.Value))
+                .Where(path =>
+                    path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+                    path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ||
+                    path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                    path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var missingTexture = textureDependencies.FirstOrDefault(path =>
+                !overlay.SourceAliases.ContainsKey(path));
+            if (missingTexture != null)
+            {
+                failures.Add(
+                    $"cards/{option.Id}: sample card omitted texture dependency {missingTexture}");
+                continue;
+            }
+
             validatedCardResources++;
         }
         catch (Exception exception)

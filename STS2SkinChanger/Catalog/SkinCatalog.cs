@@ -1976,6 +1976,22 @@ internal sealed partial class SkinCatalog : IDisposable
             throw new InvalidOperationException("找不到任何可隔离的卡牌资源。");
         }
 
+        if (useSelectedProvider && option != null)
+        {
+            // Exported AtlasTexture .res files keep their source atlas page as an external
+            // resource (often under a provider-private ArtWorks/Atlas directory). The card slice
+            // alone therefore loads successfully but renders blank unless its shared PNG/imported
+            // payload joins the same isolated overlay. Reuse the full resource dependency walker
+            // so custom materials and other nested card resources are covered as well.
+            IncludeAliasedDependencyChain(
+                new SkinOption(
+                    option.Id,
+                    option.Name,
+                    option.Assets,
+                    ProviderId: option.ProviderId),
+                resources);
+        }
+
         return BuildAliasedResourceOverlay(
             resources,
             resources.Select(resource => resource.SourcePath).ToArray(),
