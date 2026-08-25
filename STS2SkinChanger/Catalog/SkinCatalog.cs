@@ -1588,23 +1588,31 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(file => file != null)
                 .Cast<ResourceFile>()
                 .Concat(resource.PayloadFiles);
-            foreach (var sourcePath in dependencyFiles.SelectMany(EnumerateDependencyPaths))
+            foreach (var dependencyFile in dependencyFiles)
             {
-                if (resourcesByPath.ContainsKey(sourcePath) || !CanAliasDependency(sourcePath))
+                // Text resources can safely be rewritten to private copies of their imported
+                // Spine/texture payloads. Binary .scn/.res files cannot: their embedded strings
+                // must keep resolving through the temporary canonical bridge instead.
+                var allowImportedPayloadAlias = IsRewritableTextResource(dependencyFile.Path);
+                foreach (var sourcePath in EnumerateDependencyPaths(dependencyFile))
                 {
-                    continue;
-                }
+                    if (resourcesByPath.ContainsKey(sourcePath) ||
+                        !CanAliasDependency(sourcePath, allowImportedPayloadAlias))
+                    {
+                        continue;
+                    }
 
-                if (TryResolveSelected(sourcePath, out var selectedAsset, out var selectedIndex))
-                {
-                    IncludeResource(sourcePath, selectedAsset, selectedIndex);
-                    continue;
-                }
+                    if (TryResolveSelected(sourcePath, out var selectedAsset, out var selectedIndex))
+                    {
+                        IncludeResource(sourcePath, selectedAsset, selectedIndex);
+                        continue;
+                    }
 
-                var baseline = ResolveBaseline(sourcePath);
-                if (baseline != null)
-                {
-                    IncludeResource(sourcePath, baseline, FindOwningIndex(baseline));
+                    var baseline = ResolveBaseline(sourcePath);
+                    if (baseline != null)
+                    {
+                        IncludeResource(sourcePath, baseline, FindOwningIndex(baseline));
+                    }
                 }
             }
         }
@@ -1714,8 +1722,9 @@ internal sealed partial class SkinCatalog : IDisposable
         path.EndsWith(".gdshader", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase);
 
-    private static bool CanAliasDependency(string path) =>
-        !path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase) &&
+    private static bool CanAliasDependency(string path, bool allowImportedPayloadAlias) =>
+        (allowImportedPayloadAlias ||
+         !path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase)) &&
         !path.StartsWith("res://.godot/exported/", StringComparison.OrdinalIgnoreCase) &&
         !path.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) &&
         !path.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) &&
