@@ -91,6 +91,7 @@ var descriptors = manifests
     .ToList();
 
 using var catalog = SkinCatalog.Build(args[0], descriptors);
+var showAssets = Environment.GetEnvironmentVariable("CATALOG_INSPECT_ASSETS") == "1";
 var validationCards = validateIndex >= 0
     ? BuildValidationCardEntries(
         new[] { args[0] }.Concat(descriptors
@@ -115,6 +116,15 @@ foreach (var group in catalog.Groups)
             (option.RuntimeMonsterVisualMode == null
                 ? string.Empty
                 : $", mode={option.RuntimeMonsterVisualMode.ModeName}, {modeResources} mode resources"));
+        if (showAssets)
+        {
+            foreach (var asset in option.Assets.OrderBy(
+                         pair => pair.Key,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"    {asset.Key} <- {asset.Value.SourcePath}");
+            }
+        }
     }
 }
 

@@ -17,6 +17,9 @@ internal sealed partial class SkinCatalog : IDisposable
     private static readonly object RuntimeAncientImageCacheSync = new();
     private static readonly Dictionary<string, RuntimeAncientImageCacheEntry> RuntimeAncientImageCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object ManagedScriptCountCacheSync = new();
+    private static readonly Dictionary<string, ManagedScriptCountCacheEntry> ManagedScriptCountCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly PckArchive _gameArchive;
     private readonly List<PckResourceIndex> _baselineIndexes;
@@ -47,8 +50,7 @@ internal sealed partial class SkinCatalog : IDisposable
         _pckCardOptions = pckCardOptions;
         _cardGroups = cardGroups.ToList();
         _managedGodotScriptProviders = cosmeticIndexes
-            .Where(index => index.Mod.HasDll && index.Archive.Paths.Any(path =>
-                path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)))
+            .Where(index => index.Mod.HasDll && CountManagedGodotScripts(index.Archive) > 0)
             .Select(index => index.Mod.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visualGroupsByProvider = _groups
@@ -193,8 +195,7 @@ internal sealed partial class SkinCatalog : IDisposable
                         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                         remapFilter: null);
                     managedScriptCount = mod.HasDll
-                        ? archive.Paths.Count(path =>
-                            path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                        ? CountManagedGodotScripts(archive)
                         : 0;
                     visualGroups = BuildGroups([index])
                         .Count(group => group.Options.Count > 0);
@@ -257,6 +258,49 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return providers;
+    }
+
+    private static int CountManagedGodotScripts(PckArchive archive)
+    {
+        var info = new FileInfo(archive.Path);
+        lock (ManagedScriptCountCacheSync)
+        {
+            if (ManagedScriptCountCache.TryGetValue(archive.Path, out var cached) &&
+                cached.Length == info.Length &&
+                cached.LastWriteTimeUtc == info.LastWriteTimeUtc)
+            {
+                return cached.Count;
+            }
+        }
+
+        var scriptPaths = archive.Paths
+            .Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var resourcePath in archive.Paths.Where(path =>
+                     path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)))
+        {
+            var text = Encoding.UTF8.GetString(archive.ReadFile(resourcePath));
+            foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
+            {
+                if (match.Value.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                {
+                    scriptPaths.Add(match.Value);
+                }
+            }
+        }
+
+        var count = scriptPaths.Count;
+        lock (ManagedScriptCountCacheSync)
+        {
+            ManagedScriptCountCache[archive.Path] = new ManagedScriptCountCacheEntry(
+                info.Length,
+                info.LastWriteTimeUtc,
+                count);
+        }
+
+        return count;
     }
 
     private static bool LooksLikeDllSkinProvider(SkinModDescriptor mod)
@@ -1094,7 +1138,8 @@ internal sealed partial class SkinCatalog : IDisposable
         PckResourceIndex index,
         string atlasSourcePath)
     {
-        if (!atlasSourcePath.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase))
+        if (!atlasSourcePath.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase) &&
+            !atlasSourcePath.EndsWith(".spatlas", StringComparison.OrdinalIgnoreCase))
         {
             yield break;
         }
@@ -3083,6 +3128,26 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in indexes)
         {
             var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
+            var managedCharacterReplacements = ManagedCharacterAssetReplacementScanner.Scan(
+                index.Mod.RootPath,
+                index.Mod.Id);
+            var managedRuntimeMappings = managedCharacterReplacements
+                .SelectMany(replacement => replacement.CanonicalPathsByProviderPath.Select(pair =>
+                    new KeyValuePair<string, RuntimeProviderAsset>(
+                        pair.Key,
+                        new RuntimeProviderAsset(
+                            new GroupIdentity(
+                                replacement.TargetGroupId,
+                                DisplayName(replacement.TargetGroupId)),
+                            pair.Value))))
+                .GroupBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    pairs => pairs.Key,
+                    pairs => pairs.Last().Value,
+                    StringComparer.OrdinalIgnoreCase);
+            var managedDependencyPaths = CollectManagedCharacterDependencyPaths(
+                index,
+                managedRuntimeMappings.Keys);
             var indexedAssets = index.Assets.Values.ToArray();
             // The lightweight PCK index eagerly registers canonical game animation/scene paths,
             // but a DLL provider may keep its routed scene below any private top-level folder.
@@ -3100,13 +3165,42 @@ internal sealed partial class SkinCatalog : IDisposable
                 .DistinctBy(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase)
                 .Select(asset => (
                     Asset: asset,
-                    Mapping: TryGetRuntimeProviderAsset(index.Mod.Id, asset.SourcePath)))
+                    Mapping: managedRuntimeMappings.TryGetValue(asset.SourcePath, out var managedMapping)
+                        ? managedMapping
+                        : managedDependencyPaths.Contains(asset.SourcePath)
+                            ? null
+                            : TryGetRuntimeProviderAsset(index.Mod.Id, asset.SourcePath)))
                 .Where(pair => pair.Mapping != null)
                 .Select(pair => (pair.Asset, Mapping: pair.Mapping!))
                 .ToArray();
+
+            // Framework registrations often name every private resource after the skin instead
+            // of the replaced character. Remove the resulting phantom character option after the
+            // explicit registration has routed those resources to the real character group.
+            var managedTargetIds = managedCharacterReplacements
+                .Select(replacement => replacement.TargetGroupId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var sourceGroup in groups.Values
+                         .Where(group => !managedTargetIds.Contains(group.Id))
+                         .ToArray())
+            {
+                sourceGroup.Options.RemoveAll(option =>
+                    option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase) &&
+                    option.Assets.Count > 0 &&
+                    option.Assets.Values.Any(asset =>
+                        managedDependencyPaths.Contains(asset.SourcePath)));
+                if (sourceGroup.Options.Count == 0)
+                {
+                    groups.Remove(sourceGroup.Id);
+                }
+            }
+
             var identities = runtimeAssets
                 .Select(pair => pair.Mapping.Identity)
-                .Where(identity => enabledGroupIds == null || enabledGroupIds.Contains(identity.Id))
+                .Where(identity =>
+                    enabledGroupIds == null ||
+                    enabledGroupIds.Contains(identity.Id) ||
+                    managedTargetIds.Contains(identity.Id))
                 .DistinctBy(identity => identity.Id)
                 .ToArray();
             foreach (var identity in identities)
@@ -3149,6 +3243,49 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Name,
                     mappedAssets,
                     IsRuntimeProvider: true));
+            }
+        }
+    }
+
+    private static IReadOnlySet<string> CollectManagedCharacterDependencyPaths(
+        PckResourceIndex index,
+        IEnumerable<string> roots)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<ResourceAsset>();
+        foreach (var root in roots)
+        {
+            var asset = index.Assets.GetValueOrDefault(root) ?? index.TryBuildAsset(root);
+            if (asset != null && result.Add(asset.SourcePath))
+            {
+                queue.Enqueue(asset);
+            }
+        }
+
+        while (queue.TryDequeue(out var asset))
+        {
+            foreach (var file in asset.Files.Where(file => MayContainResourceReferences(file.Path)))
+            {
+                var text = Encoding.UTF8.GetString(file.Archive.ReadFile(file.Path));
+                foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
+                {
+                    Include(index.Assets.GetValueOrDefault(match.Value) ??
+                            index.TryBuildAsset(match.Value));
+                    foreach (var sibling in GetSiblingAtlasTextureAssets(index, match.Value))
+                    {
+                        Include(sibling);
+                    }
+                }
+            }
+        }
+
+        return result;
+
+        void Include(ResourceAsset? dependency)
+        {
+            if (dependency != null && result.Add(dependency.SourcePath))
+            {
+                queue.Enqueue(dependency);
             }
         }
     }
@@ -4025,6 +4162,11 @@ internal sealed record RuntimeAncientImage(
 internal sealed record RuntimeAncientImageCacheEntry(
     DateTime RootWriteTimeUtc,
     IReadOnlyList<RuntimeAncientImage> Images);
+
+internal sealed record ManagedScriptCountCacheEntry(
+    long Length,
+    DateTime LastWriteTimeUtc,
+    int Count);
 
 internal sealed class SkinGroup(string id, string displayName)
 {

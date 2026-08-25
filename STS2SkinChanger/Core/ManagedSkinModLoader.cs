@@ -177,10 +177,13 @@ internal static class ManagedSkinModLoader
             return;
         }
 
+        var hasDeclarativeCharacterAssetReplacement =
+            ManagedCharacterAssetReplacementScanner.Scan(mod.path, mod.manifest.id).Count > 0;
         ProviderAssemblies[mod.manifest.id] = new ProviderAssembly(
             assemblyPath,
             mod.manifest.name ?? mod.manifest.id,
-            provider.ManagedScriptCount > 0);
+            provider.ManagedScriptCount > 0 || hasDeclarativeCharacterAssetReplacement,
+            hasDeclarativeCharacterAssetReplacement);
     }
 
     public static bool EnsureProviderGodotScripts(string providerId)
@@ -283,14 +286,22 @@ internal static class ManagedSkinModLoader
                 return;
             }
 
-            var initializerTypes = GetLoadableTypes(assembly)
-                .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
-                .Where(pair => pair.Attribute != null)
-                .ToArray();
+            var initializerTypes = provider.HasDeclarativeCharacterAssetReplacement
+                ? []
+                : GetLoadableTypes(assembly)
+                    .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
+                    .Where(pair => pair.Attribute != null)
+                    .ToArray();
             if (initializerTypes.Length == 0)
             {
                 new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
                     .PatchAll(assembly);
+                if (provider.HasDeclarativeCharacterAssetReplacement)
+                {
+                    ModLog.Info(
+                        $"{provider.Name} 使用框架式角色资源注册；已由皮肤切换器直接路由资源，" +
+                        "因此未执行会产生全局强制替换的原初始化器。");
+                }
             }
             else
             {
@@ -1246,7 +1257,8 @@ internal static class ManagedSkinModLoader
     private sealed record ProviderAssembly(
         string AssemblyPath,
         string Name,
-        bool HasGodotScripts);
+        bool HasGodotScripts,
+        bool HasDeclarativeCharacterAssetReplacement);
 
     private sealed record ActiveProviderRuntime(
         Assembly Assembly,
