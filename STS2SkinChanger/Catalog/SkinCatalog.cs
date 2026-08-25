@@ -1843,32 +1843,67 @@ internal sealed partial class SkinCatalog : IDisposable
         bool useSelectedProvider,
         string aliasToken)
     {
-        ResourceAsset? asset;
-        if (useSelectedProvider)
-        {
-            var option = CardGroups
-                .FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
-                .Options.FirstOrDefault(option =>
-                    option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
-            option ??= _pckCardOptions.FirstOrDefault(candidate =>
-                candidate.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
-            asset = option == null ? null : ResolveCardProviderAsset(option, resourcePath);
-        }
-        else
-        {
-            asset = ResolveBaseline(resourcePath);
-        }
-
-        if (asset == null)
+        var overlay = BuildIsolatedCardResources(
+            groupId,
+            selectionId,
+            [resourcePath],
+            useSelectedProvider,
+            aliasToken);
+        if (!overlay.ResourcePaths.ContainsKey(resourcePath))
         {
             throw new InvalidOperationException($"找不到独立卡牌资源：{resourcePath}");
         }
-        var resource = new RuntimeResource(
-            resourcePath,
-            FindDirectFile(asset, resourcePath),
-            FindRemapFile(asset, resourcePath),
-            GetImportedPayloadFiles(asset, resourcePath));
-        return BuildAliasedResourceOverlay([resource], [resourcePath], aliasToken);
+
+        return overlay;
+    }
+
+    public RuntimeResourceOverlay BuildIsolatedCardResources(
+        string groupId,
+        string selectionId,
+        IEnumerable<string> resourcePaths,
+        bool useSelectedProvider,
+        string aliasToken)
+    {
+        CardSkinOption? option = null;
+        if (useSelectedProvider)
+        {
+            option = CardGroups
+                .FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+                .Options.FirstOrDefault(candidate =>
+                    candidate.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+            option ??= _pckCardOptions.FirstOrDefault(candidate =>
+                candidate.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var resources = new List<RuntimeResource>();
+        foreach (var resourcePath in resourcePaths
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var asset = useSelectedProvider
+                ? option == null ? null : ResolveCardProviderAsset(option, resourcePath)
+                : ResolveBaseline(resourcePath);
+            if (asset == null)
+            {
+                continue;
+            }
+
+            resources.Add(new RuntimeResource(
+                resourcePath,
+                FindDirectFile(asset, resourcePath),
+                FindRemapFile(asset, resourcePath),
+                GetImportedPayloadFiles(asset, resourcePath)));
+        }
+
+        if (resources.Count == 0)
+        {
+            throw new InvalidOperationException("找不到任何可隔离的卡牌资源。");
+        }
+
+        return BuildAliasedResourceOverlay(
+            resources,
+            resources.Select(resource => resource.SourcePath).ToArray(),
+            aliasToken);
     }
 
     private ResourceAsset? ResolveCardProviderAsset(CardSkinOption option, string resourcePath)

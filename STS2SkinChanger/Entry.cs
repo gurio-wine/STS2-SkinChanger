@@ -58,5 +58,6 @@ internal static class EssentialInitializationPatch
     {
         VisualPatchGuard.RemoveProviderVisualPatches(ManagedSkinModLoader.ProviderRoots);
         SkinService.InitializeCardGroupsAfterModels();
+        ExternalCardVisualBridge.WarmUp();
     }
 }

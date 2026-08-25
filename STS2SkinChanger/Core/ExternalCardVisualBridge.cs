@@ -14,6 +14,7 @@ internal static class ExternalCardVisualBridge
     private static readonly List<ICardVisualOwnershipAdapter> Adapters = [];
     private static readonly HashSet<Assembly> ScannedAssemblies = [];
     private static readonly HashSet<string> LoggedFailures = new(StringComparer.Ordinal);
+    private static ICardVisualOwnershipAdapter[] _adapterSnapshot = [];
     private static volatile bool _discoveryDirty = true;
 
     static ExternalCardVisualBridge()
@@ -31,6 +32,8 @@ internal static class ExternalCardVisualBridge
         return ownership;
     }
 
+    public static void WarmUp() => EnumerateAdapters();
+
     private static ICardVisualOwnershipAdapter[] EnumerateAdapters()
     {
         lock (Sync)
@@ -40,7 +43,7 @@ internal static class ExternalCardVisualBridge
                 DiscoverAdapters();
             }
 
-            return Adapters.ToArray();
+            return _adapterSnapshot;
         }
     }
 
@@ -116,6 +119,8 @@ internal static class ExternalCardVisualBridge
                 LogFailure(assembly, "能力探测", exception);
             }
         }
+
+        _adapterSnapshot = Adapters.ToArray();
     }
 
     private static FullCardPresentationAdapter? CreateFullCardPresentationAdapter(

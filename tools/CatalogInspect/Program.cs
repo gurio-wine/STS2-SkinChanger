@@ -1148,8 +1148,21 @@ static void RunCardExportSelfTest(string gamePckPath)
             }
         }
 
+        var batchedOverlay = catalog.BuildIsolatedCardResources(
+            "tests",
+            routed.Id,
+            expectedPortraits.Values,
+            useSelectedProvider: true,
+            "self-test/batched");
+        if (expectedPortraits.Values.Any(path =>
+                !batchedOverlay.ResourcePaths.ContainsKey(path)) ||
+            batchedOverlay.Files.Count < expectedPortraits.Count)
+        {
+            throw new InvalidOperationException("batched exported portrait isolation failed");
+        }
+
         Console.WriteLine(
-            "card export self-test passed: static, framed and animation fallback manifests");
+            "card export self-test passed: static, framed, animation fallback and batched isolation");
     }
     finally
     {

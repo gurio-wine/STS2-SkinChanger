@@ -98,6 +98,9 @@ internal static class CharacterAppearanceRuntime
         if (!CanApplySelectionNow())
         {
             _pendingSelection = new PendingSelection(groupId, optionId);
+            NRun.Instance?
+                .GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime")?
+                .Wake();
             return new AppearanceSelectionRequestResult(AppearanceSelectionRequestState.Queued);
         }
 
@@ -135,12 +138,16 @@ internal static class CharacterAppearanceRuntime
         return NCombatRoom.Instance?.GetCreatureNode(player.Creature);
     }
 
-    internal static void ProcessPendingSelection()
+    internal static bool ProcessPendingSelection()
     {
         var pending = _pendingSelection;
-        if (pending == null || !CanApplySelectionNow())
+        if (pending == null)
         {
-            return;
+            return false;
+        }
+        if (!CanApplySelectionNow())
+        {
+            return true;
         }
 
         _pendingSelection = null;
@@ -149,6 +156,7 @@ internal static class CharacterAppearanceRuntime
             pending.GroupId,
             result.State == AppearanceSelectionRequestState.Applied,
             result.Error);
+        return false;
     }
 
     internal static void ClearPendingSelection() => _pendingSelection = null;
@@ -1186,8 +1194,17 @@ internal static class CharacterAppearanceRuntime
 
 internal partial class CharacterAppearanceRuntimeNode : Node
 {
-    public override void _Process(double delta) =>
-        CharacterAppearanceRuntime.ProcessPendingSelection();
+    public override void _Ready() => SetProcess(false);
+
+    public void Wake() => SetProcess(true);
+
+    public override void _Process(double delta)
+    {
+        if (!CharacterAppearanceRuntime.ProcessPendingSelection())
+        {
+            SetProcess(false);
+        }
+    }
 
     public override void _ExitTree() =>
         CharacterAppearanceRuntime.ClearPendingSelection();

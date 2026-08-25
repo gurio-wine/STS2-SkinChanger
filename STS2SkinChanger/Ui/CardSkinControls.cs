@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.UI;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens;
@@ -42,7 +43,6 @@ internal static class CardSkinControls
     public static void Attach(NCardLibrary screen)
     {
         SkinService.InitializeCardGroupsAfterModels();
-        VisualPatchGuard.RemoveProviderVisualPatches(ManagedSkinModLoader.ProviderRoots);
         var bottom = screen.GetNodeOrNull<VBoxContainer>("Sidebar/MarginContainer/BottomVBox");
         if (bottom == null || bottom.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
         {
@@ -894,7 +894,6 @@ internal static class CardInspectSkinControls
     public static void Attach(NInspectCardScreen screen)
     {
         SkinService.InitializeCardGroupsAfterModels();
-        VisualPatchGuard.RemoveProviderVisualPatches(ManagedSkinModLoader.ProviderRoots);
         if (screen.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
         {
             return;
@@ -1108,6 +1107,29 @@ internal static class CardLibraryPoolSkinPatch
         CardSkinControls.ShowForFilter(__instance, filter);
 }
 
+[HarmonyPatch(typeof(NCardLibraryGrid), "InitGrid")]
+internal static class CardLibraryInitialPortraitPreloadPatch
+{
+    private const int InitialCardPreloadCount = 36;
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCardLibraryGrid __instance) =>
+        SkinService.PreloadCardPortraits(
+            __instance.VisibleCards.Take(InitialCardPreloadCount));
+}
+
+[HarmonyPatch(typeof(NCardLibraryGrid), "AssignCardsToRow")]
+internal static class CardLibraryRowPortraitPreloadPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(
+        NCardLibraryGrid __instance,
+        List<NGridCardHolder> row,
+        int startIndex) =>
+        SkinService.PreloadCardPortraits(
+            __instance.VisibleCards.Skip(startIndex).Take(row.Count));
+}
+
 [HarmonyPatch(typeof(CardModel), nameof(CardModel.Portrait), MethodType.Getter)]
 internal static class CardPortraitResultPatch
 {
@@ -1119,11 +1141,8 @@ internal static class CardPortraitResultPatch
 [HarmonyPatch]
 internal static class CardLayoutResetPatch
 {
-    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
-    {
-        yield return AccessTools.Method(typeof(NCard), "Reload");
-        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
-    }
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCard), "Reload");
 
     [HarmonyPriority(Priority.First)]
     private static void Prefix(NCard __instance) =>
@@ -1133,11 +1152,8 @@ internal static class CardLayoutResetPatch
 [HarmonyPatch]
 internal static class CardLayoutBaselineCapturePatch
 {
-    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
-    {
-        yield return AccessTools.Method(typeof(NCard), "Reload");
-        yield return AccessTools.Method(typeof(NCard), nameof(NCard.UpdateVisuals));
-    }
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCard), "Reload");
 
     [HarmonyPriority(Priority.First)]
     private static void Postfix(NCard __instance) =>
