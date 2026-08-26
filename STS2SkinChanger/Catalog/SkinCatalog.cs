@@ -77,19 +77,67 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(option => option.Assets.Count > 0 || option.CardPresentations.Count > 0)
                 .Select(option => option.ProviderId ?? option.Id))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var characterVisualGroupsByProvider = _groups
+            .SelectMany(group => group.Options
+                .Where(OptionOwnsCharacterRuntimeAssets)
+                .Select(option => (GroupId: group.Id, ProviderId: option.Id)))
+            .GroupBy(pair => pair.ProviderId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(pair => pair.GroupId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+        var singleCharacterBundleGroupsByProvider = characterVisualGroupsByProvider
+            .Where(pair => pair.Value
+                .Select(CharacterRuntimeFamilyId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count() == 1)
+            .ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.OrdinalIgnoreCase);
+
+        // Card ownership and runtime behaviour are two independent concerns. A character skin can
+        // bundle selectable card art while still relying on its DLL for voice, character-select
+        // animation and battle presentation nodes. Keep such a provider's character bundle active,
+        // but do not turn unrelated Ancient/monster groups from a mixed card pack into a linked
+        // full-runtime selection.
         _fullRuntimeProviders = cosmeticIndexes
             .Where(index => index.Mod.HasDll)
             .Select(index => index.Mod.Id)
             .Where(providerId =>
                 visualGroupsByProvider.ContainsKey(providerId) &&
-                !cardProviderIds.Contains(providerId))
+                (!cardProviderIds.Contains(providerId) ||
+                 singleCharacterBundleGroupsByProvider.ContainsKey(providerId)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _fullRuntimeProviderGroups = visualGroupsByProvider
             .Where(pair => _fullRuntimeProviders.Contains(pair.Key))
             .ToDictionary(
                 pair => pair.Key,
-                pair => (IReadOnlyList<string>)pair.Value,
+                pair => (IReadOnlyList<string>)(cardProviderIds.Contains(pair.Key)
+                    ? singleCharacterBundleGroupsByProvider[pair.Key]
+                    : pair.Value),
                 StringComparer.OrdinalIgnoreCase);
+
+        static bool OptionOwnsCharacterRuntimeAssets(SkinOption option) =>
+            option.Assets.Keys.Any(path =>
+            {
+                var canonicalPath = NormalizeTakeoverPath(path);
+                return CharacterPathRegex().IsMatch(canonicalPath) ||
+                       CharacterSelectSceneRegex().IsMatch(canonicalPath) ||
+                       MerchantCharacterSceneRegex().IsMatch(canonicalPath) ||
+                       RestSiteCharacterSceneRegex().IsMatch(canonicalPath) ||
+                       CharacterSelectIconRegex().IsMatch(canonicalPath) ||
+                       CharacterUiTextureRegex().IsMatch(canonicalPath) ||
+                       CharacterIconSceneRegex().IsMatch(canonicalPath) ||
+                       CharacterMapMarkerRegex().IsMatch(canonicalPath);
+            });
+
+        static string CharacterRuntimeFamilyId(string groupId) =>
+            groupId.EndsWith("_b", StringComparison.OrdinalIgnoreCase)
+                ? groupId[..^2]
+                : groupId;
     }
 
     public IReadOnlyList<SkinGroup> Groups => _groups;
@@ -558,10 +606,11 @@ internal sealed partial class SkinCatalog : IDisposable
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// A DLL-backed provider that owns visual groups and no independently selectable cards is an
-    /// inseparable cosmetic runtime bundle. A provider that spans several groups is activated only
-    /// when all of those groups select it, so its original callbacks cannot force a partially
-    /// selected character, companion or monster skin.
+    /// A DLL-backed provider that owns visual groups is an inseparable cosmetic runtime bundle.
+    /// Its selectable card resources remain independently owned by Skin Changer; only the
+    /// non-resource behaviour layer is enabled. A provider that spans several visual groups is
+    /// activated only when all of those groups select it, so its original callbacks cannot force a
+    /// partially selected character, companion or monster skin.
     /// </summary>
     public bool ProviderUsesFullRuntime(string optionId) =>
         _fullRuntimeProviders.Contains(optionId);
@@ -769,6 +818,13 @@ internal sealed partial class SkinCatalog : IDisposable
             .Where(option => option.IsRuntimeProvider)
             .SelectMany(option => option.Assets.Values)
             .SelectMany(asset => asset.Files)
+            .Concat(_pckCardOptions
+                .SelectMany(option => option.Assets.Values)
+                .SelectMany(asset => asset.Files))
+            .Concat(_configuredCardGroups
+                .SelectMany(group => group.Options)
+                .SelectMany(option => option.Assets.Values)
+                .SelectMany(asset => asset.Files))
             .Select(file => NormalizeTakeoverPath(file.Path))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 

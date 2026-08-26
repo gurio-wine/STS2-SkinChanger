@@ -619,8 +619,18 @@ if (validateIndex >= 0)
                     if (provider?.PckPath != null && File.Exists(provider.PckPath))
                     {
                         using var providerArchive = PckArchive.Open(provider.PckPath);
+                        var independentlySelectableCardFiles = catalog.PckCardOptions
+                            .Where(candidate => (candidate.ProviderId ?? candidate.Id).Equals(
+                                option.EffectiveProviderId,
+                                StringComparison.OrdinalIgnoreCase))
+                            .SelectMany(candidate => candidate.Assets.Values)
+                            .SelectMany(asset => asset.Files)
+                            .Select(file => SkinCatalog.NormalizeTakeoverPath(file.Path))
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
                         var expectedPackagePaths = providerArchive.Paths
                             .Where(path => !IsProviderProjectControlFile(path))
+                            .Where(path => !independentlySelectableCardFiles.Contains(
+                                SkinCatalog.NormalizeTakeoverPath(path)))
                             .ToArray();
                         var missingPackagePaths = expectedPackagePaths
                             .Where(path => !selectedOverlay.ContainsKey(path))
