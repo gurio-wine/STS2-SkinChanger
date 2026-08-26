@@ -31,6 +31,7 @@ internal static class CardSkinControls
     private const float CardVisualRightEdge = 150f;
     private const float CardVisualBottomEdge = 211f;
     private const string NormalTextBackgroundOverlayName = "STS2ManagedNormalTextBackgroundOverlay";
+    private const string FullFrameOverlayName = "STS2ManagedFullFrameOverlay";
     private const string AncientBorderPath =
         "res://images/atlases/compressed.sprites/card_template/ancient_card_border.tres";
     private const string AncientBannerPath =
@@ -410,6 +411,23 @@ internal static class CardSkinControls
         var energyIcon = card.GetNodeOrNull<TextureRect>("%EnergyIcon");
         var highlight = card.GetNodeOrNull<TextureRect>("%Highlight");
         var fire = FindNodeByName(card, "Fire") as AnimatedSprite2D;
+        if (presentation.UseFullFrameArt)
+        {
+            ApplyManagedFullFrameArt(
+                card,
+                presentation,
+                portrait,
+                portraitBorder,
+                frame,
+                banner,
+                ancientPortrait,
+                ancientGlass,
+                ancientBorder,
+                ancientTextBg,
+                ancientBanner);
+            return;
+        }
+
         var useAncientLayout = presentation.UseAncientLayout ||
                                card.Model!.Rarity == CardRarity.Ancient;
 
@@ -505,6 +523,11 @@ internal static class CardSkinControls
         {
             SetVisible(portraitBorder, portraitBorderVisible && !useAncientLayout);
         }
+        if (presentation.PortraitVisible is { } portraitVisible)
+        {
+            SetVisible(portrait, portraitVisible && !useAncientLayout);
+            SetVisible(ancientPortrait, portraitVisible && useAncientLayout);
+        }
         SetVisible(energyIcon, presentation.EnergyIconVisible);
         if (presentation.HighlightVisible is { } highlightVisible)
         {
@@ -521,6 +544,102 @@ internal static class CardSkinControls
         SetVisible(
             FindNodeByName(card, "Infection") as CanvasItem,
             presentation.InfectionOverlayVisible);
+    }
+
+    private static void ApplyManagedFullFrameArt(
+        NCard card,
+        CardPresentationDefinition presentation,
+        TextureRect? portrait,
+        TextureRect? portraitBorder,
+        TextureRect? frame,
+        TextureRect? banner,
+        TextureRect? ancientPortrait,
+        TextureRect? ancientGlass,
+        TextureRect? ancientBorder,
+        TextureRect? ancientTextBg,
+        TextureRect? ancientBanner)
+    {
+        ApplyTexture(card, frame, presentation.Frame);
+        if (frame != null)
+        {
+            frame.Material = null;
+        }
+
+        SetVisible(frame, presentation.FrameVisible ?? true);
+        SetVisible(portrait, presentation.PortraitVisible ?? false);
+        SetVisible(portraitBorder, presentation.PortraitBorderVisible ?? false);
+        SetVisible(ancientPortrait, false);
+        SetVisible(ancientGlass, false);
+        SetVisible(ancientBanner, false);
+        SetVisible(banner, presentation.BannerVisible ?? true);
+
+        var isNativeAncient = card.Model!.Rarity == CardRarity.Ancient;
+        SetVisible(ancientBorder, isNativeAncient);
+        SetVisible(ancientTextBg, presentation.TextBackgroundVisible ?? true);
+        if (ancientTextBg != null)
+        {
+            ancientTextBg.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                card.Model,
+                presentation.AncientTextBackground ?? DefaultAncientTextBackgroundPath(card.Model));
+        }
+
+        var parent = ancientBorder?.GetParent();
+        TextureRect? overlay = null;
+        if (!isNativeAncient &&
+            parent != null &&
+            !string.IsNullOrWhiteSpace(presentation.FrameOverlay))
+        {
+            overlay = new TextureRect
+            {
+                Name = FullFrameOverlayName,
+                Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model,
+                    presentation.FrameOverlay),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ZIndex = ancientBorder!.ZIndex,
+                AnchorLeft = 0.5f,
+                AnchorTop = 0.5f,
+                AnchorRight = 0.5f,
+                AnchorBottom = 0.5f,
+                GrowHorizontal = Control.GrowDirection.Both,
+                GrowVertical = Control.GrowDirection.Both,
+                PivotOffset = new Vector2(CardVisualRightEdge, CardVisualBottomEdge),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
+                OffsetTop = presentation.FrameOverlayOffsetTop ?? -CardVisualBottomEdge,
+                OffsetBottom = presentation.FrameOverlayOffsetBottom ?? CardVisualBottomEdge,
+                OffsetLeft = presentation.FrameOverlayOffsetLeft ?? -CardVisualRightEdge,
+                OffsetRight = presentation.FrameOverlayOffsetRight ?? CardVisualRightEdge,
+                Scale = new Vector2(
+                    presentation.FrameOverlayScaleX ?? 1f,
+                    presentation.FrameOverlayScaleY ?? 1f)
+            };
+            parent.AddChild(overlay);
+        }
+
+        if (parent == null)
+        {
+            return;
+        }
+
+        foreach (var node in new Node?[]
+                 {
+                     ancientBorder,
+                     ancientTextBg,
+                     overlay,
+                     card.GetNodeOrNull<Node>("%TypePlaque"),
+                     card.GetNodeOrNull<Node>("%DescriptionLabel"),
+                     banner,
+                     FindNodeByName(card, "TitleLabel"),
+                     card.GetNodeOrNull<Node>("%EnergyIcon"),
+                     FindNodeByName(card, "StarIcon")
+                 })
+        {
+            if (node?.GetParent() == parent)
+            {
+                parent.MoveChild(node, parent.GetChildCount() - 1);
+            }
+        }
     }
 
     private static string DefaultAncientTextBackgroundPath(CardModel card)

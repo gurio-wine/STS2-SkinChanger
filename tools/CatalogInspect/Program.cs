@@ -147,6 +147,8 @@ foreach (var option in catalog.PckCardOptions)
         [option.ProviderId ?? option.Id]);
     Console.WriteLine(
         $"card-provider:{option.Id}\t{option.Name}\t{option.Assets.Count} assets, " +
+        $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient, " +
+        $"{option.CardPresentations.Count(pair => pair.Value.UseFullFrameArt)} full-frame, " +
         $"{namespaceFiles.Count} namespace files, " +
         $"{option.CardPresentations.Count} presentations");
 }

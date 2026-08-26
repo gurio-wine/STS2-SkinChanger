@@ -2685,7 +2685,10 @@ internal sealed partial class SkinCatalog : IDisposable
         }
         foreach (var index in cosmeticIndexes)
         {
-            var presentations = LoadCardPresentations(index);
+            var providerBehavior = ProviderCardBehaviorScanner.Scan(
+                index.Mod.RootPath,
+                index.Assets.Values);
+            var presentations = LoadCardPresentations(index, providerBehavior.Presentations);
             var exportedPortraits = LoadExportedCardPortraits(index);
             var standardAssets = index.Assets.Values
                 .Where(asset => IsCardArtSourcePath(asset.SourcePath))
@@ -2760,7 +2763,13 @@ internal sealed partial class SkinCatalog : IDisposable
                     new Dictionary<string, string>(
                         exportedPortraits,
                         StringComparer.OrdinalIgnoreCase),
-                    new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
+                    providerBehavior.AncientPortraits
+                        .Where(pair => !splitVariants || variant.Stems.Contains(
+                            NormalizeCardPresentationType(pair.Key)))
+                        .ToDictionary(
+                            pair => pair.Key,
+                            pair => pair.Value,
+                            StringComparer.OrdinalIgnoreCase),
                     variant.Assets.ToDictionary(
                         asset => asset.SourcePath,
                         asset => asset,
@@ -2793,7 +2802,8 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     private static IReadOnlyDictionary<string, CardPresentationDefinition> LoadCardPresentations(
-        PckResourceIndex index)
+        PckResourceIndex index,
+        IReadOnlyDictionary<string, CardPresentationDefinition>? providerBehavior = null)
     {
         var presentations = new Dictionary<string, CardPresentationDefinition>(
             StringComparer.OrdinalIgnoreCase);
@@ -2860,6 +2870,16 @@ internal sealed partial class SkinCatalog : IDisposable
             // Explicit provider manifests remain authoritative. DLL inference only fills the
             // presentation intent that would otherwise be lost when provider code is disabled.
             presentations.TryAdd(inferred.Key, inferred.Value);
+        }
+
+        if (providerBehavior != null)
+        {
+            foreach (var inferred in providerBehavior)
+            {
+                // Exported declarative manifests remain authoritative. Sidecar behavior only
+                // restores provider intent that would disappear with its patches disabled.
+                presentations.TryAdd(inferred.Key, inferred.Value);
+            }
         }
 
         return presentations;
@@ -4444,7 +4464,16 @@ internal sealed record CardPresentationDefinition(
     bool? TypePlaqueVisible = null,
     bool? TypeLabelVisible = null,
     bool? DescriptionVisible = null,
-    bool? InfectionOverlayVisible = null)
+    bool? InfectionOverlayVisible = null,
+    bool UseFullFrameArt = false,
+    string? FrameOverlay = null,
+    bool? PortraitVisible = null,
+    float? FrameOverlayOffsetTop = null,
+    float? FrameOverlayOffsetBottom = null,
+    float? FrameOverlayOffsetLeft = null,
+    float? FrameOverlayOffsetRight = null,
+    float? FrameOverlayScaleX = null,
+    float? FrameOverlayScaleY = null)
 {
     public IEnumerable<string> ResourcePaths => new[]
         {
@@ -4458,7 +4487,8 @@ internal sealed record CardPresentationDefinition(
             TextBackgroundMaterial,
             EnergyIcon,
             Highlight,
-            HighlightMaterial
+            HighlightMaterial,
+            FrameOverlay
         }
         .Where(path => !string.IsNullOrWhiteSpace(path))
         .Cast<string>()
