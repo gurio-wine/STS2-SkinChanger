@@ -29,6 +29,10 @@ internal static class SkinService
     private static readonly object Sync = new();
     private static readonly Dictionary<string, Resource> RuntimeResourceCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, PreparedRuntimeOverlay> PreparedRuntimeOverlays =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, RuntimeResourceBundleState> RuntimeResourceBundles =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> CardPortraitCache =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, CardCoverageState> CardCoverageCache =
@@ -151,6 +155,8 @@ internal static class SkinService
                 Catalog?.Dispose();
                 Catalog = null;
                 RuntimeResourceCache.Clear();
+                PreparedRuntimeOverlays.Clear();
+                RuntimeResourceBundles.Clear();
                 CardPortraitCache.Clear();
                 IsolatedCardOverlayCache.Clear();
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
@@ -163,6 +169,7 @@ internal static class SkinService
                 LocalizationStateCache.Clear();
                 _mountedLocalizationSignature = null;
                 CleanupOldOverlays();
+                CleanupPreparedRuntimeOverlayCache();
                 var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
                 var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
                 var loadedMods = ModManager.GetLoadedMods()
@@ -240,6 +247,61 @@ internal static class SkinService
             {
                 LastError = exception.ToString();
                 ModLog.Error("按卡牌总览分类卡牌皮肤失败：" + exception);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Builds the selected character-preview packs while the game's own startup loading screen is
+    /// still active. No Godot resources are decoded here; the expensive PCK graph walk and write
+    /// are simply moved out of the first character click and the result is reused for the session.
+    /// </summary>
+    public static void PrepareSelectedCharacterPreviews()
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null)
+            {
+                return;
+            }
+
+            var started = Stopwatch.GetTimestamp();
+            var prepared = 0;
+            foreach (var character in ModelDb.AllCharacters)
+            {
+                var groupId = character.Id.Entry.ToLowerInvariant();
+                var group = catalog.Groups.FirstOrDefault(candidate =>
+                    candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+                if (group == null)
+                {
+                    continue;
+                }
+
+                var selection = Config.GetSelection(group.Id);
+                if (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
+                    (catalog.IsRuntimeProviderOption(group.Id, selection) &&
+                     !catalog.IsResourceBackedOption(group.Id, selection) &&
+                     catalog.GetRuntimeImagePath(group.Id, selection) != null))
+                {
+                    continue;
+                }
+
+                var paths = CharacterSelectResourcePaths(groupId);
+                _ = GetOrPrepareRuntimeOverlay(
+                    catalog,
+                    group.Id,
+                    selection,
+                    paths,
+                    includeProviderDependencies: true);
+                prepared++;
+            }
+
+            if (prepared > 0)
+            {
+                ModLog.Info(
+                    $"已在启动阶段准备 {prepared} 个角色的选角资源包，" +
+                    $"耗时={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms。");
             }
         }
     }
@@ -1940,35 +2002,21 @@ internal static class SkinService
         lock (Sync)
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-
             var loadStarted = Stopwatch.GetTimestamp();
-            var generation = ++_overlayGeneration;
-            var aliasToken = $"{_sessionId}/{generation:D3}";
-            var overlay = catalog.BuildRuntimeResourceOverlay(
+            var selection = Config.GetSelection(groupId);
+            var prepared = GetOrPrepareRuntimeOverlay(
+                catalog,
                 groupId,
-                Config.GetSelection(groupId),
+                selection,
                 resourcePaths,
-                aliasToken,
                 includeProviderDependencies);
-            var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
-                groupId,
-                overlay.CanonicalDependencyPaths);
-            long overlaySize = 0;
-            if (overlay.Files.Count > 0)
+            if (prepared.OverlayPath != null &&
+                !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
             {
-                var overlayPath = System.IO.Path.Combine(
-                    OS.GetUserDataDir(),
-                    $"sts2_skin_overlay_{_sessionId}_{generation:D3}_runtime.pck");
-                PckArchive.Write(overlayPath, overlay.Files);
-                if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
-                {
-                    throw new InvalidOperationException("Godot 拒绝加载独立皮肤场景资源包。");
-                }
-
-                overlaySize = new FileInfo(overlayPath).Length;
+                throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
             }
 
-            if (overlay.CanonicalDependencyPaths.Count > 0)
+            if (prepared.CanonicalDependencyPaths.Count > 0)
             {
                 if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
                 {
@@ -1976,14 +2024,14 @@ internal static class SkinService
                     RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
                 }
 
-                trackedPaths.UnionWith(overlay.CanonicalDependencyPaths);
+                trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
             }
 
-            var resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
-            T callbackResult;
-            try
+            var reused = TryGetRuntimeResourceBundle(prepared.Key, out var resources);
+            if (!reused)
             {
-                foreach (var pair in overlay.ResourcePaths)
+                resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in prepared.ResourcePaths)
                 {
                     var resource = ResourceLoader.Load<Resource>(
                         pair.Value,
@@ -1998,27 +2046,112 @@ internal static class SkinService
                     RuntimeResourceCache[RuntimeResourceKey(groupId, pair.Key)] = resource;
                 }
 
+                RuntimeResourceBundles[prepared.Key] = new RuntimeResourceBundleState(resources);
+            }
+
+            T callbackResult;
+            try
+            {
                 callbackResult = callback(resources);
             }
             finally
             {
-                if (restoreGroups.Count > 0)
+                if (prepared.RestoreGroups.Count > 0)
                 {
                     // Binary resources cannot rewrite all of their internal paths. Restore only
                     // the other catalog groups that the temporary dependency pack actually
                     // touched; rebuilding every skin group here caused a full localization reload
                     // on the first character click.
-                    MountOverlay(restoreGroups);
+                    MountOverlay(prepared.RestoreGroups);
                 }
             }
 
             var elapsedMs = Stopwatch.GetElapsedTime(loadStarted).TotalMilliseconds;
             ModLog.Info(
-                $"已从独立路径加载 {groupId} 的 {resources.Count} 个资源；" +
-                $"运行包={overlay.Files.Count} 个文件/{overlaySize / 1024d:F1} KiB，" +
-                $"耗时={elapsedMs:F1} ms：{aliasToken}");
+                $"已{(reused ? "复用" : "加载")} {groupId} 的 {resources.Count} 个独立资源；" +
+                $"运行包={prepared.FileCount} 个文件/{prepared.FileSize / 1024d:F1} KiB，" +
+                $"耗时={elapsedMs:F1} ms：{prepared.AliasToken}");
             return callbackResult;
         }
+    }
+
+    private static PreparedRuntimeOverlay GetOrPrepareRuntimeOverlay(
+        SkinCatalog catalog,
+        string groupId,
+        string selection,
+        IReadOnlyCollection<string> resourcePaths,
+        bool includeProviderDependencies)
+    {
+        var normalizedPaths = resourcePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var key = RuntimeOverlayKey(
+            groupId,
+            selection,
+            normalizedPaths,
+            includeProviderDependencies);
+        if (PreparedRuntimeOverlays.TryGetValue(key, out var cached) &&
+            (cached.OverlayPath == null || File.Exists(cached.OverlayPath)))
+        {
+            return cached;
+        }
+
+        RuntimeResourceBundles.Remove(key);
+
+        var generation = ++_overlayGeneration;
+        var aliasToken = $"{_sessionId}/{generation:D3}";
+        var overlay = catalog.BuildRuntimeResourceOverlay(
+            groupId,
+            selection,
+            normalizedPaths,
+            aliasToken,
+            includeProviderDependencies);
+        var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
+            groupId,
+            overlay.CanonicalDependencyPaths);
+        string? overlayPath = null;
+        long overlaySize = 0;
+        if (overlay.Files.Count > 0)
+        {
+            var directory = PreparedRuntimeOverlayDirectory();
+            Directory.CreateDirectory(directory);
+            overlayPath = System.IO.Path.Combine(directory, $"{generation:D3}.pck");
+            PckArchive.Write(overlayPath, overlay.Files);
+            overlaySize = new FileInfo(overlayPath).Length;
+        }
+
+        var prepared = new PreparedRuntimeOverlay(
+            key,
+            aliasToken,
+            overlayPath,
+            new Dictionary<string, string>(
+                overlay.ResourcePaths,
+                StringComparer.OrdinalIgnoreCase),
+            overlay.CanonicalDependencyPaths.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            restoreGroups.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            overlay.Files.Count,
+            overlaySize);
+        PreparedRuntimeOverlays[key] = prepared;
+        return prepared;
+    }
+
+    private static bool TryGetRuntimeResourceBundle(
+        string key,
+        out Dictionary<string, Resource> resources)
+    {
+        if (RuntimeResourceBundles.TryGetValue(key, out var bundle) &&
+            bundle.Resources.Values.All(resource =>
+                GodotObject.IsInstanceValid(resource)))
+        {
+            resources = bundle.Resources;
+            return true;
+        }
+
+        RuntimeResourceBundles.Remove(key);
+        resources = null!;
+        return false;
     }
 
     private static bool TryGetCachedRuntimeResources(
@@ -2328,6 +2461,19 @@ internal static class SkinService
             $"{GroupId}\n{Selection}\n{(UseSelectedProvider ? "provider" : "base")}";
     }
 
+    private sealed record PreparedRuntimeOverlay(
+        string Key,
+        string AliasToken,
+        string? OverlayPath,
+        IReadOnlyDictionary<string, string> ResourcePaths,
+        IReadOnlySet<string> CanonicalDependencyPaths,
+        IReadOnlySet<string> RestoreGroups,
+        int FileCount,
+        long FileSize);
+
+    private sealed record RuntimeResourceBundleState(
+        Dictionary<string, Resource> Resources);
+
     private sealed class IsolatedCardOverlayState
     {
         public Dictionary<string, string> ResourcePaths { get; } =
@@ -2356,6 +2502,13 @@ internal static class SkinService
         {
             RuntimeResourceCache.Remove(key);
         }
+        foreach (var key in PreparedRuntimeOverlays.Keys
+                     .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
+        {
+            PreparedRuntimeOverlays.Remove(key);
+            RuntimeResourceBundles.Remove(key);
+        }
     }
 
     private static void ClearCardPortraitCache(string groupId)
@@ -2376,6 +2529,28 @@ internal static class SkinService
 
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
         groupId + "\n" + resourcePath;
+
+    private static string RuntimeOverlayKey(
+        string groupId,
+        string selection,
+        IReadOnlyCollection<string> resourcePaths,
+        bool includeProviderDependencies) =>
+        groupId + "\n" + selection + "\n" + includeProviderDependencies + "\n" +
+        string.Join("\n", resourcePaths);
+
+    private static string[] CharacterSelectResourcePaths(string characterId) =>
+    [
+        $"res://scenes/screens/char_select/char_select_bg_{characterId}.tscn",
+        $"res://images/packed/character_select/char_select_{characterId}.png",
+        $"res://images/packed/character_select/char_select_{characterId}_locked.png"
+    ];
+
+    private static string PreparedRuntimeOverlayDirectory() =>
+        System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "Gurio.SkinChanger",
+            "runtime",
+            _sessionId);
 
     private static SkinConfig LoadConfig()
     {
@@ -2511,6 +2686,30 @@ internal static class SkinService
             catch (Exception exception)
             {
                 ModLog.Warn($"无法清理旧皮肤缓存 {file}：{exception.Message}");
+            }
+        }
+    }
+
+    private static void CleanupPreparedRuntimeOverlayCache()
+    {
+        var root = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "Gurio.SkinChanger",
+            "runtime");
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+
+        foreach (var directory in Directory.EnumerateDirectories(root))
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn($"无法清理旧角色预览缓存 {directory}：{exception.Message}");
             }
         }
     }
