@@ -30,6 +30,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly List<CardSkinGroup> _cardGroups;
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
+    private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
     private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceFile>>
         _fullRuntimeProviderBaselineOverlays = new(StringComparer.OrdinalIgnoreCase);
@@ -51,6 +52,12 @@ internal sealed partial class SkinCatalog : IDisposable
         _cardGroups = cardGroups.ToList();
         _managedGodotScriptProviders = cosmeticIndexes
             .Where(index => index.Mod.HasDll && CountManagedGodotScripts(index.Archive) > 0)
+            .Select(index => index.Mod.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _interactiveRuntimeProviders = cosmeticIndexes
+            .Where(index => index.Mod.HasDll &&
+                            _managedGodotScriptProviders.Contains(index.Mod.Id) &&
+                            ContainsInteractiveScene(index.Archive))
             .Select(index => index.Mod.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visualGroupsByProvider = _groups
@@ -182,6 +189,7 @@ internal sealed partial class SkinCatalog : IDisposable
             var cardAssets = 0;
             var cardPresentations = 0;
             var managedScriptCount = 0;
+            var hasInteractiveScenes = false;
             if (mod.PckPath != null && File.Exists(mod.PckPath))
             {
                 PckArchive? archive = null;
@@ -197,6 +205,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     managedScriptCount = mod.HasDll
                         ? CountManagedGodotScripts(archive)
                         : 0;
+                    hasInteractiveScenes = managedScriptCount > 0 && ContainsInteractiveScene(archive);
                     visualGroups = BuildGroups([index])
                         .Count(group => group.Options.Count > 0);
                     var configuredCardGroups = BuildCardGroups([index]);
@@ -253,7 +262,8 @@ internal sealed partial class SkinCatalog : IDisposable
                     cardAssets,
                     cardPresentations,
                     runtimeImages,
-                    managedScriptCount));
+                    managedScriptCount,
+                    hasInteractiveScenes));
             }
         }
 
@@ -301,6 +311,42 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return count;
+    }
+
+    private static bool ContainsInteractiveScene(PckArchive archive)
+    {
+        foreach (var path in archive.Paths.Where(path =>
+                     path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".remap", StringComparison.OrdinalIgnoreCase)))
+        {
+            string text;
+            try
+            {
+                text = Encoding.UTF8.GetString(archive.ReadFile(path));
+            }
+            catch
+            {
+                continue;
+            }
+
+            // Do not match a mod name. These are Godot scene/input markers and work for any
+            // provider that expresses click/drag behaviour through exported scene metadata.
+            var hasHitRegion = text.Contains("Touch_Box_", StringComparison.OrdinalIgnoreCase) ||
+                               text.Contains("InputEventMouse", StringComparison.OrdinalIgnoreCase) ||
+                               text.Contains("GuiInput", StringComparison.OrdinalIgnoreCase);
+            var hasInteractionData = text.Contains("ClickAnim", StringComparison.OrdinalIgnoreCase) ||
+                                     text.Contains("DragSpeed", StringComparison.OrdinalIgnoreCase) ||
+                                     text.Contains("MaxDragRadius", StringComparison.OrdinalIgnoreCase) ||
+                                     text.Contains("IsAbsoluteDrag", StringComparison.OrdinalIgnoreCase);
+            if (hasHitRegion && hasInteractionData)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool LooksLikeDllSkinProvider(SkinModDescriptor mod)
@@ -492,6 +538,24 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public bool ProviderUsesManagedGodotScripts(string optionId) =>
         _managedGodotScriptProviders.Contains(optionId);
+
+    /// <summary>
+    /// A provider can contain selectable cards and still have an independently useful scene
+    /// behaviour layer (for example a Spine scene with click/drag hit boxes).  This is separate
+    /// from the full-runtime classification: card resources remain owned by Skin Changer, while
+    /// the provider's input/animation scripts are enabled only while one of its visual groups is
+    /// selected.
+    /// </summary>
+    public bool ProviderUsesInteractiveRuntime(string optionId) =>
+        _interactiveRuntimeProviders.Contains(optionId);
+
+    public IReadOnlySet<string> GetSelectedInteractiveRuntimeProviders(
+        IReadOnlyDictionary<string, string> selections) =>
+        _groups
+            .Where(group => selections.TryGetValue(group.Id, out var selectedId))
+            .Select(group => selections[group.Id])
+            .Where(ProviderUsesInteractiveRuntime)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// A DLL-backed provider that owns visual groups and no independently selectable cards is an
@@ -4161,7 +4225,8 @@ internal sealed record SkinProviderProbe(
     int CardAssetCount,
     int CardPresentationCount,
     int RuntimeImageCount,
-    int ManagedScriptCount);
+    int ManagedScriptCount,
+    bool HasInteractiveScenes);
 
 internal sealed record AncientLayeredImagePaths(
     string Character,

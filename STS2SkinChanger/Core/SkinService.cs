@@ -1586,6 +1586,21 @@ internal static class SkinService
         }
     }
 
+    public static bool IsInteractiveRuntimeProviderSelected(string groupId)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return false;
+            }
+
+            var selection = Config.GetSelection(groupId);
+            return Catalog.IsRuntimeProviderOption(groupId, selection) &&
+                   Catalog.ProviderUsesInteractiveRuntime(selection);
+        }
+    }
+
     public static bool IsManagedResourceOptionSelected(string groupId)
     {
         lock (Sync)
@@ -2052,11 +2067,15 @@ internal static class SkinService
     {
         var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-        var selectedFullRuntimeProviders = catalog.GetFullySelectedFullRuntimeProviders(
-            Config.Selections);
+        var selectedRuntimeProviders = catalog.GetFullySelectedFullRuntimeProviders(
+            Config.Selections)
+            .Union(
+                catalog.GetSelectedInteractiveRuntimeProviders(Config.Selections),
+                StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
-        ManagedSkinModLoader.DeactivateProvidersExcept(selectedFullRuntimeProviders);
+        ManagedSkinModLoader.DeactivateProvidersExcept(selectedRuntimeProviders);
 
         var buildStarted = Stopwatch.GetTimestamp();
         var staleCanonicalPaths = groups
@@ -2096,7 +2115,7 @@ internal static class SkinService
             }
         }
 
-        ManagedSkinModLoader.ActivateSelectedProviders(selectedFullRuntimeProviders);
+        ManagedSkinModLoader.ActivateSelectedProviders(selectedRuntimeProviders);
         ModLog.Info(
             $"已挂载 {groups.Count} 个外观分组/{files.Count} 个文件；" +
             $"目录={buildElapsed.TotalMilliseconds:F1} ms，" +

@@ -182,7 +182,8 @@ if (validateIndex >= 0)
         Console.WriteLine(
             $"provider {probe.Id}: visual={probe.VisualGroupCount}, " +
             $"cards={probe.CardAssetCount}, presentations={probe.CardPresentationCount}, " +
-            $"images={probe.RuntimeImageCount}, scripts={probe.ManagedScriptCount}");
+            $"images={probe.RuntimeImageCount}, scripts={probe.ManagedScriptCount}, " +
+            $"interactive={probe.HasInteractiveScenes}");
     }
 
     foreach (var option in catalog.PckCardOptions.Where(option => option.Assets.Count > 0))

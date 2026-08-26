@@ -143,14 +143,15 @@ internal static class ManagedSkinModLoader
                 $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
                 $"卡牌呈现={provider.CardPresentationCount}, 独立图片={provider.RuntimeImageCount}, " +
-                $"场景脚本={provider.ManagedScriptCount}；" +
+                $"场景脚本={provider.ManagedScriptCount}, " +
+                $"交互场景={(provider.HasInteractiveScenes ? "是" : "否")}；" +
                 "原 PCK 未全局挂载；" +
                 "只有选中该皮肤时，才会按需调用与模型 CreateVisuals 明确绑定的视觉后处理；" +
                 (provider.ManagedScriptCount > 0
                     ? "只有选中该皮肤时才注册场景实例化所需的 Godot 脚本类型；"
                     : string.Empty) +
-                "单一视觉组且不含独立卡牌选择的整包会在选中期间临时启用原作者行为，" +
-                "其余卡牌呈现只读取 PCK 配置并由皮肤切换器自身渲染。");
+                "完整视觉整包或含交互场景的提供者会在选中期间临时启用原作者行为，" +
+                "其资源替换与卡牌呈现仍由皮肤切换器自身接管。");
             return true;
         }
         catch (Exception exception)
@@ -257,9 +258,10 @@ internal static class ManagedSkinModLoader
     }
 
     /// <summary>
-    /// Activates the original initializer of each selected single-bundle skin after its complete
-    /// PCK has been mounted. Resource replacement callbacks are then removed because Skin Changer
-    /// owns those entry points; animation/VFX/room behavior remains active until deselection.
+    /// Activates the original initializer of each selected runtime provider after its required PCK
+    /// resources have been mounted. Resource replacement callbacks are then removed because Skin
+    /// Changer owns those entry points; input, animation and scene behaviour remains active until
+    /// deselection. This also supports providers that expose independently selectable cards.
     /// </summary>
     public static void ActivateSelectedProviders(IEnumerable<string> selectedProviderIds)
     {

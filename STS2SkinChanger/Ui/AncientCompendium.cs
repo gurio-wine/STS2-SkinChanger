@@ -214,6 +214,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private HBoxContainer _skinSelector = null!;
     private OptionButton _skinDropdown = null!;
     private SubViewport _previewViewport = null!;
+    private SubViewportContainer _previewContainer = null!;
     private AncientEventModel? _selectedAncient;
     private bool _updatingDropdown;
 
@@ -241,7 +242,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void BuildUi()
     {
-        var previewContainer = new SubViewportContainer
+        _previewContainer = new SubViewportContainer
         {
             AnchorLeft = 0,
             AnchorTop = 0,
@@ -254,7 +255,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Stretch = true,
             MouseFilter = MouseFilterEnum.Ignore
         };
-        AddChild(previewContainer);
+        AddChild(_previewContainer);
 
         _previewViewport = new SubViewport
         {
@@ -264,7 +265,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // 子菜单打开时切为 Always 以持续播放 Spine/AnimationPlayer；关闭时禁用。
             RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled
         };
-        previewContainer.AddChild(_previewViewport);
+        _previewContainer.AddChild(_previewViewport);
 
         _nameLabel = BuildLabel(48, new Color("efc850"));
         _nameLabel.HorizontalAlignment = HorizontalAlignment.Left;
@@ -502,6 +503,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ClearPreview();
             var scenePath = AncientCompendiumEntry.GetScenePath(ancient);
             var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
+            var interactive = group != null &&
+                              SkinService.IsInteractiveRuntimeProviderSelected(group.Id);
+            _previewContainer.MouseFilter = interactive
+                ? MouseFilterEnum.Pass
+                : MouseFilterEnum.Ignore;
+            _previewViewport.GuiDisableInput = !interactive;
             PackedScene scene;
             if (group != null && SkinService.IsExternalRuntimeProviderSelected(group.Id))
             {
@@ -566,6 +573,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void ClearPreview()
     {
+        _previewContainer.MouseFilter = MouseFilterEnum.Ignore;
+        _previewViewport.GuiDisableInput = true;
         foreach (var child in _previewViewport.GetChildren())
         {
             _previewViewport.RemoveChild(child);
