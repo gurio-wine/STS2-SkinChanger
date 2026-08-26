@@ -22,6 +22,6 @@
     "screenshot/upload/8.jpg",
     "screenshot/upload/9.jpg"
   ],
-  "changeNote": "Update the Workshop cover and feature gallery / 更新创意工坊封面与功能展示图",
+  "changeNote": "Optimize character selection loading and restore provider-defined card presentation support / 优化角色切换加载并恢复卡牌模组自定义外观支持",
   "localizationsFile": "localizations.json"
 }
