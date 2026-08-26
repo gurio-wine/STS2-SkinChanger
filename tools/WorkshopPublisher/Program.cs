@@ -25,11 +25,27 @@ var config = JsonSerializer.Deserialize<WorkshopConfig>(
 var configDir = Path.GetDirectoryName(configPath)!;
 var contentFolder = Path.GetFullPath(Path.Combine(configDir, config.ContentFolder));
 var previewFile = Path.GetFullPath(Path.Combine(configDir, config.PreviewFile));
+var additionalPreviewFiles = (config.PreviewFiles ?? [])
+    .Select(path => Path.GetFullPath(Path.Combine(configDir, path)))
+    .ToArray();
 
 if (!Directory.Exists(contentFolder))
     throw new DirectoryNotFoundException(contentFolder);
 if (!File.Exists(previewFile))
     throw new FileNotFoundException("Workshop preview image not found.", previewFile);
+if (new FileInfo(previewFile).Length >= 1_000_000)
+    throw new InvalidDataException(
+        $"Workshop primary preview image must be under 1 MB: {previewFile}");
+foreach (var additionalPreviewFile in additionalPreviewFiles)
+{
+    if (!File.Exists(additionalPreviewFile))
+        throw new FileNotFoundException(
+            "Workshop additional preview image not found.",
+            additionalPreviewFile);
+    if (new FileInfo(additionalPreviewFile).Length >= 1_000_000)
+        throw new InvalidDataException(
+            $"Workshop additional preview image must be under 1 MB: {additionalPreviewFile}");
+}
 
 List<WorkshopLocalization> localizations = [];
 if (!string.IsNullOrWhiteSpace(config.LocalizationsFile))
@@ -109,6 +125,7 @@ try
     Require(SteamUGC.SetItemVisibility(update, config.Visibility), "SetItemVisibility");
     Require(SteamUGC.SetItemContent(update, contentFolder), "SetItemContent");
     Require(SteamUGC.SetItemPreview(update, previewFile), "SetItemPreview");
+    SyncAdditionalPreviews(update, publishedFileId, additionalPreviewFiles);
 
     var result = WaitForCallResult<SubmitItemUpdateResult_t>(
         SteamUGC.SubmitItemUpdate(update, config.ChangeNote));
@@ -139,6 +156,67 @@ static PublishedFileId_t CreateItem(AppId_t appId)
     Console.WriteLine($"CREATED_FILE_ID={result.m_nPublishedFileId.m_PublishedFileId}");
     Console.WriteLine($"LEGAL_AGREEMENT_REQUIRED={result.m_bUserNeedsToAcceptWorkshopLegalAgreement}");
     return result.m_nPublishedFileId;
+}
+
+static void SyncAdditionalPreviews(
+    UGCUpdateHandle_t update,
+    PublishedFileId_t publishedFileId,
+    IReadOnlyList<string> previewFiles)
+{
+    var existingCount = GetAdditionalPreviewCount(publishedFileId);
+    var sharedCount = Math.Min(existingCount, (uint)previewFiles.Count);
+    for (uint index = 0; index < sharedCount; index++)
+    {
+        Require(
+            SteamUGC.UpdateItemPreviewFile(update, index, previewFiles[(int)index]),
+            $"UpdateItemPreviewFile({index})");
+    }
+
+    for (var index = (int)sharedCount; index < previewFiles.Count; index++)
+    {
+        Require(
+            SteamUGC.AddItemPreviewFile(
+                update,
+                previewFiles[index],
+                EItemPreviewType.k_EItemPreviewType_Image),
+            $"AddItemPreviewFile({index})");
+    }
+
+    for (var index = existingCount; index > previewFiles.Count; index--)
+    {
+        Require(
+            SteamUGC.RemoveItemPreview(update, index - 1),
+            $"RemoveItemPreview({index - 1})");
+    }
+
+    Console.WriteLine(
+        $"Synchronized {previewFiles.Count} additional preview image(s)." +
+        (existingCount == previewFiles.Count ? string.Empty : $" Previous count: {existingCount}."));
+}
+
+static uint GetAdditionalPreviewCount(PublishedFileId_t publishedFileId)
+{
+    var query = SteamUGC.CreateQueryUGCDetailsRequest([publishedFileId], 1);
+    if (query == UGCQueryHandle_t.Invalid)
+        throw new InvalidOperationException("CreateQueryUGCDetailsRequest failed.");
+
+    try
+    {
+        Require(
+            SteamUGC.SetReturnAdditionalPreviews(query, true),
+            "SetReturnAdditionalPreviews");
+        var result = WaitForCallResult<SteamUGCQueryCompleted_t>(
+            SteamUGC.SendQueryUGCRequest(query));
+        if (result.m_eResult != EResult.k_EResultOK || result.m_unNumResultsReturned == 0)
+            throw new InvalidOperationException(
+                $"Workshop preview query failed: {result.m_eResult}");
+
+        return SteamUGC.GetQueryUGCNumAdditionalPreviews(query, 0);
+    }
+    finally
+    {
+        SteamUGC.ReleaseQueryUGCRequest(query);
+    }
 }
 
 static void PublishLocalization(
@@ -295,6 +373,7 @@ internal sealed class WorkshopConfig
     public ERemoteStoragePublishedFileVisibility Visibility { get; init; }
     public required string ContentFolder { get; init; }
     public required string PreviewFile { get; init; }
+    public IReadOnlyList<string>? PreviewFiles { get; init; }
     public required string ChangeNote { get; init; }
     public string? LocalizationsFile { get; init; }
 }
