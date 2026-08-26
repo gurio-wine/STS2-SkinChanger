@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
@@ -755,6 +756,7 @@ internal static partial class ContextualSkinControls
         // Provider presentation callbacks are allowed to temporarily hide this host while their
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
+        var baselineSpineAnchors = CaptureSpineAnchors(container);
 
         foreach (var child in container.GetChildren())
         {
@@ -774,6 +776,7 @@ internal static partial class ContextualSkinControls
         if (background.IsInsideTree())
         {
             RefreshCharacterBackgroundLayout(container, background);
+            ScheduleSpineAnchorCorrection(background, baselineSpineAnchors);
         }
 
         // NCharacterSelectScreenBg only subscribes to SizeChanged in _Ready; it does not run
@@ -787,8 +790,111 @@ internal static partial class ContextualSkinControls
                 GodotObject.IsInstanceValid(background))
             {
                 RefreshCharacterBackgroundLayout(container, background);
+                ScheduleSpineAnchorCorrection(background, baselineSpineAnchors);
             }
         }).CallDeferred();
+    }
+
+    private static void ScheduleSpineAnchorCorrection(
+        Node selectedRoot,
+        IReadOnlyDictionary<string, SpineAnchor> baselineAnchors)
+    {
+        CorrectSpineAnchors(selectedRoot, baselineAnchors);
+        foreach (var node in EnumerateNodes(selectedRoot).Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        {
+            try
+            {
+                selectedRoot.RunWhenSpineReady(
+                    new MegaSprite(node),
+                    _ =>
+                    {
+                        if (GodotObject.IsInstanceValid(selectedRoot))
+                        {
+                            CorrectSpineAnchors(selectedRoot, baselineAnchors);
+                        }
+                    });
+            }
+            catch
+            {
+                // A provider may use a non-Spine visual in one of its variants. The correction is
+                // best effort and must never prevent the character preview from appearing.
+            }
+        }
+    }
+
+    private static IReadOnlyDictionary<string, SpineAnchor> CaptureSpineAnchors(Node root)
+    {
+        var anchors = new Dictionary<string, SpineAnchor>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in EnumerateNodes(root).Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        {
+            if (node is not Node2D node2D || !TryGetSpineBounds(node, out var bounds))
+            {
+                continue;
+            }
+
+            var key = root.GetPathTo(node).ToString();
+            anchors[key] = new SpineAnchor(node2D.ToGlobal(bounds.GetCenter()), bounds.Size);
+        }
+
+        return anchors;
+    }
+
+    private static void CorrectSpineAnchors(
+        Node selectedRoot,
+        IReadOnlyDictionary<string, SpineAnchor> baselineAnchors)
+    {
+        if (baselineAnchors.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var node in EnumerateNodes(selectedRoot).Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        {
+            if (node is not Node2D node2D ||
+                !baselineAnchors.TryGetValue(selectedRoot.GetPathTo(node).ToString(), out var baseline) ||
+                !TryGetSpineBounds(node, out var bounds))
+            {
+                continue;
+            }
+
+            var delta = baseline.GlobalCenter - node2D.ToGlobal(bounds.GetCenter());
+            // A small difference is normal between animation frames. Avoid accumulating tiny
+            // corrections while keeping genuinely different skeleton origins aligned.
+            if (delta.Length() < 8f || delta.Length() > 1600f)
+            {
+                continue;
+            }
+
+            node2D.GlobalPosition += delta;
+            ModLog.Info(
+                $"已校正选角 Spine 视觉锚点 {node.Name}：" +
+                $"偏移=({delta.X:F0}, {delta.Y:F0})，" +
+                $"原尺寸=({baseline.Size.X:F0}, {baseline.Size.Y:F0})，" +
+                $"当前尺寸=({bounds.Size.X:F0}, {bounds.Size.Y:F0})。" );
+        }
+    }
+
+    private static bool TryGetSpineBounds(Node node, out Rect2 bounds)
+    {
+        bounds = default;
+        try
+        {
+            var skeleton = new MegaSprite(node).GetSkeleton();
+            if (skeleton == null)
+            {
+                return false;
+            }
+
+            bounds = skeleton.GetBounds();
+            return bounds.Size.X > 1f && bounds.Size.Y > 1f;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void RebindCharacterSceneResources(
@@ -1257,6 +1363,7 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    private sealed record SpineAnchor(Vector2 GlobalCenter, Vector2 Size);
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
