@@ -45,6 +45,7 @@ internal enum ModText
     ModelTransform,
     HealthBarTransform,
     IntentTransform,
+    SelectionReticleTransform,
     HealthBarScale,
     FollowModelScale,
     FollowModelMovement,
@@ -158,6 +159,7 @@ internal static class ModLocalization
         string ModelTransform,
         string HealthBarTransform,
         string IntentTransform,
+        string SelectionReticleTransform,
         string HealthBarScale,
         string FollowModelScale,
         string FollowModelMovement,
@@ -169,6 +171,7 @@ internal static class ModLocalization
             ModText.ModelTransform => ModelTransform,
             ModText.HealthBarTransform => HealthBarTransform,
             ModText.IntentTransform => IntentTransform,
+            ModText.SelectionReticleTransform => SelectionReticleTransform,
             ModText.HealthBarScale => HealthBarScale,
             ModText.FollowModelScale => FollowModelScale,
             ModText.FollowModelMovement => FollowModelMovement,
@@ -632,65 +635,65 @@ internal static class ModLocalization
         new Dictionary<string, AdjustmentLanguagePack>(StringComparer.OrdinalIgnoreCase)
         {
             ["eng"] = new(
-                "Model", "Health bar", "Intent", "Health-bar scale", "Follow model scale",
+                "Model", "Health bar", "Intent", "Selection box", "Health-bar scale", "Follow model scale",
                 "Follow model movement", "Drag the selected model or health bar directly to adjust its position.",
-                "Drag the selected model, health bar, or intent directly to adjust its position."),
+                "Drag the selected model, health bar, intent, or selection box directly to adjust its position."),
             ["zhs"] = new(
-                "模型", "血条", "意图", "血条缩放", "跟随模型缩放",
+                "模型", "血条", "意图", "选择框", "血条缩放", "跟随模型缩放",
                 "跟随模型移动", "可直接拖动所选模型或血条调整位置。",
-                "可直接拖动所选模型、血条或意图调整位置。"),
+                "可直接拖动所选模型、血条、意图或选择框调整位置。"),
             ["zht"] = new(
-                "模型", "血條", "意圖", "血條縮放", "跟隨模型縮放",
+                "模型", "血條", "意圖", "選擇框", "血條縮放", "跟隨模型縮放",
                 "跟隨模型移動", "可直接拖曳所選模型或血條調整位置。",
-                "可直接拖曳所選模型、血條或意圖調整位置。"),
+                "可直接拖曳所選模型、血條、意圖或選擇框調整位置。"),
             ["deu"] = new(
-                "Modell", "Lebensleiste", "Absicht", "Skalierung der Lebensleiste", "Modellskalierung folgen",
+                "Modell", "Lebensleiste", "Absicht", "Auswahlrahmen", "Skalierung der Lebensleiste", "Modellskalierung folgen",
                 "Modellbewegung folgen", "Ziehe das ausgewählte Modell oder die Lebensleiste direkt, um die Position anzupassen.",
-                "Ziehe das ausgewählte Modell, die Lebensleiste oder die Absicht direkt, um die Position anzupassen."),
+                "Ziehe das Modell, die Lebensleiste, die Absicht oder den Auswahlrahmen direkt, um die Position anzupassen."),
             ["esp"] = new(
-                "Modelo", "Barra de vida", "Intención", "Escala de la barra", "Seguir escala del modelo",
+                "Modelo", "Barra de vida", "Intención", "Marco de selección", "Escala de la barra", "Seguir escala del modelo",
                 "Seguir movimiento del modelo", "Arrastra directamente el modelo o la barra de vida para ajustar su posición.",
-                "Arrastra directamente el modelo, la barra de vida o la intención para ajustar su posición."),
+                "Arrastra directamente el modelo, la barra de vida, la intención o el marco de selección para ajustar su posición."),
             ["fra"] = new(
-                "Modèle", "Barre de vie", "Intention", "Échelle de la barre de vie", "Suivre l’échelle du modèle",
+                "Modèle", "Barre de vie", "Intention", "Cadre de sélection", "Échelle de la barre de vie", "Suivre l’échelle du modèle",
                 "Suivre le déplacement du modèle", "Faites glisser directement le modèle ou la barre de vie pour régler sa position.",
-                "Faites glisser directement le modèle, la barre de vie ou l’intention pour régler sa position."),
+                "Faites glisser le modèle, la barre de vie, l’intention ou le cadre de sélection pour régler sa position."),
             ["ita"] = new(
-                "Modello", "Barra salute", "Intento", "Scala barra salute", "Segui scala modello",
+                "Modello", "Barra salute", "Intento", "Riquadro selezione", "Scala barra salute", "Segui scala modello",
                 "Segui movimento modello", "Trascina direttamente il modello o la barra salute per regolarne la posizione.",
-                "Trascina direttamente il modello, la barra salute o l’intento per regolarne la posizione."),
+                "Trascina il modello, la barra salute, l’intento o il riquadro di selezione per regolarne la posizione."),
             ["jpn"] = new(
-                "モデル", "HPバー", "行動予告", "HPバーの拡大率", "モデルの拡大率に追従",
+                "モデル", "HPバー", "行動予告", "選択枠", "HPバーの拡大率", "モデルの拡大率に追従",
                 "モデルの移動に追従", "選択したモデルまたはHPバーを直接ドラッグして位置を調整できます。",
-                "選択したモデル、HPバー、行動予告を直接ドラッグして位置を調整できます。"),
+                "モデル、HPバー、行動予告、選択枠を直接ドラッグして位置を調整できます。"),
             ["kor"] = new(
-                "모델", "체력 바", "의도", "체력 바 크기", "모델 크기 따라가기",
+                "모델", "체력 바", "의도", "선택 테두리", "체력 바 크기", "모델 크기 따라가기",
                 "모델 이동 따라가기", "선택한 모델이나 체력 바를 직접 끌어 위치를 조정하세요.",
-                "선택한 모델, 체력 바 또는 의도를 직접 끌어 위치를 조정하세요."),
+                "모델, 체력 바, 의도 또는 선택 테두리를 직접 끌어 위치를 조정하세요."),
             ["pol"] = new(
-                "Model", "Pasek zdrowia", "Zamiar", "Skala paska zdrowia", "Skaluj razem z modelem",
+                "Model", "Pasek zdrowia", "Zamiar", "Ramka wyboru", "Skala paska zdrowia", "Skaluj razem z modelem",
                 "Przesuwaj razem z modelem", "Przeciągnij bezpośrednio model lub pasek zdrowia, aby zmienić położenie.",
-                "Przeciągnij bezpośrednio model, pasek zdrowia lub zamiar, aby zmienić położenie."),
+                "Przeciągnij model, pasek zdrowia, zamiar lub ramkę wyboru, aby zmienić położenie."),
             ["ptb"] = new(
-                "Modelo", "Barra de vida", "Intenção", "Escala da barra de vida", "Seguir escala do modelo",
+                "Modelo", "Barra de vida", "Intenção", "Moldura de seleção", "Escala da barra de vida", "Seguir escala do modelo",
                 "Seguir movimento do modelo", "Arraste diretamente o modelo ou a barra de vida para ajustar a posição.",
-                "Arraste diretamente o modelo, a barra de vida ou a intenção para ajustar a posição."),
+                "Arraste o modelo, a barra de vida, a intenção ou a moldura de seleção para ajustar a posição."),
             ["rus"] = new(
-                "Модель", "Полоса здоровья", "Намерение", "Масштаб полосы здоровья", "Следовать масштабу модели",
+                "Модель", "Полоса здоровья", "Намерение", "Рамка выбора", "Масштаб полосы здоровья", "Следовать масштабу модели",
                 "Следовать перемещению модели", "Перетаскивайте модель или полосу здоровья, чтобы настроить положение.",
-                "Перетаскивайте модель, полосу здоровья или намерение, чтобы настроить положение."),
+                "Перетаскивайте модель, полосу здоровья, намерение или рамку выбора, чтобы настроить положение."),
             ["spa"] = new(
-                "Modelo", "Barra de vida", "Intención", "Escala de la barra", "Seguir escala del modelo",
+                "Modelo", "Barra de vida", "Intención", "Marco de selección", "Escala de la barra", "Seguir escala del modelo",
                 "Seguir movimiento del modelo", "Arrastra directamente el modelo o la barra de vida para ajustar su posición.",
-                "Arrastra directamente el modelo, la barra de vida o la intención para ajustar su posición."),
+                "Arrastra directamente el modelo, la barra de vida, la intención o el marco de selección para ajustar su posición."),
             ["tha"] = new(
-                "โมเดล", "แถบพลังชีวิต", "เจตนา", "ขนาดแถบพลังชีวิต", "ปรับขนาดตามโมเดล",
+                "โมเดล", "แถบพลังชีวิต", "เจตนา", "กรอบเลือก", "ขนาดแถบพลังชีวิต", "ปรับขนาดตามโมเดล",
                 "เคลื่อนตามโมเดล", "ลากโมเดลหรือแถบพลังชีวิตโดยตรงเพื่อปรับตำแหน่ง",
-                "ลากโมเดล แถบพลังชีวิต หรือเจตนาโดยตรงเพื่อปรับตำแหน่ง"),
+                "ลากโมเดล แถบพลังชีวิต เจตนา หรือกรอบเลือกโดยตรงเพื่อปรับตำแหน่ง"),
             ["tur"] = new(
-                "Model", "Can çubuğu", "Niyet", "Can çubuğu ölçeği", "Model ölçeğini izle",
+                "Model", "Can çubuğu", "Niyet", "Seçim çerçevesi", "Can çubuğu ölçeği", "Model ölçeğini izle",
                 "Model hareketini izle", "Konumu ayarlamak için modeli veya can çubuğunu doğrudan sürükleyin.",
-                "Konumu ayarlamak için modeli, can çubuğunu veya niyeti doğrudan sürükleyin.")
+                "Konumu ayarlamak için modeli, can çubuğunu, niyeti veya seçim çerçevesini sürükleyin.")
         };
 
     private static event Action? LanguageChanged;

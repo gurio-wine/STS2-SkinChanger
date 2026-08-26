@@ -24,7 +24,8 @@ internal enum CharacterAppearanceDragTarget
     None,
     Model,
     HealthBar,
-    Intent
+    Intent,
+    SelectionReticle
 }
 
 internal partial class CharacterAppearanceScreen : NSubmenu
@@ -48,11 +49,18 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private SpinBox _intentOffsetY = null!;
     private CheckButton _intentFollowScale = null!;
     private CheckButton _intentFollowMovement = null!;
+    private HSlider _selectionReticleScaleSlider = null!;
+    private Label _selectionReticleScaleValue = null!;
+    private SpinBox _selectionReticleOffsetX = null!;
+    private SpinBox _selectionReticleOffsetY = null!;
+    private CheckButton _selectionReticleFollowScale = null!;
+    private CheckButton _selectionReticleFollowMovement = null!;
     private Button _compareButton = null!;
     private Button _skinResetButton = null!;
     private Button _modelResetButton = null!;
     private Button _healthBarResetButton = null!;
     private Button _intentResetButton = null!;
+    private Button _selectionReticleResetButton = null!;
     private Label _title = null!;
     private Label _skinLabel = null!;
     private Label _modelSectionLabel = null!;
@@ -67,17 +75,24 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private Label _intentScaleLabel = null!;
     private Label _intentOffsetXLabel = null!;
     private Label _intentOffsetYLabel = null!;
+    private Label _selectionReticleSectionLabel = null!;
+    private Label _selectionReticleScaleLabel = null!;
+    private Label _selectionReticleOffsetXLabel = null!;
+    private Label _selectionReticleOffsetYLabel = null!;
     private Label _hint = null!;
     private Label _selectionHint = null!;
     private Label _status = null!;
     private CharacterDragSurface _dragSurface = null!;
     private CanvasLayer _hintLayer = null!;
     private PanelContainer _panel = null!;
+    private ScrollContainer _settingsScroll = null!;
+    private VBoxContainer _settingsContent = null!;
     private NBackButton _backButton = null!;
     private Control _modelSpacer = null!;
     private readonly List<CanvasItem> _skinControls = [];
     private readonly List<CanvasItem> _creatureOnlyControls = [];
     private readonly List<CanvasItem> _intentOnlyControls = [];
+    private readonly List<CanvasItem> _selectionReticleOnlyControls = [];
     private NCreature? _targetCreature;
     private AncientEventModel? _targetAncient;
     private SkinGroup? _group;
@@ -88,6 +103,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private CharacterAppearanceDragTarget _dragTarget;
     private Vector2 _dragStartPosition;
     private Vector2 _dragStartOffset;
+    private NSelectionReticle? _previewSelectionReticle;
+    private bool _previewSelectionReticleWasSelected;
 
     protected override Control? InitialFocusedControl =>
         _selectionMode ? _backButton : GetTargetInitialFocus();
@@ -154,6 +171,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     {
         FinishDrag(save: true);
         EndComparison();
+        EndSelectionReticlePreview();
         CharacterAppearanceRuntime.QueuedSelectionFinished -= OnQueuedSelectionFinished;
         _hintLayer.Visible = false;
         NCapstoneContainer.Instance?.EnableBackstopInstantly();
@@ -163,6 +181,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     protected override void OnSubmenuShown()
     {
         _hintLayer.Visible = true;
+        BeginSelectionReticlePreview(_targetCreature);
         UpdateDragSurfaceCreature();
         base.OnSubmenuShown();
     }
@@ -171,6 +190,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     {
         FinishDrag(save: true);
         EndComparison();
+        EndSelectionReticlePreview();
         _hintLayer.Visible = false;
         base.OnSubmenuHidden();
     }
@@ -266,13 +286,22 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         margin.AddThemeConstantOverride("margin_bottom", 24);
         _panel.AddChild(margin);
 
+        _settingsScroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        margin.AddChild(_settingsScroll);
+
         var content = new VBoxContainer
         {
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             CustomMinimumSize = new Vector2(460f, 0f)
         };
+        _settingsContent = content;
         content.AddThemeConstantOverride("separation", 7);
-        margin.AddChild(content);
+        _settingsScroll.AddChild(content);
 
         _title = BuildLabel(string.Empty, 31, HorizontalAlignment.Center);
         _title.CustomMinimumSize = new Vector2(0f, 46f);
@@ -452,6 +481,63 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         intentFollowRow.AddChild(_intentFollowMovement);
         content.AddChild(intentFollowRow);
 
+        var selectionReticleSpacer = BuildVerticalSpacer(15f);
+        content.AddChild(selectionReticleSpacer);
+        var selectionReticleHeader = BuildSectionHeader(
+            out _selectionReticleSectionLabel,
+            out _selectionReticleResetButton);
+        content.AddChild(selectionReticleHeader);
+        _selectionReticleResetButton.Pressed += ResetSelectionReticleTransform;
+
+        var selectionReticleScaleRow = new HBoxContainer();
+        selectionReticleScaleRow.AddThemeConstantOverride("separation", 12);
+        _selectionReticleScaleLabel = BuildLabel(string.Empty, 21);
+        _selectionReticleScaleLabel.CustomMinimumSize = new Vector2(74f, 44f);
+        selectionReticleScaleRow.AddChild(_selectionReticleScaleLabel);
+        _selectionReticleScaleSlider = new HSlider
+        {
+            MinValue = SkinService.MinimumCharacterScale,
+            MaxValue = SkinService.MaximumCharacterScale,
+            Step = SkinService.CharacterScaleStep,
+            Value = 1d,
+            CustomMinimumSize = new Vector2(230f, 44f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        _selectionReticleScaleSlider.ValueChanged += _ => OnTransformChanged();
+        selectionReticleScaleRow.AddChild(_selectionReticleScaleSlider);
+        _selectionReticleScaleValue = BuildLabel("100%", 21, HorizontalAlignment.Right);
+        _selectionReticleScaleValue.CustomMinimumSize = new Vector2(82f, 44f);
+        selectionReticleScaleRow.AddChild(_selectionReticleScaleValue);
+        content.AddChild(selectionReticleScaleRow);
+
+        var selectionReticleOffsetRow = new HBoxContainer();
+        selectionReticleOffsetRow.AddThemeConstantOverride("separation", 10);
+        _selectionReticleOffsetXLabel = BuildLabel(string.Empty, 21);
+        _selectionReticleOffsetYLabel = BuildLabel(string.Empty, 21);
+        _selectionReticleOffsetXLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _selectionReticleOffsetYLabel.CustomMinimumSize = new Vector2(24f, 44f);
+        _selectionReticleOffsetX = BuildOffsetSpinBox();
+        _selectionReticleOffsetY = BuildOffsetSpinBox();
+        _selectionReticleOffsetX.ValueChanged += _ => OnTransformChanged();
+        _selectionReticleOffsetY.ValueChanged += _ => OnTransformChanged();
+        selectionReticleOffsetRow.AddChild(_selectionReticleOffsetXLabel);
+        selectionReticleOffsetRow.AddChild(_selectionReticleOffsetX);
+        selectionReticleOffsetRow.AddChild(_selectionReticleOffsetYLabel);
+        selectionReticleOffsetRow.AddChild(_selectionReticleOffsetY);
+        content.AddChild(selectionReticleOffsetRow);
+
+        var selectionReticleFollowRow = new HBoxContainer();
+        selectionReticleFollowRow.AddThemeConstantOverride("separation", 12);
+        _selectionReticleFollowScale = BuildCheckButton();
+        _selectionReticleFollowScale.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _selectionReticleFollowScale.Toggled += _ => OnTransformChanged();
+        selectionReticleFollowRow.AddChild(_selectionReticleFollowScale);
+        _selectionReticleFollowMovement = BuildCheckButton();
+        _selectionReticleFollowMovement.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _selectionReticleFollowMovement.Toggled += _ => OnTransformChanged();
+        selectionReticleFollowRow.AddChild(_selectionReticleFollowMovement);
+        content.AddChild(selectionReticleFollowRow);
+
         var compareSpacer = BuildVerticalSpacer(8f);
         content.AddChild(compareSpacer);
 
@@ -485,6 +571,13 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             intentOffsetRow,
             intentFollowRow
         ]);
+        _selectionReticleOnlyControls.AddRange([
+            selectionReticleSpacer,
+            selectionReticleHeader,
+            selectionReticleScaleRow,
+            selectionReticleOffsetRow,
+            selectionReticleFollowRow
+        ]);
 
         var backScene = ResourceLoader.Load<PackedScene>(BackButtonScenePath) ??
                         throw new InvalidOperationException("无法加载游戏返回按钮场景。");
@@ -504,18 +597,24 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _healthBarScaleLabel.Text = ModLocalization.Get(ModText.CharacterScale);
         _intentSectionLabel.Text = ModLocalization.Get(ModText.IntentTransform);
         _intentScaleLabel.Text = ModLocalization.Get(ModText.CharacterScale);
+        _selectionReticleSectionLabel.Text = ModLocalization.Get(ModText.SelectionReticleTransform);
+        _selectionReticleScaleLabel.Text = ModLocalization.Get(ModText.CharacterScale);
         _offsetXLabel.Text = "X";
         _offsetYLabel.Text = "Y";
         _healthBarOffsetXLabel.Text = "X";
         _healthBarOffsetYLabel.Text = "Y";
         _intentOffsetXLabel.Text = "X";
         _intentOffsetYLabel.Text = "Y";
+        _selectionReticleOffsetXLabel.Text = "X";
+        _selectionReticleOffsetYLabel.Text = "Y";
         _offsetX.TooltipText = ModLocalization.Get(ModText.HorizontalOffset);
         _offsetY.TooltipText = ModLocalization.Get(ModText.VerticalOffset);
         _healthBarOffsetX.TooltipText = ModLocalization.Get(ModText.HorizontalOffset);
         _healthBarOffsetY.TooltipText = ModLocalization.Get(ModText.VerticalOffset);
         _intentOffsetX.TooltipText = ModLocalization.Get(ModText.HorizontalOffset);
         _intentOffsetY.TooltipText = ModLocalization.Get(ModText.VerticalOffset);
+        _selectionReticleOffsetX.TooltipText = ModLocalization.Get(ModText.HorizontalOffset);
+        _selectionReticleOffsetY.TooltipText = ModLocalization.Get(ModText.VerticalOffset);
         _healthBarFollowScale.Text = ModLocalization.Get(ModText.FollowModelScale);
         _healthBarFollowMovement.Text = ModLocalization.Get(ModText.FollowModelMovement);
         _healthBarFollowScale.TooltipText = _healthBarFollowScale.Text;
@@ -524,11 +623,16 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _intentFollowMovement.Text = ModLocalization.Get(ModText.FollowModelMovement);
         _intentFollowScale.TooltipText = _intentFollowScale.Text;
         _intentFollowMovement.TooltipText = _intentFollowMovement.Text;
+        _selectionReticleFollowScale.Text = ModLocalization.Get(ModText.FollowModelScale);
+        _selectionReticleFollowMovement.Text = ModLocalization.Get(ModText.FollowModelMovement);
+        _selectionReticleFollowScale.TooltipText = _selectionReticleFollowScale.Text;
+        _selectionReticleFollowMovement.TooltipText = _selectionReticleFollowMovement.Text;
         _compareButton.Text = ModLocalization.Get(ModText.HoldToCompare);
         _skinResetButton.Text = ModLocalization.Get(ModText.Reset);
         _modelResetButton.Text = ModLocalization.Get(ModText.Reset);
         _healthBarResetButton.Text = ModLocalization.Get(ModText.Reset);
         _intentResetButton.Text = ModLocalization.Get(ModText.Reset);
+        _selectionReticleResetButton.Text = ModLocalization.Get(ModText.Reset);
         RefreshDragHint();
         _selectionHint.Text = ModLocalization.Get(ModText.SelectAppearanceTarget);
         PopulateSkinDropdown();
@@ -716,6 +820,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             $"{Mathf.RoundToInt((float)_healthBarScaleSlider.Value * 100f)}%";
         _intentScaleValue.Text =
             $"{Mathf.RoundToInt((float)_intentScaleSlider.Value * 100f)}%";
+        _selectionReticleScaleValue.Text =
+            $"{Mathf.RoundToInt((float)_selectionReticleScaleSlider.Value * 100f)}%";
         if (_updating || _group == null || _targetCreature == null ||
             CharacterAppearanceRuntime.GetRequestedOption(_group.Id) != null)
         {
@@ -758,7 +864,12 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             IntentOffsetX = (float)_intentOffsetX.Value,
             IntentOffsetY = (float)_intentOffsetY.Value,
             IntentFollowsModelScale = _intentFollowScale.ButtonPressed,
-            IntentFollowsModelMovement = _intentFollowMovement.ButtonPressed
+            IntentFollowsModelMovement = _intentFollowMovement.ButtonPressed,
+            SelectionReticleScale = (float)_selectionReticleScaleSlider.Value,
+            SelectionReticleOffsetX = (float)_selectionReticleOffsetX.Value,
+            SelectionReticleOffsetY = (float)_selectionReticleOffsetY.Value,
+            SelectionReticleFollowsModelScale = _selectionReticleFollowScale.ButtonPressed,
+            SelectionReticleFollowsModelMovement = _selectionReticleFollowMovement.ButtonPressed
         };
 
     private void SetTransformControlValues(CharacterCombatTransform value)
@@ -778,9 +889,16 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _intentOffsetY.Value = value.IntentOffsetY;
         _intentFollowScale.ButtonPressed = value.IntentFollowsModelScale;
         _intentFollowMovement.ButtonPressed = value.IntentFollowsModelMovement;
+        _selectionReticleScaleSlider.Value = value.SelectionReticleScale;
+        _selectionReticleOffsetX.Value = value.SelectionReticleOffsetX;
+        _selectionReticleOffsetY.Value = value.SelectionReticleOffsetY;
+        _selectionReticleFollowScale.ButtonPressed = value.SelectionReticleFollowsModelScale;
+        _selectionReticleFollowMovement.ButtonPressed = value.SelectionReticleFollowsModelMovement;
         _scaleValue.Text = $"{Mathf.RoundToInt(value.Scale * 100f)}%";
         _healthBarScaleValue.Text = $"{Mathf.RoundToInt(value.HealthBarScale * 100f)}%";
         _intentScaleValue.Text = $"{Mathf.RoundToInt(value.IntentScale * 100f)}%";
+        _selectionReticleScaleValue.Text =
+            $"{Mathf.RoundToInt(value.SelectionReticleScale * 100f)}%";
         _updating = wasUpdating;
     }
 
@@ -788,6 +906,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     {
         FinishDrag(save: true);
         EndComparison();
+        EndSelectionReticlePreview();
         _selectionMode = true;
         _targetCreature = null;
         _targetAncient = null;
@@ -839,6 +958,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         _selectionMode = false;
+        EndSelectionReticlePreview();
         _targetAncient = ancient;
         _group = ancientGroup;
         _transformKey = null;
@@ -865,6 +985,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         _selectionMode = false;
+        EndSelectionReticlePreview();
         _targetCreature = creature;
         _targetAncient = null;
         _group = binding.Group;
@@ -880,6 +1001,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         SyncTransformControls();
         SetTransformControlsEnabled(true);
         UpdateDragSurfaceCreature();
+        BeginSelectionReticlePreview(creature);
         RefreshStatusForCurrentContext();
         GetTargetInitialFocus().TryGrabFocus();
         return true;
@@ -905,8 +1027,34 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             control.Visible = isCreature && supportsIntent;
         }
 
+        foreach (var control in _selectionReticleOnlyControls)
+        {
+            control.Visible = isCreature && supportsIntent;
+        }
+
         _modelSpacer.Visible = isCreature && canSelectSkin;
-        _panel.ResetSize();
+        ResizePanelToContent();
+    }
+
+    private void ResizePanelToContent()
+    {
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(_settingsScroll) ||
+                !GodotObject.IsInstanceValid(_settingsContent))
+            {
+                return;
+            }
+
+            var maximumHeight = Math.Max(300f, GetViewportRect().Size.Y * 0.9f - 48f);
+            var desiredHeight = _settingsContent.GetCombinedMinimumSize().Y;
+            var height = Math.Min(desiredHeight, maximumHeight);
+            _settingsScroll.CustomMinimumSize = new Vector2(460f, height);
+            _settingsScroll.VerticalScrollMode = desiredHeight > maximumHeight
+                ? ScrollContainer.ScrollMode.Auto
+                : ScrollContainer.ScrollMode.Disabled;
+            _panel.ResetSize();
+        }).CallDeferred();
     }
 
     private Control GetTargetInitialFocus() =>
@@ -980,6 +1128,64 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         };
         SetTransformControlValues(value);
         OnTransformChanged();
+    }
+
+    private void ResetSelectionReticleTransform()
+    {
+        if (_targetCreature == null)
+        {
+            return;
+        }
+
+        EndComparison();
+        var value = ReadTransformControls() with
+        {
+            SelectionReticleScale = 1f,
+            SelectionReticleOffsetX = 0f,
+            SelectionReticleOffsetY = 0f,
+            SelectionReticleFollowsModelScale = true,
+            SelectionReticleFollowsModelMovement = true
+        };
+        SetTransformControlValues(value);
+        OnTransformChanged();
+    }
+
+    private void BeginSelectionReticlePreview(NCreature? creature)
+    {
+        if (_selectionMode ||
+            !CharacterAppearanceRuntime.SupportsIntentAppearance(creature))
+        {
+            return;
+        }
+
+        var reticle = CharacterAppearanceRuntime.GetSelectionReticle(creature);
+        if (reticle == null || !GodotObject.IsInstanceValid(reticle) ||
+            ReferenceEquals(reticle, _previewSelectionReticle))
+        {
+            return;
+        }
+
+        EndSelectionReticlePreview();
+        _previewSelectionReticle = reticle;
+        _previewSelectionReticleWasSelected = reticle.IsSelected;
+        if (!reticle.IsSelected)
+        {
+            reticle.OnSelect();
+        }
+    }
+
+    private void EndSelectionReticlePreview()
+    {
+        if (_previewSelectionReticle != null &&
+            GodotObject.IsInstanceValid(_previewSelectionReticle) &&
+            !_previewSelectionReticleWasSelected &&
+            _previewSelectionReticle.IsSelected)
+        {
+            _previewSelectionReticle.OnDeselect();
+        }
+
+        _previewSelectionReticle = null;
+        _previewSelectionReticleWasSelected = false;
     }
 
     private void BeginComparison()
@@ -1080,6 +1286,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
                             (float)_healthBarOffsetY.Value),
                     CharacterAppearanceDragTarget.Intent =>
                         new Vector2((float)_intentOffsetX.Value, (float)_intentOffsetY.Value),
+                    CharacterAppearanceDragTarget.SelectionReticle =>
+                        new Vector2(
+                            (float)_selectionReticleOffsetX.Value,
+                            (float)_selectionReticleOffsetY.Value),
                     _ => Vector2.Zero
                 };
                 _dragSurface.GrabClickFocus();
@@ -1117,6 +1327,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             case CharacterAppearanceDragTarget.Intent:
                 _intentOffsetX.Value = _dragStartOffset.X + delta.X;
                 _intentOffsetY.Value = _dragStartOffset.Y + delta.Y;
+                break;
+            case CharacterAppearanceDragTarget.SelectionReticle:
+                _selectionReticleOffsetX.Value = _dragStartOffset.X + delta.X;
+                _selectionReticleOffsetY.Value = _dragStartOffset.Y + delta.Y;
                 break;
         }
 
@@ -1176,12 +1390,19 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _intentOffsetY.Editable = enabled;
         _intentFollowScale.Disabled = !enabled;
         _intentFollowMovement.Disabled = !enabled;
+        _selectionReticleScaleSlider.Editable = enabled;
+        _selectionReticleOffsetX.Editable = enabled;
+        _selectionReticleOffsetY.Editable = enabled;
+        _selectionReticleFollowScale.Disabled = !enabled;
+        _selectionReticleFollowMovement.Disabled = !enabled;
         _skinDropdown.Disabled = !enabled || _group == null || !_skinDropdown.Visible;
         _dragSurface.SetDragEnabled(enabled && _targetCreature != null);
         _skinResetButton.Disabled = !enabled || !_skinResetButton.Visible;
         _modelResetButton.Disabled = !enabled;
         _healthBarResetButton.Disabled = !enabled;
         _intentResetButton.Disabled = !enabled || !_intentResetButton.Visible;
+        _selectionReticleResetButton.Disabled =
+            !enabled || !_selectionReticleResetButton.Visible;
         _compareButton.Disabled = !enabled || _targetCreature == null;
     }
 
@@ -1396,6 +1617,15 @@ internal partial class CharacterDragSurface : Control
             return CharacterAppearanceDragTarget.Intent;
         }
 
+        var reticle = CharacterAppearanceRuntime.GetSelectionReticle(_creature);
+        if (reticle != null &&
+            reticle.IsVisibleInTree() &&
+            TryGetCanvasRect(reticle, 0f, out var reticleRect) &&
+            IsNearRectBorder(reticleRect, localPosition, 20f))
+        {
+            return CharacterAppearanceDragTarget.SelectionReticle;
+        }
+
         if (_creature != null && GodotObject.IsInstanceValid(_creature.Hitbox) &&
             TryGetCanvasRect(_creature.Hitbox, 8f, out var modelRect) &&
             modelRect.HasPoint(localPosition))
@@ -1404,6 +1634,21 @@ internal partial class CharacterDragSurface : Control
         }
 
         return CharacterAppearanceDragTarget.None;
+    }
+
+    private static bool IsNearRectBorder(Rect2 rect, Vector2 point, float width)
+    {
+        if (!rect.Grow(width).HasPoint(point))
+        {
+            return false;
+        }
+
+        var innerWidth = Math.Max(0f, rect.Size.X - width * 2f);
+        var innerHeight = Math.Max(0f, rect.Size.Y - width * 2f);
+        var inner = new Rect2(
+            rect.Position + Vector2.One * width,
+            new Vector2(innerWidth, innerHeight));
+        return innerWidth <= 0f || innerHeight <= 0f || !inner.HasPoint(point);
     }
 
     private bool TryGetIntentTargetRect(out Rect2 rect)

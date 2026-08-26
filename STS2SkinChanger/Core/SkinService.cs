@@ -1766,7 +1766,21 @@ internal static class SkinService
                 MinimumCharacterOffset,
                 MaximumCharacterOffset),
             IntentFollowsModelScale = value.IntentFollowsModelScale,
-            IntentFollowsModelMovement = value.IntentFollowsModelMovement
+            IntentFollowsModelMovement = value.IntentFollowsModelMovement,
+            SelectionReticleScale = Mathf.Clamp(
+                Mathf.Round(value.SelectionReticleScale / CharacterScaleStep) * CharacterScaleStep,
+                MinimumCharacterScale,
+                MaximumCharacterScale),
+            SelectionReticleOffsetX = Mathf.Clamp(
+                Mathf.Round(value.SelectionReticleOffsetX / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset),
+            SelectionReticleOffsetY = Mathf.Clamp(
+                Mathf.Round(value.SelectionReticleOffsetY / CharacterOffsetStep) * CharacterOffsetStep,
+                MinimumCharacterOffset,
+                MaximumCharacterOffset),
+            SelectionReticleFollowsModelScale = value.SelectionReticleFollowsModelScale,
+            SelectionReticleFollowsModelMovement = value.SelectionReticleFollowsModelMovement
         };
 
     private static bool IsDefaultCharacterCombatTransform(CharacterCombatTransform value) =>
@@ -1782,7 +1796,12 @@ internal static class SkinService
         Mathf.IsZeroApprox(value.IntentOffsetX) &&
         Mathf.IsZeroApprox(value.IntentOffsetY) &&
         !value.IntentFollowsModelScale &&
-        value.IntentFollowsModelMovement;
+        value.IntentFollowsModelMovement &&
+        Mathf.IsEqualApprox(value.SelectionReticleScale, 1f) &&
+        Mathf.IsZeroApprox(value.SelectionReticleOffsetX) &&
+        Mathf.IsZeroApprox(value.SelectionReticleOffsetY) &&
+        value.SelectionReticleFollowsModelScale &&
+        value.SelectionReticleFollowsModelMovement;
 
     public static Texture2D GetSelectedRuntimeImageTexture(string groupId)
     {

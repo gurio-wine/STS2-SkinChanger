@@ -43,6 +43,7 @@ internal static class CharacterAppearanceRuntime
     internal const string TransformWrapperName = "SkinChangerCharacterTransform";
     internal const string HealthDisplayWrapperName = "SkinChangerHealthDisplayTransform";
     internal const string IntentDisplayWrapperName = "SkinChangerIntentDisplayTransform";
+    internal const string SelectionReticleWrapperName = "SkinChangerSelectionReticleTransform";
     private const string HealthBoundsProxyName = "SkinChangerHealthBoundsProxy";
     private const string BaseVisualScaleMeta = "skin_changer_character_base_visual_scale";
     private const string BaseDefaultScaleMeta = "skin_changer_character_base_default_scale";
@@ -59,6 +60,11 @@ internal static class CharacterAppearanceRuntime
     private const string CurrentIntentOffsetYMeta = "skin_changer_intent_current_offset_y";
     private const string CurrentIntentFollowScaleMeta = "skin_changer_intent_follow_scale";
     private const string CurrentIntentFollowMovementMeta = "skin_changer_intent_follow_movement";
+    private const string CurrentReticleScaleMeta = "skin_changer_reticle_current_scale";
+    private const string CurrentReticleOffsetXMeta = "skin_changer_reticle_current_offset_x";
+    private const string CurrentReticleOffsetYMeta = "skin_changer_reticle_current_offset_y";
+    private const string CurrentReticleFollowScaleMeta = "skin_changer_reticle_follow_scale";
+    private const string CurrentReticleFollowMovementMeta = "skin_changer_reticle_follow_movement";
 
     private static readonly FieldInfo? VisualsField =
         AccessTools.Field(typeof(NCreature), "<Visuals>k__BackingField");
@@ -182,6 +188,7 @@ internal static class CharacterAppearanceRuntime
         if (SupportsIntentAppearance(creature))
         {
             EnsureIntentDisplayWrapper(creature);
+            EnsureSelectionReticleWrapper(creature);
         }
         ApplyStoredTransform(creature);
     }
@@ -308,6 +315,26 @@ internal static class CharacterAppearanceRuntime
         return creature.GetNodeOrNull<Node2D>(IntentDisplayWrapperName);
     }
 
+    internal static Node2D? GetSelectionReticleWrapper(NCreature? creature)
+    {
+        if (creature == null || !GodotObject.IsInstanceValid(creature))
+        {
+            return null;
+        }
+
+        return creature.GetNodeOrNull<Node2D>(SelectionReticleWrapperName);
+    }
+
+    internal static NSelectionReticle? GetSelectionReticle(NCreature? creature)
+    {
+        if (creature == null || !GodotObject.IsInstanceValid(creature))
+        {
+            return null;
+        }
+
+        return SelectionReticleField?.GetValue(creature) as NSelectionReticle;
+    }
+
     internal static bool SupportsIntentAppearance(NCreature? creature) =>
         creature != null &&
         GodotObject.IsInstanceValid(creature) &&
@@ -422,14 +449,27 @@ internal static class CharacterAppearanceRuntime
             var size = baseSize * resourceScale * wrapperScale;
             var globalPosition = wrapper.GetGlobalTransform() *
                                  (baseLocalPosition * resourceScale);
+            var currentTransform = GetCurrentTransform(wrapper);
 
             creature.Hitbox.Size = size;
             creature.Hitbox.GlobalPosition = globalPosition;
-            if (SelectionReticleField?.GetValue(creature) is Control reticle)
+            if (SupportsIntentAppearance(creature) &&
+                EnsureSelectionReticleWrapper(creature) is { } reticleWrapper &&
+                GetSelectionReticle(creature) is { } reticle)
             {
-                reticle.Size = size;
-                reticle.GlobalPosition = globalPosition;
-                reticle.PivotOffset = size * 0.5f;
+                reticle.Position = Vector2.Zero;
+                reticle.Size = baseSize;
+                reticle.PivotOffset = baseSize * 0.5f;
+                ApplySelectionReticleTransform(
+                    reticleWrapper,
+                    currentTransform,
+                    baseLocalPosition);
+            }
+            else if (SelectionReticleField?.GetValue(creature) is Control fallbackReticle)
+            {
+                fallbackReticle.Size = size;
+                fallbackReticle.GlobalPosition = globalPosition;
+                fallbackReticle.PivotOffset = size * 0.5f;
             }
 
             var intentMarker = boundsContainer.GetNode<Marker2D>("%IntentPos");
@@ -437,7 +477,6 @@ internal static class CharacterAppearanceRuntime
                 (wrapper.GetGlobalTransform().AffineInverse() * intentMarker.GlobalPosition) /
                 tempScale /
                 resourceScale;
-            var currentTransform = GetCurrentTransform(wrapper);
             var intentWrapper = SupportsIntentAppearance(creature)
                 ? EnsureIntentDisplayWrapper(creature)
                 : null;
@@ -917,6 +956,31 @@ internal static class CharacterAppearanceRuntime
         return wrapper;
     }
 
+    private static Node2D? EnsureSelectionReticleWrapper(NCreature creature)
+    {
+        var reticle = GetSelectionReticle(creature);
+        if (reticle == null || !GodotObject.IsInstanceValid(reticle))
+        {
+            return null;
+        }
+
+        var wrapper = GetSelectionReticleWrapper(creature);
+        if (wrapper == null)
+        {
+            wrapper = new Node2D { Name = SelectionReticleWrapperName };
+            var reticleIndex = reticle.GetIndex();
+            creature.AddChild(wrapper);
+            creature.MoveChild(wrapper, Math.Max(0, reticleIndex));
+        }
+
+        if (!ReferenceEquals(reticle.GetParent(), wrapper))
+        {
+            reticle.Reparent(wrapper, keepGlobalTransform: false);
+        }
+
+        return wrapper;
+    }
+
     private static Control? EnsureHealthBoundsProxy(NCreature creature)
     {
         var proxy = creature.GetNodeOrNull<Control>(HealthBoundsProxyName);
@@ -950,6 +1014,11 @@ internal static class CharacterAppearanceRuntime
         wrapper.SetMeta(CurrentIntentOffsetYMeta, value.IntentOffsetY);
         wrapper.SetMeta(CurrentIntentFollowScaleMeta, value.IntentFollowsModelScale);
         wrapper.SetMeta(CurrentIntentFollowMovementMeta, value.IntentFollowsModelMovement);
+        wrapper.SetMeta(CurrentReticleScaleMeta, value.SelectionReticleScale);
+        wrapper.SetMeta(CurrentReticleOffsetXMeta, value.SelectionReticleOffsetX);
+        wrapper.SetMeta(CurrentReticleOffsetYMeta, value.SelectionReticleOffsetY);
+        wrapper.SetMeta(CurrentReticleFollowScaleMeta, value.SelectionReticleFollowsModelScale);
+        wrapper.SetMeta(CurrentReticleFollowMovementMeta, value.SelectionReticleFollowsModelMovement);
     }
 
     private static CharacterCombatTransform GetCurrentTransform(Node2D wrapper) =>
@@ -971,7 +1040,14 @@ internal static class CharacterAppearanceRuntime
             IntentFollowsModelScale =
                 wrapper.GetMeta(CurrentIntentFollowScaleMeta, false).AsBool(),
             IntentFollowsModelMovement =
-                wrapper.GetMeta(CurrentIntentFollowMovementMeta, true).AsBool()
+                wrapper.GetMeta(CurrentIntentFollowMovementMeta, true).AsBool(),
+            SelectionReticleScale = wrapper.GetMeta(CurrentReticleScaleMeta, 1f).AsSingle(),
+            SelectionReticleOffsetX = wrapper.GetMeta(CurrentReticleOffsetXMeta, 0f).AsSingle(),
+            SelectionReticleOffsetY = wrapper.GetMeta(CurrentReticleOffsetYMeta, 0f).AsSingle(),
+            SelectionReticleFollowsModelScale =
+                wrapper.GetMeta(CurrentReticleFollowScaleMeta, true).AsBool(),
+            SelectionReticleFollowsModelMovement =
+                wrapper.GetMeta(CurrentReticleFollowMovementMeta, true).AsBool()
         };
 
     private static void ApplyHealthDisplayTransform(
@@ -1001,6 +1077,23 @@ internal static class CharacterAppearanceRuntime
                            movement +
                            new Vector2(value.IntentOffsetX, value.IntentOffsetY);
         wrapper.Scale = Vector2.One * value.IntentScale * followedScale;
+    }
+
+    private static void ApplySelectionReticleTransform(
+        Node2D wrapper,
+        CharacterCombatTransform value,
+        Vector2 basePosition)
+    {
+        var followedScale = value.SelectionReticleFollowsModelScale ? value.Scale : 1f;
+        var movement = value.SelectionReticleFollowsModelMovement
+            ? new Vector2(value.OffsetX, value.OffsetY)
+            : Vector2.Zero;
+        wrapper.Position = basePosition * followedScale +
+                           movement +
+                           new Vector2(
+                               value.SelectionReticleOffsetX,
+                               value.SelectionReticleOffsetY);
+        wrapper.Scale = Vector2.One * value.SelectionReticleScale * followedScale;
     }
 
     private static void CaptureVisualBaseline(NCreatureVisuals visuals)

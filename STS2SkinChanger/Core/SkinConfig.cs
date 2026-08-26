@@ -26,6 +26,16 @@ internal sealed record CharacterCombatTransform(
     public bool IntentFollowsModelScale { get; init; }
 
     public bool IntentFollowsModelMovement { get; init; } = true;
+
+    public float SelectionReticleScale { get; init; } = 1f;
+
+    public float SelectionReticleOffsetX { get; init; }
+
+    public float SelectionReticleOffsetY { get; init; }
+
+    public bool SelectionReticleFollowsModelScale { get; init; } = true;
+
+    public bool SelectionReticleFollowsModelMovement { get; init; } = true;
 }
 
 internal sealed record CardSkinPriorityEntry(
