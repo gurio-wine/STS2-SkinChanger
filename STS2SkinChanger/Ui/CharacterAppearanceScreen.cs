@@ -1170,8 +1170,13 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         EndSelectionReticlePreview();
         _previewSelectionReticle = reticle;
         _previewSelectionReticleWasSelected = reticle.IsSelected;
-        _previewSelectionReticleModulate = reticle.Modulate;
-        _previewSelectionReticleScale = reticle.Scale;
+        _previewSelectionReticleModulate = reticle.IsSelected
+            ? reticle.Modulate
+            : Colors.Transparent;
+        _previewSelectionReticleScale = reticle.IsSelected
+            ? reticle.Scale
+            : Vector2.One;
+        CharacterAppearanceRuntime.StopSelectionReticleAnimation(reticle);
         if (!reticle.IsSelected)
         {
             // This preview must not call OnSelect: doing so would change the game's targeting state.

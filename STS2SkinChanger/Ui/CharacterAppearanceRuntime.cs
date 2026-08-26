@@ -337,11 +337,9 @@ internal static class CharacterAppearanceRuntime
         return SelectionReticleField?.GetValue(creature) as NSelectionReticle;
     }
 
-    internal static void FinishManagedReticleHide(NSelectionReticle? reticle)
+    internal static void StopSelectionReticleAnimation(NSelectionReticle? reticle)
     {
-        if (reticle == null ||
-            !GodotObject.IsInstanceValid(reticle) ||
-            reticle.GetParent()?.Name != SelectionReticleWrapperName)
+        if (reticle == null || !GodotObject.IsInstanceValid(reticle))
         {
             return;
         }
@@ -350,26 +348,6 @@ internal static class CharacterAppearanceRuntime
             GodotObject.IsInstanceValid(tween))
         {
             tween.Kill();
-        }
-
-        reticle.Modulate = Colors.Transparent;
-        reticle.Scale = Vector2.One;
-    }
-
-    internal static void HideAllManagedSelectionReticles()
-    {
-        foreach (var creature in NCombatRoom.Instance?.CreatureNodes ?? [])
-        {
-            var reticle = GetSelectionReticle(creature);
-            if (reticle == null ||
-                !GodotObject.IsInstanceValid(reticle) ||
-                reticle.GetParent()?.Name != SelectionReticleWrapperName)
-            {
-                continue;
-            }
-
-            reticle.OnDeselect();
-            FinishManagedReticleHide(reticle);
         }
     }
 
@@ -1152,19 +1130,11 @@ internal static class CharacterAppearanceRuntime
         Node2D reticleWrapper,
         Vector2 reticleSize)
     {
-        var transform = reticleWrapper.GetGlobalTransform();
-        var first = transform * Vector2.Zero;
-        var second = transform * new Vector2(reticleSize.X, 0f);
-        var third = transform * reticleSize;
-        var fourth = transform * new Vector2(0f, reticleSize.Y);
-        var minimum = new Vector2(
-            Math.Min(Math.Min(first.X, second.X), Math.Min(third.X, fourth.X)),
-            Math.Min(Math.Min(first.Y, second.Y), Math.Min(third.Y, fourth.Y)));
-        var maximum = new Vector2(
-            Math.Max(Math.Max(first.X, second.X), Math.Max(third.X, fourth.X)),
-            Math.Max(Math.Max(first.Y, second.Y), Math.Max(third.Y, fourth.Y)));
-        hitbox.Size = maximum - minimum;
-        hitbox.GlobalPosition = minimum;
+        // The wrapper and hitbox are siblings under the creature. Keeping this calculation in their
+        // shared local coordinate space avoids applying the creature/layout scale a second time.
+        hitbox.Position = reticleWrapper.Position;
+        hitbox.Size = reticleSize * reticleWrapper.Scale.Abs();
+        hitbox.PivotOffset = hitbox.Size * 0.5f;
     }
 
     private static void CaptureVisualBaseline(NCreatureVisuals visuals)
@@ -1491,23 +1461,4 @@ internal static class CharacterAppearanceOrbPositionPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCreature __instance) =>
         CharacterAppearanceRuntime.CorrectOrbPositionForCharacterTransform(__instance);
-}
-
-[HarmonyPatch(typeof(NSelectionReticle), nameof(NSelectionReticle.OnDeselect))]
-internal static class CharacterAppearanceReticleHidePatch
-{
-    [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NSelectionReticle __instance) =>
-        CharacterAppearanceRuntime.FinishManagedReticleHide(__instance);
-}
-
-[HarmonyPatch]
-internal static class CharacterAppearanceTargetingFinishedPatch
-{
-    private static MethodBase TargetMethod() =>
-        AccessTools.Method(typeof(NTargetManager), "FinishTargeting", [typeof(bool)]);
-
-    [HarmonyPriority(Priority.Last)]
-    private static void Postfix() =>
-        CharacterAppearanceRuntime.HideAllManagedSelectionReticles();
 }
