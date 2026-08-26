@@ -43,7 +43,6 @@ internal static class CharacterAppearanceRuntime
     internal const string TransformWrapperName = "SkinChangerCharacterTransform";
     internal const string HealthDisplayWrapperName = "SkinChangerHealthDisplayTransform";
     internal const string IntentDisplayWrapperName = "SkinChangerIntentDisplayTransform";
-    internal const string SelectionReticleWrapperName = "SkinChangerSelectionReticleTransform";
     private const string HealthBoundsProxyName = "SkinChangerHealthBoundsProxy";
     private const string BaseVisualScaleMeta = "skin_changer_character_base_visual_scale";
     private const string BaseDefaultScaleMeta = "skin_changer_character_base_default_scale";
@@ -190,7 +189,6 @@ internal static class CharacterAppearanceRuntime
         if (SupportsIntentAppearance(creature))
         {
             EnsureIntentDisplayWrapper(creature);
-            EnsureSelectionReticleWrapper(creature);
         }
         ApplyStoredTransform(creature);
     }
@@ -315,16 +313,6 @@ internal static class CharacterAppearanceRuntime
         }
 
         return creature.GetNodeOrNull<Node2D>(IntentDisplayWrapperName);
-    }
-
-    internal static Node2D? GetSelectionReticleWrapper(NCreature? creature)
-    {
-        if (creature == null || !GodotObject.IsInstanceValid(creature))
-        {
-            return null;
-        }
-
-        return creature.GetNodeOrNull<Node2D>(SelectionReticleWrapperName);
     }
 
     internal static NSelectionReticle? GetSelectionReticle(NCreature? creature)
@@ -482,17 +470,14 @@ internal static class CharacterAppearanceRuntime
             creature.Hitbox.Size = size;
             creature.Hitbox.GlobalPosition = globalPosition;
             if (SupportsIntentAppearance(creature) &&
-                EnsureSelectionReticleWrapper(creature) is { } reticleWrapper &&
                 GetSelectionReticle(creature) is { } reticle)
             {
-                reticle.Position = Vector2.Zero;
-                reticle.Size = baseSize;
-                reticle.PivotOffset = baseSize * 0.5f;
-                ApplySelectionReticleTransform(
-                    reticleWrapper,
+                ApplySelectionReticleAndHitbox(
+                    reticle,
+                    creature.Hitbox,
                     currentTransform,
-                    baseLocalPosition);
-                ApplySelectionHitbox(creature.Hitbox, reticleWrapper, baseSize);
+                    baseLocalPosition,
+                    baseSize);
             }
             else if (SelectionReticleField?.GetValue(creature) is Control fallbackReticle)
             {
@@ -985,31 +970,6 @@ internal static class CharacterAppearanceRuntime
         return wrapper;
     }
 
-    private static Node2D? EnsureSelectionReticleWrapper(NCreature creature)
-    {
-        var reticle = GetSelectionReticle(creature);
-        if (reticle == null || !GodotObject.IsInstanceValid(reticle))
-        {
-            return null;
-        }
-
-        var wrapper = GetSelectionReticleWrapper(creature);
-        if (wrapper == null)
-        {
-            wrapper = new Node2D { Name = SelectionReticleWrapperName };
-            var reticleIndex = reticle.GetIndex();
-            creature.AddChild(wrapper);
-            creature.MoveChild(wrapper, Math.Max(0, reticleIndex));
-        }
-
-        if (!ReferenceEquals(reticle.GetParent(), wrapper))
-        {
-            reticle.Reparent(wrapper, keepGlobalTransform: false);
-        }
-
-        return wrapper;
-    }
-
     private static Control? EnsureHealthBoundsProxy(NCreature creature)
     {
         var proxy = creature.GetNodeOrNull<Control>(HealthBoundsProxyName);
@@ -1108,33 +1068,32 @@ internal static class CharacterAppearanceRuntime
         wrapper.Scale = Vector2.One * value.IntentScale * followedScale;
     }
 
-    private static void ApplySelectionReticleTransform(
-        Node2D wrapper,
+    private static void ApplySelectionReticleAndHitbox(
+        NSelectionReticle reticle,
+        Control hitbox,
         CharacterCombatTransform value,
-        Vector2 basePosition)
+        Vector2 basePosition,
+        Vector2 baseSize)
     {
         var followedScale = value.SelectionReticleFollowsModelScale ? value.Scale : 1f;
         var movement = value.SelectionReticleFollowsModelMovement
             ? new Vector2(value.OffsetX, value.OffsetY)
             : Vector2.Zero;
-        wrapper.Position = basePosition * followedScale +
-                           movement +
-                           new Vector2(
-                               value.SelectionReticleOffsetX,
-                               value.SelectionReticleOffsetY);
-        wrapper.Scale = Vector2.One * value.SelectionReticleScale * followedScale;
-    }
+        var position = basePosition * followedScale +
+                       movement +
+                       new Vector2(
+                           value.SelectionReticleOffsetX,
+                           value.SelectionReticleOffsetY);
+        var size = baseSize * value.SelectionReticleScale * followedScale;
 
-    private static void ApplySelectionHitbox(
-        Control hitbox,
-        Node2D reticleWrapper,
-        Vector2 reticleSize)
-    {
-        // The wrapper and hitbox are siblings under the creature. Keeping this calculation in their
-        // shared local coordinate space avoids applying the creature/layout scale a second time.
-        hitbox.Position = reticleWrapper.Position;
-        hitbox.Size = reticleSize * reticleWrapper.Scale.Abs();
-        hitbox.PivotOffset = hitbox.Size * 0.5f;
+        // Keep the game's original reticle hierarchy and animation state intact. Only its rectangle,
+        // and the hitbox that drives mouse targeting, are customized.
+        reticle.Position = position;
+        reticle.Size = size;
+        reticle.PivotOffset = size * 0.5f;
+        hitbox.Position = position;
+        hitbox.Size = size;
+        hitbox.PivotOffset = size * 0.5f;
     }
 
     private static void CaptureVisualBaseline(NCreatureVisuals visuals)
