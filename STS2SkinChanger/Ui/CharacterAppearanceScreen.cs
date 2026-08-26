@@ -105,6 +105,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private Vector2 _dragStartOffset;
     private NSelectionReticle? _previewSelectionReticle;
     private bool _previewSelectionReticleWasSelected;
+    private Color _previewSelectionReticleModulate;
+    private Vector2 _previewSelectionReticleScale;
 
     protected override Control? InitialFocusedControl =>
         _selectionMode ? _backButton : GetTargetInitialFocus();
@@ -1168,9 +1170,13 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         EndSelectionReticlePreview();
         _previewSelectionReticle = reticle;
         _previewSelectionReticleWasSelected = reticle.IsSelected;
+        _previewSelectionReticleModulate = reticle.Modulate;
+        _previewSelectionReticleScale = reticle.Scale;
         if (!reticle.IsSelected)
         {
-            reticle.OnSelect();
+            // This preview must not call OnSelect: doing so would change the game's targeting state.
+            reticle.Modulate = Colors.White;
+            reticle.Scale = Vector2.One;
         }
     }
 
@@ -1179,9 +1185,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         if (_previewSelectionReticle != null &&
             GodotObject.IsInstanceValid(_previewSelectionReticle) &&
             !_previewSelectionReticleWasSelected &&
-            _previewSelectionReticle.IsSelected)
+            !_previewSelectionReticle.IsSelected)
         {
-            _previewSelectionReticle.OnDeselect();
+            _previewSelectionReticle.Modulate = _previewSelectionReticleModulate;
+            _previewSelectionReticle.Scale = _previewSelectionReticleScale;
         }
 
         _previewSelectionReticle = null;
@@ -1626,8 +1633,9 @@ internal partial class CharacterDragSurface : Control
             return CharacterAppearanceDragTarget.SelectionReticle;
         }
 
-        if (_creature != null && GodotObject.IsInstanceValid(_creature.Hitbox) &&
-            TryGetCanvasRect(_creature.Hitbox, 8f, out var modelRect) &&
+        var modelBounds = CharacterAppearanceRuntime.GetModelBounds(_creature);
+        if (modelBounds != null &&
+            TryGetCanvasRect(modelBounds, 8f, out var modelRect) &&
             modelRect.HasPoint(localPosition))
         {
             return CharacterAppearanceDragTarget.Model;

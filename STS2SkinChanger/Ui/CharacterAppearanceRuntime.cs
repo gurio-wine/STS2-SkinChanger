@@ -360,6 +360,18 @@ internal static class CharacterAppearanceRuntime
             : null;
     }
 
+    internal static Control? GetModelBounds(NCreature? creature)
+    {
+        if (creature == null ||
+            !GodotObject.IsInstanceValid(creature) ||
+            !GodotObject.IsInstanceValid(creature.Visuals))
+        {
+            return null;
+        }
+
+        return creature.Visuals.GetNodeOrNull<Control>("%Bounds");
+    }
+
     internal static bool TryGetCreatureAppearance(
         NCreature creature,
         out CreatureAppearanceBinding binding)
@@ -464,6 +476,7 @@ internal static class CharacterAppearanceRuntime
                     reticleWrapper,
                     currentTransform,
                     baseLocalPosition);
+                ApplySelectionHitbox(creature.Hitbox, reticleWrapper, baseSize);
             }
             else if (SelectionReticleField?.GetValue(creature) is Control fallbackReticle)
             {
@@ -1094,6 +1107,26 @@ internal static class CharacterAppearanceRuntime
                                value.SelectionReticleOffsetX,
                                value.SelectionReticleOffsetY);
         wrapper.Scale = Vector2.One * value.SelectionReticleScale * followedScale;
+    }
+
+    private static void ApplySelectionHitbox(
+        Control hitbox,
+        Node2D reticleWrapper,
+        Vector2 reticleSize)
+    {
+        var transform = reticleWrapper.GetGlobalTransform();
+        var first = transform * Vector2.Zero;
+        var second = transform * new Vector2(reticleSize.X, 0f);
+        var third = transform * reticleSize;
+        var fourth = transform * new Vector2(0f, reticleSize.Y);
+        var minimum = new Vector2(
+            Math.Min(Math.Min(first.X, second.X), Math.Min(third.X, fourth.X)),
+            Math.Min(Math.Min(first.Y, second.Y), Math.Min(third.Y, fourth.Y)));
+        var maximum = new Vector2(
+            Math.Max(Math.Max(first.X, second.X), Math.Max(third.X, fourth.X)),
+            Math.Max(Math.Max(first.Y, second.Y), Math.Max(third.Y, fourth.Y)));
+        hitbox.Size = maximum - minimum;
+        hitbox.GlobalPosition = minimum;
     }
 
     private static void CaptureVisualBaseline(NCreatureVisuals visuals)
