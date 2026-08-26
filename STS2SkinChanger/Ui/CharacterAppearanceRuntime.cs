@@ -72,6 +72,8 @@ internal static class CharacterAppearanceRuntime
         AccessTools.Field(typeof(NCreature), "_spineAnimator");
     private static readonly FieldInfo? SelectionReticleField =
         AccessTools.Field(typeof(NCreature), "_selectionReticle");
+    private static readonly FieldInfo? SelectionReticleTweenField =
+        AccessTools.Field(typeof(NSelectionReticle), "_currentTween");
     private static readonly FieldInfo? StateDisplayField =
         AccessTools.Field(typeof(NCreature), "_stateDisplay");
     private static readonly FieldInfo? TempScaleField =
@@ -333,6 +335,42 @@ internal static class CharacterAppearanceRuntime
         }
 
         return SelectionReticleField?.GetValue(creature) as NSelectionReticle;
+    }
+
+    internal static void FinishManagedReticleHide(NSelectionReticle? reticle)
+    {
+        if (reticle == null ||
+            !GodotObject.IsInstanceValid(reticle) ||
+            reticle.GetParent()?.Name != SelectionReticleWrapperName)
+        {
+            return;
+        }
+
+        if (SelectionReticleTweenField?.GetValue(reticle) is Tween tween &&
+            GodotObject.IsInstanceValid(tween))
+        {
+            tween.Kill();
+        }
+
+        reticle.Modulate = Colors.Transparent;
+        reticle.Scale = Vector2.One;
+    }
+
+    internal static void HideAllManagedSelectionReticles()
+    {
+        foreach (var creature in NCombatRoom.Instance?.CreatureNodes ?? [])
+        {
+            var reticle = GetSelectionReticle(creature);
+            if (reticle == null ||
+                !GodotObject.IsInstanceValid(reticle) ||
+                reticle.GetParent()?.Name != SelectionReticleWrapperName)
+            {
+                continue;
+            }
+
+            reticle.OnDeselect();
+            FinishManagedReticleHide(reticle);
+        }
     }
 
     internal static bool SupportsIntentAppearance(NCreature? creature) =>
@@ -1453,4 +1491,23 @@ internal static class CharacterAppearanceOrbPositionPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCreature __instance) =>
         CharacterAppearanceRuntime.CorrectOrbPositionForCharacterTransform(__instance);
+}
+
+[HarmonyPatch(typeof(NSelectionReticle), nameof(NSelectionReticle.OnDeselect))]
+internal static class CharacterAppearanceReticleHidePatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NSelectionReticle __instance) =>
+        CharacterAppearanceRuntime.FinishManagedReticleHide(__instance);
+}
+
+[HarmonyPatch]
+internal static class CharacterAppearanceTargetingFinishedPatch
+{
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NTargetManager), "FinishTargeting", [typeof(bool)]);
+
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix() =>
+        CharacterAppearanceRuntime.HideAllManagedSelectionReticles();
 }
