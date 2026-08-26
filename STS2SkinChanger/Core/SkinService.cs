@@ -35,6 +35,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IsolatedCardOverlayState> IsolatedCardOverlayCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> CardPreviewSelections =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, System.Reflection.MethodInfo> AncientStyleMethods =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> MissingAncientStyleMethods =
@@ -562,6 +564,40 @@ internal static class SkinService
         }
     }
 
+    public static void WithCardPreviewSelection(
+        CardModel card,
+        string selection,
+        Action previewAction)
+    {
+        var key = IndividualCardSelectionKey(card);
+        string? previous = null;
+        bool hadPrevious;
+        lock (Sync)
+        {
+            hadPrevious = CardPreviewSelections.TryGetValue(key, out previous);
+            CardPreviewSelections[key] = selection;
+        }
+
+        try
+        {
+            previewAction();
+        }
+        finally
+        {
+            lock (Sync)
+            {
+                if (hadPrevious)
+                {
+                    CardPreviewSelections[key] = previous!;
+                }
+                else
+                {
+                    CardPreviewSelections.Remove(key);
+                }
+            }
+        }
+    }
+
     private static string GetEffectiveCardSelection(CardModel card, CardLookup lookup)
         => GetEffectiveCardSelection(card, lookup, CardVisualLayer.Portrait);
 
@@ -570,9 +606,10 @@ internal static class SkinService
         CardLookup lookup,
         CardVisualLayer layer)
     {
-        var individual = Config.Selections.GetValueOrDefault(
-            IndividualCardSelectionKey(card),
-            InheritCardSelectionId);
+        var cardSelectionKey = IndividualCardSelectionKey(card);
+        var individual = CardPreviewSelections.TryGetValue(cardSelectionKey, out var previewSelection)
+            ? previewSelection
+            : Config.Selections.GetValueOrDefault(cardSelectionKey, InheritCardSelectionId);
         if (individual.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
             return individual;

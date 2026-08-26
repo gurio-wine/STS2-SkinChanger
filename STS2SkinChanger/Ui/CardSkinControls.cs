@@ -1256,6 +1256,8 @@ internal static class CardInspectSkinControls
     private const string SelectorName = "STS2IndividualCardSkinSelector";
     private const string DropdownName = "IndividualCardSkinDropdown";
     private const string UpdatingMeta = "sts2_individual_card_skin_updating";
+    private const string PreviewCardMeta = "sts2_individual_card_skin_preview_card";
+    private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
     private static readonly System.Reflection.MethodInfo ReloadCardMethod =
         AccessTools.Method(typeof(NCard), "Reload");
 
@@ -1294,7 +1296,32 @@ internal static class CardInspectSkinControls
         };
         ContextualSkinControls.ApplyGameTheme(dropdown);
         dropdown.AddThemeFontSizeOverride("font_size", 20);
-        dropdown.GetPopup().AddThemeFontSizeOverride("font_size", 20);
+        var popup = dropdown.GetPopup();
+        popup.AddThemeFontSizeOverride("font_size", 20);
+        popup.IdFocused += id => PreviewSelection(
+            screen,
+            dropdown,
+            popup.GetItemIndex(checked((int)id)));
+        popup.WindowInput += inputEvent =>
+        {
+            if (inputEvent is not InputEventMouseMotion)
+            {
+                return;
+            }
+
+            // PopupMenu updates its focused row during the same mouse event. Read it on the next
+            // idle step so mouse hover and keyboard focus share the same preview path.
+            Callable.From(() =>
+            {
+                if (GodotObject.IsInstanceValid(screen) &&
+                    GodotObject.IsInstanceValid(popup) &&
+                    popup.Visible)
+                {
+                    PreviewSelection(screen, dropdown, popup.GetFocusedItem());
+                }
+            }).CallDeferred();
+        };
+        popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,
             selector,
@@ -1382,6 +1409,82 @@ internal static class CardInspectSkinControls
             RefreshMatchingCards(screen.GetTree()?.Root, cardId);
             Sync(screen);
         }).CallDeferred();
+    }
+
+    private static void PreviewSelection(
+        NInspectCardScreen screen,
+        OptionButton dropdown,
+        int index)
+    {
+        if (index < 0 || index >= dropdown.ItemCount)
+        {
+            RestorePreview(screen);
+            return;
+        }
+
+        var cardNode = screen.GetNodeOrNull<NCard>("Card");
+        var card = cardNode?.Model;
+        if (cardNode == null || card == null)
+        {
+            return;
+        }
+
+        var cardId = card.Id.ToString();
+        var optionId = dropdown.GetItemMetadata(index).AsString();
+        if (screen.GetMeta(PreviewCardMeta, string.Empty).AsString().Equals(
+                cardId,
+                StringComparison.OrdinalIgnoreCase) &&
+            screen.GetMeta(PreviewOptionMeta, string.Empty).AsString().Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        screen.SetMeta(PreviewCardMeta, cardId);
+        screen.SetMeta(PreviewOptionMeta, optionId);
+        try
+        {
+            SkinService.WithCardPreviewSelection(
+                card,
+                optionId,
+                () => ReloadCardMethod.Invoke(cardNode, null));
+        }
+        catch (Exception exception)
+        {
+            screen.RemoveMeta(PreviewCardMeta);
+            screen.RemoveMeta(PreviewOptionMeta);
+            ModLog.Error("预览单卡皮肤失败：" + exception);
+        }
+    }
+
+    private static void RestorePreview(NInspectCardScreen screen)
+    {
+        if (!screen.HasMeta(PreviewOptionMeta))
+        {
+            return;
+        }
+
+        var previewCardId = screen.GetMeta(PreviewCardMeta, string.Empty).AsString();
+        screen.RemoveMeta(PreviewCardMeta);
+        screen.RemoveMeta(PreviewOptionMeta);
+
+        var cardNode = screen.GetNodeOrNull<NCard>("Card");
+        if (cardNode?.Model?.Id.ToString().Equals(
+                previewCardId,
+                StringComparison.OrdinalIgnoreCase) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            ReloadCardMethod.Invoke(cardNode, null);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("恢复单卡皮肤预览失败：" + exception);
+        }
     }
 
     private static void RefreshMatchingCards(Node? root, string cardId)
