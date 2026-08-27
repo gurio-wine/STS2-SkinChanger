@@ -755,7 +755,10 @@ internal static partial class ContextualSkinControls
         // Provider presentation callbacks are allowed to temporarily hide this host while their
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
-        var inheritedViewportTransforms = CaptureViewportFitTransforms(container);
+        // Some character mods attach a per-frame viewport fitter to their SpineSprite. Capture
+        // only enough state to recognise that fitter; never copy its old transform into the new
+        // skin because that would also carry one skin's offset into another (including vanilla).
+        var previousViewportStates = CaptureViewportFitStates(container);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChildSafely(child);
@@ -768,7 +771,7 @@ internal static partial class ContextualSkinControls
             RebindCharacterSceneResources(background, isolatedResources);
         }
 
-        ApplyViewportFitTransforms(background, inheritedViewportTransforms);
+        ApplyExternalViewportFit(background, previousViewportStates, container.GetViewportRect().Size);
 
         background.Name = character.Id.Entry + "_bg";
         container.AddChildSafely(background);
@@ -793,67 +796,76 @@ internal static partial class ContextualSkinControls
         }).CallDeferred();
     }
 
-    private static IReadOnlyDictionary<string, SpineTransform> CaptureViewportFitTransforms(
+    private static IReadOnlyDictionary<string, SpineViewportState> CaptureViewportFitStates(
         Control container)
     {
         var previousBackground = container.GetChildren().OfType<Node>().FirstOrDefault();
         if (previousBackground == null)
         {
-            return new Dictionary<string, SpineTransform>(StringComparer.Ordinal);
+            return new Dictionary<string, SpineViewportState>(StringComparer.Ordinal);
         }
 
-        var transforms = new Dictionary<string, SpineTransform>(StringComparer.Ordinal);
+        var transforms = new Dictionary<string, SpineViewportState>(StringComparer.Ordinal);
         foreach (var node in EnumerateNodes(previousBackground).OfType<Node2D>().Where(node =>
                      node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
         {
             var path = previousBackground.GetPathTo(node).ToString();
-            transforms[path] = new SpineTransform(
-                node.Position,
-                node.Scale,
-                node.Rotation,
-                node.Skew);
+            transforms[path] = new SpineViewportState(node.Position, node.Scale);
         }
 
         return transforms;
     }
 
-    private static void ApplyViewportFitTransforms(
+    private static void ApplyExternalViewportFit(
         Node replacementBackground,
-        IReadOnlyDictionary<string, SpineTransform> inheritedTransforms)
+        IReadOnlyDictionary<string, SpineViewportState> previousStates,
+        Vector2 viewportSize)
     {
-        if (inheritedTransforms.Count == 0)
+        if (previousStates.Count == 0)
         {
             return;
         }
 
+        // Watcher and similar mods use the standard 1920x1080 design-space fitter:
+        //   scale = authoredScale * max(viewport/design)
+        //   pos   = (authoredPos - center) * max + viewport/2
+        // Recompute this from the replacement scene's authored transform. This is a detection
+        // and re-application of an external layout policy, not a fixed pixel offset.
+        if (viewportSize.X <= 1f || viewportSize.Y <= 1f)
+        {
+            return;
+        }
+
+        const float designWidth = 1920f;
+        const float designHeight = 1080f;
+        var fit = Mathf.Max(viewportSize.X / designWidth, viewportSize.Y / designHeight);
+        var center = new Vector2(designWidth * 0.5f, designHeight * 0.5f);
         var applied = 0;
         foreach (var node in EnumerateNodes(replacementBackground).OfType<Node2D>().Where(node =>
                      node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
         {
             var path = replacementBackground.GetPathTo(node).ToString();
-            if (!inheritedTransforms.TryGetValue(path, out var transform))
+            if (!previousStates.TryGetValue(path, out var previous))
             {
                 continue;
             }
 
-            if ((transform.Position - node.Position).Length() < 0.01f &&
-                (transform.Scale - node.Scale).Length() < 0.001f &&
-                Mathf.IsZeroApprox(transform.Rotation - node.Rotation) &&
-                Mathf.IsZeroApprox(transform.Skew - node.Skew))
+            var expectedPosition = (node.Position - center) * fit + viewportSize * 0.5f;
+            var expectedScale = node.Scale * fit;
+            if ((previous.Position - expectedPosition).Length() > 2f ||
+                (previous.Scale - expectedScale).Length() > 0.02f)
             {
                 continue;
             }
 
-            node.Position = transform.Position;
-            node.Scale = transform.Scale;
-            node.Rotation = transform.Rotation;
-            node.Skew = transform.Skew;
+            node.Position = expectedPosition;
+            node.Scale = expectedScale;
             applied++;
         }
 
         if (applied > 0)
         {
-            ModLog.Info($"已继承选角场景的 {applied} 个窗口适配节点变换。");
+            ModLog.Info($"检测到外部选角窗口适配器，已按 {viewportSize.X:0}x{viewportSize.Y:0} 窗口公式重算 {applied} 个节点。");
         }
     }
 
@@ -937,11 +949,7 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private sealed record SpineTransform(
-        Vector2 Position,
-        Vector2 Scale,
-        float Rotation,
-        float Skew);
+    private sealed record SpineViewportState(Vector2 Position, Vector2 Scale);
 
     private static void RefreshCharacterButtonIcon(
         NCharacterSelectScreen screen,
