@@ -885,7 +885,11 @@ internal static partial class ContextualSkinControls
                 continue;
             }
 
-            var current = node.Get("skeleton_data_res").AsGodotObject() as Resource;
+            // Use Variant.As<Resource>() here. AsGodotObject() returns the native wrapper but
+            // does not reliably preserve the managed Resource type for Spine resources, so the
+            // old cast silently skipped rebinding and left Godot using a previously cached
+            // skeleton/atlas (most visible with Watcher Beautified).
+            var current = node.Get("skeleton_data_res").As<Resource>();
             if (current == null ||
                 string.IsNullOrWhiteSpace(current.ResourcePath) ||
                 !isolatedResources.TryGetValue(current.ResourcePath, out var replacement) ||
@@ -894,7 +898,7 @@ internal static partial class ContextualSkinControls
                 continue;
             }
 
-            node.Call("set_skeleton_data_res", replacement);
+            node.Set("skeleton_data_res", replacement);
             rebound++;
         }
 
