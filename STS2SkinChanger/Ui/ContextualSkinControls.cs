@@ -890,9 +890,12 @@ internal static partial class ContextualSkinControls
             // old cast silently skipped rebinding and left Godot using a previously cached
             // skeleton/atlas (most visible with Watcher Beautified).
             var current = node.Get("skeleton_data_res").As<Resource>();
+            var logicalPath = current == null
+                ? string.Empty
+                : CanonicalRuntimeResourcePath(current.ResourcePath);
             if (current == null ||
-                string.IsNullOrWhiteSpace(current.ResourcePath) ||
-                !isolatedResources.TryGetValue(current.ResourcePath, out var replacement) ||
+                string.IsNullOrWhiteSpace(logicalPath) ||
+                !isolatedResources.TryGetValue(logicalPath, out var replacement) ||
                 ReferenceEquals(current, replacement))
             {
                 continue;
@@ -906,6 +909,24 @@ internal static partial class ContextualSkinControls
         {
             ModLog.Info($"选角场景已在进树前重新绑定 {rebound} 个隔离骨骼资源。");
         }
+    }
+
+    private static string CanonicalRuntimeResourcePath(string resourcePath)
+    {
+        const string prefix = "res://sts2_skin_runtime/";
+        if (!resourcePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return resourcePath;
+        }
+
+        var relative = resourcePath[prefix.Length..];
+        var sessionSeparator = relative.IndexOf('/');
+        var generationSeparator = sessionSeparator < 0
+            ? -1
+            : relative.IndexOf('/', sessionSeparator + 1);
+        return generationSeparator >= 0 && generationSeparator + 1 < relative.Length
+            ? "res://" + relative[(generationSeparator + 1)..]
+            : resourcePath;
     }
 
     private static void RefreshCharacterBackgroundLayout(Control container, Control background)
