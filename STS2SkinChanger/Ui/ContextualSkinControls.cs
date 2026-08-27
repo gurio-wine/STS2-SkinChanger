@@ -755,6 +755,7 @@ internal static partial class ContextualSkinControls
         // Provider presentation callbacks are allowed to temporarily hide this host while their
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
+        var inheritedViewportTransforms = CaptureViewportFitTransforms(container);
         foreach (var child in container.GetChildren())
         {
             container.RemoveChildSafely(child);
@@ -766,6 +767,8 @@ internal static partial class ContextualSkinControls
         {
             RebindCharacterSceneResources(background, isolatedResources);
         }
+
+        ApplyViewportFitTransforms(background, inheritedViewportTransforms);
 
         background.Name = character.Id.Entry + "_bg";
         container.AddChildSafely(background);
@@ -788,6 +791,79 @@ internal static partial class ContextualSkinControls
                 RefreshCharacterBackgroundLayout(container, background);
             }
         }).CallDeferred();
+    }
+
+    private static IReadOnlyDictionary<string, ViewportFitTransform> CaptureViewportFitTransforms(
+        Control container)
+    {
+        var previousBackground = container.GetChildren().OfType<Node>().FirstOrDefault();
+        if (previousBackground == null)
+        {
+            return new Dictionary<string, ViewportFitTransform>(StringComparer.Ordinal);
+        }
+
+        var viewport = container.GetViewportRect().Size;
+        if (viewport.X <= 0f || viewport.Y <= 0f)
+        {
+            return new Dictionary<string, ViewportFitTransform>(StringComparer.Ordinal);
+        }
+
+        var transforms = new Dictionary<string, ViewportFitTransform>(StringComparer.Ordinal);
+        foreach (var node in EnumerateNodes(previousBackground).OfType<Node2D>())
+        {
+            var path = previousBackground.GetPathTo(node).ToString();
+            transforms[path] = new ViewportFitTransform(
+                node.Position,
+                node.Scale,
+                node.Rotation,
+                node.Skew,
+                viewport);
+        }
+
+        return transforms;
+    }
+
+    private static void ApplyViewportFitTransforms(
+        Node replacementBackground,
+        IReadOnlyDictionary<string, ViewportFitTransform> inheritedTransforms)
+    {
+        if (inheritedTransforms.Count == 0)
+        {
+            return;
+        }
+
+        var applied = 0;
+        foreach (var node in EnumerateNodes(replacementBackground).OfType<Node2D>())
+        {
+            var path = replacementBackground.GetPathTo(node).ToString();
+            if (!inheritedTransforms.TryGetValue(path, out var transform))
+            {
+                continue;
+            }
+
+            var fitScale = Mathf.Max(
+                transform.Viewport.X / 1920f,
+                transform.Viewport.Y / 1080f);
+            var expectedPosition =
+                (node.Position - new Vector2(960f, 540f)) * fitScale + transform.Viewport * 0.5f;
+            var expectedScale = node.Scale * fitScale;
+            if ((transform.Position - expectedPosition).Length() >= 2f ||
+                (transform.Scale - expectedScale).Length() >= 0.02f)
+            {
+                continue;
+            }
+
+            node.Position = transform.Position;
+            node.Scale = transform.Scale;
+            node.Rotation = transform.Rotation;
+            node.Skew = transform.Skew;
+            applied++;
+        }
+
+        if (applied > 0)
+        {
+            ModLog.Info($"已继承选角场景的 {applied} 个窗口适配节点变换。");
+        }
     }
 
     private static void RebindCharacterSceneResources(
@@ -869,6 +945,13 @@ internal static partial class ContextualSkinControls
             }
         }
     }
+
+    private sealed record ViewportFitTransform(
+        Vector2 Position,
+        Vector2 Scale,
+        float Rotation,
+        float Skew,
+        Vector2 Viewport);
 
     private static void RefreshCharacterButtonIcon(
         NCharacterSelectScreen screen,
