@@ -793,31 +793,25 @@ internal static partial class ContextualSkinControls
         }).CallDeferred();
     }
 
-    private static IReadOnlyDictionary<string, ViewportFitTransform> CaptureViewportFitTransforms(
+    private static IReadOnlyDictionary<string, SpineTransform> CaptureViewportFitTransforms(
         Control container)
     {
         var previousBackground = container.GetChildren().OfType<Node>().FirstOrDefault();
         if (previousBackground == null)
         {
-            return new Dictionary<string, ViewportFitTransform>(StringComparer.Ordinal);
+            return new Dictionary<string, SpineTransform>(StringComparer.Ordinal);
         }
 
-        var viewport = container.GetViewportRect().Size;
-        if (viewport.X <= 0f || viewport.Y <= 0f)
-        {
-            return new Dictionary<string, ViewportFitTransform>(StringComparer.Ordinal);
-        }
-
-        var transforms = new Dictionary<string, ViewportFitTransform>(StringComparer.Ordinal);
-        foreach (var node in EnumerateNodes(previousBackground).OfType<Node2D>())
+        var transforms = new Dictionary<string, SpineTransform>(StringComparer.Ordinal);
+        foreach (var node in EnumerateNodes(previousBackground).OfType<Node2D>().Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
         {
             var path = previousBackground.GetPathTo(node).ToString();
-            transforms[path] = new ViewportFitTransform(
+            transforms[path] = new SpineTransform(
                 node.Position,
                 node.Scale,
                 node.Rotation,
-                node.Skew,
-                viewport);
+                node.Skew);
         }
 
         return transforms;
@@ -825,7 +819,7 @@ internal static partial class ContextualSkinControls
 
     private static void ApplyViewportFitTransforms(
         Node replacementBackground,
-        IReadOnlyDictionary<string, ViewportFitTransform> inheritedTransforms)
+        IReadOnlyDictionary<string, SpineTransform> inheritedTransforms)
     {
         if (inheritedTransforms.Count == 0)
         {
@@ -833,7 +827,8 @@ internal static partial class ContextualSkinControls
         }
 
         var applied = 0;
-        foreach (var node in EnumerateNodes(replacementBackground).OfType<Node2D>())
+        foreach (var node in EnumerateNodes(replacementBackground).OfType<Node2D>().Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
         {
             var path = replacementBackground.GetPathTo(node).ToString();
             if (!inheritedTransforms.TryGetValue(path, out var transform))
@@ -841,14 +836,10 @@ internal static partial class ContextualSkinControls
                 continue;
             }
 
-            var fitScale = Mathf.Max(
-                transform.Viewport.X / 1920f,
-                transform.Viewport.Y / 1080f);
-            var expectedPosition =
-                (node.Position - new Vector2(960f, 540f)) * fitScale + transform.Viewport * 0.5f;
-            var expectedScale = node.Scale * fitScale;
-            if ((transform.Position - expectedPosition).Length() >= 2f ||
-                (transform.Scale - expectedScale).Length() >= 0.02f)
+            if ((transform.Position - node.Position).Length() < 0.01f &&
+                (transform.Scale - node.Scale).Length() < 0.001f &&
+                Mathf.IsZeroApprox(transform.Rotation - node.Rotation) &&
+                Mathf.IsZeroApprox(transform.Skew - node.Skew))
             {
                 continue;
             }
@@ -946,12 +937,11 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private sealed record ViewportFitTransform(
+    private sealed record SpineTransform(
         Vector2 Position,
         Vector2 Scale,
         float Rotation,
-        float Skew,
-        Vector2 Viewport);
+        float Skew);
 
     private static void RefreshCharacterButtonIcon(
         NCharacterSelectScreen screen,
