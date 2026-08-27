@@ -755,30 +755,46 @@ internal static partial class ContextualSkinControls
         // Provider presentation callbacks are allowed to temporarily hide this host while their
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
-        // Some character mods attach a per-frame viewport fitter to their SpineSprite. Capture
-        // only enough state to recognise that fitter; never copy its old transform into the new
-        // skin because that would also carry one skin's offset into another (including vanilla).
-        var previousViewportStates = CaptureViewportFitStates(container);
+        var previousBackground = container.GetChildren().OfType<Control>().FirstOrDefault();
+        var replacementBackground = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        if (isolatedResources != null)
+        {
+            RebindCharacterSceneResources(replacementBackground, isolatedResources);
+        }
+
+        // Keep the game's original node when the selected scene has the same Spine topology.
+        // External character mods commonly register per-node/per-frame adapters (for example
+        // Watcher's viewport fitter). Removing that node invalidates those adapters and a copied
+        // coordinate can never reproduce their runtime behaviour. Swapping the resource in place
+        // preserves the adapter, animation players and every authored transform.
+        if (previousBackground != null &&
+            TrySwapCharacterSpineResources(previousBackground, replacementBackground))
+        {
+            replacementBackground.QueueFreeSafely();
+            RefreshCharacterBackgroundLayout(container, previousBackground);
+            Callable.From(() =>
+            {
+                if (GodotObject.IsInstanceValid(container) &&
+                    GodotObject.IsInstanceValid(previousBackground))
+                {
+                    RefreshCharacterBackgroundLayout(container, previousBackground);
+                }
+            }).CallDeferred();
+            return;
+        }
+
         foreach (var child in container.GetChildren())
         {
             container.RemoveChildSafely(child);
             child.QueueFreeSafely();
         }
 
-        var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
-        if (isolatedResources != null)
+        replacementBackground.Name = character.Id.Entry + "_bg";
+        container.AddChildSafely(replacementBackground);
+
+        if (replacementBackground.IsInsideTree())
         {
-            RebindCharacterSceneResources(background, isolatedResources);
-        }
-
-        ApplyExternalViewportFit(background, previousViewportStates, container.GetViewportRect().Size);
-
-        background.Name = character.Id.Entry + "_bg";
-        container.AddChildSafely(background);
-
-        if (background.IsInsideTree())
-        {
-            RefreshCharacterBackgroundLayout(container, background);
+            RefreshCharacterBackgroundLayout(container, replacementBackground);
         }
 
         // NCharacterSelectScreenBg only subscribes to SizeChanged in _Ready; it does not run
@@ -789,84 +805,52 @@ internal static partial class ContextualSkinControls
         Callable.From(() =>
         {
             if (GodotObject.IsInstanceValid(container) &&
-                GodotObject.IsInstanceValid(background))
+                GodotObject.IsInstanceValid(replacementBackground))
             {
-                RefreshCharacterBackgroundLayout(container, background);
+                RefreshCharacterBackgroundLayout(container, replacementBackground);
             }
         }).CallDeferred();
     }
 
-    private static IReadOnlyDictionary<string, SpineViewportState> CaptureViewportFitStates(
-        Control container)
+    private static bool TrySwapCharacterSpineResources(
+        Node existingBackground,
+        Node replacementBackground)
     {
-        var previousBackground = container.GetChildren().OfType<Node>().FirstOrDefault();
-        if (previousBackground == null)
+        var existingSpines = EnumerateNodes(existingBackground)
+            .Where(node => node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal))
+            .ToDictionary(node => existingBackground.GetPathTo(node).ToString(), StringComparer.Ordinal);
+        var replacementSpines = EnumerateNodes(replacementBackground)
+            .Where(node => node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal))
+            .ToDictionary(node => replacementBackground.GetPathTo(node).ToString(), StringComparer.Ordinal);
+        if (existingSpines.Count == 0 || existingSpines.Count != replacementSpines.Count ||
+            existingSpines.Keys.Any(path => !replacementSpines.ContainsKey(path)))
         {
-            return new Dictionary<string, SpineViewportState>(StringComparer.Ordinal);
+            return false;
         }
 
-        var transforms = new Dictionary<string, SpineViewportState>(StringComparer.Ordinal);
-        foreach (var node in EnumerateNodes(previousBackground).OfType<Node2D>().Where(node =>
-                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        var changed = 0;
+        foreach (var pair in existingSpines)
         {
-            var path = previousBackground.GetPathTo(node).ToString();
-            transforms[path] = new SpineViewportState(node.Position, node.Scale);
-        }
-
-        return transforms;
-    }
-
-    private static void ApplyExternalViewportFit(
-        Node replacementBackground,
-        IReadOnlyDictionary<string, SpineViewportState> previousStates,
-        Vector2 viewportSize)
-    {
-        if (previousStates.Count == 0)
-        {
-            return;
-        }
-
-        // Watcher and similar mods use the standard 1920x1080 design-space fitter:
-        //   scale = authoredScale * max(viewport/design)
-        //   pos   = (authoredPos - center) * max + viewport/2
-        // Recompute this from the replacement scene's authored transform. This is a detection
-        // and re-application of an external layout policy, not a fixed pixel offset.
-        if (viewportSize.X <= 1f || viewportSize.Y <= 1f)
-        {
-            return;
-        }
-
-        const float designWidth = 1920f;
-        const float designHeight = 1080f;
-        var fit = Mathf.Max(viewportSize.X / designWidth, viewportSize.Y / designHeight);
-        var center = new Vector2(designWidth * 0.5f, designHeight * 0.5f);
-        var applied = 0;
-        foreach (var node in EnumerateNodes(replacementBackground).OfType<Node2D>().Where(node =>
-                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
-        {
-            var path = replacementBackground.GetPathTo(node).ToString();
-            if (!previousStates.TryGetValue(path, out var previous))
+            var existing = pair.Value;
+            var replacement = replacementSpines[pair.Key];
+            if (!existing.HasMethod("set_skeleton_data_res") ||
+                !replacement.HasMethod("set_skeleton_data_res"))
             {
-                continue;
+                return false;
             }
 
-            var expectedPosition = (node.Position - center) * fit + viewportSize * 0.5f;
-            var expectedScale = node.Scale * fit;
-            if ((previous.Position - expectedPosition).Length() > 2f ||
-                (previous.Scale - expectedScale).Length() > 0.02f)
+            var resource = replacement.Get("skeleton_data_res").As<Resource>();
+            if (resource == null)
             {
-                continue;
+                return false;
             }
 
-            node.Position = expectedPosition;
-            node.Scale = expectedScale;
-            applied++;
+            existing.Set("skeleton_data_res", resource);
+            changed++;
         }
 
-        if (applied > 0)
-        {
-            ModLog.Info($"检测到外部选角窗口适配器，已按 {viewportSize.X:0}x{viewportSize.Y:0} 窗口公式重算 {applied} 个节点。");
-        }
+        ModLog.Info($"保留原选角节点并热替换 {changed} 个 Spine 资源，外部运行时适配器继续有效。");
+        return changed > 0;
     }
 
     private static void RebindCharacterSceneResources(
@@ -973,8 +957,6 @@ internal static partial class ContextualSkinControls
             }
         }
     }
-
-    private sealed record SpineViewportState(Vector2 Position, Vector2 Scale);
 
     private static void RefreshCharacterButtonIcon(
         NCharacterSelectScreen screen,
