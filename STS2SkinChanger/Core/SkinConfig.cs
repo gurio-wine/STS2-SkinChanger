@@ -69,45 +69,31 @@ internal sealed class SkinConfig
 
     public static SkinConfig Load(string path)
     {
+        var backupPath = path + ".bak";
         try
         {
             if (File.Exists(path))
             {
-                var config = JsonSerializer.Deserialize<SkinConfig>(File.ReadAllText(path), JsonOptions) ?? new SkinConfig();
-                config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                config.CardSkinPriorities ??=
-                    new Dictionary<string, List<CardSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
-                config.CardSkinPriorities = config.CardSkinPriorities.ToDictionary(
-                    pair => pair.Key,
-                    pair => (pair.Value ?? [])
-                        .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
-                        .ToList(),
-                    StringComparer.OrdinalIgnoreCase);
-                config.MonsterScales ??=
-                    new Dictionary<string, Dictionary<string, float>>(StringComparer.OrdinalIgnoreCase);
-                config.MonsterScales = config.MonsterScales.ToDictionary(
-                    pair => pair.Key,
-                    pair => new Dictionary<string, float>(
-                        pair.Value ?? new Dictionary<string, float>(),
-                        StringComparer.OrdinalIgnoreCase),
-                    StringComparer.OrdinalIgnoreCase);
-                config.CharacterCombatTransforms ??=
-                    new Dictionary<string, Dictionary<string, CharacterCombatTransform>>(
-                        StringComparer.OrdinalIgnoreCase);
-                config.CharacterCombatTransforms = config.CharacterCombatTransforms.ToDictionary(
-                    pair => pair.Key,
-                    pair => new Dictionary<string, CharacterCombatTransform>(
-                        (pair.Value ?? new Dictionary<string, CharacterCombatTransform>())
-                        .Where(option => option.Value != null)
-                        .ToDictionary(option => option.Key, option => option.Value),
-                        StringComparer.OrdinalIgnoreCase),
-                    StringComparer.OrdinalIgnoreCase);
-                return config;
+                return Deserialize(File.ReadAllText(path));
             }
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"读取皮肤配置失败，将使用默认配置：{exception.Message}");
+            ModLog.Warn($"读取皮肤配置失败，将尝试备份：{exception.Message}");
+        }
+
+        try
+        {
+            if (File.Exists(backupPath))
+            {
+                var recovered = Deserialize(File.ReadAllText(backupPath));
+                ModLog.Warn("已从 skin_changer.json.bak 恢复皮肤选择设置。");
+                return recovered;
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"读取皮肤配置备份失败，将使用默认配置：{exception.Message}");
         }
 
         return new SkinConfig();
@@ -125,6 +111,52 @@ internal sealed class SkinConfig
         }
 
         File.Move(temporaryPath, path, overwrite: true);
+        try
+        {
+            File.Copy(path, path + ".bak", overwrite: true);
+        }
+        catch (Exception exception)
+        {
+            // 主配置已经安全落盘；备份失败不应让调用方回滚内存中的成功选择。
+            ModLog.Warn("更新皮肤配置备份失败：" + exception.Message);
+        }
+    }
+
+    private static SkinConfig Deserialize(string json)
+    {
+        var config = JsonSerializer.Deserialize<SkinConfig>(json, JsonOptions) ?? new SkinConfig();
+        config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        config.Selections = new Dictionary<string, string>(
+            config.Selections,
+            StringComparer.OrdinalIgnoreCase);
+        config.CardSkinPriorities ??=
+            new Dictionary<string, List<CardSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
+        config.CardSkinPriorities = config.CardSkinPriorities.ToDictionary(
+            pair => pair.Key,
+            pair => (pair.Value ?? [])
+                .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
+                .ToList(),
+            StringComparer.OrdinalIgnoreCase);
+        config.MonsterScales ??=
+            new Dictionary<string, Dictionary<string, float>>(StringComparer.OrdinalIgnoreCase);
+        config.MonsterScales = config.MonsterScales.ToDictionary(
+            pair => pair.Key,
+            pair => new Dictionary<string, float>(
+                pair.Value ?? new Dictionary<string, float>(),
+                StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+        config.CharacterCombatTransforms ??=
+            new Dictionary<string, Dictionary<string, CharacterCombatTransform>>(
+                StringComparer.OrdinalIgnoreCase);
+        config.CharacterCombatTransforms = config.CharacterCombatTransforms.ToDictionary(
+            pair => pair.Key,
+            pair => new Dictionary<string, CharacterCombatTransform>(
+                (pair.Value ?? new Dictionary<string, CharacterCombatTransform>())
+                .Where(option => option.Value != null)
+                .ToDictionary(option => option.Key, option => option.Value),
+                StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+        return config;
     }
 
     public string GetSelection(string groupId) =>

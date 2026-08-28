@@ -468,7 +468,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         var current = SkinService.Config.GetSelection(group.Id);
         var selectedIndex = Enumerable.Range(0, _skinDropdown.ItemCount)
-            .FirstOrDefault(index => _skinDropdown.GetItemMetadata(index).AsString() == current);
+            .FirstOrDefault(index => _skinDropdown.GetItemMetadata(index).AsString()
+                .Equals(current, StringComparison.OrdinalIgnoreCase));
         _skinDropdown.Select(selectedIndex);
         _skinDropdown.SetMeta("sts2_skin_group", group.Id);
         _updatingDropdown = false;

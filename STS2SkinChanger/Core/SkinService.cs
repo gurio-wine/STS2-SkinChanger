@@ -529,25 +529,29 @@ internal static class SkinService
 
         var knownIds = group.Options.Select(option => option.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var entries = requestedEntries
+        var knownEntries = requestedEntries
             .Where(entry => knownIds.Contains(entry.OptionId))
             .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        foreach (var option in group.Options.Where(option => entries.All(entry =>
+        foreach (var option in group.Options.Where(option => knownEntries.All(entry =>
                      !entry.OptionId.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
         {
-            entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: true));
+            knownEntries.Add(new CardSkinPriorityEntry(option.Id, Enabled: true));
         }
 
         var previousEntries = Config.CardSkinPriorities.TryGetValue(group.Id, out var configured)
             ? configured.ToList()
             : null;
+        var storedEntries = MergeKnownCardPriorityEntries(
+            previousEntries ?? [],
+            knownEntries,
+            knownIds);
         var selectionKey = CardSelectionKey(group.Id);
         var hadPreviousSelection = Config.Selections.TryGetValue(selectionKey, out var previousSelection);
         try
         {
-            Config.CardSkinPriorities[group.Id] = entries;
-            Config.Selections[selectionKey] = entries.FirstOrDefault(entry => entry.Enabled)?.OptionId ??
+            Config.CardSkinPriorities[group.Id] = storedEntries;
+            Config.Selections[selectionKey] = knownEntries.FirstOrDefault(entry => entry.Enabled)?.OptionId ??
                                              SkinCatalog.BaseOptionId;
             ClearCardPortraitCache(group.Id);
             MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id });
@@ -2569,6 +2573,8 @@ internal static class SkinService
 
     private static void SanitizeSelections()
     {
+        var previouslyConfiguredGroups = Config.Selections.Keys
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var group in Catalog!.Groups)
         {
             if (!Config.Selections.ContainsKey(group.Id))
@@ -2585,7 +2591,12 @@ internal static class SkinService
             .Select(group => Config.GetSelection(group.Id))
             .Where(Catalog.ProviderUsesFullRuntime)
             .GroupBy(providerId => providerId, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(group => group.Count())
+            .OrderByDescending(group => Catalog.GetFullRuntimeProviderGroups(group.Key)
+                .Count(ownedGroupId =>
+                    previouslyConfiguredGroups.Contains(ownedGroupId) &&
+                    Config.GetSelection(ownedGroupId)
+                        .Equals(group.Key, StringComparison.OrdinalIgnoreCase)))
+            .ThenByDescending(group => group.Count())
             .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.Key)
             .ToArray();
@@ -2597,18 +2608,20 @@ internal static class SkinService
             {
                 var selectedId = Config.GetSelection(ownedGroupId);
                 return !selectedId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
-                       !selectedId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase);
+                       !selectedId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                       previouslyConfiguredGroups.Contains(ownedGroupId);
             });
-            if (conflictsWithExplicitChoice || ownedGroups.Any(claimedGroups.Contains))
+            if (ownedGroups.Any(claimedGroups.Contains))
             {
-                foreach (var ownedGroupId in ownedGroups.Where(ownedGroupId =>
-                             Config.GetSelection(ownedGroupId)
-                                 .Equals(providerId, StringComparison.OrdinalIgnoreCase)))
-                {
-                    Config.Selections[ownedGroupId] = SkinCatalog.BaseOptionId;
-                }
-
                 continue;
+            }
+
+            if (conflictsWithExplicitChoice)
+            {
+                // A catalog update can make an old skin own extra linked groups. Keep the saved
+                // primary choice and make the bundle coherent instead of silently reverting it to
+                // the game default. Normal UI changes are already coherent transactions.
+                ModLog.Info($"恢复 {providerId} 的联动外观选择，未丢弃已有角色皮肤设置。");
             }
 
             foreach (var ownedGroupId in ownedGroups)
@@ -2640,11 +2653,20 @@ internal static class SkinService
             .Select(option => option.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         List<CardSkinPriorityEntry> entries;
-        if (Config.CardSkinPriorities.TryGetValue(group.Id, out var configured))
+        var configuredEntries = Config.CardSkinPriorities.TryGetValue(group.Id, out var configured)
+            ? configured
+            : [];
+        if (configuredEntries.Count > 0)
         {
-            entries = configured
+            if (enableAllByDefault)
+            {
+                configuredEntries = configuredEntries
+                    .Select(entry => entry with { Enabled = true })
+                    .ToList();
+            }
+
+            entries = configuredEntries
                 .Where(entry => knownIds.Contains(entry.OptionId))
-                .Select(entry => enableAllByDefault ? entry with { Enabled = true } : entry)
                 .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             foreach (var option in group.Options.Where(option => entries.All(entry =>
@@ -2668,10 +2690,48 @@ internal static class SkinService
                 .ToList();
         }
 
-        Config.CardSkinPriorities[group.Id] = entries;
+        Config.CardSkinPriorities[group.Id] = MergeKnownCardPriorityEntries(
+            configuredEntries,
+            entries,
+            knownIds);
         Config.Selections[CardSelectionKey(group.Id)] =
             entries.FirstOrDefault(entry => entry.Enabled)?.OptionId ?? SkinCatalog.BaseOptionId;
         return entries;
+    }
+
+    private static List<CardSkinPriorityEntry> MergeKnownCardPriorityEntries(
+        IReadOnlyList<CardSkinPriorityEntry> existingEntries,
+        IReadOnlyList<CardSkinPriorityEntry> knownEntries,
+        IReadOnlySet<string> knownIds)
+    {
+        var pendingKnown = new Queue<CardSkinPriorityEntry>(knownEntries);
+        var result = new List<CardSkinPriorityEntry>(
+            Math.Max(existingEntries.Count, knownEntries.Count));
+        var preservedUnknownIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var existing in existingEntries)
+        {
+            if (knownIds.Contains(existing.OptionId))
+            {
+                if (pendingKnown.Count > 0)
+                {
+                    result.Add(pendingKnown.Dequeue());
+                }
+
+                continue;
+            }
+
+            if (preservedUnknownIds.Add(existing.OptionId))
+            {
+                result.Add(existing);
+            }
+        }
+
+        while (pendingKnown.Count > 0)
+        {
+            result.Add(pendingKnown.Dequeue());
+        }
+
+        return result;
     }
 
     private static void CleanupOldOverlays()

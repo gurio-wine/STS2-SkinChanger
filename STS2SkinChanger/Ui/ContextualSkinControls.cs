@@ -403,7 +403,8 @@ internal static partial class ContextualSkinControls
 
         var selected = SkinService.Config.GetSelection(group.Id);
         var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
-            .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString() == selected);
+            .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
+                .Equals(selected, StringComparison.OrdinalIgnoreCase));
         dropdown.Select(selectedIndex);
         PopulateMonsterScale(selector, group.Id);
         selector.SetMeta(UpdatingMeta, false);
@@ -471,7 +472,8 @@ internal static partial class ContextualSkinControls
             ModLog.Error($"界面切换失败：{SkinService.LastError}");
             var current = SkinService.Config.GetSelection(groupId);
             var currentIndex = Enumerable.Range(0, dropdown.ItemCount)
-                .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString() == current);
+                .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString()
+                    .Equals(current, StringComparison.OrdinalIgnoreCase));
             dropdown.Select(currentIndex);
             return;
         }
