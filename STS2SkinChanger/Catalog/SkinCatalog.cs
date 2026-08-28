@@ -552,7 +552,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 "map_marker_",
                 "ui/run_history"
             }.Any(path => ContainsMetadata(path, StringComparison.OrdinalIgnoreCase));
-            if (!hasSkinResourcePath)
+            var hasDirectCharacterPresentationPatch = HasDirectVisualHarmonyPatch(assemblyPath);
+            if (!hasSkinResourcePath && !hasDirectCharacterPresentationPatch)
             {
                 return false;
             }
@@ -561,7 +562,7 @@ internal sealed partial class SkinCatalog : IDisposable
             // libraries naturally mention those names without replacing a skin. Prefer actual
             // HarmonyPatch attribute targets, which can be inspected without loading the DLL.
             // Keep a narrow string fallback for dynamically resolved creature visual patches.
-            return HasDirectVisualHarmonyPatch(assemblyPath) ||
+            return hasDirectCharacterPresentationPatch ||
                    HasTarget("CharacterModel", "CreateVisuals") ||
                    HasTarget("MonsterModel", "CreateVisuals") ||
                    HasTarget("EventModel", "CreateBackgroundScene");
@@ -616,7 +617,17 @@ internal sealed partial class SkinCatalog : IDisposable
                 HasPatchTarget(value, "EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
                 HasPatchTarget(value, "CardModel", "Portrait", "PortraitPath") ||
                 HasPatchTarget(value, "AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
-                HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas"))
+                HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas") ||
+                // Full character packs often leave resources in a private namespace and inject
+                // presentation from lifecycle callbacks instead of patching a model getter.
+                // These are stable game contracts, so recognize them without matching a mod
+                // name or author.
+                HasPatchTarget(value, "NCreature", "_Ready", "SetAnimationTrigger") ||
+                HasPatchTarget(value, "NCharacterSelectScreen", "SelectCharacter") ||
+                HasPatchTarget(value, "NCharacterSelectButton", "Init") ||
+                HasPatchTarget(value, "NMerchantRoom", "_Ready") ||
+                HasPatchTarget(value, "NRestSiteRoom", "_Ready") ||
+                HasPatchTarget(value, "CombatManager", "EndCombatInternal"))
             {
                 return true;
             }
@@ -3740,7 +3751,14 @@ internal sealed partial class SkinCatalog : IDisposable
             // Discover direct resources by their game-facing structure before building options;
             // this keeps arbitrary provider namespaces working without indexing every project file.
             var privateRuntimeAssets = index.Archive.Paths
-                .Where(path => path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase))
+                // Exported Godot projects commonly ship only `scene.tscn.remap` plus the
+                // `.godot/exported/*.scn` payload. Normalize the remap source so private scenes
+                // remain discoverable even when the source `.tscn` itself is absent from the PCK.
+                .Where(path => path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+                               path.EndsWith(".tscn.remap", StringComparison.OrdinalIgnoreCase))
+                .Select(path => path.EndsWith(".tscn.remap", StringComparison.OrdinalIgnoreCase)
+                    ? path[..^6]
+                    : path)
                 .Where(path => TryGetRuntimeProviderAsset(index.Mod.Id, path) != null)
                 .Select(index.TryBuildAsset)
                 .Where(asset => asset != null)

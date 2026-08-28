@@ -196,13 +196,19 @@ internal static class ManagedMonsterSceneScanner
                 }
 
                 var hasStringResult = signature.ParameterTypes.Any(IsStringByReferenceType);
+                // A scene path plus a `string&` result is not sufficient evidence by itself:
+                // character-select/UI patches frequently cast a node to CanvasItem and happen to
+                // contain a scene path, which used to create phantom monster groups such as
+                // `canvasitem`. Require a model- or VisualsPath-specific signal from the patch
+                // type/signature. This keeps the scanner generic while preventing unrelated UI
+                // callbacks from claiming a monster scene.
                 var isVisualsPathPatch = patchTypeName.Contains(
                                              "VisualsPath",
                                              StringComparison.OrdinalIgnoreCase) ||
-                                         hasStringResult &&
-                                         (signature.ParameterTypes.Any(IsMonsterModelType) ||
-                                          candidates.Any(candidate => candidate.ModelTypeName != null) ||
-                                          patchTypeName.Contains("Monster", StringComparison.OrdinalIgnoreCase));
+                                         patchTypeName.Contains(
+                                             "Monster",
+                                             StringComparison.OrdinalIgnoreCase) ||
+                                         hasStringResult && signature.ParameterTypes.Any(IsMonsterModelType);
                 if (!isVisualsPathPatch)
                 {
                     continue;

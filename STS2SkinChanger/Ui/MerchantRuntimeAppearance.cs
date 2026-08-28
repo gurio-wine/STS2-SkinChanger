@@ -20,6 +20,8 @@ internal static class MerchantRuntimeAppearance
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
     private const string PlayerBasePositionMeta = "skin_changer_shop_player_base_position";
     private const string PlayerBaseScaleMeta = "skin_changer_shop_player_base_scale";
+    private const string ProviderRootBasePositionMeta = "skin_changer_shop_provider_root_position";
+    private const string ProviderRootBaseScaleMeta = "skin_changer_shop_provider_root_scale";
 
     private static readonly FieldInfo? MerchantButtonField =
         AccessTools.Field(typeof(NMerchantRoom), "<MerchantButton>k__BackingField");
@@ -27,11 +29,28 @@ internal static class MerchantRuntimeAppearance
         AccessTools.Field(typeof(NMerchantInventory), "<MerchantHand>k__BackingField");
     private static readonly List<WeakReference<Node>> ReplayedInventoryAdditions = [];
     private static readonly Dictionary<ulong, HashSet<ulong>> InventoryReadyBaselines = [];
+    private static readonly Dictionary<ulong, List<WeakReference<Node2D>>> ShopProviderRoots = [];
 
     internal static NMerchantCharacter? GetLocalPlayerVisual()
     {
         var room = NMerchantRoom.Instance;
         return room is { PlayerVisuals.Count: > 0 } ? room.PlayerVisuals[0] : null;
+    }
+
+    internal static string? GetSelectedLocalCharacterProvider()
+    {
+        var player = CharacterAppearanceRuntime.GetLocalPlayer();
+        if (player == null)
+        {
+            return null;
+        }
+
+        var group = ContextualSkinControls.FindGroup(
+            player.Character.Id.Entry,
+            player.Character.GetType().Name);
+        return group == null
+            ? null
+            : SkinService.GetSelectedFullRuntimeProvider(group.Id);
     }
 
     internal static CharacterCombatTransform GetLocalPlayerTransform(string groupId)
@@ -65,6 +84,47 @@ internal static class MerchantRuntimeAppearance
         var transform = value ?? GetLocalPlayerTransform(groupId);
         visual.Position = basePosition + new Vector2(transform.OffsetX, transform.OffsetY);
         visual.Scale = baseScale * transform.Scale;
+        ApplyProviderRootsTransform(visual, transform);
+    }
+
+    internal static void TrackProviderRoots(
+        NMerchantCharacter visual,
+        IEnumerable<Node> addedRoots)
+    {
+        if (!GodotObject.IsInstanceValid(visual))
+        {
+            return;
+        }
+
+        var candidates = addedRoots
+            .OfType<Node2D>()
+            .Where(node => GodotObject.IsInstanceValid(node) && !ReferenceEquals(node, visual))
+            .ToArray();
+        var sameParentCandidates = candidates
+            .Where(node => ReferenceEquals(node.GetParent(), visual.GetParent()))
+            .ToArray();
+        var candidatePool = sameParentCandidates.Length > 0
+            ? sameParentCandidates
+            : candidates;
+        var nearestDistance = candidatePool.Length == 0
+            ? float.PositiveInfinity
+            : candidatePool.Min(node => node.GlobalPosition.DistanceSquaredTo(visual.GlobalPosition));
+        var selected = candidatePool
+            .Where(node => nearestDistance < float.PositiveInfinity &&
+                          (candidatePool.Length == 1 ||
+                           node.GlobalPosition.DistanceSquaredTo(visual.GlobalPosition) <=
+                           nearestDistance + 16f))
+            .Select(node => new WeakReference<Node2D>(node))
+            .ToList();
+        var visualId = visual.GetInstanceId();
+        if (selected.Count == 0)
+        {
+            ShopProviderRoots.Remove(visualId);
+        }
+        else
+        {
+            ShopProviderRoots[visualId] = selected;
+        }
     }
 
     internal static void PrepareMerchantSelectionChange()
@@ -238,6 +298,22 @@ internal static class MerchantRuntimeAppearance
             previous.QueueFree();
             refreshedVisual = replacement;
             replacement = null;
+
+            // Complete character skins can attach a separate shop presentation from an
+            // NMerchantRoom._Ready postfix. That callback already ran when the room was first
+            // created, so replay it after a hot swap as well; the loader tracks its added nodes
+            // and visibility changes and restores them when the provider is left.
+            var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
+            if (providerId != null)
+            {
+                foreach (var replay in ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(room, providerId))
+                {
+                    TrackProviderRoots(refreshedVisual!, replay.AddedRoots);
+                }
+
+                ApplyLocalPlayerTransform(refreshedVisual!, groupId);
+            }
+
             return true;
         }
         catch (Exception exception)
@@ -268,6 +344,49 @@ internal static class MerchantRuntimeAppearance
         if (!visual.HasMeta(PlayerBaseScaleMeta))
         {
             visual.SetMeta(PlayerBaseScaleMeta, visual.Scale);
+        }
+    }
+
+    private static void ApplyProviderRootsTransform(
+        NMerchantCharacter visual,
+        CharacterCombatTransform transform)
+    {
+        if (!ShopProviderRoots.TryGetValue(visual.GetInstanceId(), out var roots))
+        {
+            return;
+        }
+
+        foreach (var reference in roots.ToArray())
+        {
+            if (!reference.TryGetTarget(out var root) || !GodotObject.IsInstanceValid(root))
+            {
+                roots.Remove(reference);
+                continue;
+            }
+
+            if (!root.HasMeta(ProviderRootBasePositionMeta))
+            {
+                root.SetMeta(ProviderRootBasePositionMeta, root.Position);
+            }
+
+            if (!root.HasMeta(ProviderRootBaseScaleMeta))
+            {
+                root.SetMeta(ProviderRootBaseScaleMeta, root.Scale);
+            }
+
+            var basePosition = root
+                .GetMeta(ProviderRootBasePositionMeta, root.Position)
+                .AsVector2();
+            var baseScale = root
+                .GetMeta(ProviderRootBaseScaleMeta, root.Scale)
+                .AsVector2();
+            root.Position = basePosition + new Vector2(transform.OffsetX, transform.OffsetY);
+            root.Scale = baseScale * transform.Scale;
+        }
+
+        if (roots.Count == 0)
+        {
+            ShopProviderRoots.Remove(visual.GetInstanceId());
         }
     }
 
@@ -355,7 +474,31 @@ internal static class MerchantRoomPlayerAppearancePatch
             MerchantRuntimeAppearance.ApplyLocalPlayerTransform(
                 __instance.PlayerVisuals[0],
                 group.Id);
+
+            var providerId = MerchantRuntimeAppearance.GetSelectedLocalCharacterProvider();
+            foreach (var replay in ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(__instance, providerId))
+            {
+                MerchantRuntimeAppearance.TrackProviderRoots(
+                    __instance.PlayerVisuals[0],
+                    replay.AddedRoots);
+            }
+
+            MerchantRuntimeAppearance.ApplyLocalPlayerTransform(
+                __instance.PlayerVisuals[0],
+                group.Id);
         }
+    }
+}
+
+[HarmonyPatch(typeof(NRestSiteRoom), nameof(NRestSiteRoom._Ready))]
+internal static class RestSitePlayerAppearancePatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NRestSiteRoom __instance)
+    {
+        var providerId = MerchantRuntimeAppearance.GetSelectedLocalCharacterProvider();
+        ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(__instance, providerId);
     }
 }
 

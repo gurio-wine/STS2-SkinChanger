@@ -296,6 +296,10 @@ internal static class ManagedSkinModLoader
                     .ToArray();
             if (initializerTypes.Length == 0)
             {
+                // There is no original initializer left to register managed Godot scripts (this
+                // is also the intentional path for declarative providers), so do it immediately
+                // before PatchAll/scene use.
+                EnsureProviderGodotScripts(providerId);
                 new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
                     .PatchAll(assembly);
                 if (provider.HasDeclarativeCharacterAssetReplacement)
@@ -350,20 +354,29 @@ internal static class ManagedSkinModLoader
             }
 
             var installedPatches = CaptureProviderPatches(assembly);
+            // Only postfixes can be replayed after Skin Changer rebuilds the baseline.  Prefixes,
+            // transpilers and finalizers on the same entry points are still isolated below, but
+            // replaying them would re-run gameplay/input side effects (and, for Harmony
+            // `__state`, would require a matching prefix invocation).
             var presentationPatches = installedPatches
-                .Where(IsManagedCharacterPresentationPatch)
+                .Where(IsReplayableCharacterPresentationPatch)
+                .ToArray();
+            var nodeReadyPresentationPatches = installedPatches
+                .Where(IsReplayableNodeReadyPresentationPatch)
                 .ToArray();
             var managedPatches = installedPatches
                 .Where(patch =>
                     IsManagedResourceOwnershipPatch(patch) ||
-                    IsManagedCharacterPresentationPatch(patch))
+                    IsManagedCharacterPresentationPatch(patch) ||
+                    IsManagedNodeReadyPresentationPatch(patch))
                 .ToArray();
             UnpatchProviderCallbacks(managedPatches);
 
             var leakedManagedPatches = CaptureProviderPatches(assembly)
                 .Where(patch =>
                     IsManagedResourceOwnershipPatch(patch) ||
-                    IsManagedCharacterPresentationPatch(patch))
+                    IsManagedCharacterPresentationPatch(patch) ||
+                    IsManagedNodeReadyPresentationPatch(patch))
                 .ToArray();
             if (leakedManagedPatches.Length > 0)
             {
@@ -375,7 +388,8 @@ internal static class ManagedSkinModLoader
             ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(
                 assembly,
                 behaviorPatches,
-                presentationPatches);
+                presentationPatches,
+                nodeReadyPresentationPatches);
             ModLog.Info(
                 $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
                 $"资源整包已隔离挂载，{managedPatches.Length} 个资源/选角呈现入口已交由本 Mod 接管，" +
@@ -411,6 +425,7 @@ internal static class ManagedSkinModLoader
             return;
         }
 
+        RestoreNodeReadyBehaviors(runtime);
         RestoreCharacterPresentations(runtime);
         UnpatchProviderCallbacks(runtime.Patches);
         ModLog.Info($"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁。");
@@ -502,9 +517,29 @@ internal static class ManagedSkinModLoader
         }.Any(token => propertyName.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
 
+    // Skin Changer owns the character-select baseline.  Every callback kind on these targets
+    // must therefore be removed while the provider is selected; otherwise a prefix can mutate
+    // the model before our rebuild and a finalizer/transpiler can leak the provider into the next
+    // character.  Replay is deliberately limited to postfixes (see the separate predicate).
     private static bool IsManagedCharacterPresentationPatch(ProviderPatch patch) =>
+        IsCharacterPresentationTarget(patch.Target);
+
+    private static bool IsReplayableCharacterPresentationPatch(ProviderPatch patch) =>
         patch.Kind == ProviderPatchKind.Postfix &&
         IsCharacterPresentationTarget(patch.Target);
+
+    private static bool IsManagedNodeReadyPresentationPatch(ProviderPatch patch) =>
+        IsNodeReadyPresentationTarget(patch.Target);
+
+    private static bool IsReplayableNodeReadyPresentationPatch(ProviderPatch patch) =>
+        patch.Kind == ProviderPatchKind.Postfix &&
+        IsNodeReadyPresentationTarget(patch.Target);
+
+    private static bool IsNodeReadyPresentationTarget(MethodBase target) =>
+        target.Name.Equals("_Ready", StringComparison.Ordinal) &&
+        target.DeclaringType != null &&
+        (typeof(NMerchantRoom).IsAssignableFrom(target.DeclaringType) ||
+         typeof(NRestSiteRoom).IsAssignableFrom(target.DeclaringType));
 
     /// <summary>
     /// Replays presentation-only postfixes after Skin Changer has rebuilt the current character
@@ -582,7 +617,8 @@ internal static class ManagedSkinModLoader
         {
             result[node.GetInstanceId()] = new CharacterPresentationNodeState(
                 node,
-                node is CanvasItem canvasItem ? canvasItem.Visible : null);
+                node is CanvasItem canvasItem ? canvasItem.Visible : null,
+                GetCharacterPresentationText(node));
         }
 
         return result;
@@ -610,22 +646,36 @@ internal static class ManagedSkinModLoader
         }
 
         var visibilityChanges = new List<CharacterPresentationVisibilityChange>();
+        var textChanges = new List<CharacterPresentationTextChange>();
         foreach (var state in baseline.Values)
         {
-            if (state.Visible is not { } originalVisibility ||
-                state.Node is not CanvasItem canvasItem ||
-                !GodotObject.IsInstanceValid(canvasItem) ||
-                canvasItem.Visible == originalVisibility)
+            if (!GodotObject.IsInstanceValid(state.Node))
             {
                 continue;
             }
 
-            visibilityChanges.Add(new CharacterPresentationVisibilityChange(
-                new WeakReference<CanvasItem>(canvasItem),
-                originalVisibility));
+            if (state.Visible is { } originalVisibility &&
+                state.Node is CanvasItem canvasItem &&
+                canvasItem.Visible != originalVisibility)
+            {
+                visibilityChanges.Add(new CharacterPresentationVisibilityChange(
+                    new WeakReference<CanvasItem>(canvasItem),
+                    originalVisibility,
+                    canvasItem.Visible));
+            }
+
+            if (state.Text is { } originalText &&
+                GetCharacterPresentationText(state.Node) is { } appliedText &&
+                appliedText != originalText)
+            {
+                textChanges.Add(new CharacterPresentationTextChange(
+                    new WeakReference<Node>(state.Node),
+                    originalText,
+                    appliedText));
+            }
         }
 
-        if (addedRoots.Count == 0 && visibilityChanges.Count == 0)
+        if (addedRoots.Count == 0 && visibilityChanges.Count == 0 && textChanges.Count == 0)
         {
             return;
         }
@@ -634,7 +684,8 @@ internal static class ManagedSkinModLoader
             new CharacterPresentationMutation(
                 new WeakReference<NCharacterSelectScreen>(screen),
                 addedRoots,
-                visibilityChanges);
+                visibilityChanges,
+                textChanges);
     }
 
     private static IEnumerable<Node> EnumerateNodeTree(Node root)
@@ -702,8 +753,46 @@ internal static class ManagedSkinModLoader
             if (visibilityChange.Node.TryGetTarget(out var canvasItem) &&
                 GodotObject.IsInstanceValid(canvasItem))
             {
-                canvasItem.Visible = visibilityChange.OriginalVisibility;
+                // Preserve a later game/UI update if it replaced the provider's value while the
+                // presentation was active. Only undo the exact value captured from this replay.
+                if (canvasItem.Visible == visibilityChange.AppliedVisibility)
+                {
+                    canvasItem.Visible = visibilityChange.OriginalVisibility;
+                }
             }
+        }
+
+        foreach (var textChange in mutation.TextChanges)
+        {
+            if (!textChange.Node.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node) ||
+                GetCharacterPresentationText(node) != textChange.AppliedText)
+            {
+                continue;
+            }
+
+            SetCharacterPresentationText(node, textChange.OriginalText);
+        }
+    }
+
+    private static string? GetCharacterPresentationText(Node node) =>
+        node switch
+        {
+            Label label => label.Text,
+            RichTextLabel richTextLabel => richTextLabel.Text,
+            _ => null
+        };
+
+    private static void SetCharacterPresentationText(Node node, string text)
+    {
+        switch (node)
+        {
+            case Label label:
+                label.Text = text;
+                break;
+            case RichTextLabel richTextLabel:
+                richTextLabel.Text = text;
+                break;
         }
     }
 
@@ -761,7 +850,9 @@ internal static class ManagedSkinModLoader
     /// <summary>
     /// Replays parameter-free visual setup attached to an already existing Godot node after a
     /// provider is hot-selected. Newly instantiated nodes do not need this because their normal
-    /// _Ready call already passes through the selected provider's active Harmony patches.
+    /// _Ready call already passes through the selected provider's active Harmony patches. The
+    /// node is snapshotted before the replay, so added children and common CanvasItem/Node2D/
+    /// Control mutations can be restored when the provider is deselected or replayed again.
     /// </summary>
     public static IReadOnlyList<Node> ReplaySelectedNodeReadyBehavior(
         string providerId,
@@ -773,49 +864,373 @@ internal static class ManagedSkinModLoader
             return [];
         }
 
-        var baselineIds = EnumerateNodeTree(node)
-            .Select(candidate => candidate.GetInstanceId())
-            .ToHashSet();
+        BeginSelectedNodeReadyTracking(providerId, node);
         var replayed = 0;
-        foreach (var patch in runtime.Patches.Where(patch =>
-                     (patch.Kind is ProviderPatchKind.Prefix or ProviderPatchKind.Postfix) &&
-                     patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
-                     patch.Target.DeclaringType?.IsInstanceOfType(node) == true))
+        try
         {
-            if (!TryBuildNodeReadyArguments(
-                    patch.Callback,
-                    patch.Target,
-                    node,
-                    out var arguments))
+            foreach (var patch in runtime.Patches
+                         .Concat(runtime.NodeReadyPresentationPatches)
+                         .Where(patch =>
+                             (patch.Kind is ProviderPatchKind.Prefix or ProviderPatchKind.Postfix) &&
+                             patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
+                             patch.Target.DeclaringType?.IsInstanceOfType(node) == true))
             {
-                continue;
-            }
+                if (!TryBuildNodeReadyArguments(
+                        patch.Callback,
+                        patch.Target,
+                        node,
+                        out var arguments))
+                {
+                    continue;
+                }
 
-            try
-            {
-                patch.Callback.Invoke(null, arguments);
-                replayed++;
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn(
-                    $"重放 {providerId} 的场景外观初始化 " +
-                    $"{patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
-                    exception.GetBaseException().Message);
+                try
+                {
+                    patch.Callback.Invoke(null, arguments);
+                    replayed++;
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        $"重放 {providerId} 的场景外观初始化 " +
+                        $"{patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                        exception.GetBaseException().Message);
+                }
             }
         }
+        finally
+        {
+            EndSelectedNodeReadyTracking(providerId, node);
+        }
 
-        var addedRoots = EnumerateNodeTree(node)
-            .Where(candidate => !baselineIds.Contains(candidate.GetInstanceId()))
-            .Where(candidate => candidate.GetParent() is not { } parent ||
-                                baselineIds.Contains(parent.GetInstanceId()))
-            .ToArray();
+        var addedRoots = runtime.NodeReadyMutations.TryGetValue(
+                node.GetInstanceId(),
+                out var mutation)
+            ? mutation.AddedRoots
+                .Select(reference => reference.TryGetTarget(out var addedNode) ? addedNode : null)
+                .Where(addedNode => addedNode != null && GodotObject.IsInstanceValid(addedNode))
+                .Cast<Node>()
+                .ToArray()
+            : [];
         if (replayed > 0)
         {
             ModLog.Info($"已为现有场景节点重放 {providerId} 的 {replayed} 个外观初始化步骤。");
         }
 
         return addedRoots;
+    }
+
+    /// <summary>
+    /// Replays the isolated room-level visual postfixes for every currently selected full runtime
+    /// provider. Room _Ready has already run by the time a hot appearance switch is requested, so
+    /// invoking these callbacks on the live room is the safe equivalent of rebuilding the room.
+    /// Each provider is tracked independently; leaving it restores only nodes and properties that
+    /// its callback actually introduced.
+    /// </summary>
+    public static IReadOnlyList<(string ProviderId, IReadOnlyList<Node> AddedRoots)>
+        ReplaySelectedRoomReadyBehaviors(Node room, string? onlyProviderId = null)
+    {
+        if (!GodotObject.IsInstanceValid(room))
+        {
+            return [];
+        }
+
+        var results = new List<(string ProviderId, IReadOnlyList<Node> AddedRoots)>();
+        foreach (var providerId in ActiveProviderRuntimes
+                     .Where(pair => pair.Value.NodeReadyPresentationPatches.Any(patch =>
+                         patch.Target.DeclaringType?.IsInstanceOfType(room) == true) &&
+                         (onlyProviderId == null ||
+                          pair.Key.Equals(onlyProviderId, StringComparison.OrdinalIgnoreCase)))
+                     .Select(pair => pair.Key)
+                     .ToArray())
+        {
+            var roots = ReplaySelectedNodeReadyBehavior(providerId, room);
+            results.Add((providerId, roots));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Starts tracking a provider's visual changes to an already existing node. This is also
+    /// used by the room lifecycle patches: a provider may have run its _Ready postfix normally
+    /// before the appearance panel is opened, so cleanup must cover that first invocation too.
+    /// </summary>
+    public static void BeginSelectedNodeReadyTracking(string providerId, Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        var nodeId = node.GetInstanceId();
+        RestoreNodeReadyMutation(runtime, nodeId);
+        runtime.PendingNodeReadyBaselines[nodeId] = new NodeReadyBaseline(
+            new WeakReference<Node>(node),
+            CaptureNodeReadyState(node));
+    }
+
+    /// <summary>
+    /// Finishes a node tracking scope and stores only the mutations introduced by the selected
+    /// provider. Returning no value keeps the API safe for Harmony Prefix/Postfix callers; the
+    /// replay method reads the stored weak references when it needs the newly added roots.
+    /// </summary>
+    public static void EndSelectedNodeReadyTracking(string providerId, Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node) ||
+            !runtime.PendingNodeReadyBaselines.Remove(node.GetInstanceId(), out var baseline))
+        {
+            return;
+        }
+
+        var mutation = BuildNodeReadyMutation(node, baseline);
+        if (mutation != null)
+        {
+            runtime.NodeReadyMutations[node.GetInstanceId()] = mutation;
+        }
+    }
+
+    private static NodeReadyMutation? BuildNodeReadyMutation(
+        Node node,
+        NodeReadyBaseline baseline)
+    {
+        var baselineIds = baseline.States.Keys.ToHashSet();
+        var addedRoots = EnumerateNodeTree(node)
+            .Where(candidate => !baselineIds.Contains(candidate.GetInstanceId()))
+            .Where(candidate => candidate.GetParent() is not { } parent ||
+                                baselineIds.Contains(parent.GetInstanceId()))
+            .Select(candidate => new WeakReference<Node>(candidate))
+            .ToArray();
+        // Capture the live tree once. The previous implementation captured the entire tree once
+        // per baseline node, which made a large shop scene quadratic and caused visible pauses on
+        // every hot switch.
+        var currentStates = CaptureNodeReadyState(node);
+        var changes = new List<NodeReadyVisualChange>();
+        foreach (var state in baseline.States.Values)
+        {
+            if (!state.Node.TryGetTarget(out var candidate) ||
+                !GodotObject.IsInstanceValid(candidate))
+            {
+                continue;
+            }
+
+            if (!currentStates.TryGetValue(candidate.GetInstanceId(), out var current))
+            {
+                continue;
+            }
+
+            if (!HasNodeReadyVisualChanged(state, current))
+            {
+                continue;
+            }
+
+            changes.Add(new NodeReadyVisualChange(state.Node, state, current));
+        }
+
+        return addedRoots.Length == 0 && changes.Count == 0
+            ? null
+            : new NodeReadyMutation(addedRoots, changes);
+    }
+
+    private static bool HasNodeReadyVisualChanged(
+        NodeReadyVisualState baseline,
+        NodeReadyVisualState current) =>
+        baseline.Visible != current.Visible ||
+        baseline.Modulate != current.Modulate ||
+        baseline.SelfModulate != current.SelfModulate ||
+        baseline.ZIndex != current.ZIndex ||
+        baseline.ZAsRelative != current.ZAsRelative ||
+        baseline.Node2DPosition != current.Node2DPosition ||
+        baseline.Node2DScale != current.Node2DScale ||
+        baseline.Node2DRotation != current.Node2DRotation ||
+        baseline.ControlPosition != current.ControlPosition ||
+        baseline.ControlSize != current.ControlSize ||
+        baseline.ControlScale != current.ControlScale ||
+        baseline.ControlRotation != current.ControlRotation ||
+        baseline.ControlPivotOffset != current.ControlPivotOffset;
+
+    private static Dictionary<ulong, NodeReadyVisualState> CaptureNodeReadyState(Node root)
+    {
+        var result = new Dictionary<ulong, NodeReadyVisualState>();
+        foreach (var node in EnumerateNodeTree(root))
+        {
+            if (!GodotObject.IsInstanceValid(node))
+            {
+                continue;
+            }
+
+            var canvas = node as CanvasItem;
+            var node2d = node as Node2D;
+            var control = node as Control;
+            result[node.GetInstanceId()] = new NodeReadyVisualState(
+                new WeakReference<Node>(node),
+                canvas?.Visible,
+                canvas?.Modulate,
+                canvas?.SelfModulate,
+                canvas?.ZIndex,
+                canvas?.ZAsRelative,
+                node2d?.Position,
+                node2d?.Scale,
+                node2d?.Rotation,
+                control?.Position,
+                control?.Size,
+                control?.Scale,
+                control?.Rotation,
+                control?.PivotOffset);
+        }
+
+        return result;
+    }
+
+    private static void RestoreNodeReadyBehaviors(ActiveProviderRuntime runtime)
+    {
+        foreach (var mutation in runtime.NodeReadyMutations.Values.ToArray())
+        {
+            RestoreNodeReadyMutation(mutation);
+        }
+
+        runtime.NodeReadyMutations.Clear();
+        runtime.PendingNodeReadyBaselines.Clear();
+    }
+
+    private static void RestoreNodeReadyMutation(
+        ActiveProviderRuntime runtime,
+        ulong nodeId)
+    {
+        if (runtime.NodeReadyMutations.Remove(nodeId, out var mutation))
+        {
+            RestoreNodeReadyMutation(mutation);
+        }
+
+        runtime.PendingNodeReadyBaselines.Remove(nodeId);
+    }
+
+    private static void RestoreNodeReadyMutation(NodeReadyMutation mutation)
+    {
+        foreach (var addedReference in mutation.AddedRoots)
+        {
+            if (!addedReference.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node))
+            {
+                continue;
+            }
+
+            node.GetParent()?.RemoveChildSafely(node);
+            node.QueueFreeSafely();
+        }
+
+        foreach (var change in mutation.Changes)
+        {
+            if (!change.Node.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node))
+            {
+                continue;
+            }
+
+            var original = change.Original;
+            var applied = change.Applied;
+            if (node is CanvasItem canvas)
+            {
+                if (original.Visible is { } visible &&
+                    applied.Visible is { } appliedVisible &&
+                    canvas.Visible == appliedVisible)
+                {
+                    canvas.Visible = visible;
+                }
+
+                if (original.Modulate is { } modulate &&
+                    applied.Modulate is { } appliedModulate &&
+                    canvas.Modulate == appliedModulate)
+                {
+                    canvas.Modulate = modulate;
+                }
+
+                if (original.SelfModulate is { } selfModulate &&
+                    applied.SelfModulate is { } appliedSelfModulate &&
+                    canvas.SelfModulate == appliedSelfModulate)
+                {
+                    canvas.SelfModulate = selfModulate;
+                }
+
+                if (original.ZIndex is { } zIndex &&
+                    applied.ZIndex is { } appliedZIndex &&
+                    canvas.ZIndex == appliedZIndex)
+                {
+                    canvas.ZIndex = zIndex;
+                }
+
+                if (original.ZAsRelative is { } zAsRelative &&
+                    applied.ZAsRelative is { } appliedZAsRelative &&
+                    canvas.ZAsRelative == appliedZAsRelative)
+                {
+                    canvas.ZAsRelative = zAsRelative;
+                }
+            }
+
+            if (node is Node2D node2d)
+            {
+                if (original.Node2DPosition is { } position &&
+                    applied.Node2DPosition is { } appliedPosition &&
+                    node2d.Position == appliedPosition)
+                {
+                    node2d.Position = position;
+                }
+
+                if (original.Node2DScale is { } scale &&
+                    applied.Node2DScale is { } appliedScale &&
+                    node2d.Scale == appliedScale)
+                {
+                    node2d.Scale = scale;
+                }
+
+                if (original.Node2DRotation is { } rotation &&
+                    applied.Node2DRotation is { } appliedRotation &&
+                    Mathf.IsEqualApprox(node2d.Rotation, appliedRotation))
+                {
+                    node2d.Rotation = rotation;
+                }
+            }
+
+            if (node is Control control)
+            {
+                if (original.ControlPosition is { } position &&
+                    applied.ControlPosition is { } appliedPosition &&
+                    control.Position == appliedPosition)
+                {
+                    control.Position = position;
+                }
+
+                if (original.ControlSize is { } size &&
+                    applied.ControlSize is { } appliedSize &&
+                    control.Size == appliedSize)
+                {
+                    control.Size = size;
+                }
+
+                if (original.ControlScale is { } scale &&
+                    applied.ControlScale is { } appliedScale &&
+                    control.Scale == appliedScale)
+                {
+                    control.Scale = scale;
+                }
+
+                if (original.ControlRotation is { } rotation &&
+                    applied.ControlRotation is { } appliedRotation &&
+                    Mathf.IsEqualApprox(control.Rotation, appliedRotation))
+                {
+                    control.Rotation = rotation;
+                }
+
+                if (original.ControlPivotOffset is { } pivotOffset &&
+                    applied.ControlPivotOffset is { } appliedPivotOffset &&
+                    control.PivotOffset == appliedPivotOffset)
+                {
+                    control.PivotOffset = pivotOffset;
+                }
+            }
+        }
     }
 
     private static bool IsLiveCreatureInitializationPatch(
@@ -873,6 +1288,16 @@ internal static class ManagedSkinModLoader
                 case "__runOriginal" when parameterType == typeof(bool):
                     arguments[index] = true;
                     break;
+                // Harmony injects a fresh state value for a postfix paired with a prefix.  The
+                // prefix is intentionally isolated, so replay with the neutral value instead of
+                // refusing the callback altogether.  This still lets the visual part of a
+                // postfix (custom scene/title/avatar) run without restoring audio or other
+                // transient state owned by the original prefix.
+                case "__state":
+                    arguments[index] = parameterType.IsValueType
+                        ? Activator.CreateInstance(parameterType)
+                        : null;
+                    break;
                 case "charSelectButton" or "button" when parameterType.IsInstanceOfType(button):
                     arguments[index] = button;
                     break;
@@ -925,6 +1350,11 @@ internal static class ManagedSkinModLoader
                 case "__runOriginal" when parameterType == typeof(bool):
                     arguments[index] = true;
                     break;
+                case "__state":
+                    arguments[index] = parameterType.IsValueType
+                        ? Activator.CreateInstance(parameterType)
+                        : null;
+                    break;
                 default:
                     if (parameter.HasDefaultValue)
                     {
@@ -963,6 +1393,11 @@ internal static class ManagedSkinModLoader
                     break;
                 case "__runOriginal" when parameterType == typeof(bool):
                     arguments[index] = true;
+                    break;
+                case "__state":
+                    arguments[index] = parameterType.IsValueType
+                        ? Activator.CreateInstance(parameterType)
+                        : null;
                     break;
                 default:
                     if (parameter.HasDefaultValue)
@@ -1514,21 +1949,63 @@ internal static class ManagedSkinModLoader
     private sealed record ActiveProviderRuntime(
         Assembly Assembly,
         IReadOnlyList<ProviderPatch> Patches,
-        IReadOnlyList<ProviderPatch> CharacterPresentationPatches)
+        IReadOnlyList<ProviderPatch> CharacterPresentationPatches,
+        IReadOnlyList<ProviderPatch> NodeReadyPresentationPatches)
     {
         public Dictionary<ulong, CharacterPresentationMutation> CharacterPresentationMutations { get; } = [];
+        public Dictionary<ulong, NodeReadyMutation> NodeReadyMutations { get; } = [];
+        public Dictionary<ulong, NodeReadyBaseline> PendingNodeReadyBaselines { get; } = [];
     }
 
-    private sealed record CharacterPresentationNodeState(Node Node, bool? Visible);
+    private sealed record CharacterPresentationNodeState(
+        Node Node,
+        bool? Visible,
+        string? Text);
 
     private sealed record CharacterPresentationMutation(
         WeakReference<NCharacterSelectScreen> Screen,
         IReadOnlyList<WeakReference<Node>> AddedRoots,
-        IReadOnlyList<CharacterPresentationVisibilityChange> VisibilityChanges);
+        IReadOnlyList<CharacterPresentationVisibilityChange> VisibilityChanges,
+        IReadOnlyList<CharacterPresentationTextChange> TextChanges);
 
     private sealed record CharacterPresentationVisibilityChange(
         WeakReference<CanvasItem> Node,
-        bool OriginalVisibility);
+        bool OriginalVisibility,
+        bool AppliedVisibility);
+
+    private sealed record CharacterPresentationTextChange(
+        WeakReference<Node> Node,
+        string OriginalText,
+        string AppliedText);
+
+    private sealed record NodeReadyBaseline(
+        WeakReference<Node> Node,
+        IReadOnlyDictionary<ulong, NodeReadyVisualState> States);
+
+    private sealed record NodeReadyVisualState(
+        WeakReference<Node> Node,
+        bool? Visible,
+        Color? Modulate,
+        Color? SelfModulate,
+        int? ZIndex,
+        bool? ZAsRelative,
+        Vector2? Node2DPosition,
+        Vector2? Node2DScale,
+        float? Node2DRotation,
+        Vector2? ControlPosition,
+        Vector2? ControlSize,
+        Vector2? ControlScale,
+        float? ControlRotation,
+        Vector2? ControlPivotOffset);
+
+    private sealed record NodeReadyVisualChange(
+        WeakReference<Node> Node,
+        NodeReadyVisualState Original,
+        NodeReadyVisualState Applied);
+
+    private sealed record NodeReadyMutation(
+        IReadOnlyList<WeakReference<Node>> AddedRoots,
+        IReadOnlyList<NodeReadyVisualChange> Changes);
 
     private sealed record ProviderPatch(
         MethodBase Target,
@@ -1550,6 +2027,51 @@ internal static class ManagedSkinModLoader
         Resource Resource,
         string CanonicalPath);
 
+}
+
+[HarmonyPatch]
+internal static class GodotScriptPathRegistrationCompatibilityPatch
+{
+    // Godot's ScriptManagerBridge stores script paths in a private Dictionary and uses Add rather
+    // than an idempotent assignment. Complete skin providers commonly register their C# scenes
+    // once from Skin Changer and once again from their own initializer; the second call otherwise
+    // aborts the provider's whole visual session with a duplicate-key exception. Only an exact
+    // same-path/same-Type repeat is ignored. A genuine path collision between different types is
+    // deliberately left to Godot so it cannot silently select the wrong script.
+    private static bool Prepare() => FindTarget() != null;
+
+    private static MethodBase TargetMethod() =>
+        FindTarget() ?? throw new MissingMethodException(
+            "Godot.Bridge.ScriptManagerBridge.PathScriptTypeBiMap.Add");
+
+    private static bool Prefix(object __instance, string scriptPath, Type scriptType)
+    {
+        var mapField = __instance.GetType().GetField(
+            "_pathTypeMap",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (mapField?.GetValue(__instance) is not IDictionary<string, Type> map ||
+            !map.TryGetValue(scriptPath, out var existingType))
+        {
+            return true;
+        }
+
+        return existingType != scriptType;
+    }
+
+    private static MethodBase? FindTarget()
+    {
+        var bridgeType = typeof(GodotObject).Assembly.GetType(
+            "Godot.Bridge.ScriptManagerBridge");
+        var mapType = bridgeType?.GetNestedType(
+            "PathScriptTypeBiMap",
+            BindingFlags.NonPublic);
+        return mapType?.GetMethod(
+            "Add",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(string), typeof(Type)],
+            modifiers: null);
+    }
 }
 
 [HarmonyPatch]

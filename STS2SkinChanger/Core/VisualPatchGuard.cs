@@ -149,6 +149,34 @@ internal static class VisualPatchGuard
                    HasVisualName(target.Name);
         }
 
+        // Complete character skins frequently attach their shop/camp presentation from room
+        // lifecycle callbacks instead of a CharacterModel getter.  These callbacks are cosmetic
+        // only when they originate from a provider already classified by SkinCatalog, so keep
+        // them in the same isolation set without relying on a particular mod name.
+        if (declaringType.Name.EndsWith("MerchantRoom", StringComparison.OrdinalIgnoreCase) ||
+            declaringType.Name.EndsWith("RestSiteRoom", StringComparison.OrdinalIgnoreCase))
+        {
+            return target.Name is "_Ready" or "Ready" || HasVisualName(target.Name);
+        }
+
+        // A full runtime provider may use combat-room creation to attach auxiliary visual nodes
+        // after the creature itself has been constructed.
+        if (declaringType.Name.EndsWith("CombatRoom", StringComparison.OrdinalIgnoreCase) &&
+            target.Name.Equals("AddCreature", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Victory/defeat animation hooks are often installed on CombatManager, whose type and
+        // namespace contain no visual token.  Provider roots are filtered below, so this does not
+        // touch gameplay mods; it only prevents a recognized cosmetic provider's animation hook
+        // from surviving after that provider is deselected.
+        if (declaringType.Name.EndsWith("CombatManager", StringComparison.OrdinalIgnoreCase) &&
+            target.Name.StartsWith("EndCombat", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         var namespaceName = declaringType.Namespace ?? string.Empty;
         // MegaSpine 绑定全部是骨骼/动画呈现 API，属于视觉接管范围。
         if (namespaceName.StartsWith("MegaCrit.Sts2.Core.Bindings.MegaSpine", StringComparison.Ordinal))

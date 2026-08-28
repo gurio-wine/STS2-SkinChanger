@@ -2462,6 +2462,9 @@ internal static class SkinService
             if (catalog.IsRuntimeProviderOption(group.Id, selectedId) &&
                 catalog.ProviderUsesManagedGodotScripts(selectedId))
             {
+                // Register before a private PackedScene is instantiated. The compatibility patch
+                // on Godot's path map makes this operation idempotent when the provider initializer
+                // also calls LookupScriptsInAssembly (a common pattern in complete character packs).
                 ManagedSkinModLoader.EnsureProviderGodotScripts(selectedId);
             }
         }
