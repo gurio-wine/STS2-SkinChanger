@@ -32,6 +32,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
     private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
+    private readonly IReadOnlyDictionary<string, string> _resourceGroupIds;
     private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceFile>>
         _fullRuntimeProviderBaselineOverlays = new(StringComparer.OrdinalIgnoreCase);
 
@@ -47,6 +48,23 @@ internal sealed partial class SkinCatalog : IDisposable
         _baselineIndexes = baselineIndexes;
         _cosmeticIndexes = cosmeticIndexes;
         _groups = groups.ToList();
+        _resourceGroupIds = _groups
+            .SelectMany(group => group.Options
+                .SelectMany(option => option.Assets.Keys)
+                .Select(path => (Path: NormalizeTakeoverPath(path), GroupId: group.Id)))
+            .GroupBy(pair => pair.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new
+            {
+                Path = group.Key,
+                GroupIds = group.Select(pair => pair.GroupId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            })
+            .Where(entry => entry.GroupIds.Length == 1)
+            .ToDictionary(
+                entry => entry.Path,
+                entry => entry.GroupIds[0],
+                StringComparer.OrdinalIgnoreCase);
         _configuredCardGroups = cardGroups;
         _pckCardOptions = pckCardOptions;
         _cardGroups = cardGroups.ToList();
@@ -201,7 +219,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
             }
 
-            var groups = BuildGroups(cosmeticIndexes);
+            var groups = BuildGroups(cosmeticIndexes, baselineIndexes);
             var cardGroups = BuildCardGroups(cosmeticIndexes);
             var pckCardOptions = BuildPckCardOptions(cosmeticIndexes, baselineIndexes);
             var catalog = new SkinCatalog(
@@ -750,6 +768,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public string? FindGroupIdForResourcePath(string resourcePath)
     {
+        if (_resourceGroupIds.TryGetValue(NormalizeTakeoverPath(resourcePath), out var assignedGroupId))
+        {
+            return assignedGroupId;
+        }
+
         var identity = TryGetPrimaryGroup(resourcePath) ??
                        TryGetCharacterSelectIconGroup(resourcePath) ??
                        TryGetCharacterUiTextureGroup(resourcePath) ??
@@ -2350,14 +2373,19 @@ internal sealed partial class SkinCatalog : IDisposable
         _gameArchive.Dispose();
     }
 
-    private static IReadOnlyList<SkinGroup> BuildGroups(IEnumerable<PckResourceIndex> cosmeticIndexes)
+    private static IReadOnlyList<SkinGroup> BuildGroups(
+        IEnumerable<PckResourceIndex> cosmeticIndexes,
+        IEnumerable<PckResourceIndex>? baselineIndexes = null)
     {
         var indexes = cosmeticIndexes.ToArray();
+        var managedMonsterAssetGroups = BuildManagedMonsterAssetGroups(baselineIndexes ?? []);
         var groups = new Dictionary<string, SkinGroup>(StringComparer.OrdinalIgnoreCase);
         foreach (var index in indexes)
         {
             var primaryGroups = index.Assets.Keys
-                .Select(TryGetPrimaryGroup)
+                .Select(path => TryGetPrimaryGroup(path) ??
+                                managedMonsterAssetGroups.GetValueOrDefault(
+                                    NormalizeTakeoverPath(path)))
                 .Where(group => group != null)
                 .Cast<GroupIdentity>()
                 .DistinctBy(group => group.Id)
@@ -2381,7 +2409,9 @@ internal sealed partial class SkinCatalog : IDisposable
                     continue;
                 }
 
-                var identity = TryGetPrimaryGroup(asset.SourcePath);
+                var identity = TryGetPrimaryGroup(asset.SourcePath) ??
+                               managedMonsterAssetGroups.GetValueOrDefault(
+                                   NormalizeTakeoverPath(asset.SourcePath));
                 if (identity != null && assigned.TryGetValue(identity.Id, out var primaryAssets))
                 {
                     primaryAssets[asset.SourcePath] = asset;
@@ -2429,6 +2459,46 @@ internal sealed partial class SkinCatalog : IDisposable
             .OrderBy(group => GroupSortOrder(group.Id))
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, GroupIdentity> BuildManagedMonsterAssetGroups(
+        IEnumerable<PckResourceIndex> baselineIndexes)
+    {
+        var candidates = new Dictionary<string, List<GroupIdentity>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var index in baselineIndexes.Where(index =>
+                     index.Mod.AffectsGameplay && index.Mod.HasDll))
+        {
+            foreach (var declaration in ManagedMonsterSceneScanner.ScanDeclaredAssets(
+                         index.Mod.RootPath,
+                         index.Mod.Id))
+            {
+                var groupId = declaration.ModelTypeName.ToLowerInvariant();
+                var identity = new GroupIdentity(groupId, DisplayName(groupId));
+                foreach (var resourcePath in declaration.ResourcePaths)
+                {
+                    var path = NormalizeTakeoverPath(resourcePath);
+                    if (!candidates.TryGetValue(path, out var owners))
+                    {
+                        owners = [];
+                        candidates.Add(path, owners);
+                    }
+
+                    if (owners.All(owner => !owner.Id.Equals(identity.Id, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        owners.Add(identity);
+                    }
+                }
+            }
+        }
+
+        // If two gameplay monsters intentionally share the same canonical image, ownership is
+        // ambiguous and the resource must not be assigned to either selectable skin group.
+        return candidates
+            .Where(pair => pair.Value.Count == 1)
+            .ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value[0],
+                StringComparer.OrdinalIgnoreCase);
     }
 
     private static void AddManagedMonsterSceneOptions(
