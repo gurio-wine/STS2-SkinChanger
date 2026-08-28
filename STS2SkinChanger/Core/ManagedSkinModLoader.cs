@@ -32,6 +32,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, ProviderAssembly> ProviderAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Assembly> LoadedProviderAssemblies =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IReadOnlyList<ManagedVisualPostfix>> VisualPostfixesByProvider =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, ActiveProviderRuntime> ActiveProviderRuntimes =
@@ -1488,6 +1490,11 @@ internal static class ManagedSkinModLoader
 
     private static Assembly? GetOrLoadProviderAssembly(ProviderAssembly provider)
     {
+        if (LoadedProviderAssemblies.TryGetValue(provider.AssemblyPath, out var loadedProviderAssembly))
+        {
+            return loadedProviderAssembly;
+        }
+
         var assembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(candidate =>
             {
@@ -1504,12 +1511,39 @@ internal static class ManagedSkinModLoader
             });
         if (assembly != null)
         {
+            LoadedProviderAssemblies[provider.AssemblyPath] = assembly;
             return assembly;
         }
 
         var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
-        return loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??
-               Assembly.LoadFrom(provider.AssemblyPath);
+        if (ProviderAssemblyCompatibility.TryRewriteForCurrentGame(
+                provider.AssemblyPath,
+                out var rewrittenAssembly,
+                out var rewrittenCalls,
+                out var compatibilityFailure))
+        {
+            using (rewrittenAssembly)
+            {
+                assembly = loadContext?.LoadFromStream(rewrittenAssembly!) ??
+                           Assembly.Load(rewrittenAssembly!.ToArray());
+            }
+
+            LoadedProviderAssemblies[provider.AssemblyPath] = assembly;
+            ModLog.Info(
+                $"已为 {provider.Name} 桥接 {rewrittenCalls} 处跨游戏版本动画接口调用。" +
+                "该处理按接口签名识别，不依赖皮肤 Mod 名称。");
+            return assembly;
+        }
+
+        if (!string.IsNullOrWhiteSpace(compatibilityFailure))
+        {
+            ModLog.Warn($"检查 {provider.Name} 的跨版本动画接口失败：{compatibilityFailure}");
+        }
+
+        assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??
+                   Assembly.LoadFrom(provider.AssemblyPath);
+        LoadedProviderAssemblies[provider.AssemblyPath] = assembly;
+        return assembly;
     }
 
     private static IReadOnlyList<ManagedVisualPostfix> DiscoverVisualPostfixes(Assembly assembly)
