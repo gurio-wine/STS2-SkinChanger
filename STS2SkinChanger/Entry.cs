@@ -153,6 +153,33 @@ internal static class ModelTypeCompatibility
             return false;
         }).ToArray();
     }
+
+    internal static int RemoveExistingCanonicalConflicts()
+    {
+        var coreAssembly = typeof(AbstractModel).Assembly;
+        var removed = 0;
+        foreach (var model in ModelDb.All.ToArray())
+        {
+            var type = model.GetType();
+            if (type.Assembly == coreAssembly ||
+                !CanonicalModelIds.Value.Contains(model.Id))
+            {
+                continue;
+            }
+
+            ModelDb.Remove(type);
+            removed++;
+            lock (ReportedCollisions)
+            {
+                if (ReportedCollisions.Add(model.Id))
+                {
+                    ModLog.Warn($"检测到已注入的 Mod 模型 {model.Id} 与当前游戏原版重复，已移除 Mod 实例并保留原版。");
+                }
+            }
+        }
+
+        return removed;
+    }
 }
 
 // Some compatibility/framework mods pass an explicit model array to ModelDb.Init instead
@@ -164,6 +191,7 @@ internal static class DuplicateModelInitCompatibilityPatch
     [HarmonyPriority(Priority.First)]
     private static void Prefix(ref Type[]? __0)
     {
+        var existingRemoved = ModelTypeCompatibility.RemoveExistingCanonicalConflicts();
         // The normal game call passes null and resolves AllAbstractModelSubtypes inside the
         // original method. Resolve it here too, so a previously cached/unfiltered reflection
         // list cannot bypass the compatibility filter.
@@ -172,6 +200,6 @@ internal static class DuplicateModelInitCompatibilityPatch
         var filtered = ModelTypeCompatibility.Filter(candidates);
         var removedCount = originalCount - filtered.Length;
         __0 = filtered;
-        ModLog.Info($"ModelDb.Init 兼容补丁已执行：模型 {originalCount} 个，移除重复 Mod 模型 {removedCount} 个。");
+        ModLog.Info($"ModelDb.Init 兼容补丁已执行：模型 {originalCount} 个，移除列表重复 {removedCount} 个，移除已注入冲突 {existingRemoved} 个。");
     }
 }
