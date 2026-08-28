@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
@@ -755,33 +756,7 @@ internal static partial class ContextualSkinControls
         // Provider presentation callbacks are allowed to temporarily hide this host while their
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
-        var previousBackground = container.GetChildren().OfType<Control>().FirstOrDefault();
-        var replacementBackground = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
-        if (isolatedResources != null)
-        {
-            RebindCharacterSceneResources(replacementBackground, isolatedResources);
-        }
-
-        // Keep the game's original node when the selected scene has the same Spine topology.
-        // External character mods commonly register per-node/per-frame adapters (for example
-        // Watcher's viewport fitter). Removing that node invalidates those adapters and a copied
-        // coordinate can never reproduce their runtime behaviour. Swapping the resource in place
-        // preserves the adapter, animation players and every authored transform.
-        if (previousBackground != null &&
-            TrySwapCharacterSpineResources(previousBackground, replacementBackground))
-        {
-            replacementBackground.QueueFreeSafely();
-            RefreshCharacterBackgroundLayout(container, previousBackground);
-            Callable.From(() =>
-            {
-                if (GodotObject.IsInstanceValid(container) &&
-                    GodotObject.IsInstanceValid(previousBackground))
-                {
-                    RefreshCharacterBackgroundLayout(container, previousBackground);
-                }
-            }).CallDeferred();
-            return;
-        }
+        var baselineSpineAnchors = CaptureSpineAnchors(container);
 
         foreach (var child in container.GetChildren())
         {
@@ -789,12 +764,19 @@ internal static partial class ContextualSkinControls
             child.QueueFreeSafely();
         }
 
-        replacementBackground.Name = character.Id.Entry + "_bg";
-        container.AddChildSafely(replacementBackground);
-
-        if (replacementBackground.IsInsideTree())
+        var background = scene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        if (isolatedResources != null)
         {
-            RefreshCharacterBackgroundLayout(container, replacementBackground);
+            RebindCharacterSceneResources(background, isolatedResources);
+        }
+
+        background.Name = character.Id.Entry + "_bg";
+        container.AddChildSafely(background);
+
+        if (background.IsInsideTree())
+        {
+            RefreshCharacterBackgroundLayout(container, background);
+            ScheduleSpineAnchorCorrection(background, baselineSpineAnchors);
         }
 
         // NCharacterSelectScreenBg only subscribes to SizeChanged in _Ready; it does not run
@@ -805,52 +787,114 @@ internal static partial class ContextualSkinControls
         Callable.From(() =>
         {
             if (GodotObject.IsInstanceValid(container) &&
-                GodotObject.IsInstanceValid(replacementBackground))
+                GodotObject.IsInstanceValid(background))
             {
-                RefreshCharacterBackgroundLayout(container, replacementBackground);
+                RefreshCharacterBackgroundLayout(container, background);
+                ScheduleSpineAnchorCorrection(background, baselineSpineAnchors);
             }
         }).CallDeferred();
     }
 
-    private static bool TrySwapCharacterSpineResources(
-        Node existingBackground,
-        Node replacementBackground)
+    private static void ScheduleSpineAnchorCorrection(
+        Node selectedRoot,
+        IReadOnlyDictionary<string, SpineAnchor> baselineAnchors)
     {
-        var existingSpines = EnumerateNodes(existingBackground)
-            .Where(node => node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal))
-            .ToDictionary(node => existingBackground.GetPathTo(node).ToString(), StringComparer.Ordinal);
-        var replacementSpines = EnumerateNodes(replacementBackground)
-            .Where(node => node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal))
-            .ToDictionary(node => replacementBackground.GetPathTo(node).ToString(), StringComparer.Ordinal);
-        if (existingSpines.Count == 0 || existingSpines.Count != replacementSpines.Count ||
-            existingSpines.Keys.Any(path => !replacementSpines.ContainsKey(path)))
+        CorrectSpineAnchors(selectedRoot, baselineAnchors);
+        foreach (var node in EnumerateNodes(selectedRoot).Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        {
+            try
+            {
+                selectedRoot.RunWhenSpineReady(
+                    new MegaSprite(node),
+                    _ =>
+                    {
+                        if (GodotObject.IsInstanceValid(selectedRoot))
+                        {
+                            CorrectSpineAnchors(selectedRoot, baselineAnchors);
+                        }
+                    });
+            }
+            catch
+            {
+                // A provider may use a non-Spine visual in one of its variants. The correction is
+                // best effort and must never prevent the character preview from appearing.
+            }
+        }
+    }
+
+    private static IReadOnlyDictionary<string, SpineAnchor> CaptureSpineAnchors(Node root)
+    {
+        var anchors = new Dictionary<string, SpineAnchor>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in EnumerateNodes(root).Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        {
+            if (node is not Node2D node2D || !TryGetSpineBounds(node, out var bounds))
+            {
+                continue;
+            }
+
+            var key = root.GetPathTo(node).ToString();
+            anchors[key] = new SpineAnchor(node2D.ToGlobal(bounds.GetCenter()), bounds.Size);
+        }
+
+        return anchors;
+    }
+
+    private static void CorrectSpineAnchors(
+        Node selectedRoot,
+        IReadOnlyDictionary<string, SpineAnchor> baselineAnchors)
+    {
+        if (baselineAnchors.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var node in EnumerateNodes(selectedRoot).Where(node =>
+                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        {
+            if (node is not Node2D node2D ||
+                !baselineAnchors.TryGetValue(selectedRoot.GetPathTo(node).ToString(), out var baseline) ||
+                !TryGetSpineBounds(node, out var bounds))
+            {
+                continue;
+            }
+
+            var delta = baseline.GlobalCenter - node2D.ToGlobal(bounds.GetCenter());
+            // A small difference is normal between animation frames. Avoid accumulating tiny
+            // corrections while keeping genuinely different skeleton origins aligned.
+            if (delta.Length() < 8f || delta.Length() > 1600f)
+            {
+                continue;
+            }
+
+            node2D.GlobalPosition += delta;
+            ModLog.Info(
+                $"已校正选角 Spine 视觉锚点 {node.Name}：" +
+                $"偏移=({delta.X:F0}, {delta.Y:F0})，" +
+                $"原尺寸=({baseline.Size.X:F0}, {baseline.Size.Y:F0})，" +
+                $"当前尺寸=({bounds.Size.X:F0}, {bounds.Size.Y:F0})。" );
+        }
+    }
+
+    private static bool TryGetSpineBounds(Node node, out Rect2 bounds)
+    {
+        bounds = default;
+        try
+        {
+            var skeleton = new MegaSprite(node).GetSkeleton();
+            if (skeleton == null)
+            {
+                return false;
+            }
+
+            bounds = skeleton.GetBounds();
+            return bounds.Size.X > 1f && bounds.Size.Y > 1f;
+        }
+        catch
         {
             return false;
         }
-
-        var changed = 0;
-        foreach (var pair in existingSpines)
-        {
-            var existing = pair.Value;
-            var replacement = replacementSpines[pair.Key];
-            if (!existing.HasMethod("set_skeleton_data_res") ||
-                !replacement.HasMethod("set_skeleton_data_res"))
-            {
-                return false;
-            }
-
-            var resource = replacement.Get("skeleton_data_res").As<Resource>();
-            if (resource == null)
-            {
-                return false;
-            }
-
-            existing.Set("skeleton_data_res", resource);
-            changed++;
-        }
-
-        ModLog.Info($"保留原选角节点并热替换 {changed} 个 Spine 资源，外部运行时适配器继续有效。");
-        return changed > 0;
     }
 
     private static void RebindCharacterSceneResources(
@@ -869,23 +913,16 @@ internal static partial class ContextualSkinControls
                 continue;
             }
 
-            // Use Variant.As<Resource>() here. AsGodotObject() returns the native wrapper but
-            // does not reliably preserve the managed Resource type for Spine resources, so the
-            // old cast silently skipped rebinding and left Godot using a previously cached
-            // skeleton/atlas (most visible with Watcher Beautified).
-            var current = node.Get("skeleton_data_res").As<Resource>();
-            var logicalPath = current == null
-                ? string.Empty
-                : CanonicalRuntimeResourcePath(current.ResourcePath);
+            var current = node.Get("skeleton_data_res").AsGodotObject() as Resource;
             if (current == null ||
-                string.IsNullOrWhiteSpace(logicalPath) ||
-                !isolatedResources.TryGetValue(logicalPath, out var replacement) ||
+                string.IsNullOrWhiteSpace(current.ResourcePath) ||
+                !isolatedResources.TryGetValue(current.ResourcePath, out var replacement) ||
                 ReferenceEquals(current, replacement))
             {
                 continue;
             }
 
-            node.Set("skeleton_data_res", replacement);
+            node.Call("set_skeleton_data_res", replacement);
             rebound++;
         }
 
@@ -893,24 +930,6 @@ internal static partial class ContextualSkinControls
         {
             ModLog.Info($"选角场景已在进树前重新绑定 {rebound} 个隔离骨骼资源。");
         }
-    }
-
-    private static string CanonicalRuntimeResourcePath(string resourcePath)
-    {
-        const string prefix = "res://sts2_skin_runtime/";
-        if (!resourcePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-        {
-            return resourcePath;
-        }
-
-        var relative = resourcePath[prefix.Length..];
-        var sessionSeparator = relative.IndexOf('/');
-        var generationSeparator = sessionSeparator < 0
-            ? -1
-            : relative.IndexOf('/', sessionSeparator + 1);
-        return generationSeparator >= 0 && generationSeparator + 1 < relative.Length
-            ? "res://" + relative[(generationSeparator + 1)..]
-            : resourcePath;
     }
 
     private static void RefreshCharacterBackgroundLayout(Control container, Control background)
@@ -1344,6 +1363,7 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    private sealed record SpineAnchor(Vector2 GlobalCenter, Vector2 Size);
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
