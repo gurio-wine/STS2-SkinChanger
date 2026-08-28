@@ -18,6 +18,8 @@ internal static class MerchantRuntimeAppearance
     internal const string GroupId = "merchant";
     private const string MerchantButtonScenePath = "res://scenes/rooms/merchant_button.tscn";
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
+    private const string PlayerBasePositionMeta = "skin_changer_shop_player_base_position";
+    private const string PlayerBaseScaleMeta = "skin_changer_shop_player_base_scale";
 
     private static readonly FieldInfo? MerchantButtonField =
         AccessTools.Field(typeof(NMerchantRoom), "<MerchantButton>k__BackingField");
@@ -30,6 +32,39 @@ internal static class MerchantRuntimeAppearance
     {
         var room = NMerchantRoom.Instance;
         return room is { PlayerVisuals.Count: > 0 } ? room.PlayerVisuals[0] : null;
+    }
+
+    internal static CharacterCombatTransform GetLocalPlayerTransform(string groupId)
+    {
+        return SkinService.GetCharacterCombatTransform(
+            GetLocalPlayerTransformKey(groupId),
+            SkinService.Config.GetSelection(groupId));
+    }
+
+    internal static CharacterCombatTransform SetLocalPlayerTransform(
+        string groupId,
+        CharacterCombatTransform value,
+        bool save)
+    {
+        var optionId = SkinService.Config.GetSelection(groupId);
+        return SkinService.SetCharacterCombatTransform(
+            GetLocalPlayerTransformKey(groupId),
+            optionId,
+            value,
+            save);
+    }
+
+    internal static void ApplyLocalPlayerTransform(
+        NMerchantCharacter visual,
+        string groupId,
+        CharacterCombatTransform? value = null)
+    {
+        CaptureLocalPlayerBaseline(visual);
+        var basePosition = visual.GetMeta(PlayerBasePositionMeta, visual.Position).AsVector2();
+        var baseScale = visual.GetMeta(PlayerBaseScaleMeta, visual.Scale).AsVector2();
+        var transform = value ?? GetLocalPlayerTransform(groupId);
+        visual.Position = basePosition + new Vector2(transform.OffsetX, transform.OffsetY);
+        visual.Scale = baseScale * transform.Scale;
     }
 
     internal static void PrepareMerchantSelectionChange()
@@ -176,18 +211,24 @@ internal static class MerchantRuntimeAppearance
         try
         {
             var previous = visuals[0];
+            CaptureLocalPlayerBaseline(previous);
+            var basePosition = previous
+                .GetMeta(PlayerBasePositionMeta, previous.Position)
+                .AsVector2();
             var parent = previous.GetParent() ??
                          throw new InvalidOperationException("merchant player visual has no parent");
             var index = previous.GetIndex();
             replacement = SkinService
                 .GetOrLoadRuntimeScene(groupId, player.Character.MerchantAnimPath)
                 .Instantiate<NMerchantCharacter>(PackedScene.GenEditState.Disabled);
-            replacement.Position = previous.Position;
+            replacement.Position = basePosition;
             replacement.Visible = previous.Visible;
             replacement.Modulate = previous.Modulate;
             replacement.SelfModulate = previous.SelfModulate;
             replacement.ZIndex = previous.ZIndex;
             replacement.ZAsRelative = previous.ZAsRelative;
+            CaptureLocalPlayerBaseline(replacement);
+            ApplyLocalPlayerTransform(replacement, groupId);
 
             previous.Name = previous.Name + "Previous";
             parent.AddChild(replacement);
@@ -211,6 +252,22 @@ internal static class MerchantRuntimeAppearance
             {
                 replacement.Free();
             }
+        }
+    }
+
+    private static string GetLocalPlayerTransformKey(string groupId) =>
+        $"{groupId}::merchant_pose";
+
+    private static void CaptureLocalPlayerBaseline(NMerchantCharacter visual)
+    {
+        if (!visual.HasMeta(PlayerBasePositionMeta))
+        {
+            visual.SetMeta(PlayerBasePositionMeta, visual.Position);
+        }
+
+        if (!visual.HasMeta(PlayerBaseScaleMeta))
+        {
+            visual.SetMeta(PlayerBaseScaleMeta, visual.Scale);
         }
     }
 
@@ -273,6 +330,31 @@ internal static class MerchantRuntimeAppearance
             {
                 yield return descendant;
             }
+        }
+    }
+}
+
+[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._Ready))]
+internal static class MerchantRoomPlayerAppearancePatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NMerchantRoom __instance)
+    {
+        var player = CharacterAppearanceRuntime.GetLocalPlayer();
+        if (player == null || __instance.PlayerVisuals.Count == 0)
+        {
+            return;
+        }
+
+        var group = ContextualSkinControls.FindGroup(
+            player.Character.Id.Entry,
+            player.Character.GetType().Name);
+        if (group != null)
+        {
+            MerchantRuntimeAppearance.ApplyLocalPlayerTransform(
+                __instance.PlayerVisuals[0],
+                group.Id);
         }
     }
 }

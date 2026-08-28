@@ -92,6 +92,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private NBackButton _backButton = null!;
     private Control _modelSpacer = null!;
     private readonly List<CanvasItem> _skinControls = [];
+    private readonly List<CanvasItem> _modelControls = [];
     private readonly List<CanvasItem> _creatureOnlyControls = [];
     private readonly List<CanvasItem> _intentOnlyControls = [];
     private readonly List<CanvasItem> _selectionReticleOnlyControls = [];
@@ -560,10 +561,12 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _status.Visible = false;
         content.AddChild(_status);
 
-        _creatureOnlyControls.AddRange([
+        _modelControls.AddRange([
             modelHeader,
             scaleRow,
-            offsetRow,
+            offsetRow
+        ]);
+        _creatureOnlyControls.AddRange([
             healthBarSpacer,
             healthBarHeader,
             healthScaleRow,
@@ -824,13 +827,23 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private void SyncTransformControls()
     {
-        if (_targetCreature == null || _scaleSlider == null)
+        if (_scaleSlider == null)
         {
             return;
         }
 
-        SetTransformControlValues(
-            CharacterAppearanceRuntime.GetCreatureCombatTransform(_targetCreature));
+        if (_targetCreature != null)
+        {
+            SetTransformControlValues(
+                CharacterAppearanceRuntime.GetCreatureCombatTransform(_targetCreature));
+            return;
+        }
+
+        if (_targetShopPlayerVisual != null && _group != null)
+        {
+            SetTransformControlValues(
+                MerchantRuntimeAppearance.GetLocalPlayerTransform(_group.Id));
+        }
     }
 
     private void RefreshTargetTitle()
@@ -871,7 +884,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             $"{Mathf.RoundToInt((float)_intentScaleSlider.Value * 100f)}%";
         _selectionReticleScaleValue.Text =
             $"{Mathf.RoundToInt((float)_selectionReticleScaleSlider.Value * 100f)}%";
-        if (_updating || _group == null || _targetCreature == null ||
+        if (_updating || _group == null ||
             CharacterAppearanceRuntime.GetRequestedOption(_group.Id) != null)
         {
             return;
@@ -879,6 +892,26 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
         try
         {
+            if (_targetShopPlayerVisual != null &&
+                GodotObject.IsInstanceValid(_targetShopPlayerVisual))
+            {
+                var shopTransform = MerchantRuntimeAppearance.SetLocalPlayerTransform(
+                    _group.Id,
+                    ReadTransformControls(),
+                    save);
+                SetTransformControlValues(shopTransform);
+                MerchantRuntimeAppearance.ApplyLocalPlayerTransform(
+                    _targetShopPlayerVisual,
+                    _group.Id,
+                    shopTransform);
+                return;
+            }
+
+            if (_targetCreature == null)
+            {
+                return;
+            }
+
             var normalized = CharacterAppearanceRuntime.SetCreatureCombatTransform(
                 _targetCreature,
                 ReadTransformControls(),
@@ -1040,6 +1073,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _group = ancientGroup;
         _transformKey = null;
         SetTargetControlsVisible(
+            supportsModel: false,
             isCreature: false,
             canSelectSkin: true,
             supportsIntent: false);
@@ -1070,6 +1104,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _group = binding.Group;
         _transformKey = binding.TransformKey;
         SetTargetControlsVisible(
+            supportsModel: true,
             isCreature: true,
             canSelectSkin: binding.CanSelectSkin,
             supportsIntent: binding.SupportsIntent);
@@ -1103,6 +1138,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             return false;
         }
 
+        MerchantRuntimeAppearance.ApplyLocalPlayerTransform(visual, group.Id);
+
         _selectionMode = false;
         EndSelectionReticlePreview();
         _targetCreature = null;
@@ -1112,6 +1149,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _group = group;
         _transformKey = null;
         SetTargetControlsVisible(
+            supportsModel: true,
             isCreature: false,
             canSelectSkin: true,
             supportsIntent: false);
@@ -1119,6 +1157,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _panel.Visible = true;
         RefreshTargetTitle();
         PopulateSkinDropdown();
+        SyncTransformControls();
         SetTransformControlsEnabled(true);
         UpdateDragSurfaceCreature();
         SetStatus(string.Empty, warning: false);
@@ -1148,6 +1187,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _group = group;
         _transformKey = null;
         SetTargetControlsVisible(
+            supportsModel: false,
             isCreature: false,
             canSelectSkin: true,
             supportsIntent: false);
@@ -1183,6 +1223,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     }
 
     private void SetTargetControlsVisible(
+        bool supportsModel,
         bool isCreature,
         bool canSelectSkin,
         bool supportsIntent)
@@ -1190,6 +1231,11 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         foreach (var control in _skinControls)
         {
             control.Visible = canSelectSkin;
+        }
+
+        foreach (var control in _modelControls)
+        {
+            control.Visible = supportsModel;
         }
 
         foreach (var control in _creatureOnlyControls)
@@ -1207,7 +1253,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             control.Visible = isCreature && supportsIntent;
         }
 
-        _modelSpacer.Visible = isCreature && canSelectSkin;
+        _modelSpacer.Visible = supportsModel && canSelectSkin;
         ResizePanelToContent();
     }
 
@@ -1249,7 +1295,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private void ResetModelTransform()
     {
-        if (_targetCreature == null)
+        if (_targetCreature == null && _targetShopPlayerVisual == null)
         {
             return;
         }
@@ -1414,10 +1460,16 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             ? _targetCreature
             : null;
         _dragSurface.SetCreature(creature);
+        var shopPlayer = !_selectionMode &&
+                         _targetShopPlayerVisual != null &&
+                         GodotObject.IsInstanceValid(_targetShopPlayerVisual)
+            ? _targetShopPlayerVisual
+            : null;
+        _dragSurface.SetShopPlayerVisual(shopPlayer);
         _dragSurface.SetSelectionMode(_selectionMode);
-        _dragSurface.SetDragEnabled(creature != null);
+        _dragSurface.SetDragEnabled(creature != null || shopPlayer != null);
         _selectionHint.Visible = _selectionMode;
-        _hint.Visible = creature != null;
+        _hint.Visible = creature != null || shopPlayer != null;
         _compareButton.Disabled = creature == null;
         RefreshDragHint();
     }
@@ -1497,7 +1549,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             return;
         }
 
-        var delta = _dragSurface.GetCreatureLocalDelta(_dragStartPosition, motion.Position);
+        var delta = _dragSurface.GetTargetLocalDelta(_dragStartPosition, motion.Position);
         _updating = true;
         switch (_dragTarget)
         {
@@ -1750,6 +1802,7 @@ internal partial class PulsingDragHintLabel : Label
 internal partial class CharacterDragSurface : Control
 {
     private NCreature? _creature;
+    private NMerchantCharacter? _shopPlayerVisual;
 
     public bool DragEnabled { get; private set; }
 
@@ -1758,6 +1811,11 @@ internal partial class CharacterDragSurface : Control
     public void SetCreature(NCreature? creature)
     {
         _creature = creature;
+    }
+
+    public void SetShopPlayerVisual(NMerchantCharacter? visual)
+    {
+        _shopPlayerVisual = visual;
     }
 
     public void SetDragEnabled(bool enabled)
@@ -1815,6 +1873,16 @@ internal partial class CharacterDragSurface : Control
         if (modelBounds != null &&
             TryGetCanvasRect(modelBounds, 8f, out var modelRect) &&
             modelRect.HasPoint(localPosition))
+        {
+            return CharacterAppearanceDragTarget.Model;
+        }
+
+        if (_shopPlayerVisual != null &&
+            TryGetNode2DTargetRect(
+                _shopPlayerVisual,
+                new Rect2(-190f, -450f, 380f, 520f),
+                out var shopPlayerRect) &&
+            shopPlayerRect.HasPoint(localPosition))
         {
             return CharacterAppearanceDragTarget.Model;
         }
@@ -1884,17 +1952,26 @@ internal partial class CharacterDragSurface : Control
         return true;
     }
 
-    public Vector2 GetCreatureLocalDelta(Vector2 from, Vector2 to)
+    public Vector2 GetTargetLocalDelta(Vector2 from, Vector2 to)
     {
-        if (_creature == null || !GodotObject.IsInstanceValid(_creature))
+        var surfaceTransform = GetGlobalTransformWithCanvas();
+        if (_creature != null && GodotObject.IsInstanceValid(_creature))
+        {
+            var creatureInverse = _creature.GetGlobalTransformWithCanvas().AffineInverse();
+            return creatureInverse * (surfaceTransform * to) -
+                   creatureInverse * (surfaceTransform * from);
+        }
+
+        if (_shopPlayerVisual == null ||
+            !GodotObject.IsInstanceValid(_shopPlayerVisual) ||
+            _shopPlayerVisual.GetParent() is not CanvasItem parent)
         {
             return Vector2.Zero;
         }
 
-        var surfaceTransform = GetGlobalTransformWithCanvas();
-        var creatureInverse = _creature.GetGlobalTransformWithCanvas().AffineInverse();
-        return creatureInverse * (surfaceTransform * to) -
-               creatureInverse * (surfaceTransform * from);
+        var parentInverse = parent.GetGlobalTransformWithCanvas().AffineInverse();
+        return parentInverse * (surfaceTransform * to) -
+               parentInverse * (surfaceTransform * from);
     }
 
     public bool TryGetCreatureTargetRect(NCreature creature, out Rect2 rect)
