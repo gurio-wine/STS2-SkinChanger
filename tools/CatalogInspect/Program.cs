@@ -639,6 +639,61 @@ if (validateIndex >= 0)
 
             var selectedOverlay = catalog.BuildOverlay(selectedSelections, selectedGroupSet);
             var isolatedRelicProviderPaths = catalog.GetIsolatedRelicProviderPaths(option);
+            var providerRelicSpritePaths = catalog.GetProviderRelicSpritePaths(option);
+            var providerOnlyRelicPath = providerRelicSpritePaths.FirstOrDefault(path =>
+                !option.Assets.ContainsKey(path));
+            if (providerOnlyRelicPath != null)
+            {
+                var resolvedRelicGroupId = catalog.FindSelectedRelicIconGroup(
+                    providerOnlyRelicPath,
+                    selectedSelections,
+                    [option.EffectiveProviderId]);
+                if (resolvedRelicGroupId != null)
+                {
+                    var resolvedSelectionId = selectedSelections[resolvedRelicGroupId];
+                    try
+                    {
+                        var providerRelic = catalog.BuildRuntimeResourceOverlay(
+                            resolvedRelicGroupId,
+                            resolvedSelectionId,
+                            [providerOnlyRelicPath],
+                            $"validate/provider-relic/{validated:D4}");
+                        var hasProviderPayload = catalog.TryResolveProviderAsset(
+                            option,
+                            providerOnlyRelicPath,
+                            out var providerRelicAsset) &&
+                            providerRelicAsset.Files
+                                .Select(file => file.Archive.ReadFile(file.Path))
+                                .Any(providerBytes => providerRelic.Files.Values.Any(bytes =>
+                                    bytes.AsSpan().SequenceEqual(providerBytes)));
+                        if (!providerRelic.ResourcePaths.TryGetValue(
+                                providerOnlyRelicPath,
+                                out var alias) ||
+                            !alias.StartsWith(
+                                "res://sts2_skin_runtime/",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            !hasProviderPayload)
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: provider-wide relic did not use provider asset " +
+                                providerOnlyRelicPath);
+                        }
+                        else
+                        {
+                            validated++;
+                            Console.WriteLine(
+                                $"validated provider relic takeover {group.Id}/{option.Id}: " +
+                                $"{providerRelicSpritePaths.Count} slices");
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: provider-wide relic failed " +
+                            $"{providerOnlyRelicPath}: {exception.Message}");
+                    }
+                }
+            }
             foreach (var asset in option.Assets)
             {
                 if (IsAncientBackgroundScene(asset.Key))
@@ -948,6 +1003,73 @@ if (validateIndex >= 0)
             catch (Exception exception)
             {
                 failures.Add($"{group.Id}/{option.Id}: {exception.Message}");
+            }
+        }
+    }
+
+    var sharedRelicPriorityProbe = catalog.Groups
+        .SelectMany(group => group.Options.SelectMany(option =>
+            catalog.GetProviderRelicSpritePaths(option).Select(path =>
+                (Path: path, Group: group, Option: option))))
+        .GroupBy(entry => entry.Path, StringComparer.OrdinalIgnoreCase)
+        .Select(entries => entries
+            .DistinctBy(
+                entry => entry.Group.Id + "\n" + entry.Option.EffectiveProviderId,
+                StringComparer.OrdinalIgnoreCase)
+            .Where(entry => catalog.FindSelectedRelicIconGroup(
+                entry.Path,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [entry.Group.Id] = entry.Option.Id
+                },
+                [entry.Option.EffectiveProviderId]) != null)
+            .ToArray())
+        .FirstOrDefault(entries => entries
+            .Select(entry => entry.Group.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count() >= 2 &&
+            entries.Select(entry => entry.Option.EffectiveProviderId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count() >= 2);
+    if (sharedRelicPriorityProbe != null)
+    {
+        var first = sharedRelicPriorityProbe[0];
+        var second = sharedRelicPriorityProbe.First(entry =>
+            !entry.Group.Id.Equals(first.Group.Id, StringComparison.OrdinalIgnoreCase) &&
+            !entry.Option.EffectiveProviderId.Equals(
+                first.Option.EffectiveProviderId,
+                StringComparison.OrdinalIgnoreCase));
+        var selections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [first.Group.Id] = first.Option.Id,
+            [second.Group.Id] = second.Option.Id
+        };
+        foreach (var expected in new[] { first, second })
+        {
+            var other = expected == first ? second : first;
+            var resolvedGroupId = catalog.FindSelectedRelicIconGroup(
+                first.Path,
+                selections,
+                [other.Option.EffectiveProviderId, expected.Option.EffectiveProviderId]);
+            var resolvedProviderId = catalog.Groups
+                .FirstOrDefault(group => group.Id.Equals(
+                    resolvedGroupId,
+                    StringComparison.OrdinalIgnoreCase))?
+                .Options.FirstOrDefault(option => option.Id.Equals(
+                    selections.GetValueOrDefault(resolvedGroupId ?? string.Empty),
+                    StringComparison.OrdinalIgnoreCase))?
+                .EffectiveProviderId;
+            if (!expected.Option.EffectiveProviderId.Equals(
+                    resolvedProviderId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                failures.Add(
+                    $"provider relic priority selected {resolvedProviderId ?? "base"} instead of " +
+                    expected.Option.EffectiveProviderId);
+            }
+            else
+            {
+                validated++;
             }
         }
     }

@@ -336,6 +336,7 @@ internal static class SkinService
                     ? (HadValue: true, Value: (string?)previous)
                     : (HadValue: false, Value: (string?)null),
                 StringComparer.OrdinalIgnoreCase);
+            var previousVisualProviderPriority = Config.VisualProviderPriority.ToList();
             var affectedGroups = updates.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
@@ -345,6 +346,7 @@ internal static class SkinService
                     ClearRuntimeResourceCache(update.Key);
                 }
 
+                UpdateVisualProviderPriority(groupId, optionId);
                 MountOverlay(affectedGroups);
                 Config.Save(ConfigPath);
                 LastError = null;
@@ -357,6 +359,7 @@ internal static class SkinService
                     RestoreSelection(previous.Key, previous.Value.Value, previous.Value.HadValue);
                     ClearRuntimeResourceCache(previous.Key);
                 }
+                Config.VisualProviderPriority = previousVisualProviderPriority;
 
                 TryRestoreOverlay(affectedGroups, cardOverlay: false);
                 LastError = exception.Message;
@@ -1592,7 +1595,10 @@ internal static class SkinService
         lock (Sync)
         {
             var catalog = Catalog;
-            var groupId = catalog?.FindSelectedRelicIconGroup(resourcePath, Config.Selections);
+            var groupId = catalog?.FindSelectedRelicIconGroup(
+                resourcePath,
+                Config.Selections,
+                Config.VisualProviderPriority);
             if (catalog == null || groupId == null)
             {
                 return null;
@@ -2709,6 +2715,50 @@ internal static class SkinService
         }
 
         SanitizeCardSelections();
+        SanitizeVisualProviderPriority();
+    }
+
+    private static void UpdateVisualProviderPriority(string groupId, string optionId)
+    {
+        var requestedProviderId = Catalog!.Groups
+            .First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+            .Options
+            .FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            ?.EffectiveProviderId;
+        SanitizeVisualProviderPriority();
+        if (requestedProviderId == null)
+        {
+            return;
+        }
+
+        Config.VisualProviderPriority.RemoveAll(providerId =>
+            providerId.Equals(requestedProviderId, StringComparison.OrdinalIgnoreCase));
+        Config.VisualProviderPriority.Add(requestedProviderId);
+    }
+
+    private static void SanitizeVisualProviderPriority()
+    {
+        var selectedProviderIds = Catalog!.Groups
+            .Select(group => group.Options.FirstOrDefault(option => option.Id.Equals(
+                Config.GetSelection(group.Id),
+                StringComparison.OrdinalIgnoreCase)))
+            .Where(option => option != null)
+            .Select(option => option!.EffectiveProviderId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Config.VisualProviderPriority = Config.VisualProviderPriority
+            .Where(selectedProviderIds.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var providerId in selectedProviderIds
+                     .OrderBy(providerId => providerId, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Config.VisualProviderPriority.Contains(
+                    providerId,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                Config.VisualProviderPriority.Insert(0, providerId);
+            }
+        }
     }
 
     private static void SanitizeCardSelections()

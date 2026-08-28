@@ -52,6 +52,8 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public List<string> VisualProviderPriority { get; set; } = [];
+
     public Dictionary<string, List<CardSkinPriorityEntry>> CardSkinPriorities { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -129,6 +131,11 @@ internal sealed class SkinConfig
         config.Selections = new Dictionary<string, string>(
             config.Selections,
             StringComparer.OrdinalIgnoreCase);
+        config.VisualProviderPriority ??= [];
+        config.VisualProviderPriority = config.VisualProviderPriority
+            .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         config.CardSkinPriorities ??=
             new Dictionary<string, List<CardSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
         config.CardSkinPriorities = config.CardSkinPriorities.ToDictionary(

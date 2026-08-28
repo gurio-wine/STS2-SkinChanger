@@ -35,6 +35,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyDictionary<string, string> _resourceGroupIds;
     private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceFile>>
         _fullRuntimeProviderBaselineOverlays = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceAsset>>
+        _providerRelicAssets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlySet<string>>
+        _isolatedRelicProviderPaths = new(StringComparer.OrdinalIgnoreCase);
 
     private SkinCatalog(
         PckArchive gameArchive,
@@ -985,6 +989,10 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(pair => IsRelicAtlasSpritePath(pair.Key))
                 .SelectMany(pair => EnumerateDependencyPaths(pair.Value)))
             .Where(IsRelicAtlasTexturePath)
+            .Concat(includedGroups
+                .SelectMany(group => group.Options)
+                .SelectMany(GetIsolatedRelicProviderPaths)
+                .Where(IsRelicAtlasTexturePath))
             .Distinct(StringComparer.OrdinalIgnoreCase);
         foreach (var relicAtlasPath in relicAtlasPaths)
         {
@@ -1027,9 +1035,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
     internal IReadOnlySet<string> GetIsolatedRelicProviderPaths(SkinOption selected)
     {
-        if (!selected.Assets.Keys.Any(IsRelicAtlasSpritePath))
+        if (_isolatedRelicProviderPaths.TryGetValue(
+                selected.EffectiveProviderId,
+                out var cached))
         {
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return cached;
         }
 
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1049,12 +1059,19 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        _isolatedRelicProviderPaths[selected.EffectiveProviderId] = paths;
         return paths;
     }
 
+    internal IReadOnlyList<string> GetProviderRelicSpritePaths(SkinOption selected) =>
+        GetProviderRelicAssets(selected.EffectiveProviderId).Keys
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
     public string? FindSelectedRelicIconGroup(
         string resourcePath,
-        IReadOnlyDictionary<string, string> selections)
+        IReadOnlyDictionary<string, string> selections,
+        IReadOnlyList<string> providerPriority)
     {
         var normalizedPath = NormalizeTakeoverPath(resourcePath);
         if (!IsRelicAtlasSpritePath(normalizedPath))
@@ -1062,6 +1079,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return null;
         }
 
+        var candidates = new List<(SkinGroup Group, SkinOption Option)>();
         foreach (var group in Groups)
         {
             if (!selections.TryGetValue(group.Id, out var selectedId))
@@ -1071,16 +1089,75 @@ internal sealed partial class SkinCatalog : IDisposable
 
             var selected = group.Options.FirstOrDefault(option =>
                 option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
-            if (selected?.Assets.Keys.Any(path => NormalizeTakeoverPath(path).Equals(
-                    normalizedPath,
-                    StringComparison.OrdinalIgnoreCase)) == true)
+            if (selected != null &&
+                IsCharacterAppearanceOption(selected) &&
+                TryResolveProviderAsset(selected, normalizedPath, out _))
             {
-                return group.Id;
+                candidates.Add((group, selected));
             }
         }
 
-        return null;
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        for (var i = providerPriority.Count - 1; i >= 0; i--)
+        {
+            var providerId = providerPriority[i];
+            var prioritized = candidates.FirstOrDefault(candidate =>
+                candidate.Option.EffectiveProviderId.Equals(
+                    providerId,
+                    StringComparison.OrdinalIgnoreCase));
+            if (prioritized.Group != null)
+            {
+                return prioritized.Group.Id;
+            }
+        }
+
+        return candidates[^1].Group.Id;
     }
+
+    internal bool TryResolveProviderAsset(
+        SkinOption selected,
+        string sourcePath,
+        out ResourceAsset asset) =>
+        GetProviderRelicAssets(selected.EffectiveProviderId)
+            .TryGetValue(NormalizeTakeoverPath(sourcePath), out asset!);
+
+    private IReadOnlyDictionary<string, ResourceAsset> GetProviderRelicAssets(string providerId)
+    {
+        if (_providerRelicAssets.TryGetValue(providerId, out var cached))
+        {
+            return cached;
+        }
+
+        var assets = new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
+        foreach (var index in _cosmeticIndexes.Where(index => index.Mod.Id.Equals(
+                     providerId,
+                     StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var pair in index.Assets.Where(pair => IsRelicAtlasSpritePath(pair.Key)))
+            {
+                assets[NormalizeTakeoverPath(pair.Key)] = pair.Value;
+            }
+        }
+
+        _providerRelicAssets[providerId] = assets;
+        return assets;
+    }
+
+    private static bool IsCharacterAppearanceOption(SkinOption option) =>
+        option.Assets.Keys.Any(path =>
+            CharacterPathRegex().IsMatch(path) ||
+            CharacterSelectSceneRegex().IsMatch(path) ||
+            AnyCharacterSelectSceneRegex().IsMatch(path) ||
+            MerchantCharacterSceneRegex().IsMatch(path) ||
+            RestSiteCharacterSceneRegex().IsMatch(path) ||
+            CharacterSelectIconRegex().IsMatch(path) ||
+            CharacterUiTextureRegex().IsMatch(path) ||
+            CharacterIconSceneRegex().IsMatch(path) ||
+            CharacterMapMarkerRegex().IsMatch(path));
 
     internal static bool IsRelicAtlasSpritePath(string path) =>
         RelicAtlasSpriteRegex().IsMatch(NormalizeTakeoverPath(path));
@@ -1810,12 +1887,17 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var sourcePath in sourcePaths)
         {
             var baseline = ResolveBaseline(sourcePath);
-            var primary = selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
+            var providerRelic = selected != null && IsRelicAtlasSpritePath(sourcePath) &&
+                                TryResolveProviderAsset(selected, sourcePath, out var providerRelicAsset)
+                ? providerRelicAsset
+                : null;
+            var primary = providerRelic ??
+                          (selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
                 ? selectedAsset
                 : selected?.ManagedMonsterScene != null &&
                   sourcePath.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase)
                     ? selected.ManagedMonsterScene
-                    : baseline;
+                    : baseline);
             if (primary == null)
             {
                 continue;
