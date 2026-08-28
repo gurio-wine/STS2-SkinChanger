@@ -1375,6 +1375,7 @@ internal static class CardInspectSkinControls
     private const string SelectorName = "STS2IndividualCardSkinSelector";
     private const string DropdownName = "IndividualCardSkinDropdown";
     private const string UpdatingMeta = "sts2_individual_card_skin_updating";
+    private const string OptionsCardMeta = "sts2_individual_card_skin_options_card";
     private const string PreviewCardMeta = "sts2_individual_card_skin_preview_card";
     private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
     private static readonly System.Reflection.MethodInfo ReloadCardMethod =
@@ -1382,7 +1383,6 @@ internal static class CardInspectSkinControls
 
     public static void Attach(NInspectCardScreen screen)
     {
-        SkinService.InitializeCardGroupsAfterModels();
         if (screen.GetNodeOrNull<HBoxContainer>(SelectorName) != null)
         {
             return;
@@ -1417,6 +1417,7 @@ internal static class CardInspectSkinControls
         dropdown.AddThemeFontSizeOverride("font_size", 20);
         var popup = dropdown.GetPopup();
         popup.AddThemeFontSizeOverride("font_size", 20);
+        popup.AboutToPopup += () => PopulateOptions(screen, selector, dropdown);
         popup.IdFocused += id => PreviewSelection(
             screen,
             dropdown,
@@ -1461,17 +1462,46 @@ internal static class CardInspectSkinControls
         }
 
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
-        var options = SkinService.GetCardOptions(card);
-        if (options.Count == 0)
+        selector.SetMeta(UpdatingMeta, true);
+        selector.RemoveMeta(OptionsCardMeta);
+        dropdown.Clear();
+        dropdown.TooltipText = ModLocalization.Get(ModText.IndividualCardTooltip);
+        var selected = SkinService.GetCardOverrideSelection(card);
+        dropdown.AddItem(SelectionDisplayName(selected));
+        dropdown.SetItemMetadata(0, selected);
+        dropdown.Select(0);
+        selector.SetMeta(UpdatingMeta, false);
+        selector.Visible = true;
+    }
+
+    private static void PopulateOptions(
+        NInspectCardScreen screen,
+        HBoxContainer selector,
+        OptionButton dropdown)
+    {
+        var card = screen.GetNodeOrNull<NCard>("Card")?.Model;
+        if (card == null)
         {
-            selector.Visible = false;
-            dropdown.Clear();
             return;
         }
 
+        var cardId = card.Id.ToString();
+        if (selector.GetMeta(OptionsCardMeta, string.Empty).AsString().Equals(
+                cardId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // Matching a card against every portrait, frame and presentation source is the expensive
+        // part of the individual-card selector. Do it only when the player actually opens the
+        // dropdown, not whenever the enlarged card screen refreshes.
+        SkinService.InitializeCardGroupsAfterModels();
+        var options = SkinService.GetCardOptions(card);
+        var selected = SkinService.GetCardOverrideSelection(card);
+
         selector.SetMeta(UpdatingMeta, true);
         dropdown.Clear();
-        dropdown.TooltipText = ModLocalization.Get(ModText.IndividualCardTooltip);
         dropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
         dropdown.SetItemMetadata(0, SkinService.InheritCardSelectionId);
         dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
@@ -1483,13 +1513,32 @@ internal static class CardInspectSkinControls
             dropdown.SetItemMetadata(index, option.Id);
         }
 
-        var selected = SkinService.GetCardOverrideSelection(card);
         var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
             .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
                 .Equals(selected, StringComparison.OrdinalIgnoreCase));
         dropdown.Select(selectedIndex);
+        selector.SetMeta(OptionsCardMeta, cardId);
         selector.SetMeta(UpdatingMeta, false);
-        selector.Visible = true;
+    }
+
+    private static string SelectionDisplayName(string optionId)
+    {
+        if (optionId.Equals(
+                SkinService.InheritCardSelectionId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return ModLocalization.Get(ModText.FollowCategory);
+        }
+
+        if (optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return ModLocalization.Get(ModText.GameOriginal);
+        }
+
+        var optionName = SkinService.GetCardOptionName(optionId);
+        return string.IsNullOrWhiteSpace(optionName)
+            ? optionId
+            : ModLocalization.DisplayOptionName(optionName);
     }
 
     private static void ApplySelection(

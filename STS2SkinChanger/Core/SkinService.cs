@@ -626,6 +626,19 @@ internal static class SkinService
         }
     }
 
+    public static string? GetCardOptionName(string optionId)
+    {
+        lock (Sync)
+        {
+            return Catalog?.CardGroups
+                .SelectMany(group => group.Options)
+                .FirstOrDefault(option => option.Id.Equals(
+                    optionId,
+                    StringComparison.OrdinalIgnoreCase))
+                ?.Name;
+        }
+    }
+
     public static bool HasCardSkin(CardModel card)
     {
         lock (Sync)
