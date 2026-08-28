@@ -86,6 +86,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private Label _status = null!;
     private CharacterDragSurface _dragSurface = null!;
     private CanvasLayer _hintLayer = null!;
+    private Tween? _hintPulseTween;
+    private Tween? _selectionHintPulseTween;
     private PanelContainer _panel = null!;
     private ScrollContainer _settingsScroll = null!;
     private VBoxContainer _settingsContent = null!;
@@ -182,6 +184,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         EndComparison();
         EndSelectionReticlePreview();
         CharacterAppearanceRuntime.QueuedSelectionFinished -= OnQueuedSelectionFinished;
+        StopHintPulseAnimations();
         _hintLayer.Visible = false;
         NCapstoneContainer.Instance?.EnableBackstopInstantly();
         base.OnSubmenuClosed();
@@ -200,6 +203,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         FinishDrag(save: true);
         EndComparison();
         EndSelectionReticlePreview();
+        StopHintPulseAnimations();
         _hintLayer.Visible = false;
         base.OnSubmenuHidden();
     }
@@ -228,7 +232,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         };
         AddChild(_hintLayer);
 
-        _hint = new PulsingDragHintLabel
+        _hint = new Label
         {
             Name = "DragHint",
             Position = new Vector2(34f, 28f),
@@ -245,7 +249,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _hint.AddThemeConstantOverride("outline_size", 6);
         _hintLayer.AddChild(_hint);
 
-        _selectionHint = new PulsingDragHintLabel
+        _selectionHint = new Label
         {
             Name = "SelectionHint",
             AnchorLeft = 0.15f,
@@ -265,6 +269,12 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _selectionHint.AddThemeColorOverride("font_outline_color", new Color("241d12"));
         _selectionHint.AddThemeConstantOverride("outline_size", 7);
         _hintLayer.AddChild(_selectionHint);
+
+        // The hints are animated with native Godot tweens instead of a managed Label _Process
+        // callback.  This keeps the animation alive while the game is paused and makes the
+        // effect reliable for controls created at runtime.
+        _hint.SelfModulate = Colors.White;
+        _selectionHint.SelfModulate = Colors.White;
 
         _panel = new PanelContainer
         {
@@ -1468,10 +1478,67 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _dragSurface.SetShopPlayerVisual(shopPlayer);
         _dragSurface.SetSelectionMode(_selectionMode);
         _dragSurface.SetDragEnabled(creature != null || shopPlayer != null);
-        _selectionHint.Visible = _selectionMode;
-        _hint.Visible = creature != null || shopPlayer != null;
+        var showSelectionHint = _selectionMode;
+        var showDragHint = creature != null || shopPlayer != null;
+        _selectionHint.Visible = showSelectionHint;
+        _hint.Visible = showDragHint;
+        RefreshHintPulse(_selectionHint, showSelectionHint, ref _selectionHintPulseTween);
+        RefreshHintPulse(_hint, showDragHint, ref _hintPulseTween);
         _compareButton.Disabled = creature == null;
         RefreshDragHint();
+    }
+
+    private void StopHintPulseAnimations()
+    {
+        StopHintPulse(_selectionHint, ref _selectionHintPulseTween);
+        StopHintPulse(_hint, ref _hintPulseTween);
+    }
+
+    private void RefreshHintPulse(Label label, bool shouldShow, ref Tween? tween)
+    {
+        // EnterSelectionMode can run before the screen is pushed onto the stack.  Do not create
+        // a tween until the label is actually visible in the scene tree.
+        if (!shouldShow || !_hintLayer.Visible || !IsVisibleInTree())
+        {
+            StopHintPulse(label, ref tween);
+            return;
+        }
+
+        if (tween != null && tween.IsValid() && tween.IsRunning())
+        {
+            return;
+        }
+
+        label.PivotOffset = label.Size * 0.5f;
+        label.SelfModulate = Colors.White;
+        var pulse = label.CreateTween()
+            .SetProcessMode(Tween.TweenProcessMode.Idle)
+            .SetPauseMode(Tween.TweenPauseMode.Process)
+            .SetIgnoreTimeScale();
+        pulse.SetLoops();
+        pulse.TweenProperty(label, "self_modulate:a", 0.38f, 0.72)
+            .SetTrans(Tween.TransitionType.Sine)
+            .SetEase(Tween.EaseType.InOut);
+        pulse.Chain()
+            .TweenProperty(label, "self_modulate:a", 1f, 0.72)
+            .SetTrans(Tween.TransitionType.Sine)
+            .SetEase(Tween.EaseType.InOut);
+        tween = pulse;
+    }
+
+    private static void StopHintPulse(Label label, ref Tween? tween)
+    {
+        if (tween != null && tween.IsValid())
+        {
+            tween.Kill();
+        }
+
+        tween = null;
+        if (GodotObject.IsInstanceValid(label))
+        {
+            label.SelfModulate = Colors.White;
+            label.Scale = Vector2.One;
+        }
     }
 
     private void RefreshDragHint()
@@ -1776,26 +1843,6 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         {
             control.AddThemeFontOverride("font", ContextualSkinControls.GameFont);
         }
-    }
-}
-
-internal partial class PulsingDragHintLabel : Label
-{
-    private double _elapsed;
-
-    public override void _Ready()
-    {
-        SetProcess(true);
-        PivotOffset = Size * 0.5f;
-    }
-
-    public override void _Process(double delta)
-    {
-        _elapsed += delta;
-        PivotOffset = Size * 0.5f;
-        var pulse = (Mathf.Sin((float)_elapsed * 3f) + 1f) * 0.5f;
-        Modulate = new Color(1f, 1f, 1f, 0.25f + pulse * 0.75f);
-        Scale = Vector2.One * (0.95f + pulse * 0.05f);
     }
 }
 
