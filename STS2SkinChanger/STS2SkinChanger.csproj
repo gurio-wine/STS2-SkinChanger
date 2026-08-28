@@ -9,7 +9,10 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <GameAssemblyDir Condition="'$(GameAssemblyDir)' == ''">/mnt/d/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64</GameAssemblyDir>
+    <!-- The installed main branch is the depot copy below. The public beta remains available by
+         passing -p:GameAssemblyDir explicitly, so a normal build cannot silently target v0.111.0
+         when the player is testing the v0.107.1 release. -->
+    <GameAssemblyDir Condition="'$(GameAssemblyDir)' == ''">/mnt/d/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64</GameAssemblyDir>
   </PropertyGroup>
 
   <ItemGroup>

@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger.Core;
+using System.Reflection;
 
 namespace STS2SkinChanger;
 
@@ -90,6 +91,14 @@ internal static class ModelTypeCompatibility
 {
     private static readonly Lazy<IReadOnlySet<ModelId>> CanonicalModelIds = new(BuildCanonicalModelIds);
     private static readonly HashSet<ModelId> ReportedCollisions = [];
+    private static readonly PropertyInfo? RegisteredModelsProperty =
+        typeof(ModelDb).GetProperty(
+            "All",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+    private static readonly FieldInfo? RegisteredModelsField =
+        typeof(ModelDb).GetField(
+            "_contentById",
+            BindingFlags.Static | BindingFlags.NonPublic);
 
     private static IReadOnlySet<ModelId> BuildCanonicalModelIds()
     {
@@ -119,7 +128,7 @@ internal static class ModelTypeCompatibility
     internal static Type[] Filter(IEnumerable<Type> types)
     {
         var coreAssembly = typeof(AbstractModel).Assembly;
-        var seenIds = ModelDb.All
+        var seenIds = GetRegisteredModels()
             .Select(model => model.Id)
             .ToHashSet();
         var filtered = new List<Type>();
@@ -174,7 +183,7 @@ internal static class ModelTypeCompatibility
     {
         var coreAssembly = typeof(AbstractModel).Assembly;
         var removed = 0;
-        foreach (var model in ModelDb.All.ToArray())
+        foreach (var model in GetRegisteredModels().ToArray())
         {
             var type = model.GetType();
             if (type.Assembly == coreAssembly ||
@@ -196,28 +205,55 @@ internal static class ModelTypeCompatibility
 
         return removed;
     }
+
+    private static IEnumerable<AbstractModel> GetRegisteredModels()
+    {
+        if (RegisteredModelsProperty?.GetValue(null) is IEnumerable<AbstractModel> models)
+        {
+            return models;
+        }
+
+        if (RegisteredModelsField?.GetValue(null) is IDictionary<ModelId, AbstractModel> modelMap)
+        {
+            return modelMap.Values;
+        }
+
+        return [];
+    }
 }
 
 // Some compatibility/framework mods pass an explicit model array to ModelDb.Init instead
 // of letting the game read ReflectionHelper.ModTypes. In that path the property patch above
 // is never consulted, so apply the same filtering at the actual initialization boundary.
-[HarmonyPatch(typeof(ModelDb), nameof(ModelDb.Init))]
+// The formal v0.107.1 build exposes Init() while the public beta exposes Init(Type[]?). Resolve
+// the method dynamically and use Harmony's __args bridge so one DLL can load on both branches.
+[HarmonyPatch]
 internal static class DuplicateModelInitCompatibilityPatch
 {
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(ModelDb), nameof(ModelDb.Init)) ??
+        throw new MissingMethodException(typeof(ModelDb).FullName, nameof(ModelDb.Init));
+
     // Other mods may inject legacy models from their own Init prefix. Run after those
     // prefixes so the database and the explicit list are both in their final pre-init state.
     [HarmonyPriority(Priority.Last)]
-    private static void Prefix(ref Type[]? __0)
+    private static void Prefix(object[] __args)
     {
         var existingRemoved = ModelTypeCompatibility.RemoveExistingCanonicalConflicts();
         // The normal game call passes null and resolves AllAbstractModelSubtypes inside the
         // original method. Resolve it here too, so a previously cached/unfiltered reflection
         // list cannot bypass the compatibility filter.
-        var candidates = __0 ?? ModelDb.AllAbstractModelSubtypes;
+        var candidates = __args is [{ } firstArgument] && firstArgument is Type[] injected
+            ? injected
+            : ModelDb.AllAbstractModelSubtypes;
         var originalCount = candidates.Length;
         var filtered = ModelTypeCompatibility.Filter(candidates);
         var removedCount = originalCount - filtered.Length;
-        __0 = filtered;
+        if (__args.Length > 0)
+        {
+            __args[0] = filtered;
+        }
+
         ModLog.Info($"ModelDb.Init 兼容补丁已执行：模型 {originalCount} 个，移除列表重复 {removedCount} 个，移除已注入冲突 {existingRemoved} 个。");
     }
 }
