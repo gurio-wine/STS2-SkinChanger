@@ -873,7 +873,11 @@ internal static class ManagedSkinModLoader
             foreach (var patch in runtime.Patches
                          .Concat(runtime.NodeReadyPresentationPatches)
                          .Where(patch =>
-                             (patch.Kind is ProviderPatchKind.Prefix or ProviderPatchKind.Postfix) &&
+                             // Replaying a _Ready prefix can repeat one-shot subscriptions,
+                             // input blocking, or __state setup without the original call
+                             // sequence. Existing nodes only need the visual postfix; prefixes
+                             // still run normally when a fresh scene is instantiated.
+                             patch.Kind == ProviderPatchKind.Postfix &&
                              patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
                              patch.Target.DeclaringType?.IsInstanceOfType(node) == true))
             {
@@ -1051,7 +1055,8 @@ internal static class ManagedSkinModLoader
         baseline.ControlSize != current.ControlSize ||
         baseline.ControlScale != current.ControlScale ||
         baseline.ControlRotation != current.ControlRotation ||
-        baseline.ControlPivotOffset != current.ControlPivotOffset;
+        baseline.ControlPivotOffset != current.ControlPivotOffset ||
+        baseline.ControlMouseFilter != current.ControlMouseFilter;
 
     private static Dictionary<ulong, NodeReadyVisualState> CaptureNodeReadyState(Node root)
     {
@@ -1080,7 +1085,8 @@ internal static class ManagedSkinModLoader
                 control?.Size,
                 control?.Scale,
                 control?.Rotation,
-                control?.PivotOffset);
+                control?.PivotOffset,
+                control?.MouseFilter);
         }
 
         return result;
@@ -1230,6 +1236,13 @@ internal static class ManagedSkinModLoader
                     control.PivotOffset == appliedPivotOffset)
                 {
                     control.PivotOffset = pivotOffset;
+                }
+
+                if (original.ControlMouseFilter is { } mouseFilter &&
+                    applied.ControlMouseFilter is { } appliedMouseFilter &&
+                    control.MouseFilter == appliedMouseFilter)
+                {
+                    control.MouseFilter = mouseFilter;
                 }
             }
         }
@@ -2030,7 +2043,8 @@ internal static class ManagedSkinModLoader
         Vector2? ControlSize,
         Vector2? ControlScale,
         float? ControlRotation,
-        Vector2? ControlPivotOffset);
+        Vector2? ControlPivotOffset,
+        Control.MouseFilterEnum? ControlMouseFilter);
 
     private sealed record NodeReadyVisualChange(
         WeakReference<Node> Node,

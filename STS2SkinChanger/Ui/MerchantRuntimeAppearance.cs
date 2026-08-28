@@ -17,6 +17,7 @@ internal static class MerchantRuntimeAppearance
 {
     internal const string GroupId = "merchant";
     private const string MerchantButtonScenePath = "res://scenes/rooms/merchant_button.tscn";
+    private const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
     private const string PlayerBasePositionMeta = "skin_changer_shop_player_base_position";
     private const string PlayerBaseScaleMeta = "skin_changer_shop_player_base_scale";
@@ -169,6 +170,8 @@ internal static class MerchantRuntimeAppearance
         {
             ReplayedInventoryAdditions.Add(new WeakReference<Node>(node));
         }
+
+        MakeProviderInventoryVisualsPassThrough();
     }
 
     internal static bool TryRefreshMerchant(out string? error)
@@ -192,11 +195,8 @@ internal static class MerchantRuntimeAppearance
         Node2D? newHandContainer = null;
         try
         {
-            newButton = SkinService
-                .GetOrLoadRuntimeScene(GroupId, MerchantButtonScenePath)
-                .Instantiate<NMerchantButton>(PackedScene.GenEditState.Disabled);
-            inventoryTemplate = SkinService
-                .GetOrLoadRuntimeScene(GroupId, MerchantInventoryScenePath)
+            newButton = InstantiateMerchantButton();
+            inventoryTemplate = LoadRuntimeOrBaseScene(MerchantInventoryScenePath)
                 .Instantiate<NMerchantInventory>(PackedScene.GenEditState.Disabled);
             var templateHand = inventoryTemplate.GetNode<NMerchantHand>("%MerchantHand");
             newHandContainer = templateHand.GetParent<Node2D>();
@@ -217,6 +217,12 @@ internal static class MerchantRuntimeAppearance
                 {
                     ReplayedInventoryAdditions.Add(new WeakReference<Node>(addedNode));
                 }
+
+                // A merchant skin is visual-only. Some providers add a full-size Control to the
+                // inventory root; leaving its default MouseFilter=Stop makes it sit above the
+                // game's BackButton and swallow the click after a hot swap. Keep those provider
+                // visuals transparent to input while preserving the game's own controls.
+                MakeProviderInventoryVisualsPassThrough();
             }
 
             return true;
@@ -409,6 +415,81 @@ internal static class MerchantRuntimeAppearance
         MerchantButtonField!.SetValue(room, replacement);
         previous.GetParent()?.RemoveChild(previous);
         previous.QueueFree();
+    }
+
+    private static NMerchantButton InstantiateMerchantButton()
+    {
+        // v0.111.0 introduced a standalone merchant_button.tscn. Older formal builds keep the
+        // same node embedded in merchant_room.tscn, so use the standalone scene when available
+        // and extract the embedded node as a version-neutral fallback.
+        var standalone = TryLoadRuntimeOrBaseScene(MerchantButtonScenePath);
+        if (standalone != null)
+        {
+            return standalone.Instantiate<NMerchantButton>(PackedScene.GenEditState.Disabled);
+        }
+
+        var roomScene = LoadRuntimeOrBaseScene(MerchantRoomScenePath);
+        var roomTemplate = roomScene.Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
+        try
+        {
+            var button = roomTemplate.GetNode<NMerchantButton>("SceneContainer/MerchantButton");
+            button.GetParent()?.RemoveChild(button);
+            ClearOwnerRecursive(button);
+            return button;
+        }
+        finally
+        {
+            if (GodotObject.IsInstanceValid(roomTemplate))
+            {
+                roomTemplate.Free();
+            }
+        }
+    }
+
+    private static PackedScene LoadRuntimeOrBaseScene(string scenePath) =>
+        TryLoadRuntimeOrBaseScene(scenePath) ??
+        throw new InvalidOperationException($"无法加载商店场景：{scenePath}");
+
+    private static PackedScene? TryLoadRuntimeOrBaseScene(string scenePath)
+    {
+        try
+        {
+            var runtime = SkinService.GetOrLoadRuntimeScene(GroupId, scenePath);
+            if (runtime != null)
+            {
+                return runtime;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // The selected provider may only supply code patches, or this path may not exist in
+            // the current game version. Fall through to the immutable base-game scene.
+        }
+
+        return ResourceLoader.Load<PackedScene>(
+            scenePath,
+            null,
+            ResourceLoader.CacheMode.Reuse);
+    }
+
+    private static void MakeProviderInventoryVisualsPassThrough()
+    {
+        foreach (var reference in ReplayedInventoryAdditions.ToArray())
+        {
+            if (!reference.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node))
+            {
+                continue;
+            }
+
+            foreach (var descendant in EnumerateNodeTree(node))
+            {
+                if (descendant is Control control)
+                {
+                    control.MouseFilter = Control.MouseFilterEnum.Ignore;
+                }
+            }
+        }
     }
 
     private static void ReplaceMerchantHand(
