@@ -188,6 +188,53 @@ if (validateIndex >= 0)
             $"interactive={probe.HasInteractiveScenes}");
     }
 
+    foreach (var provider in catalog.Groups
+                 .SelectMany(group => group.Options.Select(option =>
+                     (Group: group, Option: option)))
+                 .GroupBy(pair => pair.Option.Id, StringComparer.OrdinalIgnoreCase)
+                 .Where(group => group.All(pair =>
+                     SkinCatalog.KnownAncientIds.Contains(pair.Group.Id) &&
+                     pair.Option.RuntimeImagePath != null)))
+    {
+        if (catalog.ProviderUsesFullRuntime(provider.Key))
+        {
+            failures.Add(
+                $"provider {provider.Key}: independent Ancient images were linked as one runtime bundle");
+            continue;
+        }
+
+        var selections = provider.ToDictionary(
+            pair => pair.Group.Id,
+            pair => pair.Option.Id,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in provider)
+        {
+            var selectTransaction = catalog.BuildVisualSelectionTransaction(
+                pair.Group.Id,
+                pair.Option.Id,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+            if (selectTransaction.Count != 1 ||
+                !selectTransaction.TryGetValue(pair.Group.Id, out var selectedId) ||
+                !selectedId.Equals(pair.Option.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                failures.Add(
+                    $"{pair.Group.Id}/{pair.Option.Id}: independent Ancient selection changed another group");
+            }
+
+            var resetTransaction = catalog.BuildVisualSelectionTransaction(
+                pair.Group.Id,
+                SkinCatalog.BaseOptionId,
+                selections);
+            if (resetTransaction.Count != 1 ||
+                !resetTransaction.TryGetValue(pair.Group.Id, out var resetId) ||
+                !resetId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                failures.Add(
+                    $"{pair.Group.Id}/{pair.Option.Id}: independent Ancient reset changed another group");
+            }
+        }
+    }
+
     foreach (var option in catalog.PckCardOptions.Where(option => option.Assets.Count > 0))
     {
         var variants = option.Assets.Keys

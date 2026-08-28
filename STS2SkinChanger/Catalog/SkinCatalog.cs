@@ -42,7 +42,8 @@ internal sealed partial class SkinCatalog : IDisposable
         List<PckResourceIndex> cosmeticIndexes,
         IReadOnlyList<SkinGroup> groups,
         IReadOnlyList<CardSkinGroup> cardGroups,
-        IReadOnlyList<CardSkinOption> pckCardOptions)
+        IReadOnlyList<CardSkinOption> pckCardOptions,
+        IReadOnlyList<SkinModDescriptor> mods)
     {
         _gameArchive = gameArchive;
         _baselineIndexes = baselineIndexes;
@@ -68,6 +69,10 @@ internal sealed partial class SkinCatalog : IDisposable
         _configuredCardGroups = cardGroups;
         _pckCardOptions = pckCardOptions;
         _cardGroups = cardGroups.ToList();
+        // External image routers must be merged before runtime-bundle ownership is calculated.
+        // Otherwise a DLL that independently supplies several Ancient pictures looks like one
+        // inseparable multi-group runtime merely because its PCK also contains per-Ancient icons.
+        AddImageRuntimeProviderOptions(mods);
         _managedGodotScriptProviders = cosmeticIndexes
             .Where(index => index.Mod.HasDll && CountManagedGodotScripts(index.Archive) > 0)
             .Select(index => index.Mod.Id)
@@ -115,6 +120,17 @@ internal sealed partial class SkinCatalog : IDisposable
                 pair => pair.Key,
                 pair => pair.Value,
                 StringComparer.OrdinalIgnoreCase);
+        var independentAncientImageProviders = visualGroupsByProvider
+            .Where(pair => pair.Value.All(KnownAncientIds.Contains))
+            .Where(pair => pair.Value.All(groupId =>
+                _groups.First(group => group.Id.Equals(
+                        groupId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Options.Any(option =>
+                        option.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
+                        option.RuntimeImagePath != null)))
+            .Select(pair => pair.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Card ownership and runtime behaviour are two independent concerns. A character skin can
         // bundle selectable card art while still relying on its DLL for voice, character-select
@@ -126,6 +142,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(index => index.Mod.Id)
             .Where(providerId =>
                 visualGroupsByProvider.ContainsKey(providerId) &&
+                !independentAncientImageProviders.Contains(providerId) &&
                 (!cardProviderIds.Contains(providerId) ||
                  singleCharacterBundleGroupsByProvider.ContainsKey(providerId)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -228,8 +245,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 cosmeticIndexes,
                 groups,
                 cardGroups,
-                pckCardOptions);
-            catalog.AddImageRuntimeProviderOptions(modList);
+                pckCardOptions,
+                modList);
             catalog.SortGroupsAndOptions();
             return catalog;
         }
@@ -3672,8 +3689,16 @@ internal sealed partial class SkinCatalog : IDisposable
             _groups.Add(group);
         }
 
-        if (group.Options.Any(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase)))
+        var existingIndex = group.Options.FindIndex(option =>
+            option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+        if (existingIndex >= 0)
         {
+            var existing = group.Options[existingIndex];
+            group.Options[existingIndex] = existing with
+            {
+                IsRuntimeProvider = true,
+                RuntimeImagePath = runtimeImagePath
+            };
             return;
         }
 
