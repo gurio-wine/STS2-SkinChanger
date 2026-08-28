@@ -81,30 +81,96 @@ internal sealed class PckArchive : IDisposable
                 throw new InvalidDataException($"{path} 的 PCK 文件数量异常：{fileCount}。");
             }
 
-            var entries = new Dictionary<string, PckEntry>(checked((int)fileCount), StringComparer.OrdinalIgnoreCase);
-            for (var i = 0U; i < fileCount; i++)
+            var directoryStart = stream.Position;
+            Dictionary<string, PckEntry> entries;
+            if (formatVersion == 2)
             {
-                var pathLength = reader.ReadUInt32();
-                if (pathLength > 1024 * 1024)
+                // Godot 4's v2 writer has existed in two compatible forms. The form used by
+                // older mods omits the per-file flags field; our generated overlays keep the
+                // field for removal/encryption support. Try the richer form first, then rewind
+                // and read the legacy layout when the following path no longer validates.
+                try
                 {
-                    throw new InvalidDataException($"{path} 的 PCK 路径长度异常。");
+                    entries = ReadEntries(
+                        reader,
+                        stream,
+                        path,
+                        fileBase,
+                        fileCount,
+                        includeFileFlags: true);
                 }
-
-                var rawPath = reader.ReadBytes(checked((int)pathLength));
-                if (rawPath.Length != (int)pathLength)
+                catch (InvalidDataException)
                 {
-                    throw new InvalidDataException($"{path} 的 PCK 目录在读取路径时被截断。");
+                    stream.Position = directoryStart;
+                    entries = ReadEntries(
+                        reader,
+                        stream,
+                        path,
+                        fileBase,
+                        fileCount,
+                        includeFileFlags: false);
                 }
+            }
+            else
+            {
+                entries = ReadEntries(
+                    reader,
+                    stream,
+                    path,
+                    fileBase,
+                    fileCount,
+                    includeFileFlags: true);
+            }
 
-                var resourcePath = Encoding.UTF8.GetString(rawPath).TrimEnd('\0');
-                var offset = reader.ReadUInt64();
-                var size = reader.ReadUInt64();
-                var md5 = reader.ReadBytes(16);
-                if (md5.Length != 16)
-                {
-                    throw new InvalidDataException($"{path} 的 PCK 目录在读取 {resourcePath} 校验和时被截断。");
-                }
+            return new PckArchive(path, stream, entries);
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
 
+    private static Dictionary<string, PckEntry> ReadEntries(
+        BinaryReader reader,
+        FileStream stream,
+        string path,
+        ulong fileBase,
+        uint fileCount,
+        bool includeFileFlags)
+    {
+        var entries = new Dictionary<string, PckEntry>(checked((int)fileCount), StringComparer.OrdinalIgnoreCase);
+        for (var i = 0U; i < fileCount; i++)
+        {
+            var pathLength = reader.ReadUInt32();
+            if (pathLength > 1024 * 1024)
+            {
+                throw new InvalidDataException($"{path} 的 PCK 路径长度异常。");
+            }
+
+            var rawPath = reader.ReadBytes(checked((int)pathLength));
+            if (rawPath.Length != (int)pathLength)
+            {
+                throw new InvalidDataException($"{path} 的 PCK 目录在读取路径时被截断。");
+            }
+
+            var resourcePath = Encoding.UTF8.GetString(rawPath).TrimEnd('\0');
+            if (string.IsNullOrWhiteSpace(resourcePath) ||
+                resourcePath.Any(character => char.IsControl(character)))
+            {
+                throw new InvalidDataException($"{path} 的 PCK 目录包含无效资源路径。");
+            }
+
+            var offset = reader.ReadUInt64();
+            var size = reader.ReadUInt64();
+            var md5 = reader.ReadBytes(16);
+            if (md5.Length != 16)
+            {
+                throw new InvalidDataException($"{path} 的 PCK 目录在读取 {resourcePath} 校验和时被截断。");
+            }
+
+            if (includeFileFlags)
+            {
                 var fileFlags = reader.ReadUInt32();
                 if ((fileFlags & FileRemoval) != 0)
                 {
@@ -116,24 +182,19 @@ internal sealed class PckArchive : IDisposable
                 {
                     throw new InvalidDataException($"{path} 中的资源 {resourcePath} 已加密。");
                 }
-
-                var absoluteOffset = checked(fileBase + offset);
-                var fileEnd = checked(absoluteOffset + size);
-                if (fileEnd > (ulong)stream.Length)
-                {
-                    throw new InvalidDataException($"{path} 中的资源 {resourcePath} 超出文件范围。");
-                }
-
-                entries[NormalizePath(resourcePath)] = new PckEntry(absoluteOffset, size, md5);
             }
 
-            return new PckArchive(path, stream, entries);
+            var absoluteOffset = checked(fileBase + offset);
+            var fileEnd = checked(absoluteOffset + size);
+            if (fileEnd > (ulong)stream.Length)
+            {
+                throw new InvalidDataException($"{path} 中的资源 {resourcePath} 超出文件范围。");
+            }
+
+            entries[NormalizePath(resourcePath)] = new PckEntry(absoluteOffset, size, md5);
         }
-        catch
-        {
-            stream.Dispose();
-            throw;
-        }
+
+        return entries;
     }
 
     public bool Contains(string resourcePath) => _entries.ContainsKey(NormalizePath(resourcePath));
