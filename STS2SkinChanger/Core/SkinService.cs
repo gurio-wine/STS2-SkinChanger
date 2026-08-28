@@ -1587,6 +1587,35 @@ internal static class SkinService
         }
     }
 
+    public static Texture2D? GetSelectedRelicIcon(string resourcePath)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            var groupId = catalog?.FindSelectedRelicIconGroup(resourcePath, Config.Selections);
+            if (catalog == null || groupId == null)
+            {
+                return null;
+            }
+
+            var cacheKey = RuntimeResourceKey(groupId, resourcePath);
+            var wasCached = RuntimeResourceCache.TryGetValue(cacheKey, out var cached) &&
+                            GodotObject.IsInstanceValid(cached);
+            var texture = GetOrLoadRuntimeResource(groupId, resourcePath) as Texture2D ??
+                          throw new InvalidOperationException(
+                              $"隔离的遗物图标不是贴图：{resourcePath}");
+            if (!wasCached)
+            {
+                // The aliased AtlasTexture is now bound to the provider's private atlas object.
+                // Immediately put the public atlas paths back on the game baseline so unrelated
+                // relics loaded afterwards cannot observe the temporary bridge.
+                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+            }
+
+            return texture;
+        }
+    }
+
     public static bool IsRuntimeProviderSelected(string groupId)
     {
         lock (Sync)

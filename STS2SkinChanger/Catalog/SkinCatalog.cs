@@ -881,6 +881,10 @@ internal sealed partial class SkinCatalog : IDisposable
                 .SelectMany(asset => asset.Files))
             .Select(file => NormalizeTakeoverPath(file.Path))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var isolatedRelicProviderPaths = selectedProviders.ToDictionary(
+            option => option.Id,
+            GetIsolatedRelicProviderPaths,
+            StringComparer.OrdinalIgnoreCase);
 
         // Resource packs cannot be unloaded. Before an affected runtime bundle is selected or
         // deselected, restore every canonical game/mod resource that any of its full packages can
@@ -908,6 +912,12 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
             {
+                if (isolatedRelicProviderPaths[selected.Id].Contains(
+                        NormalizeTakeoverPath(file.Key)))
+                {
+                    continue;
+                }
+
                 if (!ShouldMountProviderDependency(selected, file.Key, selectableProviderFiles))
                 {
                     continue;
@@ -938,7 +948,13 @@ internal sealed partial class SkinCatalog : IDisposable
                     continue;
                 }
 
-                var asset = selected != null && selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
+                // A character skin may replace one character-specific relic slice while bundling
+                // the entire (often older) shared relic atlas. Keep every public atlas resource
+                // on the game baseline; the selected slice is loaded through an isolated alias by
+                // the RelicModel getter patch instead.
+                var asset = !IsRelicAtlasSpritePath(takeoverSourcePath) &&
+                            selected != null &&
+                            selected.Assets.TryGetValue(sourcePath, out var selectedAsset)
                     ? selectedAsset
                     : ResolveBaseline(sourcePath);
                 if (asset == null)
@@ -960,6 +976,30 @@ internal sealed partial class SkinCatalog : IDisposable
 
         }
 
+        // Older builds could already have mounted a provider's shared relic atlas during this
+        // session. Reassert the current game's atlas whenever an affected character group is
+        // rebuilt, including when the skin is deselected.
+        var relicAtlasPaths = includedGroups
+            .SelectMany(group => group.Options)
+            .SelectMany(option => option.Assets
+                .Where(pair => IsRelicAtlasSpritePath(pair.Key))
+                .SelectMany(pair => EnumerateDependencyPaths(pair.Value)))
+            .Where(IsRelicAtlasTexturePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var relicAtlasPath in relicAtlasPaths)
+        {
+            var baseline = ResolveBaseline(relicAtlasPath);
+            if (baseline == null)
+            {
+                continue;
+            }
+
+            foreach (var file in baseline.Files)
+            {
+                files[file.Path] = file;
+            }
+        }
+
         // 代码型外观 Mod 常把场景、骨骼和贴图放在自己的 res://<ModId>/
         // 命名空间，再由 DLL 把游戏资源入口路由过去。接管 DLL 路由以后仍需把
         // 当前所选提供者的私有依赖一起挂载，否则主场景能替换但内部引用会丢失。
@@ -967,6 +1007,12 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var file in CollectSelectedProviderOverlayDependencies(selected))
             {
+                if (isolatedRelicProviderPaths[selected.Id].Contains(
+                        NormalizeTakeoverPath(file.Key)))
+                {
+                    continue;
+                }
+
                 if (!ShouldMountProviderDependency(selected, file.Key, selectableProviderFiles))
                 {
                     continue;
@@ -978,6 +1024,69 @@ internal sealed partial class SkinCatalog : IDisposable
 
         return files;
     }
+
+    internal IReadOnlySet<string> GetIsolatedRelicProviderPaths(SkinOption selected)
+    {
+        if (!selected.Assets.Keys.Any(IsRelicAtlasSpritePath))
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var index in _cosmeticIndexes.Where(index => index.Mod.Id.Equals(
+                     selected.EffectiveProviderId,
+                     StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var asset in index.Assets.Where(pair =>
+                         IsRelicAtlasSpritePath(pair.Key) ||
+                         IsRelicAtlasTexturePath(pair.Key)))
+            {
+                paths.Add(NormalizeTakeoverPath(asset.Key));
+                foreach (var file in asset.Value.Files)
+                {
+                    paths.Add(NormalizeTakeoverPath(file.Path));
+                }
+            }
+        }
+
+        return paths;
+    }
+
+    public string? FindSelectedRelicIconGroup(
+        string resourcePath,
+        IReadOnlyDictionary<string, string> selections)
+    {
+        var normalizedPath = NormalizeTakeoverPath(resourcePath);
+        if (!IsRelicAtlasSpritePath(normalizedPath))
+        {
+            return null;
+        }
+
+        foreach (var group in Groups)
+        {
+            if (!selections.TryGetValue(group.Id, out var selectedId))
+            {
+                continue;
+            }
+
+            var selected = group.Options.FirstOrDefault(option =>
+                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+            if (selected?.Assets.Keys.Any(path => NormalizeTakeoverPath(path).Equals(
+                    normalizedPath,
+                    StringComparison.OrdinalIgnoreCase)) == true)
+            {
+                return group.Id;
+            }
+        }
+
+        return null;
+    }
+
+    internal static bool IsRelicAtlasSpritePath(string path) =>
+        RelicAtlasSpriteRegex().IsMatch(NormalizeTakeoverPath(path));
+
+    private static bool IsRelicAtlasTexturePath(string path) =>
+        RelicAtlasTextureRegex().IsMatch(NormalizeTakeoverPath(path));
 
     private IReadOnlyDictionary<string, ResourceFile> CollectFullRuntimeProviderBaselineOverlay(
         string providerId)
@@ -4347,6 +4456,16 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://images/ui/top_panel/character_icon_([^/.]+?)(?:_outline)?\\.(?:png|tres)$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterUiTextureRegex();
+
+    [GeneratedRegex(
+        "^res://images/atlases/relic(?:_outline)?_atlas\\.sprites/[^/]+\\.tres$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex RelicAtlasSpriteRegex();
+
+    [GeneratedRegex(
+        "^res://images/atlases/relic(?:_outline)?_atlas\\.png$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex RelicAtlasTextureRegex();
 
     [GeneratedRegex("^res://scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterIconSceneRegex();

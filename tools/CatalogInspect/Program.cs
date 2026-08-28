@@ -638,6 +638,7 @@ if (validateIndex >= 0)
             }
 
             var selectedOverlay = catalog.BuildOverlay(selectedSelections, selectedGroupSet);
+            var isolatedRelicProviderPaths = catalog.GetIsolatedRelicProviderPaths(option);
             foreach (var asset in option.Assets)
             {
                 if (IsAncientBackgroundScene(asset.Key))
@@ -646,6 +647,52 @@ if (validateIndex >= 0)
                     {
                         failures.Add(
                             $"{group.Id}/{option.Id}: global overlay replaced the game's Ancient scene {asset.Key}");
+                    }
+
+                    continue;
+                }
+
+                if (SkinCatalog.IsRelicAtlasSpritePath(asset.Key))
+                {
+                    if (ContainsAsset(selectedOverlay, asset.Key, asset.Value))
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: global overlay leaked relic atlas slice {asset.Key}");
+                    }
+
+                    var baselineRelic = catalog.ResolveBaseline(asset.Key);
+                    if (baselineRelic != null &&
+                        !ContainsAsset(selectedOverlay, asset.Key, baselineRelic))
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: global overlay did not restore baseline relic slice {asset.Key}");
+                    }
+
+                    try
+                    {
+                        var isolatedRelic = catalog.BuildRuntimeResourceOverlay(
+                            group.Id,
+                            option.Id,
+                            [asset.Key],
+                            $"validate/relic/{validated:D4}");
+                        if (!isolatedRelic.ResourcePaths.TryGetValue(asset.Key, out var alias) ||
+                            !alias.StartsWith(
+                                "res://sts2_skin_runtime/",
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: relic slice was not assigned a private alias {asset.Key}");
+                        }
+                        else
+                        {
+                            validated++;
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        failures.Add(
+                            $"{group.Id}/{option.Id}: isolated relic slice failed {asset.Key}: " +
+                            exception.Message);
                     }
 
                     continue;
@@ -690,6 +737,8 @@ if (validateIndex >= 0)
                         var expectedPackagePaths = providerArchive.Paths
                             .Where(path => !IsProviderProjectControlFile(path))
                             .Where(path => !independentlySelectableCardFiles.Contains(
+                                SkinCatalog.NormalizeTakeoverPath(path)))
+                            .Where(path => !isolatedRelicProviderPaths.Contains(
                                 SkinCatalog.NormalizeTakeoverPath(path)))
                             .ToArray();
                         var missingPackagePaths = expectedPackagePaths
