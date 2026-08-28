@@ -44,9 +44,17 @@ internal static class CardSkinControls
         AccessTools.Method(typeof(NCardLibrary), "UpdateFilter", [typeof(bool)]);
     private static readonly ConditionalWeakTable<NCard, CardLayoutState> BaselineLayouts = new();
     private static readonly ConditionalWeakTable<NCard, CardPresentationState> PresentationLayouts = new();
+    private static readonly ConditionalWeakTable<NCardLibrary, object>
+        PendingHiddenInitialDisplays = new();
     private static readonly System.Reflection.FieldInfo? HighlightShaderMaterialField =
         AccessTools.Field(typeof(NCardHighlight), "_shaderMaterial");
     private static Texture2D? _normalTextBackgroundCoverTexture;
+
+    public static void MarkHiddenInitialDisplay(NCardLibrary screen) =>
+        PendingHiddenInitialDisplays.GetValue(screen, static _ => new object());
+
+    public static bool ConsumeHiddenInitialDisplay(NCardLibrary screen) =>
+        PendingHiddenInitialDisplays.Remove(screen);
 
     public static void Attach(NCardLibrary screen)
     {
@@ -1696,6 +1704,10 @@ internal static class CardInspectSkinControls
 [HarmonyPatch(typeof(NCardLibrary), nameof(NCardLibrary._Ready))]
 internal static class CardLibrarySkinReadyPatch
 {
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCardLibrary __instance) =>
+        CardSkinControls.MarkHiddenInitialDisplay(__instance);
+
     private static void Postfix(NCardLibrary __instance) => CardSkinControls.Attach(__instance);
 }
 
@@ -1722,6 +1734,25 @@ internal static class CardLibrarySkinOpenedPatch
 
     private static void Postfix(NCardLibrary __instance) =>
         CardSkinControls.SyncToSelectedFilter(__instance);
+}
+
+[HarmonyPatch]
+internal static class CardLibraryHiddenInitialDisplayPatch
+{
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCardLibrary), "DisplayCards");
+
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(NCardLibrary __instance, ref Task __result)
+    {
+        if (!CardSkinControls.ConsumeHiddenInitialDisplay(__instance))
+        {
+            return true;
+        }
+
+        __result = Task.CompletedTask;
+        return false;
+    }
 }
 
 [HarmonyPatch]
