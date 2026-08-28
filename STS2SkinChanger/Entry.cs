@@ -188,7 +188,9 @@ internal static class ModelTypeCompatibility
 [HarmonyPatch(typeof(ModelDb), nameof(ModelDb.Init))]
 internal static class DuplicateModelInitCompatibilityPatch
 {
-    [HarmonyPriority(Priority.First)]
+    // Other mods may inject legacy models from their own Init prefix. Run after those
+    // prefixes so the database and the explicit list are both in their final pre-init state.
+    [HarmonyPriority(Priority.Last)]
     private static void Prefix(ref Type[]? __0)
     {
         var existingRemoved = ModelTypeCompatibility.RemoveExistingCanonicalConflicts();
