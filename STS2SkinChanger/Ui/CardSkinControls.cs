@@ -1746,15 +1746,32 @@ internal static class CardLibraryPoolSkinPatch
         CardSkinControls.ShowForFilter(__instance, filter);
 }
 
-[HarmonyPatch(typeof(NCardLibraryGrid), "InitGrid")]
+[HarmonyPatch]
 internal static class CardLibraryInitialPortraitPreloadPatch
 {
-    private const int InitialCardPreloadCount = 36;
+    private static readonly System.Reflection.MethodInfo ColumnsGetter =
+        AccessTools.PropertyGetter(typeof(NCardGrid), "Columns");
+
+    private static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(typeof(NCardGrid), "CalculateRowsNeeded");
 
     [HarmonyPriority(Priority.First)]
-    private static void Prefix(NCardLibraryGrid __instance) =>
+    private static void Postfix(NCardGrid __instance, int __result)
+    {
+        if (__instance is not NCardLibraryGrid libraryGrid || __result <= 0)
+        {
+            return;
+        }
+
+        int columns = (int)(ColumnsGetter.Invoke(__instance, null) ?? 0);
+        if (columns <= 0)
+        {
+            return;
+        }
+
         SkinService.PreloadCardPortraits(
-            __instance.VisibleCards.Take(InitialCardPreloadCount));
+            libraryGrid.VisibleCards.Take(__result * columns));
+    }
 }
 
 [HarmonyPatch(typeof(NCardLibraryGrid), "AssignCardsToRow")]
