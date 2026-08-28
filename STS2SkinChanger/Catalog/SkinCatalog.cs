@@ -552,7 +552,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 "map_marker_",
                 "ui/run_history"
             }.Any(path => ContainsMetadata(path, StringComparison.OrdinalIgnoreCase));
-            var hasDirectCharacterPresentationPatch = HasDirectVisualHarmonyPatch(assemblyPath);
+            var hasDirectCharacterPresentationPatch = HasDirectVisualHarmonyPatch(
+                assemblyPath,
+                hasSkinResourcePath);
             if (!hasSkinResourcePath && !hasDirectCharacterPresentationPatch)
             {
                 return false;
@@ -583,7 +585,9 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
-    private static bool HasDirectVisualHarmonyPatch(string assemblyPath)
+    private static bool HasDirectVisualHarmonyPatch(
+        string assemblyPath,
+        bool hasSkinResourcePath)
     {
         using var stream = File.OpenRead(assemblyPath);
         using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
@@ -593,6 +597,8 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var reader = peReader.GetMetadataReader();
+        var hasCreatureLifecyclePatch = false;
+        var hasCharacterSelectPatch = false;
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
@@ -617,23 +623,25 @@ internal sealed partial class SkinCatalog : IDisposable
                 HasPatchTarget(value, "EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
                 HasPatchTarget(value, "CardModel", "Portrait", "PortraitPath") ||
                 HasPatchTarget(value, "AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
-                HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas") ||
-                // Full character packs often leave resources in a private namespace and inject
-                // presentation from lifecycle callbacks instead of patching a model getter.
-                // These are stable game contracts, so recognize them without matching a mod
-                // name or author.
-                HasPatchTarget(value, "NCreature", "_Ready", "SetAnimationTrigger") ||
-                HasPatchTarget(value, "NCharacterSelectScreen", "SelectCharacter") ||
-                HasPatchTarget(value, "NCharacterSelectButton", "Init") ||
-                HasPatchTarget(value, "NMerchantRoom", "_Ready") ||
-                HasPatchTarget(value, "NRestSiteRoom", "_Ready") ||
-                HasPatchTarget(value, "CombatManager", "EndCombatInternal"))
+                HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas"))
             {
                 return true;
             }
+
+            // A creature lifecycle patch by itself is not skin evidence: additive combat VFX
+            // mods also attach effect nodes from NCreature._Ready. Private full-character packs
+            // pair that hook with character-select presentation, or reference a canonical skin
+            // resource path. Requiring the second signal keeps non-skin visual mods in the
+            // game's normal loading flow without relying on a provider name allow-list.
+            hasCreatureLifecyclePatch |=
+                HasPatchTarget(value, "NCreature", "_Ready", "SetAnimationTrigger");
+            hasCharacterSelectPatch |=
+                HasPatchTarget(value, "NCharacterSelectScreen", "SelectCharacter") ||
+                HasPatchTarget(value, "NCharacterSelectButton", "Init");
         }
 
-        return false;
+        return hasCreatureLifecyclePatch &&
+               (hasCharacterSelectPatch || hasSkinResourcePath);
 
         static bool HasPatchTarget(string metadata, string typeName, params string[] members) =>
             metadata.Contains(typeName, StringComparison.Ordinal) &&
