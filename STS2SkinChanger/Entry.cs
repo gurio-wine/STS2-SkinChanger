@@ -1,6 +1,7 @@
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger;
@@ -71,4 +72,81 @@ internal static class CosmeticLocalizationOwnershipPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(ref IEnumerable<string> __result) =>
         __result = SkinService.FilterModdedLocalizationTables(__result);
+}
+
+[HarmonyPatch(typeof(ReflectionHelper), nameof(ReflectionHelper.ModTypes), MethodType.Getter)]
+internal static class DuplicateModelTypeCompatibilityPatch
+{
+    private static readonly Lazy<IReadOnlySet<ModelId>> CanonicalModelIds = new(BuildCanonicalModelIds);
+    private static readonly HashSet<ModelId> ReportedCollisions = [];
+
+    // Some older gameplay mods ship a model with the same ID as a model introduced by the
+    // current game. ModelDb constructs both and aborts startup before any mod UI can appear.
+    // Keep the game's canonical type whenever that ID already exists; unrelated mod-only models
+    // and all non-model types remain untouched.
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(ref Type[] __result)
+    {
+        var coreAssembly = typeof(AbstractModel).Assembly;
+        var filtered = __result.Where(type =>
+        {
+            if (type.Assembly == coreAssembly ||
+                !type.IsSubclassOf(typeof(AbstractModel)))
+            {
+                return true;
+            }
+
+            ModelId id;
+            try
+            {
+                id = ModelDb.GetId(type);
+            }
+            catch
+            {
+                return true;
+            }
+
+            if (!CanonicalModelIds.Value.Contains(id))
+            {
+                return true;
+            }
+
+            lock (ReportedCollisions)
+            {
+                if (ReportedCollisions.Add(id))
+                {
+                    ModLog.Warn($"检测到 Mod 模型 {id} 与当前游戏原版重复，已保留原版模型以避免启动失败。");
+                }
+            }
+
+            return false;
+        }).ToArray();
+
+        __result = filtered;
+    }
+
+    private static IReadOnlySet<ModelId> BuildCanonicalModelIds()
+    {
+        var ids = new HashSet<ModelId>();
+        foreach (var type in typeof(AbstractModel).Assembly.GetTypes())
+        {
+            if (type.IsAbstract ||
+                !type.IsSubclassOf(typeof(AbstractModel)))
+            {
+                continue;
+            }
+
+            try
+            {
+                ids.Add(ModelDb.GetId(type));
+            }
+            catch
+            {
+                // A malformed optional type must not prevent the compatibility filter from
+                // protecting the rest of the model database.
+            }
+        }
+
+        return ids;
+    }
 }
