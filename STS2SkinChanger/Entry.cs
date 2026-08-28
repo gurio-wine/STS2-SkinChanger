@@ -164,16 +164,14 @@ internal static class DuplicateModelInitCompatibilityPatch
     [HarmonyPriority(Priority.First)]
     private static void Prefix(ref Type[]? __0)
     {
-        var originalCount = __0?.Length ?? -1;
-        if (__0 is null)
-        {
-            ModLog.Info("ModelDb.Init 兼容补丁已执行：使用默认模型扫描列表。");
-            return;
-        }
-
-        var filtered = ModelTypeCompatibility.Filter(__0);
+        // The normal game call passes null and resolves AllAbstractModelSubtypes inside the
+        // original method. Resolve it here too, so a previously cached/unfiltered reflection
+        // list cannot bypass the compatibility filter.
+        var candidates = __0 ?? ModelDb.AllAbstractModelSubtypes;
+        var originalCount = candidates.Length;
+        var filtered = ModelTypeCompatibility.Filter(candidates);
         var removedCount = originalCount - filtered.Length;
         __0 = filtered;
-        ModLog.Info($"ModelDb.Init 兼容补丁已执行：显式模型 {originalCount} 个，移除重复 Mod 模型 {removedCount} 个。");
+        ModLog.Info($"ModelDb.Init 兼容补丁已执行：模型 {originalCount} 个，移除重复 Mod 模型 {removedCount} 个。");
     }
 }
