@@ -1384,7 +1384,7 @@ static void ValidateLocalizationOwnership(
         paths.AddRange(archive.Paths.Where(path => path.StartsWith(
                 $"res://{descriptor.Id}/localization/",
                 StringComparison.OrdinalIgnoreCase) &&
-            path.EndsWith("/characters.json", StringComparison.OrdinalIgnoreCase)));
+            path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)));
     }
 
     var empty = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1405,6 +1405,8 @@ static void ValidateLocalizationOwnership(
                 $"res://{option.EffectiveProviderId}/localization/",
                 StringComparison.OrdinalIgnoreCase)).ToArray();
             var activePaths = catalog.FilterModdedLocalizationTables(paths, selections);
+            var mountedPaths = catalog.BuildOverlay(selections).Keys
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             // Keep every old path present: just like the game, mounted PCKs cannot be unloaded.
             var afterLeaving = new Dictionary<string, string>(selections, StringComparer.OrdinalIgnoreCase);
             foreach (var update in catalog.BuildVisualSelectionTransaction(
@@ -1414,9 +1416,12 @@ static void ValidateLocalizationOwnership(
             }
             var restoredPaths = catalog.FilterModdedLocalizationTables(paths, afterLeaving);
             if (ownedPaths.Any(path => basePaths.Contains(path) ||
-                                       !activePaths.Contains(path) || restoredPaths.Contains(path)))
+                                       !activePaths.Contains(path) ||
+                                       !mountedPaths.Contains(path) ||
+                                       restoredPaths.Contains(path)))
             {
-                failures.Add($"{option.EffectiveProviderId}: character localization outlived its visual selection");
+                failures.Add(
+                    $"{option.EffectiveProviderId}: localization was not mounted with, or outlived, its visual selection");
             }
             else if (ownedPaths.Length > 0)
             {
@@ -1487,6 +1492,28 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
 
         void Check(string scenario, string expectedIronclad, string expectedSilent)
         {
+            var selectedLocalizationProviders = catalog.GetSelectedLocalizationProviderIds(selections);
+            var mountedPaths = catalog.BuildOverlay(selections).Keys
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var providerId in new[]
+                     {
+                         "Tests.IronSkin",
+                         "Tests.SilentSkin",
+                         "Tests.OtherIronSkin"
+                     })
+            {
+                foreach (var path in allTables.Keys.Where(path => path.StartsWith(
+                             $"res://{providerId}/localization/",
+                             StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (mountedPaths.Contains(path) != selectedLocalizationProviders.Contains(providerId))
+                    {
+                        throw new InvalidOperationException(
+                            $"localization mounting failed: {scenario}/{providerId}");
+                    }
+                }
+            }
+
             foreach (var language in new[] { "eng", "zhs" })
             {
                 var translations = new Dictionary<string, string>

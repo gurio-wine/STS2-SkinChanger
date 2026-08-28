@@ -1476,6 +1476,19 @@ internal sealed partial class SkinCatalog : IDisposable
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
         var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Localization tables are discovered by LocManager rather than referenced from the
+        // character scenes, so dependency walking can never reach them. Mount every private
+        // table owned by the selected visual provider; localization ownership filtering below
+        // makes the same mounted paths disappear again as soon as another skin is selected.
+        foreach (var index in indexes)
+        {
+            foreach (var path in index.Archive.Paths.Where(path =>
+                         IsProviderLocalizationFile(path, selected.EffectiveProviderId)))
+            {
+                files[path] = new ResourceFile(index.Archive, path);
+            }
+        }
+
         foreach (var assetFile in selected.Assets.Values.SelectMany(asset => asset.Files))
         {
             var index = indexes.FirstOrDefault(candidate =>
@@ -1554,6 +1567,13 @@ internal sealed partial class SkinCatalog : IDisposable
                 queue.Enqueue((index, file));
             }
         }
+    }
+
+    private static bool IsProviderLocalizationFile(string path, string providerId)
+    {
+        return path.EndsWith(".json", StringComparison.OrdinalIgnoreCase) &&
+               TryGetLocalizationProviderId(path, out var ownerId) &&
+               ownerId.Equals(providerId, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsProviderProjectControlFile(string path)
