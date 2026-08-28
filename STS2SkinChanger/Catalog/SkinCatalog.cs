@@ -1277,10 +1277,12 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Distinct(StringComparer.OrdinalIgnoreCase);
             foreach (var sourcePath in sourcePaths)
             {
-                var asset = selectedOptions
-                                .Select(option => option.Assets.GetValueOrDefault(sourcePath))
-                                .FirstOrDefault(candidate => candidate != null) ??
-                            ResolveBaseline(sourcePath);
+                // Keep canonical game paths neutral. The effective provider is resolved once per
+                // card at runtime, then its portrait and presentation resources are loaded through
+                // an isolated alias. Mounting the first provider that happens to own each path here
+                // would independently compose a portrait from one mod, a frame from another, and
+                // an Ancient layout from a third before the card node is even refreshed.
+                var asset = ResolveBaseline(sourcePath);
                 if (asset == null)
                 {
                     continue;

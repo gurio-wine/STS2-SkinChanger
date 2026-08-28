@@ -467,12 +467,11 @@ internal static class SkinService
                 return [];
             }
 
-            var current = GetEffectiveCardSelection(card, lookup, CardVisualLayer.Portrait);
+            var current = GetEffectiveCardSelection(card, lookup);
             return GetCardPriorityEntriesInternal(lookup.Group)
                 .Select((entry, colorIndex) => (Entry: entry, ColorIndex: colorIndex))
                 .Where(pair =>
-                    lookup.OptionsById.TryGetValue(pair.Entry.OptionId, out var option) &&
-                    HasCardPortrait(option, lookup.CardType))
+                    lookup.OptionsById.ContainsKey(pair.Entry.OptionId))
                 .Select(pair =>
                 {
                     var option = lookup.OptionsById[pair.Entry.OptionId].Option;
@@ -688,13 +687,9 @@ internal static class SkinService
         }
     }
 
-    private static string GetEffectiveCardSelection(CardModel card, CardLookup lookup)
-        => GetEffectiveCardSelection(card, lookup, CardVisualLayer.Portrait);
-
     private static string GetEffectiveCardSelection(
         CardModel card,
-        CardLookup lookup,
-        CardVisualLayer layer)
+        CardLookup lookup)
     {
         var cardSelectionKey = IndividualCardSelectionKey(card);
         var individual = CardPreviewSelections.TryGetValue(cardSelectionKey, out var previewSelection)
@@ -705,11 +700,9 @@ internal static class SkinService
             return individual;
         }
 
-        if (lookup.OptionsById.TryGetValue(individual, out var individualOption))
+        if (lookup.OptionsById.ContainsKey(individual))
         {
-            return OptionSuppliesLayer(individualOption, lookup.CardType, layer)
-                ? individual
-                : SkinCatalog.BaseOptionId;
+            return individual;
         }
 
         if (lookup.Group == null)
@@ -719,8 +712,7 @@ internal static class SkinService
 
         foreach (var entry in GetCardPriorityEntriesInternal(lookup.Group).Where(entry => entry.Enabled))
         {
-            if (lookup.OptionsById.TryGetValue(entry.OptionId, out var option) &&
-                OptionSuppliesLayer(option, lookup.CardType, layer))
+            if (lookup.OptionsById.TryGetValue(entry.OptionId, out var option))
             {
                 return option.Option.Id;
             }
@@ -734,7 +726,7 @@ internal static class SkinService
         lock (Sync)
         {
             var lookup = GetCardLookup(card);
-            var selection = GetEffectiveCardSelection(card, lookup, CardVisualLayer.Presentation);
+            var selection = GetEffectiveCardSelection(card, lookup);
             return lookup.OptionsById.TryGetValue(selection, out var option)
                 ? option.Option.CardPresentations.GetValueOrDefault(lookup.CardType)
                 : null;
@@ -752,7 +744,7 @@ internal static class SkinService
         lock (Sync)
         {
             var lookup = GetCardLookup(card);
-            var selection = GetEffectiveCardSelection(card, lookup, CardVisualLayer.Presentation);
+            var selection = GetEffectiveCardSelection(card, lookup);
             lookup.OptionsById.TryGetValue(selection, out var optionLookup);
             var option = optionLookup?.Option;
             var cacheKey =
@@ -979,7 +971,17 @@ internal static class SkinService
             card,
             card.PortraitPath);
         return selectedProviderPath == null
-            ? null
+            // The winning provider may own only the frame/layout. Missing layers belong to the
+            // game baseline, never to the next provider in the priority list. Load an isolated
+            // baseline portrait explicitly so a previously mounted lower-priority card atlas
+            // cannot leak into this card.
+            ? new CardPortraitRequest(
+                lookup.GroupId,
+                SkinCatalog.BaseOptionId,
+                card.PortraitPath,
+                $"{lookup.GroupId}\n{selection}\nbase-fallback\n{card.PortraitPath}",
+                UseSelectedProvider: false,
+                WrapAtlas: false)
             : new CardPortraitRequest(
                 lookup.GroupId,
                 selection,
@@ -1182,19 +1184,6 @@ internal static class SkinService
     private static bool CardOptionAffectsCardUncached(CardSkinOption option, CardModel card) =>
         BuildCardOptionLookup(option, card) != null;
 
-    private static bool HasCardPortrait(CardOptionLookup option, string cardType) =>
-        option.Option.NormalPortraits.ContainsKey(cardType) ||
-        option.Option.AncientPortraits.ContainsKey(cardType) ||
-        option.MatchedAssetPaths.Count > 0;
-
-    private static bool OptionSuppliesLayer(
-        CardOptionLookup option,
-        string cardType,
-        CardVisualLayer layer) =>
-        layer == CardVisualLayer.Portrait
-            ? HasCardPortrait(option, cardType)
-            : option.Option.CardPresentations.ContainsKey(cardType);
-
     private static CardCoverageState GetCardCoverage(CardSkinGroup group)
     {
         if (CardCoverageCache.TryGetValue(group.Id, out var cached))
@@ -1209,8 +1198,7 @@ internal static class SkinService
         var byOption = group.Options.ToDictionary(
             option => option.Id,
             option => cards.Count(lookup =>
-                lookup.OptionsById.TryGetValue(option.Id, out var optionLookup) &&
-                HasCardPortrait(optionLookup, lookup.CardType)),
+                lookup.OptionsById.ContainsKey(option.Id)),
             StringComparer.OrdinalIgnoreCase);
         cached = new CardCoverageState(cards.Length, byOption);
         CardCoverageCache[group.Id] = cached;
@@ -2653,12 +2641,6 @@ internal static class SkinService
     private sealed record CardCoverageState(
         int TotalCards,
         IReadOnlyDictionary<string, int> ByOption);
-
-    private enum CardVisualLayer
-    {
-        Portrait,
-        Presentation
-    }
 
     private sealed record CardPortraitRequest(
         string GroupId,

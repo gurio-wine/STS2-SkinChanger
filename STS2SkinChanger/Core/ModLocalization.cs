@@ -571,63 +571,63 @@ internal static class ModLocalization
         {
             ["eng"] = new(
                 "Enabled", "Skin priority ({0})",
-                "Enable card-skin mods and adjust priority. Higher entries win; lower entries fill missing card art.",
+                "Enable card-skin mods and adjust priority. Each card uses every visual effect from the highest enabled mod that supports it; effects are never mixed between mods.",
                 "Art {0}/{1}", "Current: {0}", "Available: {0}", "Close"),
             ["zhs"] = new(
                 "启用", "皮肤优先级（{0}）",
-                "勾选“启用”决定 Mod 是否作用于当前分类；上方优先，缺少的卡图由下方补充。",
+                "勾选“启用”决定 Mod 是否作用于当前分类；每张牌只使用最靠上且支持它的 Mod 的全部外观效果，不会混用多个 Mod。",
                 "卡图 {0}/{1}", "当前：{0}", "可用：{0}", "关闭"),
             ["zht"] = new(
                 "啟用", "外觀優先順序（{0}）",
-                "勾選「啟用」決定 Mod 是否作用於目前分類；上方優先，缺少的卡圖由下方補充。",
+                "勾選「啟用」決定 Mod 是否作用於目前分類；每張牌只使用最上方且支援它的 Mod 的全部外觀效果，不會混用多個 Mod。",
                 "卡圖 {0}/{1}", "目前：{0}", "可用：{0}", "關閉"),
             ["deu"] = new(
                 "Aktiv", "Skin-Priorität ({0})",
-                "Aktiviere Karten-Skin-Mods und ordne sie. Höhere Einträge gewinnen; niedrigere füllen fehlende Kartenbilder.",
+                "Aktiviere und ordne Karten-Skin-Mods. Jede Karte nutzt alle Effekte des höchsten aktiven Mods, der sie unterstützt; Mods werden nie gemischt.",
                 "Bilder {0}/{1}", "Aktuell: {0}", "Verfügbar: {0}", "Schließen"),
             ["esp"] = new(
                 "Activo", "Prioridad de aspectos ({0})",
-                "Activa mods de aspectos y ordénalos. Los superiores tienen prioridad; los inferiores completan imágenes faltantes.",
+                "Activa y ordena los mods. Cada carta usa todos los efectos del mod activo más alto que la admita; nunca se mezclan mods.",
                 "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}", "Cerrar"),
             ["fra"] = new(
                 "Activé", "Priorité des skins ({0})",
-                "Activez et classez les mods de skins. Le haut est prioritaire ; le bas complète les illustrations manquantes.",
+                "Activez et classez les mods. Chaque carte utilise tous les effets du premier mod actif qui la prend en charge ; les mods ne sont jamais mélangés.",
                 "Images {0}/{1}", "Actuel : {0}", "Disponibles : {0}", "Fermer"),
             ["ita"] = new(
                 "Attivo", "Priorità skin ({0})",
-                "Attiva e ordina i mod delle skin. Quelli in alto hanno priorità; quelli sotto completano le immagini mancanti.",
+                "Attiva e ordina i mod. Ogni carta usa tutti gli effetti del primo mod attivo che la supporta; i mod non vengono mai combinati.",
                 "Immagini {0}/{1}", "Attuale: {0}", "Disponibili: {0}", "Chiudi"),
             ["jpn"] = new(
                 "有効", "スキン優先順位（{0}）",
-                "カードスキンModを有効化して並べ替えます。上が優先され、ないカード画像は下から補われます。",
+                "カードスキンModを有効化して並べ替えます。各カードは対応する最上位の有効Modの全外観効果だけを使い、複数Modを混在させません。",
                 "画像 {0}/{1}", "現在：{0}", "利用可能：{0}", "閉じる"),
             ["kor"] = new(
                 "사용", "스킨 우선순위 ({0})",
-                "카드 스킨 Mod를 켜고 순서를 조정합니다. 위 항목이 우선하며 없는 카드 그림은 아래 항목이 채웁니다.",
+                "카드 스킨 Mod를 켜고 순서를 조정합니다. 각 카드는 지원하는 가장 위의 활성 Mod 효과만 모두 사용하며 여러 Mod를 섞지 않습니다.",
                 "그림 {0}/{1}", "현재: {0}", "사용 가능: {0}", "닫기"),
             ["pol"] = new(
                 "Włączona", "Priorytet skórek ({0})",
-                "Włącz i uporządkuj mody skórek kart. Wyższe mają pierwszeństwo, a niższe uzupełniają brakujące grafiki.",
+                "Włącz i uporządkuj mody. Każda karta używa wszystkich efektów najwyższego aktywnego moda, który ją obsługuje; mody nie są mieszane.",
                 "Grafiki {0}/{1}", "Bieżąca: {0}", "Dostępne: {0}", "Zamknij"),
             ["ptb"] = new(
                 "Ativo", "Prioridade dos visuais ({0})",
-                "Ative e ordene os mods de visuais. Os itens acima vencem; os abaixo completam artes ausentes.",
+                "Ative e ordene os mods. Cada carta usa todos os efeitos do mod ativo mais alto que a suporta; efeitos de mods diferentes não são misturados.",
                 "Artes {0}/{1}", "Atual: {0}", "Disponíveis: {0}", "Fechar"),
             ["rus"] = new(
                 "Включено", "Приоритет обликов ({0})",
-                "Включайте и упорядочивайте моды обликов. Верхние важнее, нижние дополняют отсутствующие изображения.",
+                "Включайте и упорядочивайте моды. Каждая карта использует все эффекты самого верхнего активного мода, который её поддерживает; моды не смешиваются.",
                 "Изображения {0}/{1}", "Текущий: {0}", "Доступны: {0}", "Закрыть"),
             ["spa"] = new(
                 "Activo", "Prioridad de aspectos ({0})",
-                "Activa mods de aspectos y ordénalos. Los superiores tienen prioridad; los inferiores completan imágenes faltantes.",
+                "Activa y ordena los mods. Cada carta usa todos los efectos del mod activo más alto que la admita; nunca se mezclan mods.",
                 "Arte {0}/{1}", "Actual: {0}", "Disponibles: {0}", "Cerrar"),
             ["tha"] = new(
                 "เปิดใช้", "ลำดับสกิน ({0})",
-                "เปิดใช้และจัดลำดับ Mod สกินการ์ด รายการด้านบนมีสิทธิ์ก่อน และด้านล่างเติมภาพที่ขาด",
+                "เปิดใช้และจัดลำดับ Mod สกินการ์ด การ์ดแต่ละใบจะใช้เอฟเฟกต์ทั้งหมดจาก Mod ที่เปิดใช้และอยู่สูงสุดซึ่งรองรับการ์ดนั้น โดยไม่ผสมหลาย Mod",
                 "ภาพ {0}/{1}", "ปัจจุบัน: {0}", "มีให้ใช้: {0}", "ปิด"),
             ["tur"] = new(
                 "Etkin", "Görünüm önceliği ({0})",
-                "Kart görünümü Modlarını etkinleştirip sırala. Üsttekiler önceliklidir; alttakiler eksik kart görsellerini tamamlar.",
+                "Kart görünümü Modlarını etkinleştirip sırala. Her kart, onu destekleyen en üstteki etkin Modun tüm efektlerini kullanır; Modlar karıştırılmaz.",
                 "Görsel {0}/{1}", "Geçerli: {0}", "Mevcut: {0}", "Kapat")
         };
 
