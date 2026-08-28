@@ -77,16 +77,19 @@ internal static class CosmeticLocalizationOwnershipPatch
 [HarmonyPatch(typeof(ReflectionHelper), nameof(ReflectionHelper.ModTypes), MethodType.Getter)]
 internal static class DuplicateModelTypeCompatibilityPatch
 {
-    private static readonly Lazy<IReadOnlySet<ModelId>> CanonicalModelIds = new(BuildCanonicalModelIds);
-    private static readonly HashSet<ModelId> ReportedCollisions = [];
-
     // Some older gameplay mods ship a model with the same ID as a model introduced by the
     // current game. ModelDb constructs both and aborts startup before any mod UI can appear.
     // Keep the game's canonical type whenever that ID already exists; unrelated mod-only models
     // and all non-model types remain untouched.
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(ref Type[] __result)
-        => __result = Filter(__result);
+        => __result = ModelTypeCompatibility.Filter(__result);
+}
+
+internal static class ModelTypeCompatibility
+{
+    private static readonly Lazy<IReadOnlySet<ModelId>> CanonicalModelIds = new(BuildCanonicalModelIds);
+    private static readonly HashSet<ModelId> ReportedCollisions = [];
 
     private static IReadOnlySet<ModelId> BuildCanonicalModelIds()
     {
@@ -113,31 +116,7 @@ internal static class DuplicateModelTypeCompatibilityPatch
         return ids;
     }
 
-    // Some compatibility/framework mods pass an explicit model array to ModelDb.Init instead
-    // of letting the game read ReflectionHelper.ModTypes. In that path the property patch above
-    // is never consulted, so apply the same filtering at the actual initialization boundary.
-    [HarmonyPatch(typeof(ModelDb), nameof(ModelDb.Init))]
-    [HarmonyPriority(Priority.First)]
-    private static class ModelDbInitPatch
-    {
-        private static void Prefix(ref Type[]? __0)
-        {
-            if (__0 is not { Length: > 0 })
-            {
-                return;
-            }
-
-            var filtered = Filter(__0);
-            if (filtered.Length != __0.Length)
-            {
-                var removedCount = __0.Length - filtered.Length;
-                __0 = filtered;
-                ModLog.Info($"已从 ModelDb.Init 的显式模型列表移除 {removedCount} 个与原版重复的 Mod 模型。");
-            }
-        }
-    }
-
-    private static Type[] Filter(IEnumerable<Type> types)
+    internal static Type[] Filter(IEnumerable<Type> types)
     {
         var coreAssembly = typeof(AbstractModel).Assembly;
         return types.Where(type =>
@@ -173,5 +152,28 @@ internal static class DuplicateModelTypeCompatibilityPatch
 
             return false;
         }).ToArray();
+    }
+}
+
+// Some compatibility/framework mods pass an explicit model array to ModelDb.Init instead
+// of letting the game read ReflectionHelper.ModTypes. In that path the property patch above
+// is never consulted, so apply the same filtering at the actual initialization boundary.
+[HarmonyPatch(typeof(ModelDb), nameof(ModelDb.Init))]
+internal static class DuplicateModelInitCompatibilityPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(ref Type[]? __0)
+    {
+        var originalCount = __0?.Length ?? -1;
+        if (__0 is null)
+        {
+            ModLog.Info("ModelDb.Init 兼容补丁已执行：使用默认模型扫描列表。");
+            return;
+        }
+
+        var filtered = ModelTypeCompatibility.Filter(__0);
+        var removedCount = originalCount - filtered.Length;
+        __0 = filtered;
+        ModLog.Info($"ModelDb.Init 兼容补丁已执行：显式模型 {originalCount} 个，移除重复 Mod 模型 {removedCount} 个。");
     }
 }
