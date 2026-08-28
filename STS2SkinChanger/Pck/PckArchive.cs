@@ -99,7 +99,8 @@ internal sealed class PckArchive : IDisposable
                         fileCount,
                         includeFileFlags: true);
                 }
-                catch (InvalidDataException)
+                catch (Exception exception) when (
+                    exception is InvalidDataException or EndOfStreamException or OverflowException)
                 {
                     stream.Position = directoryStart;
                     entries = ReadEntries(
