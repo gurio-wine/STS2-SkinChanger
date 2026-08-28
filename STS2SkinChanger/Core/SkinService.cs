@@ -310,7 +310,8 @@ internal static class SkinService
                             group.Id,
                             selection,
                             relicPaths,
-                            includeProviderDependencies: false);
+                            includeProviderDependencies: false,
+                            isolateRelicCanonicalPaths: true);
                         preparedRelicBundles++;
                     }
                 }
@@ -1658,19 +1659,8 @@ internal static class SkinService
             groupId,
             selection,
             relicPaths,
-            includeProviderDependencies: false);
-
-        // Make sure binary AtlasTexture dependencies reuse the game's public atlas while the
-        // provider pack is temporarily mounted. Each root is rebound to the provider's private
-        // atlas immediately below, so no provider texture enters the canonical resource cache.
-        foreach (var atlasPath in prepared.ResourcePaths.Keys.Where(
-                     SkinCatalog.IsRelicAtlasTexturePath))
-        {
-            _ = ResourceLoader.Load<Texture2D>(
-                atlasPath,
-                null,
-                ResourceLoader.CacheMode.Reuse);
-        }
+            includeProviderDependencies: false,
+            isolateRelicCanonicalPaths: true);
 
         if (prepared.OverlayPath != null &&
             !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
@@ -2293,7 +2283,8 @@ internal static class SkinService
         string groupId,
         string selection,
         IReadOnlyCollection<string> resourcePaths,
-        bool includeProviderDependencies)
+        bool includeProviderDependencies,
+        bool isolateRelicCanonicalPaths = false)
     {
         var normalizedPaths = resourcePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -2304,7 +2295,8 @@ internal static class SkinService
             groupId,
             selection,
             normalizedPaths,
-            includeProviderDependencies);
+            includeProviderDependencies,
+            isolateRelicCanonicalPaths);
         if (PreparedRuntimeOverlays.TryGetValue(key, out var cached) &&
             (cached.OverlayPath == null || File.Exists(cached.OverlayPath)))
         {
@@ -2315,12 +2307,18 @@ internal static class SkinService
 
         var generation = ++_overlayGeneration;
         var aliasToken = $"{_sessionId}/{generation:D3}";
-        var overlay = catalog.BuildRuntimeResourceOverlay(
-            groupId,
-            selection,
-            normalizedPaths,
-            aliasToken,
-            includeProviderDependencies);
+        var overlay = isolateRelicCanonicalPaths
+            ? catalog.BuildIsolatedRelicResourceOverlay(
+                groupId,
+                selection,
+                normalizedPaths,
+                aliasToken)
+            : catalog.BuildRuntimeResourceOverlay(
+                groupId,
+                selection,
+                normalizedPaths,
+                aliasToken,
+                includeProviderDependencies);
         var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
             groupId,
             overlay.CanonicalDependencyPaths);
@@ -2747,8 +2745,10 @@ internal static class SkinService
         string groupId,
         string selection,
         IReadOnlyCollection<string> resourcePaths,
-        bool includeProviderDependencies) =>
+        bool includeProviderDependencies,
+        bool isolateRelicCanonicalPaths = false) =>
         groupId + "\n" + selection + "\n" + includeProviderDependencies + "\n" +
+        isolateRelicCanonicalPaths + "\n" +
         string.Join("\n", resourcePaths);
 
     private static string[] CharacterSelectResourcePaths(string characterId) =>

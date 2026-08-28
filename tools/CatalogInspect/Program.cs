@@ -653,7 +653,7 @@ if (validateIndex >= 0)
                     var resolvedSelectionId = selectedSelections[resolvedRelicGroupId];
                     try
                     {
-                        var providerRelic = catalog.BuildRuntimeResourceOverlay(
+                        var providerRelic = catalog.BuildIsolatedRelicResourceOverlay(
                             resolvedRelicGroupId,
                             resolvedSelectionId,
                             providerRelicSpritePaths,
@@ -678,7 +678,15 @@ if (validateIndex >= 0)
                                 StringComparison.OrdinalIgnoreCase) ||
                             !hasProviderPayload ||
                             missingAliases > 0 ||
-                            atlasAliases is < 1 or > 2)
+                            atlasAliases is < 1 or > 2 ||
+                            providerRelic.CanonicalDependencyPaths.Count > 0 ||
+                            providerRelic.Files.Keys.Any(path =>
+                                path.StartsWith(
+                                    "res://images/atlases/relic_atlas",
+                                    StringComparison.OrdinalIgnoreCase) ||
+                                path.StartsWith(
+                                    "res://images/atlases/relic_outline_atlas",
+                                    StringComparison.OrdinalIgnoreCase)))
                         {
                             failures.Add(
                                 $"{group.Id}/{option.Id}: provider-wide relic did not use provider asset " +

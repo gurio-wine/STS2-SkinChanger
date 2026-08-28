@@ -1948,6 +1948,43 @@ internal sealed partial class SkinCatalog : IDisposable
             canonicalDependencyPaths);
     }
 
+    internal RuntimeResourceOverlay BuildIsolatedRelicResourceOverlay(
+        string groupId,
+        string selectionId,
+        IReadOnlyCollection<string> resourcePaths,
+        string aliasToken)
+    {
+        if (resourcePaths.Any(path => !IsRelicAtlasSpritePath(path)))
+        {
+            throw new ArgumentException(
+                "遗物私有资源包只能包含遗物图集切片。",
+                nameof(resourcePaths));
+        }
+
+        var overlay = BuildRuntimeResourceOverlay(
+            groupId,
+            selectionId,
+            resourcePaths,
+            aliasToken);
+
+        // Binary AtlasTexture payloads keep the atlas' canonical res:// path internally. The
+        // ordinary runtime overlay therefore emits temporary canonical .remap/.import bridges.
+        // A provider-wide relic bundle must never emit those bridges: mounting its atlas at the
+        // game's public path poisons Godot's shared atlas cache, so icons loaded after switching
+        // away can retain the previous provider's texture and use incompatible regions. The
+        // private slice initially resolves against the game's public atlas and is immediately
+        // rebound to the provider's private atlas by SkinService.
+        var files = overlay.Files
+            .Where(pair => !overlay.CanonicalDependencyPaths.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        return new RuntimeResourceOverlay(
+            overlay.ResourcePaths,
+            files,
+            overlay.SourceAliases,
+            overlay.PayloadAliases,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+    }
+
     private RuntimeResource CreateRuntimeResource(
         string sourcePath,
         ResourceAsset primary,
