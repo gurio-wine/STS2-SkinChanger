@@ -97,6 +97,7 @@ internal static class ManagedCardPresentationScanner
             var type = reader.GetTypeDefinition(typeHandle);
             var strings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var referencedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var referencedMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var methodHandle in type.GetMethods())
             {
                 var method = reader.GetMethodDefinition(methodHandle);
@@ -109,7 +110,7 @@ internal static class ManagedCardPresentationScanner
                 var il = body.GetILBytes();
                 if (il != null)
                 {
-                    ScanIl(reader, il, strings, referencedTypes);
+                    ScanIl(reader, il, strings, referencedTypes, referencedMembers);
                 }
             }
 
@@ -129,7 +130,17 @@ internal static class ManagedCardPresentationScanner
                 // Registry-driven exporters do not reference every concrete CardModel type from
                 // their layout patch. They resolve Model.GetType().FullName at runtime and apply
                 // the Ancient nodes only to portraits declared by their own manifest. The caller
-                // supplies exactly that provider-owned set, so it is the safe fallback scope.
+                // supplies exactly that provider-owned set. Require the same patch type to call
+                // CardReplacementRegistry.TryGetTexture: generic frame patches also mention all
+                // Ancient nodes but only apply them to entries explicitly marked Ancient.
+                if (!ReferencesMember(
+                        referencedMembers,
+                        "CardReplacementRegistry",
+                        "TryGetTexture"))
+                {
+                    continue;
+                }
+
                 cardTypes = registryCardStems.Values
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -186,7 +197,8 @@ internal static class ManagedCardPresentationScanner
         MetadataReader reader,
         byte[] il,
         ISet<string> strings,
-        ISet<string> referencedTypes)
+        ISet<string> referencedTypes,
+        ISet<string> referencedMembers)
     {
         var offset = 0;
         while (offset < il.Length)
@@ -232,6 +244,16 @@ internal static class ManagedCardPresentationScanner
                     referencedTypes.Add(typeName);
                 }
             }
+            else if (opCode.OperandType is OperandType.InlineMethod or OperandType.InlineField &&
+                     operandSize == 4)
+            {
+                var token = BinaryPrimitives.ReadInt32LittleEndian(il.AsSpan(operandOffset, 4));
+                var memberName = ResolveMemberName(reader, MetadataTokens.EntityHandle(token));
+                if (memberName != null)
+                {
+                    referencedMembers.Add(memberName);
+                }
+            }
 
             offset += operandSize;
         }
@@ -270,6 +292,43 @@ internal static class ManagedCardPresentationScanner
                 reader.GetString(reader.GetTypeReference((TypeReferenceHandle)handle).Name),
             _ => null
         };
+    }
+
+    private static string? ResolveMemberName(MetadataReader reader, EntityHandle handle)
+    {
+        switch (handle.Kind)
+        {
+            case HandleKind.MethodDefinition:
+                var method = reader.GetMethodDefinition((MethodDefinitionHandle)handle);
+                var methodType = reader.GetTypeDefinition(method.GetDeclaringType());
+                return reader.GetString(methodType.Name) + "." + reader.GetString(method.Name);
+            case HandleKind.FieldDefinition:
+                var field = reader.GetFieldDefinition((FieldDefinitionHandle)handle);
+                var fieldType = reader.GetTypeDefinition(field.GetDeclaringType());
+                return reader.GetString(fieldType.Name) + "." + reader.GetString(field.Name);
+            case HandleKind.MemberReference:
+                var member = reader.GetMemberReference((MemberReferenceHandle)handle);
+                var parentType = ResolveTypeName(reader, member.Parent);
+                return parentType == null
+                    ? reader.GetString(member.Name)
+                    : parentType + "." + reader.GetString(member.Name);
+            case HandleKind.MethodSpecification:
+                var specification = reader.GetMethodSpecification((MethodSpecificationHandle)handle);
+                return ResolveMemberName(reader, specification.Method);
+            default:
+                return null;
+        }
+    }
+
+    private static bool ReferencesMember(
+        IEnumerable<string> members,
+        string declaringType,
+        string memberName)
+    {
+        var expected = NormalizeToken(declaringType + memberName);
+        return members.Any(member => NormalizeToken(member).EndsWith(
+            expected,
+            StringComparison.OrdinalIgnoreCase));
     }
 
     private static string NormalizeToken(string value) =>
