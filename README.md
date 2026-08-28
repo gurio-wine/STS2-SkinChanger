@@ -2,7 +2,7 @@
 
 一个独立的《杀戮尖塔 2》皮肤管理 Mod。它不会修改其他 Mod，也不依赖旧版“皮肤管理器”。
 
-当前同时兼容正式版 `v0.107.1` 与公开测试版 `v0.111.0`；发布 DLL 以最低支持版本 `v0.107.1` 构建。
+当前同时兼容正式版 `v0.107.1` 与公开测试版 `v0.111.0`；发布 DLL 以最低支持版本 `v0.107.1` 构建，并采用 `AnyCPU`，供 Windows x64 与 macOS Apple Silicon ARM64 共用。
 
 [Steam 创意工坊 / Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680)
 
