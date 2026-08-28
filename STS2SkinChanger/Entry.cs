@@ -119,12 +119,18 @@ internal static class ModelTypeCompatibility
     internal static Type[] Filter(IEnumerable<Type> types)
     {
         var coreAssembly = typeof(AbstractModel).Assembly;
-        return types.Where(type =>
+        var seenIds = ModelDb.All
+            .Select(model => model.Id)
+            .ToHashSet();
+        var filtered = new List<Type>();
+
+        foreach (var type in types)
         {
             if (type.Assembly == coreAssembly ||
                 !type.IsSubclassOf(typeof(AbstractModel)))
             {
-                return true;
+                filtered.Add(type);
+                continue;
             }
 
             ModelId id;
@@ -134,24 +140,34 @@ internal static class ModelTypeCompatibility
             }
             catch
             {
-                return true;
+                filtered.Add(type);
+                continue;
             }
 
-            if (!CanonicalModelIds.Value.Contains(id))
+            // A mod type with a canonical game ID can never replace the game's type.
+            // For IDs that are not present in the game, also de-duplicate competing mod
+            // types: the first loaded provider owns the ID and later providers are skipped.
+            if (CanonicalModelIds.Value.Contains(id) || !seenIds.Add(id))
             {
-                return true;
+                ReportCollision(id);
+                continue;
             }
 
-            lock (ReportedCollisions)
+            filtered.Add(type);
+        }
+
+        return filtered.ToArray();
+    }
+
+    private static void ReportCollision(ModelId id)
+    {
+        lock (ReportedCollisions)
+        {
+            if (ReportedCollisions.Add(id))
             {
-                if (ReportedCollisions.Add(id))
-                {
-                    ModLog.Warn($"检测到 Mod 模型 {id} 与当前游戏原版重复，已保留原版模型以避免启动失败。");
-                }
+                ModLog.Warn($"检测到重复 Mod 模型 ID {id}，已保留先注册的模型以避免启动失败。");
             }
-
-            return false;
-        }).ToArray();
+        }
     }
 
     internal static int RemoveExistingCanonicalConflicts()
