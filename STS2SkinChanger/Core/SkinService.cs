@@ -268,6 +268,7 @@ internal static class SkinService
 
             var started = Stopwatch.GetTimestamp();
             var prepared = 0;
+            var preparedRelicBundles = 0;
             foreach (var character in ModelDb.AllCharacters)
             {
                 var groupId = character.Id.Entry.ToLowerInvariant();
@@ -295,12 +296,31 @@ internal static class SkinService
                     paths,
                     includeProviderDependencies: true);
                 prepared++;
+
+                var selected = group.Options.FirstOrDefault(option => option.Id.Equals(
+                    selection,
+                    StringComparison.OrdinalIgnoreCase));
+                if (selected != null)
+                {
+                    var relicPaths = catalog.GetProviderRelicSpritePaths(selected);
+                    if (relicPaths.Count > 0)
+                    {
+                        _ = GetOrPrepareRuntimeOverlay(
+                            catalog,
+                            group.Id,
+                            selection,
+                            relicPaths,
+                            includeProviderDependencies: false);
+                        preparedRelicBundles++;
+                    }
+                }
             }
 
             if (prepared > 0)
             {
                 ModLog.Info(
                     $"已在启动阶段准备 {prepared} 个角色的选角资源包，" +
+                    $"其中 {preparedRelicBundles} 套包含完整遗物图集；" +
                     $"耗时={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms。");
             }
         }
@@ -1605,21 +1625,127 @@ internal static class SkinService
             }
 
             var cacheKey = RuntimeResourceKey(groupId, resourcePath);
-            var wasCached = RuntimeResourceCache.TryGetValue(cacheKey, out var cached) &&
-                            GodotObject.IsInstanceValid(cached);
-            var texture = GetOrLoadRuntimeResource(groupId, resourcePath) as Texture2D ??
-                          throw new InvalidOperationException(
-                              $"隔离的遗物图标不是贴图：{resourcePath}");
-            if (!wasCached)
+            if (!RuntimeResourceCache.TryGetValue(cacheKey, out var cached) ||
+                !GodotObject.IsInstanceValid(cached))
             {
-                // The aliased AtlasTexture is now bound to the provider's private atlas object.
-                // Immediately put the public atlas paths back on the game baseline so unrelated
-                // relics loaded afterwards cannot observe the temporary bridge.
-                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
+                LoadSelectedRelicBundle(catalog, groupId);
+                cached = RuntimeResourceCache.GetValueOrDefault(cacheKey);
             }
 
-            return texture;
+            return cached as Texture2D ?? throw new InvalidOperationException(
+                $"隔离的遗物图标不是贴图：{resourcePath}");
         }
+    }
+
+    private static void LoadSelectedRelicBundle(SkinCatalog catalog, string groupId)
+    {
+        var group = catalog.Groups.First(group => group.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase));
+        var selection = Config.GetSelection(groupId);
+        var selected = group.Options.First(option => option.Id.Equals(
+            selection,
+            StringComparison.OrdinalIgnoreCase));
+        var relicPaths = catalog.GetProviderRelicSpritePaths(selected);
+        if (relicPaths.Count == 0)
+        {
+            return;
+        }
+
+        var started = Stopwatch.GetTimestamp();
+        var prepared = GetOrPrepareRuntimeOverlay(
+            catalog,
+            groupId,
+            selection,
+            relicPaths,
+            includeProviderDependencies: false);
+
+        // Make sure binary AtlasTexture dependencies reuse the game's public atlas while the
+        // provider pack is temporarily mounted. Each root is rebound to the provider's private
+        // atlas immediately below, so no provider texture enters the canonical resource cache.
+        foreach (var atlasPath in prepared.ResourcePaths.Keys.Where(
+                     SkinCatalog.IsRelicAtlasTexturePath))
+        {
+            _ = ResourceLoader.Load<Texture2D>(
+                atlasPath,
+                null,
+                ResourceLoader.CacheMode.Reuse);
+        }
+
+        if (prepared.OverlayPath != null &&
+            !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+        {
+            throw new InvalidOperationException("Godot 拒绝加载遗物皮肤资源包。");
+        }
+
+        var loaded = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var providerAtlases = prepared.ResourcePaths
+                .Where(pair => SkinCatalog.IsRelicAtlasTexturePath(pair.Key))
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => ResourceLoader.Load<Texture2D>(
+                                pair.Value,
+                                null,
+                                ResourceLoader.CacheMode.IgnoreDeep) ??
+                            throw new InvalidOperationException(
+                                $"无法加载遗物皮肤私有图集：{pair.Value}"),
+                    StringComparer.OrdinalIgnoreCase);
+            var normalAtlas = providerAtlases.FirstOrDefault(pair =>
+                !pair.Key.Contains("relic_outline_atlas", StringComparison.OrdinalIgnoreCase)).Value;
+            var outlineAtlas = providerAtlases.FirstOrDefault(pair =>
+                pair.Key.Contains("relic_outline_atlas", StringComparison.OrdinalIgnoreCase)).Value;
+            var needsNormalAtlas = relicPaths.Any(path => !path.Contains(
+                "relic_outline_atlas",
+                StringComparison.OrdinalIgnoreCase));
+            var needsOutlineAtlas = relicPaths.Any(path => path.Contains(
+                "relic_outline_atlas",
+                StringComparison.OrdinalIgnoreCase));
+            if ((needsNormalAtlas && normalAtlas == null) ||
+                (needsOutlineAtlas && outlineAtlas == null))
+            {
+                throw new InvalidOperationException("遗物皮肤缺少其切片引用的图集。");
+            }
+
+            foreach (var relicPath in relicPaths)
+            {
+                if (!prepared.ResourcePaths.TryGetValue(relicPath, out var alias))
+                {
+                    continue;
+                }
+
+                var texture = ResourceLoader.Load<AtlasTexture>(
+                                  alias,
+                                  null,
+                                  ResourceLoader.CacheMode.Ignore) ??
+                              throw new InvalidOperationException(
+                                  $"无法加载遗物皮肤切片：{alias}");
+                texture.Atlas = relicPath.Contains(
+                    "relic_outline_atlas",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? outlineAtlas!
+                    : normalAtlas!;
+                loaded[relicPath] = texture;
+            }
+        }
+        finally
+        {
+            var restoreGroups = prepared.RestoreGroups
+                .Append(groupId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            MountOverlay(restoreGroups);
+        }
+
+        foreach (var resource in loaded)
+        {
+            RuntimeResourceCache[RuntimeResourceKey(groupId, resource.Key)] = resource.Value;
+        }
+
+        ModLog.Info(
+            $"已一次性加载 {groupId} 的 {loaded.Count} 个遗物皮肤切片；" +
+            $"运行包={prepared.FileCount} 个文件/{prepared.FileSize / 1024d:F1} KiB，" +
+            $"耗时={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms。");
     }
 
     public static bool IsRuntimeProviderSelected(string groupId)

@@ -1162,7 +1162,7 @@ internal sealed partial class SkinCatalog : IDisposable
     internal static bool IsRelicAtlasSpritePath(string path) =>
         RelicAtlasSpriteRegex().IsMatch(NormalizeTakeoverPath(path));
 
-    private static bool IsRelicAtlasTexturePath(string path) =>
+    internal static bool IsRelicAtlasTexturePath(string path) =>
         RelicAtlasTextureRegex().IsMatch(NormalizeTakeoverPath(path));
 
     private IReadOnlyDictionary<string, ResourceFile> CollectFullRuntimeProviderBaselineOverlay(

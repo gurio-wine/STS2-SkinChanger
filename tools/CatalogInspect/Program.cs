@@ -656,7 +656,7 @@ if (validateIndex >= 0)
                         var providerRelic = catalog.BuildRuntimeResourceOverlay(
                             resolvedRelicGroupId,
                             resolvedSelectionId,
-                            [providerOnlyRelicPath],
+                            providerRelicSpritePaths,
                             $"validate/provider-relic/{validated:D4}");
                         var hasProviderPayload = catalog.TryResolveProviderAsset(
                             option,
@@ -666,13 +666,19 @@ if (validateIndex >= 0)
                                 .Select(file => file.Archive.ReadFile(file.Path))
                                 .Any(providerBytes => providerRelic.Files.Values.Any(bytes =>
                                     bytes.AsSpan().SequenceEqual(providerBytes)));
+                        var missingAliases = providerRelicSpritePaths.Count(path =>
+                            !providerRelic.ResourcePaths.ContainsKey(path));
+                        var atlasAliases = providerRelic.ResourcePaths.Keys.Count(
+                            SkinCatalog.IsRelicAtlasTexturePath);
                         if (!providerRelic.ResourcePaths.TryGetValue(
                                 providerOnlyRelicPath,
                                 out var alias) ||
                             !alias.StartsWith(
                                 "res://sts2_skin_runtime/",
                                 StringComparison.OrdinalIgnoreCase) ||
-                            !hasProviderPayload)
+                            !hasProviderPayload ||
+                            missingAliases > 0 ||
+                            atlasAliases is < 1 or > 2)
                         {
                             failures.Add(
                                 $"{group.Id}/{option.Id}: provider-wide relic did not use provider asset " +
