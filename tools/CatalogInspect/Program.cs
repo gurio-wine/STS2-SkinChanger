@@ -138,6 +138,18 @@ foreach (var group in catalog.CardGroups)
             $"{option.Assets.Count} assets, " +
             $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient, " +
             $"{option.CardPresentations.Count} presentations");
+        if (showAssets)
+        {
+            foreach (var presentation in option.CardPresentations.OrderBy(
+                         pair => pair.Key,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                Console.WriteLine(
+                    $"    presentation:{presentation.Key} " +
+                    $"ancient={presentation.Value.UseAncientLayout}, " +
+                    $"full-frame={presentation.Value.UseFullFrameArt}");
+            }
+        }
     }
 }
 
@@ -151,6 +163,18 @@ foreach (var option in catalog.PckCardOptions)
         $"{option.CardPresentations.Count(pair => pair.Value.UseFullFrameArt)} full-frame, " +
         $"{namespaceFiles.Count} namespace files, " +
         $"{option.CardPresentations.Count} presentations");
+    if (showAssets)
+    {
+        foreach (var presentation in option.CardPresentations.OrderBy(
+                     pair => pair.Key,
+                     StringComparer.OrdinalIgnoreCase))
+        {
+            Console.WriteLine(
+                $"    presentation:{presentation.Key} " +
+                $"ancient={presentation.Value.UseAncientLayout}, " +
+                $"full-frame={presentation.Value.UseFullFrameArt}");
+        }
+    }
 }
 
 if (runtimeIndex >= 0)
@@ -1372,13 +1396,14 @@ static void RunCardExportSelfTest(string gamePckPath)
                   {"cardId":"Tests.ExportCard","kind":"image","image":"res://generated/export.png"}
                 ]}
                 """),
-            ["res://generated/framed_card_project.json"] = Encoding.UTF8.GetBytes(
-                """
-                {"entries":[
-                  {"cardId":"Tests.FramedCard","portrait":"res://generated/framed.png",
-                   "frame":"res://generated/frame.tres","frameVisible":true}
-                ]}
-                """),
+            ["res://generated/framed_card_project.json"] = Encoding.UTF8.Preamble.ToArray().Concat(
+                Encoding.UTF8.GetBytes(
+                    """
+                    {"entries":[
+                      {"cardId":"Tests.FramedCard","portrait":"res://generated/framed.png",
+                       "frame":"res://generated/frame.tres","frameVisible":true}
+                    ]}
+                    """)).ToArray(),
             ["res://generated/animations/card_animations.json"] = Encoding.UTF8.GetBytes(
                 """
                 {"entries":[
@@ -1472,7 +1497,7 @@ static void RunCardExportSelfTest(string gamePckPath)
         }
 
         Console.WriteLine(
-            "card export self-test passed: static, framed, animation fallback and batched isolation");
+            "card export self-test passed: static, BOM-framed, animation fallback and batched isolation");
     }
     finally
     {

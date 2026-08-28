@@ -22,7 +22,8 @@ internal static class ManagedCardPresentationScanner
 
     public static IReadOnlyDictionary<string, CardPresentationDefinition> Scan(
         string? providerRoot,
-        IReadOnlyCollection<string> knownCardStems)
+        IReadOnlyCollection<string> knownCardStems,
+        IReadOnlyCollection<string>? registryCardStems = null)
     {
         var presentations = new Dictionary<string, CardPresentationDefinition>(
             StringComparer.OrdinalIgnoreCase);
@@ -42,6 +43,13 @@ internal static class ManagedCardPresentationScanner
         {
             return presentations;
         }
+        var normalizedRegistryStems = (registryCardStems ?? [])
+            .Where(stem => !string.IsNullOrWhiteSpace(stem))
+            .GroupBy(NormalizeToken, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First(),
+                StringComparer.OrdinalIgnoreCase);
 
         foreach (var dllPath in Directory.EnumerateFiles(
                      providerRoot,
@@ -50,7 +58,11 @@ internal static class ManagedCardPresentationScanner
         {
             try
             {
-                ScanAssembly(dllPath, normalizedStems, presentations);
+                ScanAssembly(
+                    dllPath,
+                    normalizedStems,
+                    normalizedRegistryStems,
+                    presentations);
             }
             catch (Exception exception)
             {
@@ -65,6 +77,7 @@ internal static class ManagedCardPresentationScanner
     private static void ScanAssembly(
         string dllPath,
         IReadOnlyDictionary<string, string> knownCardStems,
+        IReadOnlyDictionary<string, string> registryCardStems,
         IDictionary<string, CardPresentationDefinition> presentations)
     {
         using var stream = new FileStream(
@@ -113,7 +126,17 @@ internal static class ManagedCardPresentationScanner
                 .ToArray();
             if (cardTypes.Length == 0)
             {
-                continue;
+                // Registry-driven exporters do not reference every concrete CardModel type from
+                // their layout patch. They resolve Model.GetType().FullName at runtime and apply
+                // the Ancient nodes only to portraits declared by their own manifest. The caller
+                // supplies exactly that provider-owned set, so it is the safe fallback scope.
+                cardTypes = registryCardStems.Values
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (cardTypes.Length == 0)
+                {
+                    continue;
+                }
             }
 
             var frame = FindResource(strings, "ancient_card_border");
@@ -143,10 +166,16 @@ internal static class ManagedCardPresentationScanner
             "AncientBanner",
             "AncientBorderGlassOverlay"
         };
-        return strings.Contains("AncientPortrait") &&
-               ancientNodes.Count(strings.Contains) >= 3 &&
-               new[] { "Portrait", "Frame", "TitleBanner" }.Any(strings.Contains);
+        return ContainsLayoutToken(strings, "AncientPortrait") &&
+               ancientNodes.Count(node => ContainsLayoutToken(strings, node)) >= 3 &&
+               new[] { "Portrait", "Frame", "TitleBanner" }
+                   .Any(node => ContainsLayoutToken(strings, node));
     }
+
+    private static bool ContainsLayoutToken(IEnumerable<string> strings, string expected) =>
+        strings.Any(value => NormalizeToken(value).Equals(
+            NormalizeToken(expected),
+            StringComparison.OrdinalIgnoreCase));
 
     private static string? FindResource(IEnumerable<string> strings, string token) =>
         strings.FirstOrDefault(value =>

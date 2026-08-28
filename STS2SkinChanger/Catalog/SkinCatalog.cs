@@ -2887,9 +2887,8 @@ internal sealed partial class SkinCatalog : IDisposable
             {
                 try
                 {
-                    var config = JsonSerializer.Deserialize<CardReplacementConfig>(
-                        index.Archive.ReadFile(configPath),
-                        CardReplacementJsonOptions);
+                    var config = DeserializeCardJson<CardReplacementConfig>(
+                        index.Archive.ReadFile(configPath));
                     if (config == null)
                     {
                         continue;
@@ -3017,8 +3016,11 @@ internal sealed partial class SkinCatalog : IDisposable
             var providerBehavior = ProviderCardBehaviorScanner.Scan(
                 index.Mod.RootPath,
                 index.Assets.Values);
-            var presentations = LoadCardPresentations(index, providerBehavior.Presentations);
             var exportedPortraits = LoadExportedCardPortraits(index);
+            var presentations = LoadCardPresentations(
+                index,
+                providerBehavior.Presentations,
+                exportedPortraits.Keys);
             var standardAssets = index.Assets.Values
                 .Where(asset => IsCardArtSourcePath(asset.SourcePath))
                 .ToArray();
@@ -3132,19 +3134,20 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static IReadOnlyDictionary<string, CardPresentationDefinition> LoadCardPresentations(
         PckResourceIndex index,
-        IReadOnlyDictionary<string, CardPresentationDefinition>? providerBehavior = null)
+        IReadOnlyDictionary<string, CardPresentationDefinition>? providerBehavior = null,
+        IEnumerable<string>? declaredCardTypes = null)
     {
         var presentations = new Dictionary<string, CardPresentationDefinition>(
             StringComparer.OrdinalIgnoreCase);
+        var explicitUiModes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var configPath in index.Archive.Paths.Where(path =>
                      path.EndsWith("/frame_replacements.json", StringComparison.OrdinalIgnoreCase) ||
                      path.EndsWith("/framed_card_project.json", StringComparison.OrdinalIgnoreCase)))
         {
             try
             {
-                var document = JsonSerializer.Deserialize<CardFrameReplacementDocument>(
-                    index.Archive.ReadFile(configPath),
-                    CardReplacementJsonOptions);
+                var document = DeserializeCardJson<CardFrameReplacementDocument>(
+                    index.Archive.ReadFile(configPath));
                 if (document == null)
                 {
                     continue;
@@ -3153,7 +3156,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 foreach (var entry in document.Entries.Where(entry =>
                              !string.IsNullOrWhiteSpace(entry.CardId)))
                 {
-                    presentations[NormalizeCardPresentationType(entry.CardId)] =
+                    var cardType = NormalizeCardPresentationType(entry.CardId);
+                    presentations[cardType] =
                         new CardPresentationDefinition(
                             entry.UiMode.Equals("Ancient", StringComparison.OrdinalIgnoreCase),
                             EmptyToNull(entry.Frame),
@@ -3177,6 +3181,10 @@ internal sealed partial class SkinCatalog : IDisposable
                             entry.TypeLabelVisible,
                             entry.DescriptionVisible,
                             entry.InfectionOverlayVisible);
+                    if (!string.IsNullOrWhiteSpace(entry.UiMode))
+                    {
+                        explicitUiModes.Add(cardType);
+                    }
                 }
             }
             catch (Exception exception)
@@ -3190,15 +3198,29 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(path => TryGetCardArtIdentity(path))
             .Where(identity => identity != null)
             .Select(identity => identity!.Stem)
+            .Concat(declaredCardTypes ?? [])
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         foreach (var inferred in ManagedCardPresentationScanner.Scan(
                      index.Mod.RootPath,
-                     knownCardStems))
+                     knownCardStems,
+                     declaredCardTypes?.ToArray()))
         {
-            // Explicit provider manifests remain authoritative. DLL inference only fills the
-            // presentation intent that would otherwise be lost when provider code is disabled.
-            presentations.TryAdd(inferred.Key, inferred.Value);
+            if (presentations.TryGetValue(inferred.Key, out var configured))
+            {
+                // An omitted uiMode is not an explicit request for the normal layout. Exported
+                // card managers commonly keep frame visibility in JSON while routing the same
+                // declared portraits to AncientPortrait from their disabled DLL patch. Preserve
+                // both halves of that presentation. A non-empty uiMode remains authoritative.
+                if (!explicitUiModes.Contains(inferred.Key) && inferred.Value.UseAncientLayout)
+                {
+                    presentations[inferred.Key] = configured with { UseAncientLayout = true };
+                }
+            }
+            else
+            {
+                presentations.Add(inferred.Key, inferred.Value);
+            }
         }
 
         if (providerBehavior != null)
@@ -3213,6 +3235,18 @@ internal sealed partial class SkinCatalog : IDisposable
 
         return presentations;
     }
+
+    private static T? DeserializeCardJson<T>(byte[] bytes)
+    {
+        return JsonSerializer.Deserialize<T>(
+            StripUtf8Bom(bytes).Span,
+            CardReplacementJsonOptions);
+    }
+
+    private static ReadOnlyMemory<byte> StripUtf8Bom(byte[] bytes) =>
+        bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble)
+            ? bytes.AsMemory(Encoding.UTF8.Preamble.Length)
+            : bytes;
 
     private static IReadOnlyDictionary<string, string> LoadExportedCardPortraits(
         PckResourceIndex index)
@@ -3270,7 +3304,8 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         try
         {
-            using var document = JsonDocument.Parse(index.Archive.ReadFile(configPath));
+            using var document = JsonDocument.Parse(StripUtf8Bom(
+                index.Archive.ReadFile(configPath)));
             if (!TryGetJsonProperty(document.RootElement, "entries", out var entries) ||
                 entries.ValueKind != JsonValueKind.Array)
             {
