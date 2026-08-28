@@ -86,9 +86,61 @@ internal static class DuplicateModelTypeCompatibilityPatch
     // and all non-model types remain untouched.
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(ref Type[] __result)
+        => __result = Filter(__result);
+
+    private static IReadOnlySet<ModelId> BuildCanonicalModelIds()
+    {
+        var ids = new HashSet<ModelId>();
+        foreach (var type in typeof(AbstractModel).Assembly.GetTypes())
+        {
+            if (type.IsAbstract ||
+                !type.IsSubclassOf(typeof(AbstractModel)))
+            {
+                continue;
+            }
+
+            try
+            {
+                ids.Add(ModelDb.GetId(type));
+            }
+            catch
+            {
+                // A malformed optional type must not prevent the compatibility filter from
+                // protecting the rest of the model database.
+            }
+        }
+
+        return ids;
+    }
+
+    // Some compatibility/framework mods pass an explicit model array to ModelDb.Init instead
+    // of letting the game read ReflectionHelper.ModTypes. In that path the property patch above
+    // is never consulted, so apply the same filtering at the actual initialization boundary.
+    [HarmonyPatch(typeof(ModelDb), nameof(ModelDb.Init))]
+    [HarmonyPriority(Priority.First)]
+    private static class ModelDbInitPatch
+    {
+        private static void Prefix(ref Type[]? __0)
+        {
+            if (__0 is not { Length: > 0 })
+            {
+                return;
+            }
+
+            var filtered = Filter(__0);
+            if (filtered.Length != __0.Length)
+            {
+                var removedCount = __0.Length - filtered.Length;
+                __0 = filtered;
+                ModLog.Info($"已从 ModelDb.Init 的显式模型列表移除 {removedCount} 个与原版重复的 Mod 模型。");
+            }
+        }
+    }
+
+    private static Type[] Filter(IEnumerable<Type> types)
     {
         var coreAssembly = typeof(AbstractModel).Assembly;
-        var filtered = __result.Where(type =>
+        return types.Where(type =>
         {
             if (type.Assembly == coreAssembly ||
                 !type.IsSubclassOf(typeof(AbstractModel)))
@@ -121,32 +173,5 @@ internal static class DuplicateModelTypeCompatibilityPatch
 
             return false;
         }).ToArray();
-
-        __result = filtered;
-    }
-
-    private static IReadOnlySet<ModelId> BuildCanonicalModelIds()
-    {
-        var ids = new HashSet<ModelId>();
-        foreach (var type in typeof(AbstractModel).Assembly.GetTypes())
-        {
-            if (type.IsAbstract ||
-                !type.IsSubclassOf(typeof(AbstractModel)))
-            {
-                continue;
-            }
-
-            try
-            {
-                ids.Add(ModelDb.GetId(type));
-            }
-            catch
-            {
-                // A malformed optional type must not prevent the compatibility filter from
-                // protecting the rest of the model database.
-            }
-        }
-
-        return ids;
     }
 }
