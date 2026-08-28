@@ -194,12 +194,15 @@ if (validateIndex >= 0)
                  .GroupBy(pair => pair.Option.Id, StringComparer.OrdinalIgnoreCase)
                  .Where(group => group.All(pair =>
                      SkinCatalog.KnownAncientIds.Contains(pair.Group.Id) &&
-                     pair.Option.RuntimeImagePath != null)))
+                     (pair.Option.RuntimeImagePath != null ||
+                      catalog.GetAncientLayeredImagePaths(
+                          pair.Group.Id,
+                          pair.Option.Id) != null))))
     {
         if (catalog.ProviderUsesFullRuntime(provider.Key))
         {
             failures.Add(
-                $"provider {provider.Key}: independent Ancient images were linked as one runtime bundle");
+                $"provider {provider.Key}: independently managed Ancient visuals were linked as one runtime bundle");
             continue;
         }
 
@@ -218,7 +221,7 @@ if (validateIndex >= 0)
                 !selectedId.Equals(pair.Option.Id, StringComparison.OrdinalIgnoreCase))
             {
                 failures.Add(
-                    $"{pair.Group.Id}/{pair.Option.Id}: independent Ancient selection changed another group");
+                    $"{pair.Group.Id}/{pair.Option.Id}: managed Ancient selection changed another group");
             }
 
             var resetTransaction = catalog.BuildVisualSelectionTransaction(
@@ -230,7 +233,7 @@ if (validateIndex >= 0)
                 !resetId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
             {
                 failures.Add(
-                    $"{pair.Group.Id}/{pair.Option.Id}: independent Ancient reset changed another group");
+                    $"{pair.Group.Id}/{pair.Option.Id}: managed Ancient reset changed another group");
             }
         }
     }

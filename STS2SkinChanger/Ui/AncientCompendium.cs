@@ -167,12 +167,9 @@ internal static class AncientCompendiumEntry
 
         try
         {
-            if (SkinService.IsExternalRuntimeProviderSelected(group.Id))
-            {
-                result = SkinService.GetSelectedRuntimeImageTexture(group.Id);
-                return;
-            }
-
+            // An external full-scene illustration does not imply ownership of the Ancient's
+            // map/run-history icons. Resolve the requested icon normally: a PCK-backed skin that
+            // actually supplies it wins, while an image-only provider falls back to the game icon.
             result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as Texture2D ??
                      throw new InvalidOperationException($"独立先古皮肤资源不是贴图：{resourcePath}");
         }

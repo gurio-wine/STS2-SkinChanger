@@ -1884,12 +1884,60 @@ internal static class SkinService
                 return cachedTexture;
             }
 
-            var image = Image.LoadFromFile(imagePath) ??
-                        throw new InvalidOperationException($"无法读取独立皮肤图片：{imagePath}");
+            var image = LoadRuntimeImage(imagePath);
             var texture = ImageTexture.CreateFromImage(image);
             RuntimeResourceCache[cacheKey] = texture;
             return texture;
         }
+    }
+
+    private static Image LoadRuntimeImage(string imagePath)
+    {
+        var bytes = File.ReadAllBytes(imagePath);
+        if (bytes.Length == 0)
+        {
+            throw new InvalidOperationException($"独立皮肤图片为空：{imagePath}");
+        }
+
+        var image = new Image();
+        Error error;
+        if (HasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+        {
+            error = image.LoadPngFromBuffer(bytes);
+        }
+        else if (HasPrefix(bytes, [0xff, 0xd8, 0xff]))
+        {
+            error = image.LoadJpgFromBuffer(bytes);
+        }
+        else if (bytes.Length >= 12 &&
+                 HasPrefix(bytes, [(byte)'R', (byte)'I', (byte)'F', (byte)'F']) &&
+                 bytes.AsSpan(8, 4).SequenceEqual([(byte)'W', (byte)'E', (byte)'B', (byte)'P']))
+        {
+            error = image.LoadWebpFromBuffer(bytes);
+        }
+        else
+        {
+            image.Dispose();
+            image = Image.LoadFromFile(imagePath);
+            if (image == null || image.IsEmpty())
+            {
+                throw new InvalidOperationException($"无法识别独立皮肤图片格式：{imagePath}");
+            }
+
+            return image;
+        }
+
+        if (error != Error.Ok || image.IsEmpty())
+        {
+            image.Dispose();
+            throw new InvalidOperationException(
+                $"无法解码独立皮肤图片（{error}）：{imagePath}");
+        }
+
+        return image;
+
+        static bool HasPrefix(byte[] value, ReadOnlySpan<byte> prefix) =>
+            value.Length >= prefix.Length && value.AsSpan(0, prefix.Length).SequenceEqual(prefix);
     }
 
     public static RuntimeMonsterVisualMode? GetSelectedRuntimeMonsterVisualMode(string groupId)

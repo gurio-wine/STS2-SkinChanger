@@ -120,7 +120,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 pair => pair.Key,
                 pair => pair.Value,
                 StringComparer.OrdinalIgnoreCase);
-        var independentAncientImageProviders = visualGroupsByProvider
+        var independentManagedAncientProviders = visualGroupsByProvider
             .Where(pair => pair.Value.All(KnownAncientIds.Contains))
             .Where(pair => pair.Value.All(groupId =>
                 _groups.First(group => group.Id.Equals(
@@ -128,7 +128,8 @@ internal sealed partial class SkinCatalog : IDisposable
                         StringComparison.OrdinalIgnoreCase))
                     .Options.Any(option =>
                         option.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
-                        option.RuntimeImagePath != null)))
+                        (option.RuntimeImagePath != null ||
+                         OptionUsesManagedAncientLayers(groupId, option)))))
             .Select(pair => pair.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -142,7 +143,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(index => index.Mod.Id)
             .Where(providerId =>
                 visualGroupsByProvider.ContainsKey(providerId) &&
-                !independentAncientImageProviders.Contains(providerId) &&
+                !independentManagedAncientProviders.Contains(providerId) &&
                 (!cardProviderIds.Contains(providerId) ||
                  singleCharacterBundleGroupsByProvider.ContainsKey(providerId)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -167,6 +168,19 @@ internal sealed partial class SkinCatalog : IDisposable
                        CharacterUiTextureRegex().IsMatch(canonicalPath) ||
                        CharacterIconSceneRegex().IsMatch(canonicalPath) ||
                        CharacterMapMarkerRegex().IsMatch(canonicalPath);
+            });
+
+        static bool OptionUsesManagedAncientLayers(string groupId, SkinOption option) =>
+            option.Assets.Keys.Any(path =>
+            {
+                var match = AncientLayerImageRegex().Match(NormalizeTakeoverPath(path));
+                return match.Success &&
+                       match.Groups["id"].Value.Equals(
+                           groupId,
+                           StringComparison.OrdinalIgnoreCase) &&
+                       match.Groups["kind"].Value.Equals(
+                           "character",
+                           StringComparison.OrdinalIgnoreCase);
             });
 
         static string CharacterRuntimeFamilyId(string groupId) =>
