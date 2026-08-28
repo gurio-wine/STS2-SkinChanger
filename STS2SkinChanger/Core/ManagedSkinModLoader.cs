@@ -758,6 +758,66 @@ internal static class ManagedSkinModLoader
         }
     }
 
+    /// <summary>
+    /// Replays parameter-free visual setup attached to an already existing Godot node after a
+    /// provider is hot-selected. Newly instantiated nodes do not need this because their normal
+    /// _Ready call already passes through the selected provider's active Harmony patches.
+    /// </summary>
+    public static IReadOnlyList<Node> ReplaySelectedNodeReadyBehavior(
+        string providerId,
+        Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return [];
+        }
+
+        var baselineIds = EnumerateNodeTree(node)
+            .Select(candidate => candidate.GetInstanceId())
+            .ToHashSet();
+        var replayed = 0;
+        foreach (var patch in runtime.Patches.Where(patch =>
+                     (patch.Kind is ProviderPatchKind.Prefix or ProviderPatchKind.Postfix) &&
+                     patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
+                     patch.Target.DeclaringType?.IsInstanceOfType(node) == true))
+        {
+            if (!TryBuildNodeReadyArguments(
+                    patch.Callback,
+                    patch.Target,
+                    node,
+                    out var arguments))
+            {
+                continue;
+            }
+
+            try
+            {
+                patch.Callback.Invoke(null, arguments);
+                replayed++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重放 {providerId} 的场景外观初始化 " +
+                    $"{patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        var addedRoots = EnumerateNodeTree(node)
+            .Where(candidate => !baselineIds.Contains(candidate.GetInstanceId()))
+            .Where(candidate => candidate.GetParent() is not { } parent ||
+                                baselineIds.Contains(parent.GetInstanceId()))
+            .ToArray();
+        if (replayed > 0)
+        {
+            ModLog.Info($"已为现有场景节点重放 {providerId} 的 {replayed} 个外观初始化步骤。");
+        }
+
+        return addedRoots;
+    }
+
     private static bool IsLiveCreatureInitializationPatch(
         MethodBase target,
         NCreature creature,
@@ -858,6 +918,45 @@ internal static class ManagedSkinModLoader
                     break;
                 case "creature" when parameterType.IsInstanceOfType(creature.Entity):
                     arguments[index] = creature.Entity;
+                    break;
+                case "__originalMethod" when parameterType == typeof(MethodBase):
+                    arguments[index] = target;
+                    break;
+                case "__runOriginal" when parameterType == typeof(bool):
+                    arguments[index] = true;
+                    break;
+                default:
+                    if (parameter.HasDefaultValue)
+                    {
+                        arguments[index] = parameter.DefaultValue;
+                        break;
+                    }
+
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryBuildNodeReadyArguments(
+        MethodInfo callback,
+        MethodBase target,
+        Node node,
+        out object?[] arguments)
+    {
+        var parameters = callback.GetParameters();
+        arguments = new object?[parameters.Length];
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var parameterType = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            switch (parameter.Name)
+            {
+                case "__instance" when parameterType.IsInstanceOfType(node):
+                    arguments[index] = node;
                     break;
                 case "__originalMethod" when parameterType == typeof(MethodBase):
                     arguments[index] = target;

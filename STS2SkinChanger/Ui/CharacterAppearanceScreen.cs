@@ -5,6 +5,7 @@ using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Events;
@@ -13,6 +14,7 @@ using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
+using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Runs;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
@@ -95,6 +97,9 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private readonly List<CanvasItem> _selectionReticleOnlyControls = [];
     private NCreature? _targetCreature;
     private AncientEventModel? _targetAncient;
+    private NMerchantCharacter? _targetShopPlayerVisual;
+    private NMerchantButton? _targetMerchantButton;
+    private Player? _player;
     private SkinGroup? _group;
     private string? _transformKey;
     private bool _selectionMode = true;
@@ -156,8 +161,9 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         OnSubmenuHidden();
     }
 
-    internal void Initialize(Player _)
+    internal void Initialize(Player player)
     {
+        _player = player;
         EnterSelectionMode();
     }
 
@@ -710,6 +716,33 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         EndComparison();
+        if (_targetMerchantButton != null)
+        {
+            MerchantRuntimeAppearance.PrepareMerchantSelectionChange();
+            if (!SkinService.ApplySelection(_group.Id, optionId))
+            {
+                MerchantRuntimeAppearance.TryRefreshMerchant(out _);
+                PopulateSkinDropdown();
+                SetStatus(
+                    ModLocalization.Get(ModText.AppearanceFailed) + ": " + SkinService.LastError,
+                    warning: true);
+                return;
+            }
+
+            PopulateSkinDropdown();
+            if (!MerchantRuntimeAppearance.TryRefreshMerchant(out var merchantError))
+            {
+                SetStatus(
+                    ModLocalization.Get(ModText.AppearanceFailed) + ": " + merchantError,
+                    warning: true);
+                return;
+            }
+
+            _targetMerchantButton = NMerchantRoom.Instance?.MerchantButton;
+            SetAppliedStatus(null);
+            return;
+        }
+
         if (_targetAncient != null)
         {
             if (!SkinService.ApplySelection(_group.Id, optionId))
@@ -738,12 +771,13 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         switch (result.State)
         {
             case AppearanceSelectionRequestState.Applied:
+                var shopRefreshError = RefreshShopPlayerVisualAfterSelection();
                 PopulateSkinDropdown();
                 RefreshTargetTitle();
                 SetTransformControlsEnabled(true);
                 SyncTransformControls();
                 UpdateDragSurfaceCreature();
-                SetAppliedStatus(result.Error);
+                SetAppliedStatus(result.Error ?? shopRefreshError);
                 break;
             case AppearanceSelectionRequestState.Queued:
                 PopulateSkinDropdown();
@@ -769,12 +803,13 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
         if (success)
         {
+            var shopRefreshError = RefreshShopPlayerVisualAfterSelection();
             PopulateSkinDropdown();
             RefreshTargetTitle();
             SyncTransformControls();
             SetTransformControlsEnabled(true);
             UpdateDragSurfaceCreature();
-            SetAppliedStatus(error);
+            SetAppliedStatus(error ?? shopRefreshError);
         }
         else
         {
@@ -809,6 +844,18 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         if (_targetAncient != null)
         {
             _title.Text = AncientCompendiumEntry.GetTitle(_targetAncient);
+            return;
+        }
+
+        if (_targetMerchantButton != null)
+        {
+            _title.Text = new LocString("map", "LEGEND_MERCHANT.title").GetFormattedText();
+            return;
+        }
+
+        if (_targetShopPlayerVisual != null && _player != null)
+        {
+            _title.Text = _player.Character.Title.GetFormattedText();
             return;
         }
 
@@ -912,6 +959,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _selectionMode = true;
         _targetCreature = null;
         _targetAncient = null;
+        _targetShopPlayerVisual = null;
+        _targetMerchantButton = null;
         _group = null;
         _transformKey = null;
         _panel.Visible = false;
@@ -943,6 +992,30 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             return SelectCreatureTarget(creatureTarget.Creature, creatureTarget.Rect.GetCenter());
         }
 
+        var shopPlayerVisual = MerchantRuntimeAppearance.GetLocalPlayerVisual();
+        if (_player != null &&
+            shopPlayerVisual != null &&
+            _dragSurface.TryGetNode2DTargetRect(
+                shopPlayerVisual,
+                new Rect2(-190f, -450f, 380f, 520f),
+                out var shopPlayerRect) &&
+            shopPlayerRect.HasPoint(localPosition))
+        {
+            return SelectShopPlayerTarget(shopPlayerVisual, shopPlayerRect.GetCenter());
+        }
+
+        var merchantButton = NMerchantRoom.Instance?.MerchantButton;
+        if (merchantButton != null &&
+            GodotObject.IsInstanceValid(merchantButton) &&
+            SkinService.Catalog?.Groups.Any(group => group.Id.Equals(
+                MerchantRuntimeAppearance.GroupId,
+                StringComparison.OrdinalIgnoreCase)) == true &&
+            _dragSurface.TryGetCanvasRect(merchantButton, 8f, out var merchantRect) &&
+            merchantRect.HasPoint(localPosition))
+        {
+            return SelectMerchantTarget(merchantButton, merchantRect.GetCenter());
+        }
+
         if (!AncientRuntimeAppearance.TryGetCurrent(
                 out var ancient,
                 out var layout,
@@ -962,6 +1035,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _selectionMode = false;
         EndSelectionReticlePreview();
         _targetAncient = ancient;
+        _targetShopPlayerVisual = null;
+        _targetMerchantButton = null;
         _group = ancientGroup;
         _transformKey = null;
         SetTargetControlsVisible(
@@ -990,6 +1065,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         EndSelectionReticlePreview();
         _targetCreature = creature;
         _targetAncient = null;
+        _targetShopPlayerVisual = null;
+        _targetMerchantButton = null;
         _group = binding.Group;
         _transformKey = binding.TransformKey;
         SetTargetControlsVisible(
@@ -1007,6 +1084,102 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         RefreshStatusForCurrentContext();
         GetTargetInitialFocus().TryGrabFocus();
         return true;
+    }
+
+    private bool SelectShopPlayerTarget(
+        NMerchantCharacter visual,
+        Vector2 targetCenter)
+    {
+        if (_player == null)
+        {
+            return false;
+        }
+
+        var group = ContextualSkinControls.FindGroup(
+            _player.Character.Id.Entry,
+            _player.Character.GetType().Name);
+        if (group == null)
+        {
+            return false;
+        }
+
+        _selectionMode = false;
+        EndSelectionReticlePreview();
+        _targetCreature = null;
+        _targetAncient = null;
+        _targetShopPlayerVisual = visual;
+        _targetMerchantButton = null;
+        _group = group;
+        _transformKey = null;
+        SetTargetControlsVisible(
+            isCreature: false,
+            canSelectSkin: true,
+            supportsIntent: false);
+        PositionPanelAwayFrom(targetCenter);
+        _panel.Visible = true;
+        RefreshTargetTitle();
+        PopulateSkinDropdown();
+        SetTransformControlsEnabled(true);
+        UpdateDragSurfaceCreature();
+        SetStatus(string.Empty, warning: false);
+        GetTargetInitialFocus().TryGrabFocus();
+        return true;
+    }
+
+    private bool SelectMerchantTarget(
+        NMerchantButton merchantButton,
+        Vector2 targetCenter)
+    {
+        var group = SkinService.Catalog?.Groups.FirstOrDefault(candidate =>
+            candidate.Id.Equals(
+                MerchantRuntimeAppearance.GroupId,
+                StringComparison.OrdinalIgnoreCase));
+        if (group == null)
+        {
+            return false;
+        }
+
+        _selectionMode = false;
+        EndSelectionReticlePreview();
+        _targetCreature = null;
+        _targetAncient = null;
+        _targetShopPlayerVisual = null;
+        _targetMerchantButton = merchantButton;
+        _group = group;
+        _transformKey = null;
+        SetTargetControlsVisible(
+            isCreature: false,
+            canSelectSkin: true,
+            supportsIntent: false);
+        PositionPanelAwayFrom(targetCenter);
+        _panel.Visible = true;
+        RefreshTargetTitle();
+        PopulateSkinDropdown();
+        SetTransformControlsEnabled(true);
+        UpdateDragSurfaceCreature();
+        SetStatus(string.Empty, warning: false);
+        GetTargetInitialFocus().TryGrabFocus();
+        return true;
+    }
+
+    private string? RefreshShopPlayerVisualAfterSelection()
+    {
+        if (_targetShopPlayerVisual == null || _player == null || _group == null)
+        {
+            return null;
+        }
+
+        if (!MerchantRuntimeAppearance.TryRefreshLocalPlayer(
+                _player,
+                _group.Id,
+                out var refreshedVisual,
+                out var error))
+        {
+            return error;
+        }
+
+        _targetShopPlayerVisual = refreshedVisual;
+        return null;
     }
 
     private void SetTargetControlsVisible(
@@ -1753,6 +1926,30 @@ internal partial class CharacterDragSurface : Control
             Math.Max(Math.Max(first.Y, second.Y), Math.Max(third.Y, fourth.Y)));
         var margin = Vector2.One * padding;
         rect = new Rect2(minimum - margin, maximum - minimum + margin * 2f);
+        return rect.Size.X > 0f && rect.Size.Y > 0f;
+    }
+
+    public bool TryGetNode2DTargetRect(Node2D node, Rect2 localRect, out Rect2 rect)
+    {
+        rect = default;
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return false;
+        }
+
+        var inverse = GetGlobalTransformWithCanvas().AffineInverse();
+        var transform = node.GetGlobalTransformWithCanvas();
+        var first = inverse * (transform * localRect.Position);
+        var second = inverse * (transform * new Vector2(localRect.End.X, localRect.Position.Y));
+        var third = inverse * (transform * localRect.End);
+        var fourth = inverse * (transform * new Vector2(localRect.Position.X, localRect.End.Y));
+        var minimum = new Vector2(
+            Math.Min(Math.Min(first.X, second.X), Math.Min(third.X, fourth.X)),
+            Math.Min(Math.Min(first.Y, second.Y), Math.Min(third.Y, fourth.Y)));
+        var maximum = new Vector2(
+            Math.Max(Math.Max(first.X, second.X), Math.Max(third.X, fourth.X)),
+            Math.Max(Math.Max(first.Y, second.Y), Math.Max(third.Y, fourth.Y)));
+        rect = new Rect2(minimum, maximum - minimum);
         return rect.Size.X > 0f && rect.Size.Y > 0f;
     }
 }

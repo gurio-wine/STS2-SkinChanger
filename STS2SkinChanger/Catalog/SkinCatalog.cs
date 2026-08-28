@@ -3933,6 +3933,15 @@ internal sealed partial class SkinCatalog : IDisposable
             return new GroupIdentity(id, DisplayName(id));
         }
 
+        // The merchant is a room presentation rather than a CreatureModel.  Cosmetic packs
+        // therefore replace its room/background skeletons and shop scenes instead of a creature
+        // scene. Keep those resources in one selectable runtime bundle; playable-character
+        // merchant scenes are matched separately below and remain owned by their character.
+        if (MerchantAppearancePathRegex().IsMatch(NormalizeTakeoverPath(sourcePath)))
+        {
+            return new GroupIdentity("merchant", DisplayName("merchant"));
+        }
+
         foreach (var sceneRegex in new[]
                  {
                      CreatureVisualSceneRegex(),
@@ -4253,6 +4262,15 @@ internal sealed partial class SkinCatalog : IDisposable
 
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex MonsterPathRegex();
+
+    [GeneratedRegex(
+        "^(?:res://animations/backgrounds/(?:fake_)?merchant_room/|" +
+        "res://animations/customs/merchant/|" +
+        "res://scenes/rooms/merchant_button\\.tscn$|" +
+        "res://scenes/merchant/(?!characters/)[^/]+\\.tscn$|" +
+        "res://scenes/events/custom/fake_merchant(?:_button|_inventory)?\\.tscn$)",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex MerchantAppearancePathRegex();
 
     [GeneratedRegex("^res://scenes/creature_visuals/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CreatureVisualSceneRegex();

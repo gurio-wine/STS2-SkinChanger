@@ -420,6 +420,14 @@ if (validateIndex >= 0)
         {
             resourcePaths = [creaturePath];
         }
+        else if (group.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase))
+        {
+            resourcePaths =
+            [
+                "res://scenes/rooms/merchant_button.tscn",
+                "res://scenes/merchant/merchant_inventory.tscn"
+            ];
+        }
         else if (group.Options.Any(option => option.ManagedMonsterScene != null))
         {
             // DLL-only monster skins can replace a protected VisualsPath with a private scene whose
