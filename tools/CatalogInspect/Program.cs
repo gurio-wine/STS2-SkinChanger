@@ -10,12 +10,18 @@ if (args.Length == 2 && args[1].Equals("--self-test-card-export", StringComparis
     return;
 }
 
+if (args.Length == 2 && args[1].Equals("--self-test-localization", StringComparison.OrdinalIgnoreCase))
+{
+    RunLocalizationOwnershipSelfTest(args[0]);
+    return;
+}
+
 if (args.Length < 2)
 {
     Console.Error.WriteLine(
         "usage: CatalogInspect <game.pck> <mod-root> [<mod-root> ...] " +
         "[--runtime-scene <group> <selection> <scene> <output.pck> | --validate-runtime] " +
-        "or CatalogInspect <game.pck> --self-test-card-export");
+        "or CatalogInspect <game.pck> --self-test-card-export | --self-test-localization");
     return;
 }
 
@@ -202,6 +208,7 @@ if (validateIndex >= 0)
 {
     var failures = new List<string>();
     var validated = 0;
+    ValidateLocalizationOwnership(catalog, descriptors, failures);
     var probes = SkinCatalog.ProbeSkinProviders(descriptors);
     foreach (var probe in probes)
     {
@@ -1362,6 +1369,153 @@ static IReadOnlyList<CardCatalogEntry> BuildValidationCardEntries(IEnumerable<st
     }
 
     return cards.Values.ToArray();
+}
+
+static void ValidateLocalizationOwnership(
+    SkinCatalog catalog,
+    IReadOnlyList<SkinModDescriptor> descriptors,
+    List<string> failures)
+{
+    var paths = new List<string>();
+    foreach (var descriptor in descriptors.Where(descriptor =>
+                 descriptor.PckPath != null && File.Exists(descriptor.PckPath)))
+    {
+        using var archive = PckArchive.Open(descriptor.PckPath!);
+        paths.AddRange(archive.Paths.Where(path => path.StartsWith(
+                $"res://{descriptor.Id}/localization/",
+                StringComparison.OrdinalIgnoreCase) &&
+            path.EndsWith("/characters.json", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    var empty = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    var basePaths = catalog.FilterModdedLocalizationTables(paths, empty);
+    var checkedProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var group in catalog.Groups)
+    {
+        foreach (var option in group.Options)
+        {
+            var selections = catalog.BuildVisualSelectionTransaction(group.Id, option.Id, empty);
+            if (!catalog.GetSelectedLocalizationProviderIds(selections).Contains(option.EffectiveProviderId) ||
+                !checkedProviders.Add(option.EffectiveProviderId))
+            {
+                continue;
+            }
+
+            var ownedPaths = paths.Where(path => path.StartsWith(
+                $"res://{option.EffectiveProviderId}/localization/",
+                StringComparison.OrdinalIgnoreCase)).ToArray();
+            var activePaths = catalog.FilterModdedLocalizationTables(paths, selections);
+            // Keep every old path present: just like the game, mounted PCKs cannot be unloaded.
+            var afterLeaving = new Dictionary<string, string>(selections, StringComparer.OrdinalIgnoreCase);
+            foreach (var update in catalog.BuildVisualSelectionTransaction(
+                         group.Id, SkinCatalog.BaseOptionId, afterLeaving))
+            {
+                afterLeaving[update.Key] = update.Value;
+            }
+            var restoredPaths = catalog.FilterModdedLocalizationTables(paths, afterLeaving);
+            if (ownedPaths.Any(path => basePaths.Contains(path) ||
+                                       !activePaths.Contains(path) || restoredPaths.Contains(path)))
+            {
+                failures.Add($"{option.EffectiveProviderId}: character localization outlived its visual selection");
+            }
+            else if (ownedPaths.Length > 0)
+            {
+                Console.WriteLine($"validated localization ownership {option.EffectiveProviderId}: {ownedPaths.Length} tables");
+            }
+        }
+    }
+}
+
+static void RunLocalizationOwnershipSelfTest(string gamePckPath)
+{
+    var testRoot = Directory.CreateTempSubdirectory("skin-changer-localization-").FullName;
+    try
+    {
+        var descriptors = new List<SkinModDescriptor>();
+        var allTables = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        AddProvider("Tests.IronSkin", "ironclad", "Skin Ironclad");
+        AddProvider("Tests.SilentSkin", "silent", "Skin Silent");
+        AddProvider("Tests.OtherIronSkin", "ironclad", "Other Ironclad");
+        AddProvider("Tests.Gameplay", "watcher", "New Character", affectsGameplay: true);
+        AddProvider("Tests.IronSkinExtras", null, "Independent Translation");
+        using var catalog = SkinCatalog.Build(gamePckPath, descriptors);
+        var selections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        Check("unselected/startup", "Base Ironclad", "Base Silent");
+        selections["cards:ironclad"] = "Tests.IronSkin";
+        selections["cards:item:card.strike_ironclad"] = "Tests.IronSkin";
+        Check("card-only selection", "Base Ironclad", "Base Silent");
+        selections["ironclad"] = "Tests.IronSkin";
+        Check("enter first skin", "Skin Ironclad", "Base Silent");
+        selections["silent"] = "Tests.SilentSkin";
+        Check("independent characters", "Skin Ironclad", "Skin Silent");
+        selections["ironclad"] = SkinCatalog.BaseOptionId;
+        Check("leave first skin", "Base Ironclad", "Skin Silent");
+        selections["ironclad"] = "tests.otherironskin";
+        Check("another skin, case insensitive", "Other Ironclad", "Skin Silent");
+        selections["silent"] = SkinCatalog.BaseOptionId;
+        Check("leave second skin", "Other Ironclad", "Base Silent");
+        selections["ironclad"] = SkinCatalog.BaseOptionId;
+        Check("both restored", "Base Ironclad", "Base Silent");
+        selections["ironclad"] = "Tests.IronSkin";
+        Check("reselect", "Skin Ironclad", "Base Silent");
+
+        Console.WriteLine("localization ownership self-test passed: 9 transitions in both eng/zhs, stale paths, card-only selection and unrelated translations");
+
+        void AddProvider(string id, string? character, string title, bool affectsGameplay = false)
+        {
+            var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            if (character != null)
+            {
+                files[$"res://animations/characters/{character}/skin.tres"] =
+                    Encoding.UTF8.GetBytes("[gd_resource type=\"Resource\" format=3]\n");
+            }
+            foreach (var language in new[] { "eng", "zhs" })
+            {
+                var path = $"res://{id}/localization/{language}/characters.json";
+                var entries = new Dictionary<string, string>
+                {
+                    [character == null ? "TRANSLATION.title" : character.ToUpperInvariant() + ".title"] = title
+                };
+                allTables[path] = entries;
+                files[path] = JsonSerializer.SerializeToUtf8Bytes(entries);
+            }
+            var pckPath = System.IO.Path.Combine(testRoot, id + ".pck");
+            PckArchive.Write(pckPath, files);
+            descriptors.Add(new SkinModDescriptor(id, id, pckPath, affectsGameplay, testRoot));
+        }
+
+        void Check(string scenario, string expectedIronclad, string expectedSilent)
+        {
+            foreach (var language in new[] { "eng", "zhs" })
+            {
+                var translations = new Dictionary<string, string>
+                {
+                    ["IRONCLAD.title"] = "Base Ironclad",
+                    ["SILENT.title"] = "Base Silent"
+                };
+                foreach (var path in catalog.FilterModdedLocalizationTables(
+                             allTables.Keys.Where(path => path.Contains($"/{language}/")), selections))
+                {
+                    foreach (var entry in allTables[path])
+                    {
+                        translations[entry.Key] = entry.Value;
+                    }
+                }
+                if (translations["IRONCLAD.title"] != expectedIronclad ||
+                    translations["SILENT.title"] != expectedSilent ||
+                    translations.GetValueOrDefault("WATCHER.title") != "New Character" ||
+                    translations.GetValueOrDefault("TRANSLATION.title") != "Independent Translation")
+                {
+                    throw new InvalidOperationException($"localization ownership failed: {scenario}/{language}");
+                }
+            }
+        }
+    }
+    finally
+    {
+        Directory.Delete(testRoot, recursive: true);
+    }
 }
 
 static void RunCardExportSelfTest(string gamePckPath)

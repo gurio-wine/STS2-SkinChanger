@@ -29,6 +29,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
+    private readonly IReadOnlySet<string> _cosmeticLocalizationProviders;
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
     private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
@@ -77,6 +78,18 @@ internal sealed partial class SkinCatalog : IDisposable
         // Otherwise a DLL that independently supplies several Ancient pictures looks like one
         // inseparable multi-group runtime merely because its PCK also contains per-Ancient icons.
         AddImageRuntimeProviderOptions(mods);
+        // Only selectable visual providers have a skin-owned localization lifetime. A standalone
+        // translation mod (or a gameplay mod adding characters) must keep its normal language tables.
+        var visualProviderIds = _groups.SelectMany(group => group.Options)
+            .Select(option => option.EffectiveProviderId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _cosmeticLocalizationProviders = cosmeticIndexes
+            .Where(index => visualProviderIds.Contains(index.Mod.Id) &&
+                            index.Archive.Paths.Any(path =>
+                                path.Contains("/localization/", StringComparison.OrdinalIgnoreCase) &&
+                                path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
+            .Select(index => index.Mod.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _managedGodotScriptProviders = cosmeticIndexes
             .Where(index => index.Mod.HasDll && CountManagedGodotScripts(index.Archive) > 0)
             .Select(index => index.Mod.Id)
@@ -202,6 +215,57 @@ internal sealed partial class SkinCatalog : IDisposable
         .Where(path => !string.IsNullOrWhiteSpace(path))
         .Cast<string>()
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlySet<string> GetSelectedLocalizationProviderIds(
+        IReadOnlyDictionary<string, string> selections) =>
+        Groups.Select(group =>
+            {
+                selections.TryGetValue(group.Id, out var selectedId);
+                return group.Options.FirstOrDefault(option => option.Id.Equals(
+                    selectedId,
+                    StringComparison.OrdinalIgnoreCase));
+            })
+            .Where(option => option != null &&
+                             _cosmeticLocalizationProviders.Contains(option.EffectiveProviderId))
+            .Select(option => option!.EffectiveProviderId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyList<string> FilterModdedLocalizationTables(
+        IEnumerable<string> localizationPaths,
+        IReadOnlyDictionary<string, string> selections)
+    {
+        var paths = localizationPaths.ToArray();
+        if (_cosmeticLocalizationProviders.Count == 0)
+        {
+            return paths;
+        }
+
+        var selectedProviders = GetSelectedLocalizationProviderIds(selections);
+        return paths.Where(path =>
+            !TryGetLocalizationProviderId(path, out var providerId) ||
+            !_cosmeticLocalizationProviders.Contains(providerId) ||
+            selectedProviders.Contains(providerId)).ToArray();
+    }
+
+    private static bool TryGetLocalizationProviderId(string path, out string providerId)
+    {
+        providerId = string.Empty;
+        if (!path.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var relative = path[6..];
+        var separator = relative.IndexOf('/');
+        if (separator <= 0 ||
+            !relative[(separator + 1)..].StartsWith("localization/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        providerId = relative[..separator];
+        return true;
+    }
 
     public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods)
     {

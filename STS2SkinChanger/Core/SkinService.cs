@@ -51,7 +51,7 @@ internal static class SkinService
         new(StringComparer.Ordinal);
     private static readonly Dictionary<string, HashSet<string>> RuntimeCanonicalDependencyPaths =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, ResourceFile> ActiveLocalizationFiles =
+    private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LocalizationCacheState> LocalizationStateCache =
         new(StringComparer.Ordinal);
@@ -165,7 +165,7 @@ internal static class SkinService
                 FailedAncientStyleMethods.Clear();
                 MountedOverlayCache.Clear();
                 RuntimeCanonicalDependencyPaths.Clear();
-                ActiveLocalizationFiles.Clear();
+                MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
                 _mountedLocalizationSignature = null;
                 CleanupOldOverlays();
@@ -2478,20 +2478,15 @@ internal static class SkinService
     private static void RefreshLocalizationIfNeeded(
         IReadOnlyDictionary<string, ResourceFile> mountedFiles)
     {
-        var localizationFiles = mountedFiles
-            .Where(pair => pair.Key.Contains("/localization/", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (localizationFiles.Length == 0)
+        foreach (var file in mountedFiles.Where(pair =>
+                     pair.Key.Contains("/localization/", StringComparison.OrdinalIgnoreCase)))
         {
-            return;
+            MountedLocalizationFiles[file.Key] = file.Value;
         }
 
-        foreach (var file in localizationFiles)
-        {
-            ActiveLocalizationFiles[file.Key] = file.Value;
-        }
-
-        var signature = BuildOverlaySignature(ActiveLocalizationFiles, "localization");
+        // A deselection can mount no language files at all. It still changes which provider
+        // tables the game is allowed to merge, so never skip this check for an empty file delta.
+        var signature = BuildActiveLocalizationSignature();
 
         try
         {
@@ -2536,6 +2531,37 @@ internal static class SkinService
         {
             // A broken optional translation must not make an otherwise valid visual switch fail.
             ModLog.Warn("刷新皮肤本地化缓存失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static string BuildActiveLocalizationSignature()
+    {
+        var catalog = Catalog;
+        if (catalog == null)
+        {
+            return string.Empty;
+        }
+
+        var activePaths = catalog.FilterModdedLocalizationTables(
+                MountedLocalizationFiles.Keys,
+                Config.Selections)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var activeFiles = MountedLocalizationFiles
+            .Where(pair => activePaths.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        return BuildOverlaySignature(activeFiles, "localization") + "\n" + string.Join(
+            "\n",
+            catalog.GetSelectedLocalizationProviderIds(Config.Selections)
+                .Order(StringComparer.OrdinalIgnoreCase));
+    }
+
+    public static IEnumerable<string> FilterModdedLocalizationTables(
+        IEnumerable<string> localizationPaths)
+    {
+        lock (Sync)
+        {
+            return Catalog?.FilterModdedLocalizationTables(localizationPaths, Config.Selections) ??
+                   localizationPaths.ToArray();
         }
     }
 
