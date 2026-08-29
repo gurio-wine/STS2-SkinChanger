@@ -19,10 +19,15 @@ internal static class CardSkinControls
 {
     private const string SelectorName = "STS2CardSkinSelector";
     private const string PriorityButtonName = "CardSkinPriorityButton";
+    private const string PresetButtonName = "CardSkinPresetButton";
     private const string PriorityOverlayName = "STS2CardSkinPriorityOverlay";
     private const string PriorityPanelName = "Panel";
     private const string PriorityPanelMarginName = "Margin";
     private const string PriorityContentName = "PriorityContent";
+    private const string PresetOverlayName = "STS2CardSkinPresetOverlay";
+    private const string PresetPanelName = "Panel";
+    private const string PresetPanelMarginName = "Margin";
+    private const string PresetContentName = "PresetContent";
     private const string AvailabilityFilterName = "STS2SkinnedCardsOnly";
     private const string AvailabilityFilterMeta = "sts2_skinned_cards_only";
     private const string GroupMeta = "sts2_card_skin_group";
@@ -67,11 +72,14 @@ internal static class CardSkinControls
         var priorityOverlay = CreatePriorityOverlay();
         screen.AddChild(priorityOverlay);
         priorityOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        var presetOverlay = CreatePresetOverlay();
+        screen.AddChild(presetOverlay);
+        presetOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
         var priorityButton = new Button
         {
             Name = PriorityButtonName,
-            CustomMinimumSize = new Vector2(256, 40),
+            CustomMinimumSize = new Vector2(154, 40),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             Alignment = HorizontalAlignment.Center
         };
@@ -79,6 +87,17 @@ internal static class CardSkinControls
         priorityButton.AddThemeFontSizeOverride("font_size", 19);
         priorityButton.Pressed += () => OpenPriorityOverlay(screen, selector, priorityOverlay);
         selector.AddChild(priorityButton);
+
+        var presetButton = new Button
+        {
+            Name = PresetButtonName,
+            CustomMinimumSize = new Vector2(94, 40),
+            Alignment = HorizontalAlignment.Center
+        };
+        ContextualSkinControls.ApplyGameTheme(presetButton);
+        presetButton.AddThemeFontSizeOverride("font_size", 18);
+        presetButton.Pressed += () => OpenPresetOverlay(screen, selector, presetOverlay);
+        selector.AddChild(presetButton);
 
         bottom.AddChild(selector);
         bottom.MoveChild(selector, 0);
@@ -118,6 +137,11 @@ internal static class CardSkinControls
             if (priorityOverlay.Visible)
             {
                 BuildPriorityOverlay(screen, selector, priorityOverlay);
+            }
+
+            if (presetOverlay.Visible)
+            {
+                BuildPresetOverlay(screen, selector, presetOverlay);
             }
 
             RefreshSourceIndicators(screen);
@@ -909,6 +933,7 @@ internal static class CardSkinControls
     private static void Populate(HBoxContainer selector, string? groupId)
     {
         var button = selector.GetNode<Button>(PriorityButtonName);
+        var presetButton = selector.GetNode<Button>(PresetButtonName);
         var group = groupId == null ? null : FindGroup(groupId);
         if (group == null || group.Options.Count == 0)
         {
@@ -923,7 +948,308 @@ internal static class CardSkinControls
             ModLocalization.Get(ModText.CardSkinPriority),
             options.Count(option => option.Enabled));
         button.TooltipText = ModLocalization.Get(ModText.CardPriorityTooltip);
+        presetButton.Text = ModLocalization.Get(ModText.CardPresets);
+        presetButton.TooltipText = ModLocalization.Get(ModText.CardPresetTooltip);
         selector.Visible = true;
+    }
+
+    private static Control CreatePresetOverlay()
+    {
+        var overlay = new Control
+        {
+            Name = PresetOverlayName,
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 2000
+        };
+        var mask = new ColorRect
+        {
+            Name = "Mask",
+            Color = new Color(0f, 0f, 0f, 0.68f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        mask.GuiInput += input =>
+        {
+            if (input is not InputEventMouseButton
+                {
+                    Pressed: true,
+                    ButtonIndex: MouseButton.Left
+                })
+            {
+                return;
+            }
+
+            overlay.Visible = false;
+            mask.AcceptEvent();
+        };
+        overlay.AddChild(mask);
+        mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        var panel = new PanelContainer
+        {
+            Name = PresetPanelName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -470,
+            OffsetTop = -280,
+            OffsetRight = 470,
+            OffsetBottom = 280
+        };
+        panel.AddThemeStyleboxOverride(
+            "panel",
+            ContextualSkinControls.CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        overlay.AddChild(panel);
+        var margin = new MarginContainer { Name = PresetPanelMarginName };
+        margin.AddThemeConstantOverride("margin_left", 20);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_right", 20);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
+        panel.AddChild(margin);
+        var content = new VBoxContainer { Name = PresetContentName };
+        content.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(content);
+        return overlay;
+    }
+
+    private static void OpenPresetOverlay(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        BuildPresetOverlay(screen, selector, overlay);
+        overlay.Visible = true;
+        overlay.MoveToFront();
+    }
+
+    private static void BuildPresetOverlay(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        var content = overlay.GetNode<VBoxContainer>(
+            $"{PresetPanelName}/{PresetPanelMarginName}/{PresetContentName}");
+        foreach (var child in content.GetChildren())
+        {
+            content.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        var title = new Label
+        {
+            Text = ModLocalization.Get(ModText.CardPresets),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        title.AddThemeFontSizeOverride("font_size", 25);
+        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        content.AddChild(title);
+
+        var createRow = new HBoxContainer
+        {
+            CustomMinimumSize = new Vector2(890, 44),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        createRow.AddThemeConstantOverride("separation", 10);
+        content.AddChild(createRow);
+        var newName = new LineEdit
+        {
+            PlaceholderText = ModLocalization.Get(ModText.CardPresetName),
+            MaxLength = SkinService.CardSkinPresetNameMaxLength,
+            CustomMinimumSize = new Vector2(600, 40),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        newName.AddThemeFontSizeOverride("font_size", 18);
+        createRow.AddChild(newName);
+        var save = new Button
+        {
+            Text = ModLocalization.Get(ModText.SaveCurrentPreset),
+            CustomMinimumSize = new Vector2(220, 40)
+        };
+        ContextualSkinControls.ApplyGameTheme(save);
+        save.AddThemeFontSizeOverride("font_size", 18);
+        save.Pressed += () => QueuePresetChange(
+            screen,
+            selector,
+            overlay,
+            () =>
+            {
+                var created = SkinService.CreateCardSkinPreset(newName.Text);
+                if (created)
+                {
+                    newName.Text = string.Empty;
+                }
+
+                return created;
+            },
+            refreshCards: false);
+        createRow.AddChild(save);
+
+        var scroll = new ScrollContainer
+        {
+            CustomMinimumSize = new Vector2(890, 360),
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        content.AddChild(scroll);
+        var rows = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        rows.AddThemeConstantOverride("separation", 7);
+        scroll.AddChild(rows);
+
+        var presets = SkinService.GetCardSkinPresets();
+        if (presets.Count == 0)
+        {
+            var empty = new Label
+            {
+                Text = ModLocalization.Get(ModText.NoCardPresets),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                CustomMinimumSize = new Vector2(860, 100),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
+            empty.AddThemeFontSizeOverride("font_size", 19);
+            empty.AddThemeColorOverride("font_color", new Color("b9adbd"));
+            rows.AddChild(empty);
+        }
+
+        foreach (var preset in presets)
+        {
+            var row = new HBoxContainer
+            {
+                CustomMinimumSize = new Vector2(870, 46),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            row.AddThemeConstantOverride("separation", 8);
+            rows.AddChild(row);
+
+            var active = new Label
+            {
+                Text = preset.Active ? "●" : string.Empty,
+                TooltipText = preset.Active ? ModLocalization.Get(ModText.ActiveCardPreset) : string.Empty,
+                CustomMinimumSize = new Vector2(24, 38),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                MouseFilter = Control.MouseFilterEnum.Pass
+            };
+            active.AddThemeFontSizeOverride("font_size", 18);
+            active.AddThemeColorOverride("font_color", new Color("efc850"));
+            row.AddChild(active);
+
+            var name = new LineEdit
+            {
+                Text = preset.Name,
+                MaxLength = SkinService.CardSkinPresetNameMaxLength,
+                CustomMinimumSize = new Vector2(310, 38),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            name.AddThemeFontSizeOverride("font_size", 18);
+            row.AddChild(name);
+
+            var apply = CreatePresetActionButton(
+                preset.Active
+                    ? ModLocalization.Get(ModText.ActiveCardPreset)
+                    : ModLocalization.Get(ModText.ApplyCardPreset),
+                112);
+            apply.Disabled = preset.Active;
+            apply.Pressed += () => QueuePresetChange(
+                screen,
+                selector,
+                overlay,
+                () => SkinService.ApplyCardSkinPreset(preset.Name),
+                refreshCards: true);
+            row.AddChild(apply);
+
+            var overwrite = CreatePresetActionButton(
+                ModLocalization.Get(ModText.OverwriteCardPreset),
+                100);
+            overwrite.Pressed += () => QueuePresetChange(
+                screen,
+                selector,
+                overlay,
+                () => SkinService.OverwriteCardSkinPreset(preset.Name),
+                refreshCards: false);
+            row.AddChild(overwrite);
+
+            var rename = CreatePresetActionButton(
+                ModLocalization.Get(ModText.RenameCardPreset),
+                100);
+            rename.Pressed += () => QueuePresetChange(
+                screen,
+                selector,
+                overlay,
+                () => SkinService.RenameCardSkinPreset(preset.Name, name.Text),
+                refreshCards: false);
+            row.AddChild(rename);
+
+            var delete = CreatePresetActionButton(
+                ModLocalization.Get(ModText.DeleteCardPreset),
+                112);
+            var deleteArmed = false;
+            delete.Pressed += () =>
+            {
+                if (!deleteArmed)
+                {
+                    deleteArmed = true;
+                    delete.Text = ModLocalization.Get(ModText.ConfirmDeleteCardPreset);
+                    return;
+                }
+
+                QueuePresetChange(
+                    screen,
+                    selector,
+                    overlay,
+                    () => SkinService.DeleteCardSkinPreset(preset.Name),
+                    refreshCards: false);
+            };
+            row.AddChild(delete);
+        }
+
+        var close = CreatePresetActionButton(ModLocalization.Get(ModText.Close), 180);
+        close.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        close.Pressed += () => overlay.Visible = false;
+        content.AddChild(close);
+    }
+
+    private static Button CreatePresetActionButton(string text, float width)
+    {
+        var button = new Button
+        {
+            Text = text,
+            CustomMinimumSize = new Vector2(width, 38)
+        };
+        ContextualSkinControls.ApplyGameTheme(button);
+        button.AddThemeFontSizeOverride("font_size", 17);
+        return button;
+    }
+
+    private static void QueuePresetChange(
+        NCardLibrary screen,
+        HBoxContainer selector,
+        Control overlay,
+        Func<bool> change,
+        bool refreshCards)
+    {
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !change())
+            {
+                ModLog.Error($"调整卡图预设失败：{SkinService.LastError}");
+                return;
+            }
+
+            var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+            Populate(selector, groupId);
+            BuildPresetOverlay(screen, selector, overlay);
+            if (refreshCards && !string.IsNullOrWhiteSpace(groupId))
+            {
+                RefreshVisibleCards(screen, groupId);
+                RefreshSourceIndicators(screen);
+            }
+        }).CallDeferred();
     }
 
     private static Control CreatePriorityOverlay()

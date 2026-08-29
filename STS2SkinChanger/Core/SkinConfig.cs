@@ -42,6 +42,17 @@ internal sealed record CardSkinPriorityEntry(
     string OptionId,
     bool Enabled);
 
+internal sealed class CardSkinPreset
+{
+    public string Name { get; set; } = string.Empty;
+
+    public Dictionary<string, List<CardSkinPriorityEntry>> CardSkinPriorities { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, string> Selections { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+}
+
 internal sealed record MonsterSkinPriorityEntry(
     string OptionId,
     bool Enabled);
@@ -64,6 +75,10 @@ internal sealed class SkinConfig
         new(StringComparer.OrdinalIgnoreCase);
 
     public int CardPriorityDefaultsVersion { get; set; }
+
+    public List<CardSkinPreset> CardSkinPresets { get; set; } = [];
+
+    public string? ActiveCardSkinPreset { get; set; }
 
     public Dictionary<string, List<MonsterSkinPriorityEntry>> MonsterSkinPriorities { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
@@ -169,6 +184,38 @@ internal sealed class SkinConfig
                 .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
                 .ToList(),
             StringComparer.OrdinalIgnoreCase);
+        config.CardSkinPresets ??= [];
+        config.CardSkinPresets = config.CardSkinPresets
+            .Where(preset => preset != null && !string.IsNullOrWhiteSpace(preset.Name))
+            .Select(preset =>
+            {
+                preset.Name = preset.Name.Trim();
+                preset.CardSkinPriorities ??=
+                    new Dictionary<string, List<CardSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
+                preset.CardSkinPriorities = preset.CardSkinPriorities.ToDictionary(
+                    pair => pair.Key,
+                    pair => (pair.Value ?? [])
+                        .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
+                        .ToList(),
+                    StringComparer.OrdinalIgnoreCase);
+                preset.Selections ??=
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                preset.Selections = preset.Selections
+                    .Where(pair => pair.Key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase) &&
+                                   !string.IsNullOrWhiteSpace(pair.Value))
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value,
+                        StringComparer.OrdinalIgnoreCase);
+                return preset;
+            })
+            .DistinctBy(preset => preset.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        config.ActiveCardSkinPreset = config.CardSkinPresets.Any(preset =>
+            preset.Name.Equals(config.ActiveCardSkinPreset, StringComparison.OrdinalIgnoreCase))
+                ? config.CardSkinPresets.First(preset =>
+                    preset.Name.Equals(config.ActiveCardSkinPreset, StringComparison.OrdinalIgnoreCase)).Name
+                : null;
         config.MonsterSkinPriorities ??=
             new Dictionary<string, List<MonsterSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
         config.MonsterSkinPriorities = config.MonsterSkinPriorities.ToDictionary(
