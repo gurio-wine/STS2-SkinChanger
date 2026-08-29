@@ -4,11 +4,14 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Logging;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Runs;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Ui;
@@ -93,6 +96,7 @@ internal static class MultiplayerSkinSync
     private static Stack<IReadOnlyDictionary<string, string>>? _selectionScopes;
 
     private static INetGameService? _netService;
+    private static StartRunLobby? _lobby;
     private static MessageHandlerDelegate<SkinChangerNetMessage>? _messageHandler;
     private static double _snapshotElapsed;
     private static int _snapshotStage;
@@ -182,7 +186,31 @@ internal static class MultiplayerSkinSync
     internal static void AttachToRun()
     {
         var service = RunManager.Instance.NetService;
-        if (!service.Type.IsMultiplayer() || ReferenceEquals(service, _netService))
+        _lobby = null;
+        if (!service.Type.IsMultiplayer())
+        {
+            return;
+        }
+
+        AttachToService(service, "对局");
+    }
+
+    internal static void AttachToLobby(StartRunLobby lobby)
+    {
+        var service = lobby.NetService;
+        if (!service.Type.IsMultiplayer())
+        {
+            return;
+        }
+
+        AttachToService(service, "联机选角");
+        _lobby = lobby;
+        RememberLocalAdvertisement();
+    }
+
+    private static void AttachToService(INetGameService service, string stage)
+    {
+        if (ReferenceEquals(service, _netService))
         {
             return;
         }
@@ -201,7 +229,7 @@ internal static class MultiplayerSkinSync
         _snapshotElapsed = 0;
         _snapshotStage = 0;
         RememberLocalAdvertisement();
-        ModLog.Info("多人角色皮肤同步已启用；仅向确认安装 Skin Changer 的玩家发送选择。");
+        ModLog.Info($"多人角色皮肤同步已在{stage}阶段启用；仅向确认安装 Skin Changer 的玩家发送选择。");
     }
 
     internal static void DetachFromRun(
@@ -230,6 +258,7 @@ internal static class MultiplayerSkinSync
         }
 
         _netService = null;
+        _lobby = null;
         _messageHandler = null;
         bool hadRemoteSelections;
         lock (Sync)
@@ -337,15 +366,14 @@ internal static class MultiplayerSkinSync
 
     internal static void OnLocalCharacterSelectionChanged(string groupId)
     {
-        var player = CharacterAppearanceRuntime.GetLocalPlayer();
-        if (player == null)
+        if (!TryGetLocalCharacter(out _, out var character))
         {
             return;
         }
 
         var group = ContextualSkinControls.FindGroup(
-            player.Character.Id.Entry,
-            player.Character.GetType().Name);
+            character.Id.Entry,
+            character.GetType().Name);
         if (group == null || !group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
         {
             return;
@@ -375,6 +403,7 @@ internal static class MultiplayerSkinSync
                 // A late join or reconnect still needs every existing player's current snapshot.
                 _snapshotElapsed = 0;
                 _snapshotStage = 0;
+                ModLog.Info($"已确认联机玩家 {peerId} 支持 Skin Changer 皮肤同步。");
             }
         }
     }
@@ -475,10 +504,7 @@ internal static class MultiplayerSkinSync
             return;
         }
 
-        if (!CharacterAppearanceRuntime.PlayerMatchesCharacterSelection(
-                message.PlayerNetId,
-                message.CharacterId,
-                message.GroupId))
+        if (!PlayerMatchesCharacterSelection(message))
         {
             return;
         }
@@ -546,15 +572,14 @@ internal static class MultiplayerSkinSync
 
     private static void RememberLocalAdvertisement()
     {
-        var player = CharacterAppearanceRuntime.GetLocalPlayer();
-        if (player == null)
+        if (!TryGetLocalCharacter(out var playerNetId, out var character))
         {
             return;
         }
 
         var group = ContextualSkinControls.FindGroup(
-            player.Character.Id.Entry,
-            player.Character.GetType().Name);
+            character.Id.Entry,
+            character.GetType().Name);
         if (group == null)
         {
             return;
@@ -564,8 +589,8 @@ internal static class MultiplayerSkinSync
         {
             ProtocolVersion = ProtocolVersion,
             Kind = SkinSyncMessageKind.CharacterSelection,
-            PlayerNetId = player.NetId,
-            CharacterId = player.Character.Id.Entry,
+            PlayerNetId = playerNetId,
+            CharacterId = character.Id.Entry,
             GroupId = group.Id,
             OptionId = SkinService.Config.GetSelection(group.Id)
         };
@@ -606,8 +631,7 @@ internal static class MultiplayerSkinSync
 
     internal static void OnLocalOnlineMetadataReady(string groupId, string optionId)
     {
-        var player = CharacterAppearanceRuntime.GetLocalPlayer();
-        if (player == null ||
+        if (!TryGetLocalCharacter(out _, out _) ||
             !SkinService.Config.GetSelection(groupId).Equals(
                 optionId,
                 StringComparison.OrdinalIgnoreCase))
@@ -617,6 +641,97 @@ internal static class MultiplayerSkinSync
 
         RememberLocalAdvertisement();
         SendLocalAdvertisement();
+    }
+
+    private static bool TryGetLocalCharacter(
+        out ulong playerNetId,
+        out CharacterModel character)
+    {
+        var service = _netService;
+        if (service != null && TryGetLobbyCharacter(service.NetId, out character))
+        {
+            playerNetId = service.NetId;
+            return true;
+        }
+
+        var player = CharacterAppearanceRuntime.GetLocalPlayer();
+        if (player != null)
+        {
+            playerNetId = player.NetId;
+            character = player.Character;
+            return true;
+        }
+
+        playerNetId = 0;
+        character = null!;
+        return false;
+    }
+
+    private static bool PlayerMatchesCharacterSelection(SkinChangerNetMessage message)
+    {
+        if (TryGetLobbyCharacter(message.PlayerNetId, out var character))
+        {
+            var group = ContextualSkinControls.FindGroup(
+                character.Id.Entry,
+                character.GetType().Name);
+            return character.Id.Entry.Equals(
+                       message.CharacterId,
+                       StringComparison.OrdinalIgnoreCase) &&
+                   group?.Id.Equals(
+                       message.GroupId,
+                       StringComparison.OrdinalIgnoreCase) == true;
+        }
+
+        return CharacterAppearanceRuntime.PlayerMatchesCharacterSelection(
+            message.PlayerNetId,
+            message.CharacterId,
+            message.GroupId);
+    }
+
+    private static bool TryGetLobbyCharacter(ulong playerNetId, out CharacterModel character)
+    {
+        character = null!;
+        var lobby = _lobby;
+        if (lobby == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            // 0.107.1 exposes List<LobbyPlayer>, while 0.111.0 exposes
+            // List<StartRunLobbyPlayer>. Reflection keeps the same AnyCPU DLL compatible with
+            // both return signatures.
+            if (AccessTools.Property(typeof(StartRunLobby), "Players")?.GetValue(lobby)
+                    is not System.Collections.IEnumerable players)
+            {
+                return false;
+            }
+
+            foreach (var candidate in players)
+            {
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                var candidateType = candidate.GetType();
+                if (AccessTools.Field(candidateType, "id")?.GetValue(candidate) is ulong id &&
+                    id == playerNetId &&
+                    AccessTools.Field(candidateType, "character")?.GetValue(candidate)
+                        is CharacterModel candidateCharacter)
+                {
+                    character = candidateCharacter;
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("读取联机选角玩家失败：" + exception.GetBaseException().Message);
+        }
+
+        return false;
     }
 
     private static void RememberAdvertisement(SkinChangerNetMessage message)
@@ -749,6 +864,19 @@ internal partial class MultiplayerSkinSyncNode : Node
     public override void _ExitTree() => MultiplayerSkinSync.DetachFromRun(
         clearCapabilities: false,
         refreshRuntimeProviders: true);
+}
+
+[HarmonyPatch(typeof(NCharacterSelectScreen), "AfterInitialized")]
+internal static class MultiplayerSkinLobbyAttachPatch
+{
+    private static void Postfix(NCharacterSelectScreen __instance) =>
+        MultiplayerSkinSync.AttachToLobby(__instance.Lobby);
+}
+
+[HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen._Process))]
+internal static class MultiplayerSkinLobbyTickPatch
+{
+    private static void Postfix(double delta) => MultiplayerSkinSync.Tick(delta);
 }
 
 [HarmonyPatch(typeof(MessageTypes), nameof(MessageTypes.ToId))]

@@ -189,6 +189,9 @@ internal static partial class OnlineSkinCache
             }
             Pending.Enqueue(message);
         }
+
+        ModLog.Info(
+            $"检测到联机玩家使用本地缺少的皮肤 {message.ProviderId}，已等待安全阶段显示授权弹窗。");
     }
 
     internal static bool TryGetCachedOption(

@@ -1475,6 +1475,10 @@ internal static class InRunCharacterAppearanceRuntimePatch
     private static void Postfix(NRun __instance)
     {
         CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
+        // Children added from an NRun._Ready postfix are not guaranteed to receive their own
+        // _Ready callback in every Godot build. Attach explicitly; the node below still owns
+        // per-frame ticking and teardown once the run is live.
+        MultiplayerSkinSync.AttachToRun();
         if (__instance.GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime") == null)
         {
             __instance.AddChild(new CharacterAppearanceRuntimeNode
