@@ -38,6 +38,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, ActiveProviderRuntime> ActiveProviderRuntimes =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ProviderRuntimeBlueprint> ProviderRuntimeBlueprints =
+        new(StringComparer.OrdinalIgnoreCase);
     // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
     // remove the provider's patches when it is deselected, but it cannot undo a direct C# event
     // subscription. Remember successful initializers so a hot re-selection does not register the
@@ -296,6 +298,7 @@ internal static class ManagedSkinModLoader
                     .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
                     .Where(pair => pair.Attribute != null)
                     .ToArray();
+            var skippedInitializer = false;
             if (initializerTypes.Length == 0)
             {
                 // There is no original initializer left to register managed Godot scripts (this
@@ -313,7 +316,6 @@ internal static class ManagedSkinModLoader
             }
             else
             {
-                var skippedInitializer = false;
                 foreach (var initializer in initializerTypes)
                 {
                     var method = initializer.Type.GetMethod(
@@ -347,11 +349,20 @@ internal static class ManagedSkinModLoader
                 // The first run may install Harmony patches from inside a custom initializer.
                 // After deselection those callbacks have been removed, so restore attribute-based
                 // patches without invoking the initializer (and its non-Harmony subscriptions)
-                // for a second time.
+                // for a second time. Restore the exact callbacks that the provider actually chose
+                // on its first activation: some providers deliberately exclude optional profiling
+                // or compatibility patch classes, which a blanket PatchAll would incorrectly enable.
                 if (skippedInitializer)
                 {
-                    new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
-                        .PatchAll(assembly);
+                    if (ProviderRuntimeBlueprints.TryGetValue(providerId, out var blueprint))
+                    {
+                        PatchProviderCallbacks(blueprint.BehaviorPatches);
+                    }
+                    else
+                    {
+                        new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                            .PatchAll(assembly);
+                    }
                 }
             }
 
@@ -387,6 +398,21 @@ internal static class ManagedSkinModLoader
             }
 
             var behaviorPatches = CaptureProviderPatches(assembly);
+            if (!ProviderRuntimeBlueprints.ContainsKey(providerId))
+            {
+                ProviderRuntimeBlueprints[providerId] = new ProviderRuntimeBlueprint(
+                    behaviorPatches,
+                    presentationPatches,
+                    nodeReadyPresentationPatches);
+            }
+            else if (skippedInitializer &&
+                     ProviderRuntimeBlueprints.TryGetValue(providerId, out var restoredBlueprint))
+            {
+                // Managed presentation callbacks remain intentionally unpatched and are replayed
+                // by Skin Changer against the selected scene when needed.
+                presentationPatches = restoredBlueprint.CharacterPresentationPatches.ToArray();
+                nodeReadyPresentationPatches = restoredBlueprint.NodeReadyPresentationPatches.ToArray();
+            }
             ActiveProviderRuntimes[providerId] = new ActiveProviderRuntime(
                 assembly,
                 behaviorPatches,
@@ -456,7 +482,14 @@ internal static class ManagedSkinModLoader
         {
             if (ReferenceEquals(entry.Patch.PatchMethod.Module.Assembly, assembly))
             {
-                yield return new ProviderPatch(target, entry.Patch.PatchMethod, entry.Kind);
+                yield return new ProviderPatch(
+                    target,
+                    entry.Patch.PatchMethod,
+                    entry.Kind,
+                    entry.Patch.priority,
+                    entry.Patch.before,
+                    entry.Patch.after,
+                    entry.Patch.debug);
             }
         }
     }
@@ -1446,6 +1479,37 @@ internal static class ManagedSkinModLoader
         }
     }
 
+    private static void PatchProviderCallbacks(IEnumerable<ProviderPatch> patches)
+    {
+        var harmony = new Harmony(Entry.ModId + ".provider_runtime");
+        foreach (var patch in patches)
+        {
+            try
+            {
+                var method = new HarmonyMethod(
+                    patch.Callback,
+                    patch.Priority,
+                    patch.Before,
+                    patch.After,
+                    patch.Debug);
+                _ = patch.Kind switch
+                {
+                    ProviderPatchKind.Prefix => harmony.Patch(patch.Target, prefix: method),
+                    ProviderPatchKind.Postfix => harmony.Patch(patch.Target, postfix: method),
+                    ProviderPatchKind.Transpiler => harmony.Patch(patch.Target, transpiler: method),
+                    ProviderPatchKind.Finalizer => harmony.Patch(patch.Target, finalizer: method),
+                    _ => throw new ArgumentOutOfRangeException(nameof(patch.Kind), patch.Kind, null)
+                };
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"恢复提供者行为补丁 {patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
     private static string NormalizeHarmonyId(string providerId) =>
         new(providerId.Select(character =>
             char.IsLetterOrDigit(character) || character is '.' or '-' or '_'
@@ -2004,6 +2068,11 @@ internal static class ManagedSkinModLoader
         public Dictionary<ulong, NodeReadyBaseline> PendingNodeReadyBaselines { get; } = [];
     }
 
+    private sealed record ProviderRuntimeBlueprint(
+        IReadOnlyList<ProviderPatch> BehaviorPatches,
+        IReadOnlyList<ProviderPatch> CharacterPresentationPatches,
+        IReadOnlyList<ProviderPatch> NodeReadyPresentationPatches);
+
     private sealed record CharacterPresentationNodeState(
         Node Node,
         bool? Visible,
@@ -2058,7 +2127,11 @@ internal static class ManagedSkinModLoader
     private sealed record ProviderPatch(
         MethodBase Target,
         MethodInfo Callback,
-        ProviderPatchKind Kind);
+        ProviderPatchKind Kind,
+        int Priority,
+        string[] Before,
+        string[] After,
+        bool Debug);
 
     private enum ProviderPatchKind
     {
