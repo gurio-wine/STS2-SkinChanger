@@ -2141,8 +2141,14 @@ internal sealed partial class SkinCatalog : IDisposable
         IncludeAliasedDependencyChain(selected, resources);
 
         var overlay = BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
-        if (selected == null || !includeProviderDependencies)
+        if (selected == null ||
+            !includeProviderDependencies ||
+            ProviderUsesFullRuntime(selected.Id))
         {
+            // A coherent full-runtime selection is mounted once by BuildOverlay before any
+            // preview/combat scene is rebuilt. Copying the same complete provider package into
+            // every per-monster alias PCK is redundant and, for large animated packs, can create
+            // hundreds of multi-hundred-megabyte cache files while browsing the Bestiary.
             return overlay;
         }
 
@@ -3042,6 +3048,122 @@ internal sealed partial class SkinCatalog : IDisposable
                         ManagedMonsterScene: sceneAsset));
                 }
             }
+
+            AddManagedMonsterRuntimeProfileOptions(index, groups);
+        }
+    }
+
+    private static void AddManagedMonsterRuntimeProfileOptions(
+        PckResourceIndex index,
+        IDictionary<string, SkinGroup> groups)
+    {
+        var profiles = ManagedMonsterSceneScanner.ScanRuntimeProfiles(
+            index.Mod.RootPath,
+            index.Mod.Id);
+        if (profiles.Count == 0)
+        {
+            return;
+        }
+
+        var routedProfiles = profiles
+            .Select(profile =>
+            {
+                var identity = TryGetPrimaryGroup(profile.TargetScenePath);
+                var assets = profile.ProviderResourcePaths
+                    .Select(index.TryBuildAsset)
+                    .Where(asset => asset != null)
+                    .Cast<ResourceAsset>()
+                    .DistinctBy(asset => asset.SourcePath, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                return (Profile: profile, Identity: identity, Assets: assets);
+            })
+            // The private visual resource is the second independent signal that this is a real
+            // data-driven skin profile rather than an unrelated reference to a game scene.
+            .Where(entry => entry.Identity != null && entry.Assets.Length > 0)
+            .ToArray();
+        if (routedProfiles.Length == 0)
+        {
+            return;
+        }
+
+        var targetGroupIds = routedProfiles
+            .Select(entry => entry.Identity!.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var providerResourcePrefixes = routedProfiles
+            .SelectMany(entry => entry.Profile.ProviderResourcePaths)
+            .Select(GetProviderResourcePrefix)
+            .Where(prefix => prefix != null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // The ordinary path scanner sees folders such as animations/monsters/<foreign model id>
+        // and would otherwise expose those source-model ids as phantom STS2 monsters. Once an
+        // explicit runtime profile has mapped them to canonical creature scenes, remove only the
+        // provider-private phantom options and leave canonical/data-only monster packs untouched.
+        foreach (var group in groups.Values.Where(group => !targetGroupIds.Contains(group.Id)).ToArray())
+        {
+            group.Options.RemoveAll(option =>
+                option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase) &&
+                option.Assets.Count > 0 &&
+                option.Assets.Values.All(asset => providerResourcePrefixes.Any(prefix =>
+                    asset.SourcePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))));
+            if (group.Options.Count == 0)
+            {
+                groups.Remove(group.Id);
+            }
+        }
+
+        foreach (var entry in routedProfiles)
+        {
+            var identity = entry.Identity!;
+            if (!groups.TryGetValue(identity.Id, out var group))
+            {
+                group = new SkinGroup(identity.Id, identity.DisplayName);
+                groups.Add(identity.Id, group);
+            }
+
+            var profileAssets = entry.Assets.ToDictionary(
+                asset => asset.SourcePath,
+                StringComparer.OrdinalIgnoreCase);
+            var existingIndex = group.Options.FindIndex(option =>
+                option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                var existing = group.Options[existingIndex];
+                var mergedAssets = new Dictionary<string, ResourceAsset>(
+                    existing.Assets,
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var asset in profileAssets)
+                {
+                    mergedAssets[asset.Key] = asset.Value;
+                }
+
+                group.Options[existingIndex] = existing with
+                {
+                    Assets = mergedAssets,
+                    IsRuntimeProvider = true
+                };
+            }
+            else
+            {
+                group.Options.Add(new SkinOption(
+                    index.Mod.Id,
+                    index.Mod.Name,
+                    profileAssets,
+                    IsRuntimeProvider: true));
+            }
+        }
+
+        static string? GetProviderResourcePrefix(string resourcePath)
+        {
+            const string prefix = "res://";
+            if (!resourcePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var separator = resourcePath.IndexOf('/', prefix.Length);
+            return separator < 0 ? null : resourcePath[..(separator + 1)];
         }
     }
 

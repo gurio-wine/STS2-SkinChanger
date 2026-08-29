@@ -55,6 +55,46 @@ internal static class ManagedMonsterSceneScanner
     }
 
     /// <summary>
+    /// Finds data-driven monster providers that keep the original creature scene as a host and
+    /// construct the replacement body from private animation/model resources at runtime. These
+    /// providers do not expose a replacement PackedScene from a VisualsPath patch, so the regular
+    /// scene scanner cannot associate their private resource folders with the STS2 monster they
+    /// replace. Pairing the canonical creature-scene path and private visual roots declared in the
+    /// same profile builder preserves that ownership without executing third-party code.
+    /// </summary>
+    public static IReadOnlyList<ManagedMonsterRuntimeProfile> ScanRuntimeProfiles(
+        string? providerRoot,
+        string providerId)
+    {
+        if (string.IsNullOrWhiteSpace(providerRoot) || !Directory.Exists(providerRoot))
+        {
+            return [];
+        }
+
+        var primaryAssembly = System.IO.Path.Combine(providerRoot, providerId + ".dll");
+        var assemblyPaths = File.Exists(primaryAssembly)
+            ? [primaryAssembly]
+            : Directory.EnumerateFiles(providerRoot, "*.dll", SearchOption.TopDirectoryOnly)
+                .ToArray();
+        var profiles = new Dictionary<string, ManagedMonsterRuntimeProfile>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var assemblyPath in assemblyPaths)
+        {
+            try
+            {
+                ScanRuntimeProfilesAssembly(assemblyPath, profiles);
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"无法静态分析运行时怪物配置 DLL {assemblyPath}: {exception.Message}");
+            }
+        }
+
+        return profiles.Values.ToArray();
+    }
+
+    /// <summary>
     /// Reads canonical resources declared by gameplay-mod MonsterModel.AssetPaths overrides.
     /// Data-only skins often replace only these code-selected phase textures and therefore have
     /// no creature scene from which their owning monster can otherwise be inferred.
@@ -143,6 +183,78 @@ internal static class ManagedMonsterSceneScanner
                     declarations[NormalizeToken(modelTypeName)] =
                         new ManagedMonsterAssetDeclaration(modelTypeName, resourcePaths);
                 }
+            }
+        }
+    }
+
+    private static void ScanRuntimeProfilesAssembly(
+        string assemblyPath,
+        IDictionary<string, ManagedMonsterRuntimeProfile> profiles)
+    {
+        using var stream = new FileStream(
+            assemblyPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var peReader = new PEReader(stream, PEStreamOptions.PrefetchEntireImage);
+        if (!peReader.HasMetadata)
+        {
+            return;
+        }
+
+        var reader = peReader.GetMetadataReader();
+        foreach (var typeHandle in reader.TypeDefinitions)
+        {
+            var type = reader.GetTypeDefinition(typeHandle);
+            foreach (var methodHandle in type.GetMethods())
+            {
+                var method = reader.GetMethodDefinition(methodHandle);
+                if (method.RelativeVirtualAddress == 0)
+                {
+                    continue;
+                }
+
+                var il = peReader.GetMethodBody(method.RelativeVirtualAddress).GetILBytes();
+                if (il == null)
+                {
+                    continue;
+                }
+
+                var resourcePaths = ScanStrings(reader, il)
+                    .Select(NormalizeResourcePath)
+                    .Where(path => path != null)
+                    .Cast<string>()
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var targetScenes = resourcePaths
+                    .Where(IsCanonicalCreatureScenePath)
+                    .ToArray();
+                if (targetScenes.Length != 1)
+                {
+                    continue;
+                }
+
+                var providerResources = resourcePaths
+                    .Where(path => !IsCanonicalCreatureScenePath(path) &&
+                                   IsPrivateMonsterVisualResourcePath(path))
+                    .ToArray();
+                if (providerResources.Length == 0)
+                {
+                    continue;
+                }
+
+                var targetScene = targetScenes[0];
+                if (profiles.TryGetValue(targetScene, out var existing))
+                {
+                    providerResources = existing.ProviderResourcePaths
+                        .Concat(providerResources)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                }
+
+                profiles[targetScene] = new ManagedMonsterRuntimeProfile(
+                    targetScene,
+                    providerResources);
             }
         }
     }
@@ -357,6 +469,32 @@ internal static class ManagedMonsterSceneScanner
             : null;
     }
 
+    private static string? NormalizeResourcePath(string value)
+    {
+        var path = value.Replace('\\', '/').Trim();
+        return path.StartsWith("res://", StringComparison.OrdinalIgnoreCase)
+            ? path
+            : null;
+    }
+
+    private static bool IsCanonicalCreatureScenePath(string path) =>
+        path.StartsWith("res://scenes/creature_visuals/", StringComparison.OrdinalIgnoreCase) &&
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPrivateMonsterVisualResourcePath(string path)
+    {
+        if (!path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) &&
+            !path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return new[]
+        {
+            "/animations/", "/animation/", "/models/", "/model/", "/visuals/", "/visual/"
+        }.Any(segment => path.Contains(segment, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool IsScenePath(string value) =>
         value.StartsWith("res://", StringComparison.OrdinalIgnoreCase) &&
         value.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase);
@@ -509,6 +647,10 @@ internal static class ManagedMonsterSceneScanner
 }
 
 internal sealed record ManagedMonsterSceneReplacement(string ModelTypeName, string ScenePath);
+
+internal sealed record ManagedMonsterRuntimeProfile(
+    string TargetScenePath,
+    IReadOnlyList<string> ProviderResourcePaths);
 
 internal sealed record ManagedMonsterAssetDeclaration(
     string ModelTypeName,

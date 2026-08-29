@@ -2696,14 +2696,19 @@ internal static class SkinService
         var signature = BuildOverlaySignature(files, category);
         if (!MountedOverlayCache.TryGetValue(signature, out var overlayPath) || !File.Exists(overlayPath))
         {
-            overlayPath = System.IO.Path.Combine(
-                OS.GetUserDataDir(),
-                $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}_{category}.pck");
-            var sources = files.ToDictionary(
-                pair => pair.Key,
-                pair => (pair.Value.Archive, pair.Value.Path),
-                StringComparer.OrdinalIgnoreCase);
-            PckArchive.WriteFromArchives(overlayPath, sources);
+            overlayPath = TryGetCompleteSourceArchive(files);
+            if (overlayPath == null)
+            {
+                overlayPath = System.IO.Path.Combine(
+                    OS.GetUserDataDir(),
+                    $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}_{category}.pck");
+                var sources = files.ToDictionary(
+                    pair => pair.Key,
+                    pair => (pair.Value.Archive, pair.Value.Path),
+                    StringComparer.OrdinalIgnoreCase);
+                PckArchive.WriteFromArchives(overlayPath, sources);
+            }
+
             MountedOverlayCache[signature] = overlayPath;
         }
 
@@ -2715,6 +2720,33 @@ internal static class SkinService
             MountedOverlayCache.Remove(signature);
             throw new InvalidOperationException(failureMessage);
         }
+    }
+
+    private static string? TryGetCompleteSourceArchive(
+        IReadOnlyDictionary<string, ResourceFile> files)
+    {
+        var archive = files.Values.FirstOrDefault()?.Archive;
+        if (archive == null ||
+            files.Values.Any(file => !ReferenceEquals(file.Archive, archive)) ||
+            !File.Exists(archive.Path))
+        {
+            return null;
+        }
+
+        var archivePaths = archive.Paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (files.Count != archivePaths.Count ||
+            files.Any(pair =>
+                !ReferenceEquals(pair.Value.Archive, archive) ||
+                !pair.Key.Equals(pair.Value.Path, StringComparison.OrdinalIgnoreCase)) ||
+            !archivePaths.SetEquals(files.Keys))
+        {
+            return null;
+        }
+
+        // Mounting the original archive is equivalent to mounting an exact byte-for-byte copy.
+        // Baseline overlays still restore any canonical paths after deselection; private provider
+        // namespaces are inert once their DLL callbacks are deactivated.
+        return archive.Path;
     }
 
     private static string BuildOverlaySignature(

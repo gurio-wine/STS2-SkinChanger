@@ -535,7 +535,9 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
-        if (patch.Target.Name.Equals(nameof(CharacterModel.CreateVisuals), StringComparison.Ordinal))
+        if (patch.Target.Name.Equals(nameof(CharacterModel.CreateVisuals), StringComparison.Ordinal) &&
+            (typeof(CharacterModel).IsAssignableFrom(declaringType) ||
+             typeof(MonsterModel).IsAssignableFrom(declaringType)))
         {
             return true;
         }
