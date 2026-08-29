@@ -171,8 +171,8 @@ internal static class SkinService
                 _mountedLocalizationSignature = null;
                 CleanupOldOverlays();
                 CleanupPreparedRuntimeOverlayCache();
-                var executableDirectory = System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!;
-                var gamePckPath = System.IO.Path.Combine(executableDirectory, "SlayTheSpire2.pck");
+                var gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
+                ModLog.Info($"已定位游戏主资源包：{gamePckPath}");
                 var loadedMods = ModManager.GetLoadedMods()
                     .Where(mod => mod.manifest is { id: not null })
                     .Where(mod => !Entry.IsSelfModId(mod.manifest!.id))

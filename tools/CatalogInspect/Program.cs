@@ -2,7 +2,14 @@ using System.Text.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Core;
 using STS2SkinChanger.Pck;
+
+if (args.Length == 1 && args[0].Equals("--self-test-game-pack-locator", StringComparison.OrdinalIgnoreCase))
+{
+    RunGamePackLocatorSelfTest();
+    return;
+}
 
 if (args.Length == 2 && args[1].Equals("--self-test-card-export", StringComparison.OrdinalIgnoreCase))
 {
@@ -21,7 +28,8 @@ if (args.Length < 2)
     Console.Error.WriteLine(
         "usage: CatalogInspect <game.pck> <mod-root> [<mod-root> ...] " +
         "[--runtime-scene <group> <selection> <scene> <output.pck> | --validate-runtime] " +
-        "or CatalogInspect <game.pck> --self-test-card-export | --self-test-localization");
+        "or CatalogInspect <game.pck> --self-test-card-export | --self-test-localization " +
+        "or CatalogInspect --self-test-game-pack-locator");
     return;
 }
 
@@ -1314,6 +1322,60 @@ if (validateIndex >= 0)
         }
     }
 
+}
+
+static void RunGamePackLocatorSelfTest()
+{
+    var testRoot = Path.Combine(
+        Path.GetTempPath(),
+        "Gurio.SkinChanger.GamePackLocator." + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var windowsDirectory = Path.Combine(testRoot, "windows");
+        Directory.CreateDirectory(windowsDirectory);
+        var windowsPack = Path.Combine(windowsDirectory, "SlayTheSpire2.pck");
+        File.WriteAllBytes(windowsPack, []);
+        var windowsResult = GamePackLocator.Resolve(
+            Path.Combine(windowsDirectory, "SlayTheSpire2.exe"));
+        if (!windowsResult.Equals(windowsPack, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Windows pack resolution failed: {windowsResult}");
+        }
+
+        var macContents = Path.Combine(testRoot, "Slay the Spire 2.app", "Contents");
+        var macExecutableDirectory = Path.Combine(macContents, "MacOS");
+        var macResourcesDirectory = Path.Combine(macContents, "Resources");
+        Directory.CreateDirectory(macExecutableDirectory);
+        Directory.CreateDirectory(macResourcesDirectory);
+        var macPack = Path.Combine(macResourcesDirectory, "SlayTheSpire2.pck");
+        File.WriteAllBytes(macPack, []);
+        var macResult = GamePackLocator.Resolve(
+            Path.Combine(macExecutableDirectory, "SlayTheSpire2"));
+        if (!macResult.Equals(macPack, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"macOS bundle pack resolution failed: {macResult}");
+        }
+
+        File.Delete(macPack);
+        var alternateMacPack = Path.Combine(macResourcesDirectory, "Slay the Spire 2.pck");
+        File.WriteAllBytes(alternateMacPack, []);
+        var alternateMacResult = GamePackLocator.Resolve(
+            Path.Combine(macExecutableDirectory, "Slay the Spire 2"));
+        if (!alternateMacResult.Equals(alternateMacPack, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"macOS executable-name pack resolution failed: {alternateMacResult}");
+        }
+
+        Console.WriteLine("game pack locator self-test passed: Windows and macOS app bundle layouts");
+    }
+    finally
+    {
+        if (Directory.Exists(testRoot))
+        {
+            Directory.Delete(testRoot, recursive: true);
+        }
+    }
 }
 
 static IReadOnlyList<CardCatalogEntry> BuildValidationCardEntries(IEnumerable<string> pckPaths)

@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../STS2SkinChanger/Core/GamePackLocator.cs" Link="GamePackLocator.cs" />
     <Compile Include="../../STS2SkinChanger/Pck/PckArchive.cs" Link="PckArchive.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/SkinCatalog.cs" Link="SkinCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPresentationScanner.cs" Link="ManagedCardPresentationScanner.cs" />
