@@ -754,6 +754,13 @@ internal sealed partial class SkinCatalog : IDisposable
     public IReadOnlyList<string> GetFullRuntimeProviderGroups(string optionId) =>
         _fullRuntimeProviderGroups.GetValueOrDefault(optionId) ?? [];
 
+    public bool IsCharacterAppearanceGroup(string groupId)
+    {
+        var group = Groups.FirstOrDefault(candidate =>
+            candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+        return group?.Options.Any(IsCharacterAppearanceOption) == true;
+    }
+
     public bool IsFullRuntimeProviderFullySelected(
         string optionId,
         IReadOnlyDictionary<string, string> selections)

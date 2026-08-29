@@ -51,6 +51,7 @@ internal static class SkinService
         new(StringComparer.Ordinal);
     private static readonly Dictionary<string, HashSet<string>> RuntimeCanonicalDependencyPaths =
         new(StringComparer.OrdinalIgnoreCase);
+    private static HashSet<string>? _runtimeCharacterBehaviorScope;
     private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LocalizationCacheState> LocalizationStateCache =
@@ -324,6 +325,35 @@ internal static class SkinService
                     $"其中 {preparedRelicBundles} 套包含完整遗物图集；" +
                     $"耗时={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms。");
             }
+        }
+    }
+
+    public static void FocusRuntimeProviderBehaviorsOnCharacters(IEnumerable<string> groupIds)
+    {
+        lock (Sync)
+        {
+            var nextScope = groupIds
+                .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (_runtimeCharacterBehaviorScope != null &&
+                _runtimeCharacterBehaviorScope.SetEquals(nextScope))
+            {
+                return;
+            }
+
+            _runtimeCharacterBehaviorScope = nextScope;
+            var catalog = Catalog;
+            if (catalog == null)
+            {
+                return;
+            }
+
+            var activeProviders = GetActiveRuntimeProviders(catalog);
+            ManagedSkinModLoader.DeactivateProvidersExcept(activeProviders);
+            ManagedSkinModLoader.ActivateSelectedProviders(activeProviders);
+            ModLog.Info(
+                $"已将角色皮肤代码行为收窄到 {nextScope.Count} 个当前角色；" +
+                $"保留 {activeProviders.Count} 个当前场景需要的 DLL 皮肤提供者。");
         }
     }
 
@@ -2431,15 +2461,10 @@ internal static class SkinService
     {
         var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-        var selectedRuntimeProviders = catalog.GetFullySelectedFullRuntimeProviders(
-            Config.Selections)
-            .Union(
-                catalog.GetSelectedInteractiveRuntimeProviders(Config.Selections),
-                StringComparer.OrdinalIgnoreCase)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var activeRuntimeProviders = GetActiveRuntimeProviders(catalog);
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
-        ManagedSkinModLoader.DeactivateProvidersExcept(selectedRuntimeProviders);
+        ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
 
         var buildStarted = Stopwatch.GetTimestamp();
         var staleCanonicalPaths = groups
@@ -2482,13 +2507,52 @@ internal static class SkinService
             }
         }
 
-        ManagedSkinModLoader.ActivateSelectedProviders(selectedRuntimeProviders);
+        ManagedSkinModLoader.ActivateSelectedProviders(activeRuntimeProviders);
         ModLog.Info(
             $"已挂载 {groups.Count} 个外观分组/{files.Count} 个文件；" +
             $"目录={buildElapsed.TotalMilliseconds:F1} ms，" +
             $"资源包={mountElapsed.TotalMilliseconds:F1} ms，" +
             $"本地化={localizationElapsed.TotalMilliseconds:F1} ms，" +
             $"总计={Stopwatch.GetElapsedTime(totalStarted).TotalMilliseconds:F1} ms。");
+    }
+
+    private static HashSet<string> GetActiveRuntimeProviders(SkinCatalog catalog)
+    {
+        var selectedProviders = catalog.GetFullySelectedFullRuntimeProviders(Config.Selections)
+            .Union(
+                catalog.GetSelectedInteractiveRuntimeProviders(Config.Selections),
+                StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (_runtimeCharacterBehaviorScope == null)
+        {
+            return selectedProviders;
+        }
+
+        return selectedProviders.Where(providerId =>
+        {
+            // A complete character provider can own companion groups as well as the playable
+            // character (for example Necrobinder + Osty). Classify the provider by its primary
+            // character group instead of treating every companion as an unrelated global group;
+            // otherwise one companion selection would keep the entire DLL active in every run.
+            var characterGroups = catalog.GetFullRuntimeProviderGroups(providerId)
+                .Where(catalog.IsCharacterAppearanceGroup)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (characterGroups.Count == 0)
+            {
+                // Interactive providers are not necessarily part of the full-runtime map. Fall
+                // back to the character groups on which this provider is directly selected.
+                characterGroups = catalog.Groups
+                    .Where(group => catalog.IsCharacterAppearanceGroup(group.Id))
+                    .Where(group => Config.GetSelection(group.Id).Equals(
+                        providerId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(group => group.Id)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+
+            return characterGroups.Count == 0 ||
+                   characterGroups.Overlaps(_runtimeCharacterBehaviorScope);
+        }).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private static void RefreshLocalizationIfNeeded(

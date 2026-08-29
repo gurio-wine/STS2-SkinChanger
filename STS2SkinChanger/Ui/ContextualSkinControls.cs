@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
@@ -71,6 +72,10 @@ internal static partial class ContextualSkinControls
     {
         var selector = EnsureCharacterSelector(screen);
         var group = FindGroup(character.Id.Entry);
+        if (group != null && !IsMultiplayerCharacterSelect(screen))
+        {
+            SkinService.FocusRuntimeProviderBehaviorsOnCharacters([group.Id]);
+        }
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
         if (group != null)
@@ -78,6 +83,18 @@ internal static partial class ContextualSkinControls
             // 游戏的 SelectCharacter 每次点击都会清空 AnimatedBg 并重新实例化原版背景，
             // 所以这里必须每次重建；资源已缓存在 SkinService，重建不会再次写盘或加载。
             ScheduleCharacterRefresh(screen, character, group.Id);
+        }
+    }
+
+    private static bool IsMultiplayerCharacterSelect(NCharacterSelectScreen screen)
+    {
+        try
+        {
+            return screen.Lobby?.NetService.Type.IsMultiplayer() == true;
+        }
+        catch
+        {
+            return false;
         }
     }
 

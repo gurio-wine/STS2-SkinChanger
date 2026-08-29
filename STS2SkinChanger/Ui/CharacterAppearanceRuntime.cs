@@ -138,6 +138,33 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
+    internal static void FocusRuntimeProviderBehaviorsOnRunCharacters()
+    {
+        try
+        {
+            if (RunStateField?.GetValue(NRun.Instance) is not IRunState runState)
+            {
+                return;
+            }
+
+            var groupIds = runState.Players
+                .Select(player => ContextualSkinControls.FindGroup(
+                    player.Character.Id.Entry,
+                    player.Character.GetType().Name)?.Id)
+                .Where(groupId => groupId != null)
+                .Cast<string>()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (groupIds.Count > 0)
+            {
+                SkinService.FocusRuntimeProviderBehaviorsOnCharacters(groupIds);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("收窄当前对局角色皮肤行为失败：" + exception.GetBaseException().Message);
+        }
+    }
+
     internal static NCreature? GetCurrentCreature(Player? player)
     {
         if (player == null)
@@ -1371,6 +1398,7 @@ internal static class InRunCharacterAppearanceRuntimePatch
 {
     private static void Postfix(NRun __instance)
     {
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
         if (__instance.GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime") != null)
         {
             return;
