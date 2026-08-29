@@ -17,6 +17,30 @@ internal sealed record OnlineSkinSource(
     ulong WorkshopItemId,
     string SafeResourceFingerprint);
 
+internal enum OnlineSkinCacheStage
+{
+    Idle,
+    Preparing,
+    WaitingForReady,
+    CheckingWorkshop,
+    Downloading,
+    Verifying,
+    Applying,
+    Complete,
+    Failed
+}
+
+internal readonly record struct OnlineSkinCacheProgress(
+    OnlineSkinCacheStage Stage,
+    string ProviderId,
+    ulong WorkshopItemId,
+    ulong DownloadedBytes,
+    ulong TotalBytes,
+    string Detail)
+{
+    internal bool IsVisible => Stage != OnlineSkinCacheStage.Idle;
+}
+
 internal static partial class OnlineSkinCache
 {
     private const ulong GameAppId = 2868840;
@@ -44,11 +68,15 @@ internal static partial class OnlineSkinCache
     {
         ".png", ".webp", ".jpg", ".jpeg", ".ctex",
         ".spatlas", ".spskel", ".atlas", ".skel",
-        ".remap", ".import", ".tres"
+        ".remap", ".import", ".tres", ".res", ".scn"
     };
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".remap", ".import", ".tres", ".atlas"
+    };
+    private static readonly HashSet<string> BinaryResourceExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".res", ".scn"
     };
 
     private static Callback<DownloadItemResult_t>? _downloadCallback;
@@ -56,6 +84,11 @@ internal static partial class OnlineSkinCache
     private static string? _sessionDirectory;
     private static int _sessionGeneration;
     private static bool _processing;
+    private static OnlineSkinCacheStage _progressStage;
+    private static string _progressProviderId = string.Empty;
+    private static ulong _progressWorkshopItemId;
+    private static string _progressDetail = string.Empty;
+    private static DateTime _progressExpiresAtUtc;
 
     internal static void BeginSession()
     {
@@ -106,6 +139,7 @@ internal static partial class OnlineSkinCache
             directory = _sessionDirectory;
             _sessionDirectory = null;
             _processing = false;
+            ResetProgressLocked();
         }
 
         foreach (var provider in providers.Reverse())
@@ -168,6 +202,52 @@ internal static partial class OnlineSkinCache
         }
     }
 
+    internal static OnlineSkinCacheProgress GetProgress()
+    {
+        OnlineSkinCacheStage stage;
+        string providerId;
+        ulong workshopItemId;
+        string detail;
+        lock (Sync)
+        {
+            if (_progressStage is OnlineSkinCacheStage.Complete or OnlineSkinCacheStage.Failed &&
+                DateTime.UtcNow >= _progressExpiresAtUtc)
+            {
+                ResetProgressLocked();
+            }
+
+            stage = _progressStage;
+            providerId = _progressProviderId;
+            workshopItemId = _progressWorkshopItemId;
+            detail = _progressDetail;
+        }
+
+        ulong downloadedBytes = 0;
+        ulong totalBytes = 0;
+        if (stage == OnlineSkinCacheStage.Downloading && workshopItemId != 0)
+        {
+            try
+            {
+                SteamUGC.GetItemDownloadInfo(
+                    new PublishedFileId_t(workshopItemId),
+                    out downloadedBytes,
+                    out totalBytes);
+            }
+            catch
+            {
+                // Steam download progress is optional; the stage text remains useful.
+            }
+        }
+
+        return new OnlineSkinCacheProgress(
+            stage,
+            providerId,
+            workshopItemId,
+            downloadedBytes,
+            totalBytes,
+            detail);
+    }
+
     internal static void OnRemoteSkinLoadingPreferenceChanged(bool enabled)
     {
         if (enabled)
@@ -179,6 +259,7 @@ internal static partial class OnlineSkinCache
         {
             Pending.Clear();
             PendingKeys.Clear();
+            ResetProgressLocked();
         }
     }
 
@@ -207,10 +288,7 @@ internal static partial class OnlineSkinCache
     internal static bool QueueMissingSelection(SkinChangerNetMessage message)
     {
         if (!SkinService.ShouldLoadOtherPlayersCustomSkins() ||
-            message.WorkshopItemId == 0 ||
-            string.IsNullOrWhiteSpace(message.ProviderId) ||
-            string.IsNullOrWhiteSpace(message.SafeResourceFingerprint) ||
-            !FingerprintRegex().IsMatch(message.SafeResourceFingerprint) ||
+            !HasDownloadMetadata(message) ||
             message.OptionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -231,12 +309,35 @@ internal static partial class OnlineSkinCache
                 return false;
             }
             Pending.Enqueue(message);
+            SetProgressLocked(
+                OnlineSkinCacheStage.WaitingForReady,
+                message.ProviderId,
+                message.WorkshopItemId);
         }
 
         ModLog.Info(
             $"检测到联机玩家使用本地缺少的皮肤 {message.ProviderId}，" +
             "已记录并等待所有玩家准备后自动安全缓存。");
         return true;
+    }
+
+    internal static bool HasDownloadMetadata(SkinChangerNetMessage message) =>
+        message.WorkshopItemId != 0 &&
+        !string.IsNullOrWhiteSpace(message.ProviderId) &&
+        !string.IsNullOrWhiteSpace(message.SafeResourceFingerprint) &&
+        FingerprintRegex().IsMatch(message.SafeResourceFingerprint);
+
+    internal static void ReportMissingMetadata(SkinChangerNetMessage message)
+    {
+        var providerId = string.IsNullOrWhiteSpace(message.ProviderId)
+            ? message.OptionId
+            : message.ProviderId;
+        SetProgress(
+            OnlineSkinCacheStage.Failed,
+            providerId,
+            message.WorkshopItemId,
+            "对方没有提供可下载的工坊资源信息。",
+            TimeSpan.FromSeconds(8));
     }
 
     internal static bool TryGetCachedOption(
@@ -264,8 +365,7 @@ internal static partial class OnlineSkinCache
         source = null!;
         var catalog = SkinService.Catalog;
         if (catalog == null ||
-            !catalog.TryGetVisualProviderId(groupId, optionId, out var providerId) ||
-            !optionId.Equals(providerId, StringComparison.OrdinalIgnoreCase))
+            !catalog.TryGetVisualProviderId(groupId, optionId, out var providerId))
         {
             return false;
         }
@@ -304,6 +404,10 @@ internal static partial class OnlineSkinCache
             {
                 return false;
             }
+            SetLocalPreparationProgressLocked(
+                OnlineSkinCacheStage.Preparing,
+                providerId,
+                workshopItemId);
         }
 
         _ = Task.Run(() =>
@@ -325,6 +429,12 @@ internal static partial class OnlineSkinCache
                 LocalSourcesReady.Enqueue((groupId, optionId));
                 LocalSourceReports.Enqueue(
                     $"{providerId} 已准备联机安全资源指纹；缺少该皮肤的玩家可选择临时缓存静态素材。");
+                SetLocalPreparationProgress(
+                    OnlineSkinCacheStage.Complete,
+                    providerId,
+                    workshopItemId,
+                    string.Empty,
+                    TimeSpan.FromSeconds(2.5));
             }
             catch (Exception exception)
             {
@@ -337,6 +447,12 @@ internal static partial class OnlineSkinCache
                 LocalSourceReports.Enqueue(
                     $"{providerId} 不支持安全联机缓存，将让缺少该皮肤的玩家显示原皮：" +
                     exception.GetBaseException().Message);
+                SetLocalPreparationProgress(
+                    OnlineSkinCacheStage.Failed,
+                    providerId,
+                    workshopItemId,
+                    exception.GetBaseException().Message,
+                    TimeSpan.FromSeconds(8));
             }
             finally
             {
@@ -372,6 +488,10 @@ internal static partial class OnlineSkinCache
                 return;
             }
 
+            SetProgress(
+                OnlineSkinCacheStage.CheckingWorkshop,
+                request.ProviderId,
+                request.WorkshopItemId);
             var details = await QueryWorkshopItem(request.WorkshopItemId, cancellationToken);
             if (!IsCurrentSession(generation, cancellationToken))
             {
@@ -389,6 +509,10 @@ internal static partial class OnlineSkinCache
                 return;
             }
 
+            SetProgress(
+                OnlineSkinCacheStage.Downloading,
+                request.ProviderId,
+                request.WorkshopItemId);
             var workshopDirectory = await EnsureWorkshopItemAvailable(
                 request.WorkshopItemId,
                 cancellationToken);
@@ -404,6 +528,10 @@ internal static partial class OnlineSkinCache
                 BuildSessionOptionId(request));
             Directory.CreateDirectory(outputDirectory);
             var outputPck = Path.Combine(outputDirectory, "safe-resources.pck");
+            SetProgress(
+                OnlineSkinCacheStage.Verifying,
+                request.ProviderId,
+                request.WorkshopItemId);
             var package = await Task.Run(
                 () => BuildSafePackage(sourcePck, request.GroupId, outputPck),
                 cancellationToken);
@@ -428,6 +556,10 @@ internal static partial class OnlineSkinCache
                 ? request.ProviderId
                 : details.Title;
             var sessionOptionId = BuildSessionOptionId(request);
+            SetProgress(
+                OnlineSkinCacheStage.Applying,
+                displayName,
+                request.WorkshopItemId);
             if (!SkinService.TryRegisterOnlineSessionProvider(
                     sessionOptionId,
                     displayName + OnlineCacheSuffix(),
@@ -447,8 +579,14 @@ internal static partial class OnlineSkinCache
             }
             ModLog.Info(
                 $"已为联机玩家缓存 {displayName} 的 {package.FileCount} 个安全资源，" +
-                $"共 {package.TotalBytes / 1024d:F1} KiB；未加载 DLL、脚本、Shader 或自定义场景。 ");
+                $"共 {package.TotalBytes / 1024d:F1} KiB；未加载 DLL、自定义脚本或 Shader。 ");
             MultiplayerSkinSync.RetryCachedSelection(request, sessionOptionId);
+            SetProgress(
+                OnlineSkinCacheStage.Complete,
+                displayName,
+                request.WorkshopItemId,
+                string.Empty,
+                TimeSpan.FromSeconds(3));
         }
         catch (OperationCanceledException)
         {
@@ -466,6 +604,12 @@ internal static partial class OnlineSkinCache
             ModLog.Warn(
                 $"无法在线缓存 {request.ProviderId}，远程玩家继续显示原皮：" +
                 exception.GetBaseException().Message);
+            SetProgress(
+                OnlineSkinCacheStage.Failed,
+                request.ProviderId,
+                request.WorkshopItemId,
+                exception.GetBaseException().Message,
+                TimeSpan.FromSeconds(8));
         }
         finally
         {
@@ -619,26 +763,38 @@ internal static partial class OnlineSkinCache
         while (queue.TryDequeue(out var path))
         {
             ValidateFile(path);
-            if (!TextExtensions.Contains(Path.GetExtension(path)))
+            var extension = Path.GetExtension(path);
+            if (!TextExtensions.Contains(extension) &&
+                !BinaryResourceExtensions.Contains(extension))
             {
                 continue;
             }
 
             var bytes = archive.ReadFile(path);
-            if (bytes.Length > MaxTextResourceSize)
+            if (TextExtensions.Contains(extension) && bytes.Length > MaxTextResourceSize)
             {
                 throw new InvalidDataException($"文本资源过大：{path}。");
             }
+            // Godot binary resources still store resource paths as UTF-8 strings among binary
+            // fields. UTF-8 decoding preserves non-ASCII asset names; invalid binary bytes are
+            // replaced but do not affect the res:// dependency tokens we scan.
             var text = Encoding.UTF8.GetString(bytes);
-            if (ContainsForbiddenContent(text))
+            if (TextExtensions.Contains(extension) && ContainsForbiddenContent(text))
             {
                 throw new InvalidDataException($"资源含脚本、Shader 或可执行引用：{path}。");
+            }
+            if (BinaryResourceExtensions.Contains(extension) &&
+                ForbiddenBinaryResourceRegex().IsMatch(text))
+            {
+                throw new InvalidDataException($"二进制场景内嵌了可执行脚本或扩展：{path}。");
             }
 
             foreach (Match match in ResourcePathRegex().Matches(text))
             {
                 var dependency = NormalizeResourcePath(match.Value);
-                if (SkinService.IsBaseGameResource(dependency))
+                if (SkinService.IsBaseGameResource(dependency) ||
+                    SkinService.IsBaseGameResource(dependency + ".remap") ||
+                    SkinService.IsBaseGameResource(dependency + ".import"))
                 {
                     continue;
                 }
@@ -662,8 +818,8 @@ internal static partial class OnlineSkinCache
                 throw new InvalidDataException($"资源依赖未包含在同一工坊包中：{dependency}。");
             }
 
-            if (Path.GetExtension(path).Equals(".spatlas", StringComparison.OrdinalIgnoreCase) ||
-                Path.GetExtension(path).Equals(".atlas", StringComparison.OrdinalIgnoreCase))
+            if (extension.Equals(".spatlas", StringComparison.OrdinalIgnoreCase) ||
+                extension.Equals(".atlas", StringComparison.OrdinalIgnoreCase))
             {
                 foreach (var page in AtlasPageRegex().Matches(text).Cast<Match>()
                              .Select(match => match.Groups[1].Value))
@@ -820,6 +976,81 @@ internal static partial class OnlineSkinCache
         _ => " · Online cache"
     };
 
+    private static void SetProgress(
+        OnlineSkinCacheStage stage,
+        string providerId,
+        ulong workshopItemId,
+        string detail = "",
+        TimeSpan? lifetime = null)
+    {
+        lock (Sync)
+        {
+            SetProgressLocked(stage, providerId, workshopItemId, detail, lifetime);
+        }
+    }
+
+    private static void SetLocalPreparationProgress(
+        OnlineSkinCacheStage stage,
+        string providerId,
+        ulong workshopItemId,
+        string detail = "",
+        TimeSpan? lifetime = null)
+    {
+        lock (Sync)
+        {
+            SetLocalPreparationProgressLocked(
+                stage,
+                providerId,
+                workshopItemId,
+                detail,
+                lifetime);
+        }
+    }
+
+    private static void SetLocalPreparationProgressLocked(
+        OnlineSkinCacheStage stage,
+        string providerId,
+        ulong workshopItemId,
+        string detail = "",
+        TimeSpan? lifetime = null)
+    {
+        if (_progressStage is OnlineSkinCacheStage.WaitingForReady or
+            OnlineSkinCacheStage.CheckingWorkshop or
+            OnlineSkinCacheStage.Downloading or
+            OnlineSkinCacheStage.Verifying or
+            OnlineSkinCacheStage.Applying)
+        {
+            return;
+        }
+
+        SetProgressLocked(stage, providerId, workshopItemId, detail, lifetime);
+    }
+
+    private static void SetProgressLocked(
+        OnlineSkinCacheStage stage,
+        string providerId,
+        ulong workshopItemId,
+        string detail = "",
+        TimeSpan? lifetime = null)
+    {
+        _progressStage = stage;
+        _progressProviderId = providerId;
+        _progressWorkshopItemId = workshopItemId;
+        _progressDetail = detail;
+        _progressExpiresAtUtc = lifetime.HasValue
+            ? DateTime.UtcNow + lifetime.Value
+            : DateTime.MaxValue;
+    }
+
+    private static void ResetProgressLocked()
+    {
+        _progressStage = OnlineSkinCacheStage.Idle;
+        _progressProviderId = string.Empty;
+        _progressWorkshopItemId = 0;
+        _progressDetail = string.Empty;
+        _progressExpiresAtUtc = DateTime.MinValue;
+    }
+
     private static void CleanupOldSessionDirectories()
     {
         var root = Path.Combine(Path.GetTempPath(), "Gurio.SkinChanger", "online");
@@ -866,6 +1097,9 @@ internal static partial class OnlineSkinCache
     [GeneratedRegex(
         "(?i)(?:ext_resource[^\\r\\n]*(?:Script|Shader)|script\\s*=|shader\\s*=|ShaderMaterial|GDExtension|type\\s*=\\s*[\\\"'](?:Shader|GDScript|CSharpScript|GDExtension|PackedScene)[\\\"']|\\.(?:dll|cs|gd|gdc|gdshader)(?:\\\"|'|\\s|$))")]
     private static partial Regex ForbiddenTextRegex();
+
+    [GeneratedRegex("(?i)(?:GDScript|CSharpScript|GDExtension|ExtensionLibrary|local://Shader_)")]
+    private static partial Regex ForbiddenBinaryResourceRegex();
 
     private sealed record WorkshopDetails(string Title, ulong Size);
     private sealed record SafePackage(string Fingerprint, int FileCount, ulong TotalBytes);

@@ -876,6 +876,122 @@ internal static class ModLocalization
             ["tur"] = "Diğer oyuncuların özel görünümlerini yükle"
         };
 
+    private sealed record MultiplayerProgressLanguagePack(
+        string Preparing,
+        string WaitingForReady,
+        string CheckingWorkshop,
+        string Downloading,
+        string Verifying,
+        string Applying,
+        string Complete,
+        string Failed);
+
+    private static readonly IReadOnlyDictionary<string, MultiplayerProgressLanguagePack>
+        MultiplayerProgressPacks =
+            new Dictionary<string, MultiplayerProgressLanguagePack>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["eng"] = new(
+                    "Preparing {0}…", "Waiting until everyone is ready: {0}",
+                    "Checking {0} in Workshop…", "Downloading {0}: {1}",
+                    "Verifying {0}…", "Applying {0}…", "Loaded {0}",
+                    "Could not load {0}; using the original skin"),
+                ["zhs"] = new(
+                    "正在准备 {0}…", "等待所有玩家准备后加载 {0}",
+                    "正在检查工坊资源 {0}…", "正在下载 {0}：{1}",
+                    "正在校验 {0}…", "正在应用 {0}…", "已加载 {0}",
+                    "无法加载 {0}，已使用原皮"),
+                ["zht"] = new(
+                    "正在準備 {0}…", "等待所有玩家準備後載入 {0}",
+                    "正在檢查工作坊資源 {0}…", "正在下載 {0}：{1}",
+                    "正在驗證 {0}…", "正在套用 {0}…", "已載入 {0}",
+                    "無法載入 {0}，已使用原始外觀"),
+                ["deu"] = new(
+                    "{0} wird vorbereitet…", "Warte auf alle Spieler: {0}",
+                    "Workshop-Dateien für {0} werden geprüft…", "{0} wird heruntergeladen: {1}",
+                    "{0} wird überprüft…", "{0} wird angewendet…", "{0} geladen",
+                    "{0} konnte nicht geladen werden; Original-Skin wird verwendet"),
+                ["esp"] = new(
+                    "Preparando {0}…", "Esperando a que todos estén listos: {0}",
+                    "Comprobando {0} en Workshop…", "Descargando {0}: {1}",
+                    "Verificando {0}…", "Aplicando {0}…", "{0} cargado",
+                    "No se pudo cargar {0}; se usa el aspecto original"),
+                ["fra"] = new(
+                    "Préparation de {0}…", "En attente de tous les joueurs : {0}",
+                    "Vérification de {0} dans le Workshop…", "Téléchargement de {0} : {1}",
+                    "Vérification de {0}…", "Application de {0}…", "{0} chargé",
+                    "Impossible de charger {0} ; skin d’origine utilisé"),
+                ["ita"] = new(
+                    "Preparazione di {0}…", "In attesa che tutti siano pronti: {0}",
+                    "Controllo di {0} nel Workshop…", "Download di {0}: {1}",
+                    "Verifica di {0}…", "Applicazione di {0}…", "{0} caricato",
+                    "Impossibile caricare {0}; uso della skin originale"),
+                ["jpn"] = new(
+                    "{0}を準備中…", "全員の準備完了を待っています：{0}",
+                    "Workshopの{0}を確認中…", "{0}をダウンロード中：{1}",
+                    "{0}を検証中…", "{0}を適用中…", "{0}を読み込みました",
+                    "{0}を読み込めないため、原版スキンを使用します"),
+                ["kor"] = new(
+                    "{0} 준비 중…", "모든 플레이어의 준비를 기다리는 중: {0}",
+                    "Workshop에서 {0} 확인 중…", "{0} 다운로드 중: {1}",
+                    "{0} 검증 중…", "{0} 적용 중…", "{0} 불러옴",
+                    "{0}을 불러올 수 없어 원본 스킨을 사용합니다"),
+                ["pol"] = new(
+                    "Przygotowywanie {0}…", "Oczekiwanie na gotowość wszystkich: {0}",
+                    "Sprawdzanie {0} w Warsztacie…", "Pobieranie {0}: {1}",
+                    "Weryfikowanie {0}…", "Stosowanie {0}…", "Wczytano {0}",
+                    "Nie udało się wczytać {0}; użyto oryginalnej skórki"),
+                ["ptb"] = new(
+                    "Preparando {0}…", "Aguardando todos ficarem prontos: {0}",
+                    "Verificando {0} na Oficina…", "Baixando {0}: {1}",
+                    "Verificando {0}…", "Aplicando {0}…", "{0} carregado",
+                    "Não foi possível carregar {0}; usando o visual original"),
+                ["rus"] = new(
+                    "Подготовка {0}…", "Ожидание готовности всех игроков: {0}",
+                    "Проверка {0} в Мастерской…", "Загрузка {0}: {1}",
+                    "Проверка {0}…", "Применение {0}…", "{0} загружен",
+                    "Не удалось загрузить {0}; используется оригинальный облик"),
+                ["spa"] = new(
+                    "Preparando {0}…", "Esperando a que todos estén listos: {0}",
+                    "Comprobando {0} en Workshop…", "Descargando {0}: {1}",
+                    "Verificando {0}…", "Aplicando {0}…", "{0} cargado",
+                    "No se pudo cargar {0}; se usa el aspecto original"),
+                ["tha"] = new(
+                    "กำลังเตรียม {0}…", "กำลังรอให้ผู้เล่นทุกคนพร้อม: {0}",
+                    "กำลังตรวจสอบ {0} ในเวิร์กชอป…", "กำลังดาวน์โหลด {0}: {1}",
+                    "กำลังตรวจสอบ {0}…", "กำลังใช้ {0}…", "โหลด {0} แล้ว",
+                    "โหลด {0} ไม่สำเร็จ จึงใช้สกินดั้งเดิม"),
+                ["tur"] = new(
+                    "{0} hazırlanıyor…", "Herkesin hazır olması bekleniyor: {0}",
+                    "Atölyede {0} denetleniyor…", "{0} indiriliyor: {1}",
+                    "{0} doğrulanıyor…", "{0} uygulanıyor…", "{0} yüklendi",
+                    "{0} yüklenemedi; özgün görünüm kullanılıyor")
+            };
+
+    internal static string FormatOnlineSkinCacheProgress(OnlineSkinCacheProgress progress)
+    {
+        var provider = string.IsNullOrWhiteSpace(progress.ProviderId)
+            ? "Skin"
+            : progress.ProviderId;
+        var pack = MultiplayerProgressPacks[CurrentLanguage];
+        return progress.Stage switch
+        {
+            OnlineSkinCacheStage.Preparing => string.Format(pack.Preparing, provider),
+            OnlineSkinCacheStage.WaitingForReady => string.Format(pack.WaitingForReady, provider),
+            OnlineSkinCacheStage.CheckingWorkshop => string.Format(pack.CheckingWorkshop, provider),
+            OnlineSkinCacheStage.Downloading => string.Format(
+                pack.Downloading,
+                provider,
+                progress.TotalBytes > 0
+                    ? $"{Math.Clamp(progress.DownloadedBytes * 100d / progress.TotalBytes, 0d, 100d):F0}%"
+                    : "…"),
+            OnlineSkinCacheStage.Verifying => string.Format(pack.Verifying, provider),
+            OnlineSkinCacheStage.Applying => string.Format(pack.Applying, provider),
+            OnlineSkinCacheStage.Complete => string.Format(pack.Complete, provider),
+            OnlineSkinCacheStage.Failed => string.Format(pack.Failed, provider),
+            _ => string.Empty
+        };
+    }
+
     public static string Get(ModText text) =>
         text == ModText.LoadOtherPlayersCustomSkins
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]

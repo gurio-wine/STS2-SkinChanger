@@ -315,12 +315,14 @@ internal static class MultiplayerSkinSync
         var service = _netService;
         if (service == null || !service.IsConnected)
         {
+            ContextualSkinControls.RefreshMultiplayerSkinLoadingStatus();
             return;
         }
 
         _snapshotElapsed += delta;
         var allowOnlineDownloads = UpdateReadyGate(delta);
         OnlineSkinCache.Tick(allowOnlineDownloads);
+        ContextualSkinControls.RefreshMultiplayerSkinLoadingStatus();
         UpdateReadyGateCompletion();
         if ((_snapshotStage == 0 && _snapshotElapsed >= 0.75) ||
             (_snapshotStage == 1 && _snapshotElapsed >= 3.0))
@@ -883,9 +885,19 @@ internal static class MultiplayerSkinSync
 
         if (!selectionAvailable && allowRemoteSkin)
         {
-            if (OnlineSkinCache.QueueMissingSelection(message))
+            var queued = OnlineSkinCache.QueueMissingSelection(message);
+            if (queued)
             {
                 MarkReadyResolutionActivity();
+            }
+            else if (message.OptionId != SkinCatalog.BaseOptionId &&
+                     !OnlineSkinCache.HasDownloadMetadata(message) &&
+                     IsReadyGateActive())
+            {
+                OnlineSkinCache.ReportMissingMetadata(message);
+                ModLog.Info(
+                    $"联机玩家 {message.PlayerNetId} 的皮肤 {message.OptionId} " +
+                    "没有携带可下载资源信息，暂时显示原皮。");
             }
             // Cover a cache registration racing this advertisement before falling back.
             if (OnlineSkinCache.TryGetCachedOption(message, out cachedOptionId))
@@ -927,6 +939,14 @@ internal static class MultiplayerSkinSync
                 selectionOverrides);
             PendingRefreshes.Add(message.PlayerNetId);
             _runtimeProvidersDirty = true;
+        }
+    }
+
+    private static bool IsReadyGateActive()
+    {
+        lock (Sync)
+        {
+            return _readyGateActive;
         }
     }
 

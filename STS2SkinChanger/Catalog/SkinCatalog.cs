@@ -301,10 +301,18 @@ internal sealed partial class SkinCatalog : IDisposable
             var target = _groups.FirstOrDefault(group => group.Id.Equals(
                 expectedGroupId,
                 StringComparison.OrdinalIgnoreCase));
-            if (target == null || !IsCharacterAppearanceGroup(target.Id))
+            if (!IsCharacterAppearanceOption(discovered[0].Options[0]))
             {
                 error = "找不到对应的角色外观分组。";
                 return false;
+            }
+
+            // A player may not have any local skin for this character. In that case the normal
+            // catalog has no group yet, but an online-only provider must still be attachable.
+            if (target == null)
+            {
+                target = new SkinGroup(discovered[0].Id, discovered[0].DisplayName);
+                _groups.Add(target);
             }
 
             target.Options.Add(discovered[0].Options[0]);
@@ -343,6 +351,7 @@ internal sealed partial class SkinCatalog : IDisposable
             _cosmeticIndexes.Remove(index);
             index.Dispose();
         }
+        _groups.RemoveAll(group => group.Options.Count == 0);
 
         return affectedGroups;
     }
