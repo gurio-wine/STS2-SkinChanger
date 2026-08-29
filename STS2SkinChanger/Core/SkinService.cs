@@ -1818,6 +1818,24 @@ internal static class SkinService
         }
     }
 
+    public static bool IsScopedMonsterRuntimeProviderSelected(
+        string providerId,
+        string monsterId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null || !catalog.ProviderUsesScopedMonsterRuntime(providerId))
+            {
+                return false;
+            }
+
+            var groupId = catalog.ResolveManagedMonsterGroupId(monsterId);
+            return groupId != null && Config.GetSelection(groupId)
+                .Equals(providerId, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     public static bool IsExternalRuntimeProviderSelected(string groupId)
     {
         lock (Sync)
@@ -2508,6 +2526,11 @@ internal static class SkinService
         }
 
         ManagedSkinModLoader.ActivateSelectedProviders(activeRuntimeProviders);
+        foreach (var providerId in activeRuntimeProviders.Where(
+                     catalog.ProviderUsesScopedMonsterRuntime))
+        {
+            ManagedSkinModLoader.EnsureScopedMonsterSelectionRouter(providerId);
+        }
         ModLog.Info(
             $"已挂载 {groups.Count} 个外观分组/{files.Count} 个文件；" +
             $"目录={buildElapsed.TotalMilliseconds:F1} ms，" +
@@ -2521,6 +2544,9 @@ internal static class SkinService
         var selectedProviders = catalog.GetFullySelectedFullRuntimeProviders(Config.Selections)
             .Union(
                 catalog.GetSelectedInteractiveRuntimeProviders(Config.Selections),
+                StringComparer.OrdinalIgnoreCase)
+            .Union(
+                catalog.GetSelectedScopedMonsterRuntimeProviders(Config.Selections),
                 StringComparer.OrdinalIgnoreCase)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (_runtimeCharacterBehaviorScope == null)
@@ -2902,61 +2928,77 @@ internal static class SkinService
 
     private static void SanitizeSelections()
     {
-        var previouslyConfiguredGroups = Config.Selections.Keys
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (Config.VisualSelectionDefaultsVersion < 1)
+        {
+            // The old default picked the first discovered Mod option for every new group. A
+            // multi-monster DLL could therefore be saved as a misleading partial bundle: the UI
+            // said that provider was selected, but its runtime was intentionally not started.
+            // Only clear those legacy partial selections. Complete and independently saved
+            // selections remain untouched.
+            var legacyScopedProviders = Catalog!.Groups
+                .Select(group => Config.GetSelection(group.Id))
+                .Where(Catalog.ProviderUsesScopedMonsterRuntime)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (var providerId in legacyScopedProviders)
+            {
+                var ownedGroups = Catalog.GetScopedMonsterRuntimeProviderGroups(providerId);
+                var selectedGroups = ownedGroups.Where(groupId =>
+                    Config.GetSelection(groupId).Equals(providerId, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                if (selectedGroups.Length == 0 || selectedGroups.Length == ownedGroups.Count)
+                {
+                    continue;
+                }
+
+                foreach (var groupId in selectedGroups)
+                {
+                    Config.Selections[groupId] = SkinCatalog.BaseOptionId;
+                }
+
+                ModLog.Info(
+                    $"已清理 {providerId} 的 {selectedGroups.Length} 个旧版自动外观选择；" +
+                    "这些组现在默认使用游戏原版，玩家重新选择后可按怪物独立生效。");
+            }
+
+            Config.VisualSelectionDefaultsVersion = 1;
+        }
+
         foreach (var group in Catalog!.Groups)
         {
             if (!Config.Selections.ContainsKey(group.Id))
             {
-                Config.Selections[group.Id] = group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
+                Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
             }
         }
 
-        // Older configurations could contain only one half of a multi-group DLL skin. Prefer the
-        // provider selected by the greatest number of its groups, then make each winning bundle
-        // coherent. Conflicting partial bundles are reset instead of leaving active callbacks able
-        // to force resources belonging to another selection.
-        var selectedBundles = Catalog.Groups
+        // A full-runtime provider is safe only as one coherent selection transaction. Never leave
+        // a partial provider displayed as selected while its callbacks are deliberately inactive,
+        // and never complete it by silently overwriting another explicit group choice.
+        var incompleteProviders = Catalog.Groups
             .Select(group => Config.GetSelection(group.Id))
             .Where(Catalog.ProviderUsesFullRuntime)
-            .GroupBy(providerId => providerId, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(group => Catalog.GetFullRuntimeProviderGroups(group.Key)
-                .Count(ownedGroupId =>
-                    previouslyConfiguredGroups.Contains(ownedGroupId) &&
-                    Config.GetSelection(ownedGroupId)
-                        .Equals(group.Key, StringComparison.OrdinalIgnoreCase)))
-            .ThenByDescending(group => group.Count())
-            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.Key)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(providerId =>
+                !Catalog.IsFullRuntimeProviderFullySelected(providerId, Config.Selections))
             .ToArray();
-        var claimedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var providerId in selectedBundles)
+        foreach (var providerId in incompleteProviders)
         {
             var ownedGroups = Catalog.GetFullRuntimeProviderGroups(providerId);
-            var conflictsWithExplicitChoice = ownedGroups.Any(ownedGroupId =>
+            var resetCount = 0;
+            foreach (var ownedGroupId in ownedGroups.Where(ownedGroupId =>
+                         Config.GetSelection(ownedGroupId)
+                             .Equals(providerId, StringComparison.OrdinalIgnoreCase)))
             {
-                var selectedId = Config.GetSelection(ownedGroupId);
-                return !selectedId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
-                       !selectedId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-                       previouslyConfiguredGroups.Contains(ownedGroupId);
-            });
-            if (ownedGroups.Any(claimedGroups.Contains))
-            {
-                continue;
+                Config.Selections[ownedGroupId] = SkinCatalog.BaseOptionId;
+                resetCount++;
             }
 
-            if (conflictsWithExplicitChoice)
+            if (resetCount > 0)
             {
-                // A catalog update can make an old skin own extra linked groups. Keep the saved
-                // primary choice and make the bundle coherent instead of silently reverting it to
-                // the game default. Normal UI changes are already coherent transactions.
-                ModLog.Info($"恢复 {providerId} 的联动外观选择，未丢弃已有角色皮肤设置。");
-            }
-
-            foreach (var ownedGroupId in ownedGroups)
-            {
-                Config.Selections[ownedGroupId] = providerId;
-                claimedGroups.Add(ownedGroupId);
+                ModLog.Info(
+                    $"已将 {providerId} 的 {resetCount} 个不完整联动选择恢复为游戏原版，" +
+                    "避免界面显示已选但实际运行时未启用。");
             }
         }
 

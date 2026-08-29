@@ -54,6 +54,8 @@ internal sealed class SkinConfig
 
     public List<string> VisualProviderPriority { get; set; } = [];
 
+    public int VisualSelectionDefaultsVersion { get; set; }
+
     public Dictionary<string, List<CardSkinPriorityEntry>> CardSkinPriorities { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 

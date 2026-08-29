@@ -106,6 +106,30 @@ var descriptors = manifests
 
 using var catalog = SkinCatalog.Build(args[0], descriptors);
 var showAssets = Environment.GetEnvironmentVariable("CATALOG_INSPECT_ASSETS") == "1";
+foreach (var providerId in catalog.Groups
+             .SelectMany(group => group.Options)
+             .Select(option => option.Id)
+             .Distinct(StringComparer.OrdinalIgnoreCase)
+             .Where(catalog.ProviderUsesFullRuntime)
+             .OrderBy(providerId => providerId, StringComparer.OrdinalIgnoreCase))
+{
+    Console.WriteLine(
+        $"runtime-provider:{providerId}\t" +
+        $"{catalog.GetFullRuntimeProviderGroups(providerId).Count} linked groups");
+}
+
+foreach (var providerId in catalog.Groups
+             .SelectMany(group => group.Options)
+             .Select(option => option.Id)
+             .Distinct(StringComparer.OrdinalIgnoreCase)
+             .Where(catalog.ProviderUsesScopedMonsterRuntime)
+             .OrderBy(providerId => providerId, StringComparer.OrdinalIgnoreCase))
+{
+    Console.WriteLine(
+        $"scoped-monster-provider:{providerId}\t" +
+        $"{catalog.GetScopedMonsterRuntimeProviderGroups(providerId).Count} independent groups");
+}
+
 var validationCards = validateIndex >= 0
     ? BuildValidationCardEntries(
         new[] { args[0] }.Concat(descriptors

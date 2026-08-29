@@ -40,6 +40,10 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, ProviderRuntimeBlueprint> ProviderRuntimeBlueprints =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<Assembly, string> ScopedMonsterProviderAssemblies = new();
+    private static readonly HashSet<MethodBase> ScopedMonsterIsEnabledMethods = [];
+    private static readonly Harmony ScopedMonsterSelectionHarmony =
+        new($"{Entry.ModId}.scoped-monster-selection");
     // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
     // remove the provider's patches when it is deselected, but it cannot undo a direct C# event
     // subscription. Remember successful initializers so a hot re-selection does not register the
@@ -58,6 +62,107 @@ internal static class ManagedSkinModLoader
 
     public static bool IsProviderAssemblyActive(Assembly assembly) =>
         ActiveProviderRuntimes.Values.Any(runtime => ReferenceEquals(runtime.Assembly, assembly));
+
+    public static void EnsureScopedMonsterSelectionRouter(string providerId)
+    {
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider))
+        {
+            return;
+        }
+
+        try
+        {
+            var assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly == null)
+            {
+                return;
+            }
+
+            ScopedMonsterProviderAssemblies[assembly] = providerId;
+            var prefix = new HarmonyMethod(AccessTools.Method(
+                typeof(ManagedSkinModLoader),
+                nameof(ScopedMonsterIsEnabledPrefix)));
+            var patched = 0;
+            foreach (var method in GetLoadableTypes(assembly)
+                         .SelectMany(type => type.GetMethods(
+                             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
+                             BindingFlags.DeclaredOnly))
+                         .Where(IsScopedMonsterIsEnabledMethod))
+            {
+                if (!ScopedMonsterIsEnabledMethods.Add(method))
+                {
+                    continue;
+                }
+
+                ScopedMonsterSelectionHarmony.Patch(method, prefix: prefix);
+                patched++;
+            }
+
+            if (patched > 0)
+            {
+                ModLog.Info(
+                    $"已接管 {provider.Name} 的逐怪物启用判断；" +
+                    $"{patched} 个配置入口现在直接跟随每个怪物在皮肤切换器中的选择。");
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                $"接管 {provider.Name} 的逐怪物启用判断失败，将保留原作者配置：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static bool IsScopedMonsterIsEnabledMethod(MethodInfo method)
+    {
+        if (!method.Name.Equals("IsEnabled", StringComparison.Ordinal) ||
+            method.ReturnType != typeof(bool) ||
+            method.GetParameters() is not [{ ParameterType: var profileType }])
+        {
+            return false;
+        }
+
+        var targetProperty = profileType.GetProperty(
+            "Target",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return targetProperty?.PropertyType.GetProperty(
+            "MonsterId",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.PropertyType == typeof(string);
+    }
+
+    private static bool ScopedMonsterIsEnabledPrefix(
+        MethodBase __originalMethod,
+        object __0,
+        ref bool __result)
+    {
+        try
+        {
+            var assembly = __originalMethod.DeclaringType?.Assembly;
+            if (assembly == null ||
+                !ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var providerId))
+            {
+                return true;
+            }
+
+            var target = __0.GetType().GetProperty(
+                "Target",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(__0);
+            var monsterId = target?.GetType().GetProperty(
+                "MonsterId",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(target) as string;
+            if (string.IsNullOrWhiteSpace(monsterId))
+            {
+                return true;
+            }
+
+            __result = SkinService.IsScopedMonsterRuntimeProviderSelected(providerId, monsterId);
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
+    }
 
     public static void Initialize()
     {

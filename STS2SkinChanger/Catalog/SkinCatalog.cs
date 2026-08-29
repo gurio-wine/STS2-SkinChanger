@@ -31,8 +31,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationProviders;
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
+    private readonly IReadOnlySet<string> _scopedMonsterRuntimeProviders;
     private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _scopedMonsterRuntimeProviderGroups;
     private readonly IReadOnlyDictionary<string, string> _resourceGroupIds;
     private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceFile>>
         _fullRuntimeProviderBaselineOverlays = new(StringComparer.OrdinalIgnoreCase);
@@ -149,6 +151,20 @@ internal sealed partial class SkinCatalog : IDisposable
                          OptionUsesManagedAncientLayers(groupId, option)))))
             .Select(pair => pair.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _scopedMonsterRuntimeProviderGroups = visualGroupsByProvider
+            .Where(pair => pair.Value.All(groupId =>
+                _groups.First(group => group.Id.Equals(
+                        groupId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Options.Any(option =>
+                        option.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
+                        option.IsManagedMonsterRuntimeProfile)))
+            .ToDictionary(
+                pair => pair.Key,
+                pair => (IReadOnlyList<string>)pair.Value,
+                StringComparer.OrdinalIgnoreCase);
+        _scopedMonsterRuntimeProviders = _scopedMonsterRuntimeProviderGroups.Keys
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Card ownership and runtime behaviour are two independent concerns. A character skin can
         // bundle selectable card art while still relying on its DLL for voice, character-select
@@ -161,6 +177,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .Where(providerId =>
                 visualGroupsByProvider.ContainsKey(providerId) &&
                 !independentManagedAncientProviders.Contains(providerId) &&
+                !_scopedMonsterRuntimeProviders.Contains(providerId) &&
                 (!cardProviderIds.Contains(providerId) ||
                  singleCharacterBundleGroupsByProvider.ContainsKey(providerId)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -740,6 +757,32 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(group => selections[group.Id])
             .Where(ProviderUsesInteractiveRuntime)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Some DLL providers expose one statically discoverable replacement profile per monster.
+    /// Skin Changer can keep their shared behaviour layer active while routing the provider's own
+    /// IsEnabled(profile) decision back to the independently selected monster group.
+    /// </summary>
+    public bool ProviderUsesScopedMonsterRuntime(string optionId) =>
+        _scopedMonsterRuntimeProviders.Contains(optionId);
+
+    public IReadOnlyList<string> GetScopedMonsterRuntimeProviderGroups(string optionId) =>
+        _scopedMonsterRuntimeProviderGroups.GetValueOrDefault(optionId) ?? [];
+
+    public IReadOnlySet<string> GetSelectedScopedMonsterRuntimeProviders(
+        IReadOnlyDictionary<string, string> selections) =>
+        _scopedMonsterRuntimeProviders
+            .Where(providerId => _scopedMonsterRuntimeProviderGroups[providerId].Any(groupId =>
+                selections.TryGetValue(groupId, out var selectedId) &&
+                selectedId.Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public string? ResolveManagedMonsterGroupId(string monsterId)
+    {
+        var monsterToken = NormalizeResourceToken(monsterId);
+        return _groups.FirstOrDefault(group =>
+            NormalizeResourceToken(group.Id).Equals(monsterToken, StringComparison.OrdinalIgnoreCase))?.Id;
+    }
 
     /// <summary>
     /// A DLL-backed provider that owns visual groups is an inseparable cosmetic runtime bundle.
@@ -3141,7 +3184,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 group.Options[existingIndex] = existing with
                 {
                     Assets = mergedAssets,
-                    IsRuntimeProvider = true
+                    IsRuntimeProvider = true,
+                    IsManagedMonsterRuntimeProfile = true
                 };
             }
             else
@@ -3150,7 +3194,8 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Id,
                     index.Mod.Name,
                     profileAssets,
-                    IsRuntimeProvider: true));
+                    IsRuntimeProvider: true,
+                    IsManagedMonsterRuntimeProfile: true));
             }
         }
 
@@ -5101,7 +5146,8 @@ internal sealed record SkinOption(
     string? RuntimeImagePath = null,
     ResourceAsset? ManagedMonsterScene = null,
     RuntimeMonsterVisualMode? RuntimeMonsterVisualMode = null,
-    string? ProviderId = null)
+    string? ProviderId = null,
+    bool IsManagedMonsterRuntimeProfile = false)
 {
     public string EffectiveProviderId =>
         ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;
