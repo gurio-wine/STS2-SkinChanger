@@ -135,6 +135,32 @@ try
     foreach (var localization in localizations)
         PublishLocalization(appId, publishedFileId, localization);
 
+    VerifyPublishedLocalization(
+        publishedFileId,
+        "english",
+        config.Title,
+        ComposeDescription(
+            config.Description,
+            config.StatementHeading,
+            config.Limitations,
+            config.Version,
+            JoinFeatureUpdates(config.FeatureUpdate, config.CardPriorityUpdate)));
+    foreach (var localization in localizations)
+    {
+        VerifyPublishedLocalization(
+            publishedFileId,
+            localization.Language,
+            localization.Title,
+            ComposeDescription(
+                localization.Description,
+                localization.StatementHeading,
+                localization.Limitations,
+                localization.Version,
+                JoinFeatureUpdates(
+                    localization.FeatureUpdate,
+                    localization.CardPriorityUpdate)));
+    }
+
     Console.WriteLine($"PUBLISHED_FILE_ID={publishedFileId.m_PublishedFileId}");
     Console.WriteLine($"LEGAL_AGREEMENT_REQUIRED={result.m_bUserNeedsToAcceptWorkshopLegalAgreement}");
 }
@@ -249,6 +275,71 @@ static void PublishLocalization(
         throw new InvalidOperationException(
             $"Localization update failed for {localization.Language}: {result.m_eResult}");
 }
+
+static void VerifyPublishedLocalization(
+    PublishedFileId_t publishedFileId,
+    string language,
+    string expectedTitle,
+    string expectedDescription)
+{
+    const int attempts = 12;
+    string actualTitle = string.Empty;
+    string actualDescription = string.Empty;
+
+    for (var attempt = 1; attempt <= attempts; attempt++)
+    {
+        var query = SteamUGC.CreateQueryUGCDetailsRequest([publishedFileId], 1);
+        if (query == UGCQueryHandle_t.Invalid)
+            throw new InvalidOperationException("CreateQueryUGCDetailsRequest failed.");
+
+        try
+        {
+            Require(SteamUGC.SetLanguage(query, language), $"SetLanguage({language})");
+            Require(
+                SteamUGC.SetReturnLongDescription(query, true),
+                $"SetReturnLongDescription({language})");
+            Require(
+                SteamUGC.SetAllowCachedResponse(query, 0),
+                $"SetAllowCachedResponse({language})");
+
+            var result = WaitForCallResult<SteamUGCQueryCompleted_t>(
+                SteamUGC.SendQueryUGCRequest(query));
+            if (result.m_eResult != EResult.k_EResultOK || result.m_unNumResultsReturned == 0)
+                throw new InvalidOperationException(
+                    $"Workshop localization query failed for {language}: {result.m_eResult}");
+            if (!SteamUGC.GetQueryUGCResult(query, 0, out var details))
+                throw new InvalidOperationException(
+                    $"GetQueryUGCResult failed for {language}.");
+
+            actualTitle = details.m_rgchTitle;
+            actualDescription = details.m_rgchDescription;
+        }
+        finally
+        {
+            SteamUGC.ReleaseQueryUGCRequest(query);
+        }
+
+        if (actualTitle == expectedTitle
+            && NormalizeWorkshopText(actualDescription)
+                == NormalizeWorkshopText(expectedDescription))
+        {
+            Console.WriteLine($"Verified localization: {language}");
+            return;
+        }
+
+        if (attempt < attempts)
+            Thread.Sleep(500);
+    }
+
+    throw new InvalidOperationException(
+        $"Workshop localization verification failed for {language}. "
+        + $"Expected title '{expectedTitle}', received '{actualTitle}'. "
+        + $"Expected description length {expectedDescription.Length}, "
+        + $"received {actualDescription.Length}.");
+}
+
+static string NormalizeWorkshopText(string value) =>
+    value.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
 
 static T WaitForCallResult<T>(SteamAPICall_t call) where T : struct
 {
