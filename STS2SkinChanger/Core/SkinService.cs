@@ -50,6 +50,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, string> MountedOverlayCache =
         new(StringComparer.Ordinal);
+    private static readonly HashSet<string> MountedScopedRuntimeProviderPacks =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, HashSet<string>> RuntimeCanonicalDependencyPaths =
         new(StringComparer.OrdinalIgnoreCase);
     private static HashSet<string>? _runtimeCharacterBehaviorScope;
@@ -166,6 +168,7 @@ internal static class SkinService
                 MissingAncientStyleMethods.Clear();
                 FailedAncientStyleMethods.Clear();
                 MountedOverlayCache.Clear();
+                MountedScopedRuntimeProviderPacks.Clear();
                 RuntimeCanonicalDependencyPaths.Clear();
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
@@ -290,7 +293,6 @@ internal static class SkinService
         SkinCatalog catalog,
         IEnumerable<MonsterModel> monsters) =>
         monsters
-            .Where(monster => monster.ShouldShowInCompendium)
             .Select(monster => catalog.ResolveManagedMonsterGroupId(monster.Id.Entry) ??
                                catalog.ResolveManagedMonsterGroupId(monster.GetType().Name))
             .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
@@ -2789,6 +2791,7 @@ internal static class SkinService
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
+        EnsureScopedRuntimeProviderResourcesMounted(catalog, activeRuntimeProviders);
 
         var buildStarted = Stopwatch.GetTimestamp();
         var staleCanonicalPaths = groups
@@ -2831,18 +2834,55 @@ internal static class SkinService
             }
         }
 
-        ManagedSkinModLoader.ActivateSelectedProviders(activeRuntimeProviders);
         foreach (var providerId in activeRuntimeProviders.Where(
                      catalog.ProviderUsesScopedMonsterRuntime))
         {
             ManagedSkinModLoader.EnsureScopedMonsterSelectionRouter(providerId);
         }
+        // Install the per-monster selection router before invoking a provider initializer. Some
+        // providers evaluate IsEnabled(profile) while constructing their runtime services; doing
+        // this afterwards can leave a disabled profile cached as active (or vice versa) until the
+        // next game launch.
+        ManagedSkinModLoader.ActivateSelectedProviders(activeRuntimeProviders);
         ModLog.Info(
             $"已挂载 {groups.Count} 个外观分组/{files.Count} 个文件；" +
             $"目录={buildElapsed.TotalMilliseconds:F1} ms，" +
             $"资源包={mountElapsed.TotalMilliseconds:F1} ms，" +
             $"本地化={localizationElapsed.TotalMilliseconds:F1} ms，" +
             $"总计={Stopwatch.GetElapsedTime(totalStarted).TotalMilliseconds:F1} ms。");
+    }
+
+    private static void EnsureScopedRuntimeProviderResourcesMounted(
+        SkinCatalog catalog,
+        IEnumerable<string> activeRuntimeProviders)
+    {
+        foreach (var providerId in activeRuntimeProviders
+                     .Where(catalog.ProviderUsesScopedMonsterRuntime)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (var resourcePackPath in catalog.GetProviderResourcePackPaths(providerId))
+            {
+                var normalizedPath = System.IO.Path.GetFullPath(resourcePackPath);
+                if (!MountedScopedRuntimeProviderPacks.Add(normalizedPath))
+                {
+                    continue;
+                }
+
+                // A scoped DLL can resolve effects, sounds or encounter backgrounds dynamically;
+                // those paths cannot be discovered by walking references from the selected
+                // skeleton alone. Mount its original PCK as a low-priority dependency namespace.
+                // Canonical game paths remain owned by the game/current generated overlay because
+                // replaceFiles is false, while provider-private res:// paths become available.
+                if (!ProjectSettings.LoadResourcePack(normalizedPath, replaceFiles: false))
+                {
+                    MountedScopedRuntimeProviderPacks.Remove(normalizedPath);
+                    throw new InvalidOperationException(
+                        $"无法挂载 {providerId} 的运行时依赖资源包。");
+                }
+
+                ModLog.Info($"已低优先级挂载 {providerId} 的完整运行时资源。");
+            }
+        }
     }
 
     private static HashSet<string> GetActiveRuntimeProviders(SkinCatalog catalog)

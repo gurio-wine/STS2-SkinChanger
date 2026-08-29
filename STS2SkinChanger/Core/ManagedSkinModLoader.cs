@@ -220,7 +220,8 @@ internal static class ManagedSkinModLoader
 
         ModLog.Info(
             $"托管加载模式已识别 {ProvidersByRoot.Count} 个皮肤提供者；" +
-            "其 PCK 只会按当前选择隔离读取；符合单一外观整包条件的 DLL 行为仅在选中期间启用，切走即卸载。");
+            "PCK 资源由本 Mod 按选择接管；运行时私有依赖会在首次选中时低优先级挂载，" +
+            "DLL 行为补丁仅在选中期间启用。");
     }
 
     public static bool TryManage(Mod mod)
@@ -525,8 +526,9 @@ internal static class ManagedSkinModLoader
                 nodeReadyPresentationPatches);
             ModLog.Info(
                 $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
-                $"资源整包已隔离挂载，{managedPatches.Length} 个资源/选角呈现入口已交由本 Mod 接管，" +
-                $"保留 {behaviorPatches.Count} 个原作者动画/场景行为补丁；切换离开后会自动卸载。");
+                $"所需资源已由本 Mod 挂载，{managedPatches.Length} 个资源/选角呈现入口已交由本 Mod 接管，" +
+                $"保留 {behaviorPatches.Count} 个原作者动画/场景行为补丁；" +
+                "切换离开后会自动卸载行为补丁。");
         }
         catch (Exception exception)
         {

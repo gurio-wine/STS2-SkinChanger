@@ -766,6 +766,14 @@ internal sealed partial class SkinCatalog : IDisposable
     public bool ProviderUsesScopedMonsterRuntime(string optionId) =>
         _scopedMonsterRuntimeProviders.Contains(optionId);
 
+    public IReadOnlyList<string> GetProviderResourcePackPaths(string optionId) =>
+        _cosmeticIndexes
+            .Where(index => index.Mod.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            .Select(index => index.Archive.Path)
+            .Where(File.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
     public IReadOnlyList<string> GetScopedMonsterRuntimeProviderGroups(string optionId) =>
         _scopedMonsterRuntimeProviderGroups.GetValueOrDefault(optionId) ?? [];
 

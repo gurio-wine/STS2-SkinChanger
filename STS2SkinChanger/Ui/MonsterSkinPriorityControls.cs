@@ -136,7 +136,6 @@ internal static partial class ContextualSkinControls
         }
 
         var groupIds = monsters
-            .Where(monster => monster.ShouldShowInCompendium)
             .Select(monster => FindGroup(monster.Id.Entry, monster.GetType().Name))
             .Where(group => group is { Options.Count: > 0 })
             .Select(group => group!.Id)
