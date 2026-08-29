@@ -59,26 +59,30 @@ if (!string.IsNullOrWhiteSpace(config.LocalizationsFile))
 
 // Validate every generated description before making the first Steam update so a
 // malformed localization cannot leave the Workshop item only partly updated.
-_ = ComposeDescription(
-    config.Description,
-    config.StatementHeading,
-    config.Limitations,
-    config.Version,
-    JoinFeatureUpdates(
-        config.FeatureUpdate,
-        config.CardPriorityUpdate,
-        config.MultiplayerUpdate));
+ValidateWorkshopDescription(
+    "english",
+    ComposeDescription(
+        config.Description,
+        config.StatementHeading,
+        config.Limitations,
+        config.Version,
+        JoinFeatureUpdates(
+            config.FeatureUpdate,
+            config.CardPriorityUpdate,
+            config.MultiplayerUpdate)));
 foreach (var localization in localizations)
 {
-    _ = ComposeDescription(
-        localization.Description,
-        localization.StatementHeading,
-        localization.Limitations,
-        localization.Version,
-        JoinFeatureUpdates(
-            localization.FeatureUpdate,
-            localization.CardPriorityUpdate,
-            localization.MultiplayerUpdate));
+    ValidateWorkshopDescription(
+        localization.Language,
+        ComposeDescription(
+            localization.Description,
+            localization.StatementHeading,
+            localization.Limitations,
+            localization.Version,
+            JoinFeatureUpdates(
+                localization.FeatureUpdate,
+                localization.CardPriorityUpdate,
+                localization.MultiplayerUpdate)));
 }
 
 Environment.SetEnvironmentVariable("SteamAppId", config.AppId.ToString());
@@ -356,6 +360,17 @@ static void VerifyPublishedLocalization(
 
 static string NormalizeWorkshopText(string value) =>
     value.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+
+static void ValidateWorkshopDescription(string language, string description)
+{
+    var utf8Bytes = Encoding.UTF8.GetByteCount(description);
+    if (utf8Bytes >= Constants.k_cchPublishedDocumentDescriptionMax)
+    {
+        throw new InvalidDataException(
+            $"Workshop description for {language} is {utf8Bytes} UTF-8 bytes; "
+            + $"Steam allows at most {Constants.k_cchPublishedDocumentDescriptionMax - 1}.");
+    }
+}
 
 static T WaitForCallResult<T>(SteamAPICall_t call) where T : struct
 {
