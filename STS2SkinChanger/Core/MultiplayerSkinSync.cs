@@ -20,7 +20,8 @@ namespace STS2SkinChanger.Core;
 
 internal enum SkinSyncMessageKind : byte
 {
-    CharacterSelection = 1
+    CharacterSelection = 1,
+    ReadyResolutionComplete = 2
 }
 
 /// <summary>
@@ -81,15 +82,18 @@ internal sealed record SessionCharacterSelection(
 
 internal static class MultiplayerSkinSync
 {
-    internal const byte ProtocolVersion = 2;
+    internal const byte ProtocolVersion = 3;
     internal const int ReservedMessageId = 254;
+    private const double ReadyGateQuietSeconds = 0.75;
+    private const double ReadyGateTimeoutSeconds = 180.0;
 
     private static readonly byte[] CapabilityMagic =
-        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x32, 0x21]; // GSCAP02!
+        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x33, 0x21]; // GSCAP03!
     private static readonly HashSet<ulong> CapablePeers = [];
     private static readonly Dictionary<ulong, SkinChangerNetMessage> AdvertisedSelections = [];
     private static readonly Dictionary<ulong, SessionCharacterSelection> AvailableSelections = [];
     private static readonly HashSet<ulong> PendingRefreshes = [];
+    private static readonly HashSet<ulong> ReadyResolutionCompletePeers = [];
     private static readonly object Sync = new();
 
     [ThreadStatic]
@@ -101,6 +105,11 @@ internal static class MultiplayerSkinSync
     private static double _snapshotElapsed;
     private static int _snapshotStage;
     private static bool _runtimeProvidersDirty;
+    private static bool _readyGateActive;
+    private static bool _localReadyResolutionComplete;
+    private static bool _runReleaseCommitted;
+    private static double _readyGateElapsed;
+    private static double _readyGateQuietElapsed;
 
     internal static string? GetScopedSelection(string groupId)
     {
@@ -193,6 +202,7 @@ internal static class MultiplayerSkinSync
         }
 
         AttachToService(service, "对局");
+        RememberLocalAdvertisement(includeOnlineMetadata: true);
     }
 
     internal static void AttachToLobby(StartRunLobby lobby)
@@ -203,8 +213,13 @@ internal static class MultiplayerSkinSync
             return;
         }
 
+        var changedLobby = !ReferenceEquals(_lobby, lobby);
         AttachToService(service, "联机选角");
         _lobby = lobby;
+        if (changedLobby)
+        {
+            ResetReadyGateState();
+        }
         RememberLocalAdvertisement();
     }
 
@@ -228,7 +243,6 @@ internal static class MultiplayerSkinSync
 
         _snapshotElapsed = 0;
         _snapshotStage = 0;
-        RememberLocalAdvertisement();
         ModLog.Info($"多人角色皮肤同步已在{stage}阶段启用；仅向确认安装 Skin Changer 的玩家发送选择。");
     }
 
@@ -267,12 +281,15 @@ internal static class MultiplayerSkinSync
             AdvertisedSelections.Clear();
             AvailableSelections.Clear();
             PendingRefreshes.Clear();
+            ReadyResolutionCompletePeers.Clear();
             _runtimeProvidersDirty = false;
             if (clearCapabilities)
             {
                 CapablePeers.Clear();
             }
         }
+
+        ResetReadyGateState();
 
         if (hadRemoteSelections && refreshRuntimeProviders)
         {
@@ -302,7 +319,9 @@ internal static class MultiplayerSkinSync
         }
 
         _snapshotElapsed += delta;
-        OnlineSkinCache.Tick();
+        var allowOnlineDownloads = UpdateReadyGate(delta);
+        OnlineSkinCache.Tick(allowOnlineDownloads);
+        UpdateReadyGateCompletion();
         if ((_snapshotStage == 0 && _snapshotElapsed >= 0.75) ||
             (_snapshotStage == 1 && _snapshotElapsed >= 3.0))
         {
@@ -381,11 +400,297 @@ internal static class MultiplayerSkinSync
 
         RememberLocalAdvertisement();
         SendLocalAdvertisement();
+        MarkReadyResolutionActivity();
+    }
+
+    internal static void OnRemoteSkinLoadingPreferenceChanged(bool enabled)
+    {
+        OnlineSkinCache.OnRemoteSkinLoadingPreferenceChanged(enabled);
+        SkinChangerNetMessage[] advertisements;
+        lock (Sync)
+        {
+            advertisements = AdvertisedSelections.Values
+                .Where(message => message.PlayerNetId != _netService?.NetId)
+                .ToArray();
+        }
+
+        foreach (var advertisement in advertisements)
+        {
+            TryMakeSelectionAvailable(advertisement);
+        }
+        MarkReadyResolutionActivity();
     }
 
     internal static void ResetConnectionState()
     {
         DetachFromRun(refreshRuntimeProviders: true);
+    }
+
+    internal static bool ShouldAllowBeginRun(StartRunLobby lobby)
+    {
+        AttachToLobby(lobby);
+        if (lobby.NetService.Type != NetGameType.Host ||
+            _runReleaseCommitted ||
+            !lobby.IsAboutToBeginGame() ||
+            !HasCapableLobbyPeer())
+        {
+            return true;
+        }
+
+        BeginReadyGate();
+        return false;
+    }
+
+    private static bool UpdateReadyGate(double delta)
+    {
+        var lobby = _lobby;
+        if (lobby == null || _runReleaseCommitted)
+        {
+            return false;
+        }
+
+        bool allReady;
+        try
+        {
+            allReady = lobby.IsAboutToBeginGame();
+        }
+        catch
+        {
+            allReady = false;
+        }
+
+        if (!allReady || !HasCapableLobbyPeer())
+        {
+            CancelReadyGate();
+            return false;
+        }
+
+        BeginReadyGate();
+        lock (Sync)
+        {
+            _readyGateElapsed += delta;
+            _readyGateQuietElapsed += delta;
+            return _readyGateActive && SkinService.ShouldLoadOtherPlayersCustomSkins();
+        }
+    }
+
+    private static void UpdateReadyGateCompletion()
+    {
+        bool shouldCompleteLocally;
+        lock (Sync)
+        {
+            shouldCompleteLocally = _readyGateActive &&
+                                    !_localReadyResolutionComplete &&
+                                    _readyGateQuietElapsed >= ReadyGateQuietSeconds;
+        }
+
+        if (shouldCompleteLocally && !OnlineSkinCache.HasPendingWork())
+        {
+            var service = _netService;
+            if (service == null)
+            {
+                return;
+            }
+
+            lock (Sync)
+            {
+                if (!_readyGateActive || _localReadyResolutionComplete)
+                {
+                    return;
+                }
+                _localReadyResolutionComplete = true;
+                if (service.Type == NetGameType.Host)
+                {
+                    ReadyResolutionCompletePeers.Add(service.NetId);
+                }
+            }
+
+            if (service.Type == NetGameType.Client)
+            {
+                SendReadyResolutionComplete();
+            }
+            ModLog.Info("本机已完成联机最终皮肤准备。");
+        }
+
+        TryReleaseReadyGateAsHost();
+    }
+
+    private static void BeginReadyGate()
+    {
+        lock (Sync)
+        {
+            if (_readyGateActive || _runReleaseCommitted)
+            {
+                return;
+            }
+
+            _readyGateActive = true;
+            _localReadyResolutionComplete = false;
+            _readyGateElapsed = 0;
+            _readyGateQuietElapsed = 0;
+            ReadyResolutionCompletePeers.Clear();
+        }
+
+        BroadcastKnownSelections(includeOnlineMetadata: true);
+        ModLog.Info(
+            "所有玩家均已准备；已锁定最终角色皮肤，并在开局前处理其他玩家的自定义皮肤。");
+    }
+
+    private static void CancelReadyGate()
+    {
+        bool wasActive;
+        lock (Sync)
+        {
+            wasActive = _readyGateActive;
+            _readyGateActive = false;
+            _localReadyResolutionComplete = false;
+            _readyGateElapsed = 0;
+            _readyGateQuietElapsed = 0;
+            ReadyResolutionCompletePeers.Clear();
+        }
+
+        if (wasActive)
+        {
+            ModLog.Info("有玩家取消准备；已取消本轮最终皮肤准备，返回选角等待状态。");
+        }
+    }
+
+    private static void ResetReadyGateState()
+    {
+        lock (Sync)
+        {
+            _readyGateActive = false;
+            _localReadyResolutionComplete = false;
+            _runReleaseCommitted = false;
+            _readyGateElapsed = 0;
+            _readyGateQuietElapsed = 0;
+            ReadyResolutionCompletePeers.Clear();
+        }
+    }
+
+    private static void MarkReadyResolutionActivity()
+    {
+        var service = _netService;
+        lock (Sync)
+        {
+            if (!_readyGateActive)
+            {
+                return;
+            }
+
+            _localReadyResolutionComplete = false;
+            _readyGateQuietElapsed = 0;
+            if (service != null)
+            {
+                ReadyResolutionCompletePeers.Remove(service.NetId);
+            }
+        }
+    }
+
+    private static void SendReadyResolutionComplete()
+    {
+        var service = _netService;
+        var hostId = (service as INetClientGameService)?.NetClient?.HostNetId;
+        if (service == null || !hostId.HasValue || !IsCapable(hostId.Value))
+        {
+            return;
+        }
+
+        service.SendMessage(new SkinChangerNetMessage
+        {
+            ProtocolVersion = ProtocolVersion,
+            Kind = SkinSyncMessageKind.ReadyResolutionComplete,
+            PlayerNetId = service.NetId
+        });
+    }
+
+    private static void TryReleaseReadyGateAsHost()
+    {
+        var service = _netService;
+        var lobby = _lobby;
+        if (service?.Type != NetGameType.Host || lobby == null)
+        {
+            return;
+        }
+
+        var capablePeers = GetCapableLobbyPeerIds();
+        bool complete;
+        bool timedOut;
+        lock (Sync)
+        {
+            complete = _readyGateActive &&
+                       _localReadyResolutionComplete &&
+                       capablePeers.All(peerId => ReadyResolutionCompletePeers.Contains(peerId));
+            timedOut = _readyGateActive &&
+                       _readyGateElapsed >= ReadyGateTimeoutSeconds;
+        }
+
+        if (!complete && !timedOut)
+        {
+            return;
+        }
+
+        if (timedOut && !complete)
+        {
+            ModLog.Warn("等待其他玩家完成皮肤准备超时；未完成的皮肤将回退为本地已有皮肤或原皮。");
+        }
+
+        lock (Sync)
+        {
+            _runReleaseCommitted = true;
+            _readyGateActive = false;
+        }
+
+        try
+        {
+            AccessTools.Method(typeof(StartRunLobby), "BeginRunForAllPlayersIfAllReady")
+                ?.Invoke(lobby, null);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error("完成联机皮肤准备后继续开局失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static bool HasCapableLobbyPeer() => GetCapableLobbyPeerIds().Length > 0;
+
+    private static ulong[] GetCapableLobbyPeerIds()
+    {
+        var service = _netService;
+        if (service == null)
+        {
+            return [];
+        }
+
+        var lobbyPlayerIds = GetLobbyPlayerIds();
+        lock (Sync)
+        {
+            return lobbyPlayerIds
+                .Where(playerId => playerId != service.NetId && CapablePeers.Contains(playerId))
+                .ToArray();
+        }
+    }
+
+    private static ulong[] GetLobbyPlayerIds()
+    {
+        var lobby = _lobby;
+        if (lobby == null ||
+            AccessTools.Property(typeof(StartRunLobby), "Players")?.GetValue(lobby)
+                is not System.Collections.IEnumerable players)
+        {
+            return [];
+        }
+
+        var result = new List<ulong>();
+        foreach (var candidate in players)
+        {
+            if (candidate != null &&
+                AccessTools.Field(candidate.GetType(), "id")?.GetValue(candidate) is ulong id)
+            {
+                result.Add(id);
+            }
+        }
+        return result.ToArray();
     }
 
     internal static void MarkPeerCapable(ulong peerId, byte protocolVersion)
@@ -417,14 +722,20 @@ internal static class MultiplayerSkinSync
             return false;
         }
 
-        var offset = packetBytes.Length - trailerLength;
-        if (!packetBytes.AsSpan(offset, CapabilityMagic.Length).SequenceEqual(CapabilityMagic))
+        // Other networking Mods may append their own trailer after message serialization. Search
+        // backwards instead of assuming our marker is the final bytes in the transport packet.
+        for (var offset = packetBytes.Length - trailerLength; offset >= 0; offset--)
         {
-            return false;
+            if (!packetBytes.AsSpan(offset, CapabilityMagic.Length).SequenceEqual(CapabilityMagic))
+            {
+                continue;
+            }
+
+            protocolVersion = packetBytes[offset + CapabilityMagic.Length];
+            return true;
         }
 
-        protocolVersion = packetBytes[^1];
-        return true;
+        return false;
     }
 
     internal static void AppendCapabilityTrailer(PacketWriter writer)
@@ -441,8 +752,64 @@ internal static class MultiplayerSkinSync
     private static void HandleMessage(SkinChangerNetMessage message, ulong senderId)
     {
         var service = _netService;
-        if (service == null || message.ProtocolVersion != ProtocolVersion ||
-            message.Kind != SkinSyncMessageKind.CharacterSelection ||
+        if (service == null || message.ProtocolVersion != ProtocolVersion)
+        {
+            return;
+        }
+
+        // Receiving our reserved envelope with the current protocol is itself proof that the
+        // sender supports Skin Changer. This repairs an asymmetric capability trailer if another
+        // networking Mod rewrote only one side of the initial handshake packet.
+        var newlyConfirmed = !IsCapable(senderId);
+        MarkPeerCapable(senderId, message.ProtocolVersion);
+
+        if (service.Type == NetGameType.Host)
+        {
+            if (!IsCapable(senderId))
+            {
+                return;
+            }
+
+            if (message.Kind == SkinSyncMessageKind.ReadyResolutionComplete)
+            {
+                if (message.PlayerNetId != senderId)
+                {
+                    return;
+                }
+
+                lock (Sync)
+                {
+                    ReadyResolutionCompletePeers.Add(senderId);
+                }
+                ModLog.Info($"联机玩家 {senderId} 已完成最终皮肤准备。");
+                return;
+            }
+
+            if (message.PlayerNetId != senderId)
+            {
+                return;
+            }
+        }
+        else
+        {
+            var hostNetId = (service as INetClientGameService)?.NetClient?.HostNetId;
+            if (hostNetId != senderId || !IsCapable(senderId))
+            {
+                return;
+            }
+            if (message.Kind != SkinSyncMessageKind.CharacterSelection)
+            {
+                return;
+            }
+
+            if (newlyConfirmed)
+            {
+                RememberLocalAdvertisement();
+                SendLocalAdvertisement();
+            }
+        }
+
+        if (message.Kind != SkinSyncMessageKind.CharacterSelection ||
             !ValidateText(message.CharacterId) ||
             !ValidateText(message.GroupId) ||
             !ValidateText(message.OptionId) ||
@@ -452,28 +819,15 @@ internal static class MultiplayerSkinSync
             return;
         }
 
+        RememberAdvertisement(message);
+        OnlineSkinCache.DiscardPendingSelectionsForPlayer(message.PlayerNetId);
         if (service.Type == NetGameType.Host)
         {
-            if (!IsCapable(senderId) || message.PlayerNetId != senderId)
-            {
-                return;
-            }
-
-            RememberAdvertisement(message);
             RelayFromHost(message, exceptPeerId: senderId);
-        }
-        else
-        {
-            var hostNetId = (service as INetClientGameService)?.NetClient?.HostNetId;
-            if (hostNetId != senderId || !IsCapable(senderId))
-            {
-                return;
-            }
-
-            RememberAdvertisement(message);
         }
 
         TryMakeSelectionAvailable(message);
+        MarkReadyResolutionActivity();
     }
 
     private static bool ValidateText(string? value) =>
@@ -509,12 +863,15 @@ internal static class MultiplayerSkinSync
             return;
         }
 
-        var effectiveOptionId = message.OptionId;
+        var allowRemoteSkin = SkinService.ShouldLoadOtherPlayersCustomSkins();
+        var effectiveOptionId = allowRemoteSkin
+            ? message.OptionId
+            : SkinCatalog.BaseOptionId;
         var selectionAvailable = SkinService.TryBuildSessionCharacterSelection(
             message.GroupId,
             effectiveOptionId,
             out var selectionOverrides);
-        if (!selectionAvailable &&
+        if (!selectionAvailable && allowRemoteSkin &&
             OnlineSkinCache.TryGetCachedOption(message, out var cachedOptionId))
         {
             effectiveOptionId = cachedOptionId;
@@ -524,9 +881,12 @@ internal static class MultiplayerSkinSync
                 out selectionOverrides);
         }
 
-        if (!selectionAvailable)
+        if (!selectionAvailable && allowRemoteSkin)
         {
-            OnlineSkinCache.QueueMissingSelection(message);
+            if (OnlineSkinCache.QueueMissingSelection(message))
+            {
+                MarkReadyResolutionActivity();
+            }
             // Cover a cache registration racing this advertisement before falling back.
             if (OnlineSkinCache.TryGetCachedOption(message, out cachedOptionId))
             {
@@ -570,7 +930,7 @@ internal static class MultiplayerSkinSync
         }
     }
 
-    private static void RememberLocalAdvertisement()
+    private static void RememberLocalAdvertisement(bool includeOnlineMetadata = false)
     {
         if (!TryGetLocalCharacter(out var playerNetId, out var character))
         {
@@ -594,7 +954,7 @@ internal static class MultiplayerSkinSync
             GroupId = group.Id,
             OptionId = SkinService.Config.GetSelection(group.Id)
         };
-        if (OnlineSkinCache.TryDescribeLocalSelection(
+        if (includeOnlineMetadata && OnlineSkinCache.TryDescribeLocalSelection(
                 message.GroupId,
                 message.OptionId,
                 out var source))
@@ -639,8 +999,9 @@ internal static class MultiplayerSkinSync
             return;
         }
 
-        RememberLocalAdvertisement();
+        RememberLocalAdvertisement(includeOnlineMetadata: true);
         SendLocalAdvertisement();
+        MarkReadyResolutionActivity();
     }
 
     private static bool TryGetLocalCharacter(
@@ -773,9 +1134,9 @@ internal static class MultiplayerSkinSync
         }
     }
 
-    private static void BroadcastKnownSelections()
+    private static void BroadcastKnownSelections(bool includeOnlineMetadata = false)
     {
-        RememberLocalAdvertisement();
+        RememberLocalAdvertisement(includeOnlineMetadata);
         var service = _netService;
         if (service is INetHostGameService)
         {
@@ -877,6 +1238,13 @@ internal static class MultiplayerSkinLobbyAttachPatch
 internal static class MultiplayerSkinLobbyTickPatch
 {
     private static void Postfix(double delta) => MultiplayerSkinSync.Tick(delta);
+}
+
+[HarmonyPatch(typeof(StartRunLobby), "BeginRunForAllPlayersIfAllReady")]
+internal static class MultiplayerSkinReadyGatePatch
+{
+    private static bool Prefix(StartRunLobby __instance) =>
+        MultiplayerSkinSync.ShouldAllowBeginRun(__instance);
 }
 
 [HarmonyPatch(typeof(MessageTypes), nameof(MessageTypes.ToId))]

@@ -2,14 +2,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Collections.Concurrent;
-using Godot;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Multiplayer.Transport.Steam;
 using MegaCrit.Sts2.Core.Nodes;
-using MegaCrit.Sts2.Core.Nodes.CommonUi;
-using MegaCrit.Sts2.Core.Nodes.Multiplayer;
-using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
 using Steamworks;
@@ -129,7 +125,7 @@ internal static partial class OnlineSkinCache
         TryDeleteDirectory(directory);
     }
 
-    internal static void Tick()
+    internal static void Tick(bool allowDownloads)
     {
         while (LocalSourcesReady.TryDequeue(out var ready))
         {
@@ -145,9 +141,9 @@ internal static partial class OnlineSkinCache
         CancellationToken cancellationToken;
         lock (Sync)
         {
-            if (_processing || Pending.Count == 0 || _sessionCancellation == null ||
-                NRun.Instance?.CombatRoom != null ||
-                NModalContainer.Instance is not { OpenModal: null })
+            if (!allowDownloads || !SkinService.ShouldLoadOtherPlayersCustomSkins() ||
+                _processing || Pending.Count == 0 || _sessionCancellation == null ||
+                NRun.Instance?.CombatRoom != null)
             {
                 return;
             }
@@ -162,15 +158,62 @@ internal static partial class OnlineSkinCache
         TaskHelper.RunSafely(ProcessRequest(request, generation, cancellationToken));
     }
 
-    internal static void QueueMissingSelection(SkinChangerNetMessage message)
+    internal static bool HasPendingWork()
     {
-        if (message.WorkshopItemId == 0 ||
+        var allowDownloads = SkinService.ShouldLoadOtherPlayersCustomSkins();
+        lock (Sync)
+        {
+            return LocalSourceBuilds.Count > 0 ||
+                   (allowDownloads && (_processing || Pending.Count > 0));
+        }
+    }
+
+    internal static void OnRemoteSkinLoadingPreferenceChanged(bool enabled)
+    {
+        if (enabled)
+        {
+            return;
+        }
+
+        lock (Sync)
+        {
+            Pending.Clear();
+            PendingKeys.Clear();
+        }
+    }
+
+    internal static void DiscardPendingSelectionsForPlayer(ulong playerNetId)
+    {
+        lock (Sync)
+        {
+            if (Pending.Count == 0)
+            {
+                return;
+            }
+
+            var retained = Pending
+                .Where(message => message.PlayerNetId != playerNetId)
+                .ToArray();
+            Pending.Clear();
+            PendingKeys.Clear();
+            foreach (var message in retained)
+            {
+                Pending.Enqueue(message);
+                PendingKeys.Add(RequestKey(message));
+            }
+        }
+    }
+
+    internal static bool QueueMissingSelection(SkinChangerNetMessage message)
+    {
+        if (!SkinService.ShouldLoadOtherPlayersCustomSkins() ||
+            message.WorkshopItemId == 0 ||
             string.IsNullOrWhiteSpace(message.ProviderId) ||
             string.IsNullOrWhiteSpace(message.SafeResourceFingerprint) ||
             !FingerprintRegex().IsMatch(message.SafeResourceFingerprint) ||
             message.OptionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            return false;
         }
 
         var providerKey = ProviderKey(message);
@@ -178,20 +221,22 @@ internal static partial class OnlineSkinCache
         {
             if (Providers.ContainsKey(providerKey))
             {
-                return;
+                return false;
             }
 
             var requestKey = RequestKey(message);
             if (_sessionCancellation == null || DeclinedKeys.Contains(providerKey) ||
                 !PendingKeys.Add(requestKey))
             {
-                return;
+                return false;
             }
             Pending.Enqueue(message);
         }
 
         ModLog.Info(
-            $"检测到联机玩家使用本地缺少的皮肤 {message.ProviderId}，已等待安全阶段显示授权弹窗。");
+            $"检测到联机玩家使用本地缺少的皮肤 {message.ProviderId}，" +
+            "已记录并等待所有玩家准备后自动安全缓存。");
+        return true;
     }
 
     internal static bool TryGetCachedOption(
@@ -311,6 +356,11 @@ internal static partial class OnlineSkinCache
     {
         try
         {
+            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
+            {
+                return;
+            }
+
             CachedProvider? alreadyCached;
             lock (Sync)
             {
@@ -328,19 +378,14 @@ internal static partial class OnlineSkinCache
                 return;
             }
 
-            if (NRun.Instance?.CombatRoom != null)
+            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
             {
-                Requeue(request);
                 return;
             }
 
-            var accepted = await ShowPermissionPrompt(request, details);
-            if (!accepted || !IsCurrentSession(generation, cancellationToken))
+            if (NRun.Instance?.CombatRoom != null)
             {
-                lock (Sync)
-                {
-                    DeclinedKeys.Add(ProviderKey(request));
-                }
+                Requeue(request);
                 return;
             }
 
@@ -348,6 +393,10 @@ internal static partial class OnlineSkinCache
                 request.WorkshopItemId,
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
+            {
+                return;
+            }
             var sourcePck = FindProviderPck(workshopDirectory, request.ProviderId);
             var outputDirectory = Path.Combine(
                 _sessionDirectory ?? throw new OperationCanceledException(),
@@ -360,6 +409,10 @@ internal static partial class OnlineSkinCache
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsCurrentSession(generation, cancellationToken))
+            {
+                return;
+            }
+            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
             {
                 return;
             }
@@ -471,53 +524,6 @@ internal static partial class OnlineSkinCache
         {
             SteamUGC.ReleaseQueryUGCRequest(handle);
         }
-    }
-
-    private static async Task<bool> ShowPermissionPrompt(
-        SkinChangerNetMessage request,
-        WorkshopDetails details)
-    {
-        var container = NModalContainer.Instance;
-        var popup = NGenericPopup.Create();
-        if (container == null || popup == null || container.OpenModal != null)
-        {
-            Requeue(request);
-            throw new OperationCanceledException("等待可用的游戏弹窗容器。 ");
-        }
-
-        container.Add(popup);
-        var confirmation = popup.WaitForConfirmation(
-            new MegaCrit.Sts2.Core.Localization.LocString(
-                "main_menu_ui",
-                "MOD_NOT_LOADED_POPUP.description"),
-            new MegaCrit.Sts2.Core.Localization.LocString(
-                "main_menu_ui",
-                "MOD_NOT_LOADED_POPUP.title"),
-            new MegaCrit.Sts2.Core.Localization.LocString(
-                "main_menu_ui",
-                "GENERIC_POPUP.cancel"),
-            new MegaCrit.Sts2.Core.Localization.LocString(
-                "main_menu_ui",
-                "GENERIC_POPUP.confirm"));
-        var vertical = popup.GetNodeOrNull<NVerticalPopup>("VerticalPopup");
-        if (vertical == null)
-        {
-            popup.QueueFree();
-            throw new InvalidOperationException("在线皮肤授权弹窗缺少 VerticalPopup 节点。");
-        }
-
-        var text = OnlinePromptTexts.Get();
-        var title = string.IsNullOrWhiteSpace(details.Title)
-            ? request.ProviderId
-            : EscapeBbCode(details.Title);
-        var size = FormatBytes(details.Size);
-        vertical.SetText(
-            text.Title,
-            text.Body.Replace("{0}", title, StringComparison.Ordinal)
-                .Replace("{1}", size, StringComparison.Ordinal));
-        vertical.YesButton.SetText(text.AllowOnce);
-        vertical.NoButton.SetText(text.Decline);
-        return await confirmation;
     }
 
     private static async Task<string> EnsureWorkshopItemAvailable(
@@ -805,20 +811,6 @@ internal static partial class OnlineSkinCache
         return "__online_" + Convert.ToHexString(SHA256.HashData(identity))[..24];
     }
 
-    private static string EscapeBbCode(string value) => value
-        .Replace('[', '(')
-        .Replace(']', ')')
-        .Replace('\r', ' ')
-        .Replace('\n', ' ');
-
-    private static string FormatBytes(ulong bytes) => bytes switch
-    {
-        >= 1024UL * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:F2} GiB",
-        >= 1024UL * 1024 => $"{bytes / 1024d / 1024d:F1} MiB",
-        >= 1024UL => $"{bytes / 1024d:F1} KiB",
-        _ => $"{bytes} B"
-    };
-
     private static string OnlineCacheSuffix() => ModLocalization.CurrentLanguage switch
     {
         "zhs" => " · 联机缓存",
@@ -883,54 +875,4 @@ internal static partial class OnlineSkinCache
         DateTime LastWriteTimeUtc,
         OnlineSkinSource Source);
     private sealed record LocalSourceFailureCacheEntry(long Length, DateTime LastWriteTimeUtc);
-}
-
-internal sealed record OnlinePromptLanguagePack(
-    string Title,
-    string Body,
-    string AllowOnce,
-    string Decline,
-    string UnknownSize);
-
-internal static class OnlinePromptTexts
-{
-    private static readonly OnlinePromptLanguagePack English = new(
-        "Online skin cache",
-        "Another player is using [b]{0}[/b] ({1}), which is not installed locally.\n\nSkin Changer can ask Steam to temporarily download it and will extract only verified static images, atlases, and skeleton data. DLLs, scripts, shaders, and custom scenes will never be loaded. The Workshop item may contain adult content; Steam account and region restrictions still apply.\n\nAllow this download for the current room?",
-        "Allow this time",
-        "Use original skin",
-        "size unknown");
-
-    private static readonly IReadOnlyDictionary<string, OnlinePromptLanguagePack> Packs =
-        new Dictionary<string, OnlinePromptLanguagePack>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["eng"] = English,
-            ["zhs"] = new(
-                "联机皮肤缓存",
-                "另一名玩家正在使用你本地未安装的 [b]{0}[/b]（{1}）。\n\n皮肤切换器可以让 Steam 临时下载该工坊物品，但只会提取经过校验的静态贴图、图集和骨骼数据，绝不会加载 DLL、脚本、Shader 或自定义场景。工坊物品可能含成人内容，并仍受 Steam 账号与地区限制。\n\n是否仅在当前房间允许本次下载？",
-                "本次允许",
-                "使用原皮",
-                "大小未知"),
-            ["zht"] = new(
-                "連線外觀快取",
-                "另一名玩家正在使用本機未安裝的 [b]{0}[/b]（{1}）。\n\nSkin Changer 可讓 Steam 暫時下載，但只提取已驗證的靜態圖片、圖集與骨骼資料，絕不載入 DLL、腳本、Shader 或自訂場景。物品可能含成人內容，且仍受 Steam 帳號與地區限制。\n\n僅允許目前房間的這次下載？",
-                "允許這次",
-                "使用原版",
-                "大小未知"),
-            ["deu"] = new("Online-Skin-Cache", "Ein anderer Spieler nutzt [b]{0}[/b] ({1}), das lokal fehlt. Steam kann es temporär laden; Skin Changer übernimmt nur geprüfte Bilder, Atlanten und Skelettdaten, niemals DLLs, Skripte, Shader oder eigene Szenen. Der Inhalt kann nicht jugendfrei sein. Für diesen Raum erlauben?", "Diesmal erlauben", "Original verwenden", "Größe unbekannt"),
-            ["esp"] = new("Caché de aspectos en línea", "Otro jugador usa [b]{0}[/b] ({1}) y no está instalado. Steam puede descargarlo temporalmente; Skin Changer solo extraerá imágenes, atlas y esqueletos verificados, nunca DLL, scripts, shaders ni escenas personalizadas. Puede incluir contenido adulto. ¿Permitirlo en esta sala?", "Permitir esta vez", "Usar original", "Tamaño desconocido"),
-            ["fra"] = new("Cache de skins en ligne", "Un autre joueur utilise [b]{0}[/b] ({1}), absent localement. Steam peut le télécharger temporairement ; Skin Changer n’extrait que les images, atlas et squelettes vérifiés, jamais les DLL, scripts, shaders ou scènes personnalisées. Le contenu peut être adulte. Autoriser pour cette salle ?", "Autoriser cette fois", "Utiliser l’original", "Taille inconnue"),
-            ["ita"] = new("Cache skin online", "Un altro giocatore usa [b]{0}[/b] ({1}), non installato localmente. Steam può scaricarlo temporaneamente; Skin Changer estrae solo immagini, atlanti e scheletri verificati, mai DLL, script, shader o scene personalizzate. Può contenere materiale per adulti. Consentire per questa stanza?", "Consenti questa volta", "Usa originale", "Dimensione sconosciuta"),
-            ["jpn"] = new("オンラインスキンキャッシュ", "別のプレイヤーが未導入の [b]{0}[/b]（{1}）を使用しています。Steam から一時取得できますが、検証済みの画像・アトラス・スケルトンだけを抽出し、DLL・スクリプト・Shader・独自シーンは読み込みません。成人向け内容を含む場合があります。このルームで許可しますか？", "今回のみ許可", "原版を使用", "サイズ不明"),
-            ["kor"] = new("온라인 스킨 캐시", "다른 플레이어가 로컬에 없는 [b]{0}[/b] ({1})을 사용 중입니다. Steam에서 임시 다운로드할 수 있으며 검증된 이미지, 아틀라스, 스켈레톤만 추출합니다. DLL, 스크립트, 셰이더, 사용자 장면은 로드하지 않습니다. 성인 콘텐츠가 포함될 수 있습니다. 이 방에서 허용할까요?", "이번만 허용", "원본 사용", "크기 알 수 없음"),
-            ["pol"] = new("Pamięć skórek online", "Inny gracz używa [b]{0}[/b] ({1}), którego nie masz. Steam może pobrać go tymczasowo; Skin Changer wyodrębni tylko sprawdzone obrazy, atlasy i szkielety, nigdy DLL, skrypty, shadery ani własne sceny. Zawartość może być dla dorosłych. Zezwolić w tym pokoju?", "Zezwól tym razem", "Użyj oryginału", "Rozmiar nieznany"),
-            ["ptb"] = new("Cache de visuais online", "Outro jogador usa [b]{0}[/b] ({1}), que não está instalado. A Steam pode baixá-lo temporariamente; o Skin Changer extrai apenas imagens, atlas e esqueletos verificados, nunca DLLs, scripts, shaders ou cenas personalizadas. Pode conter conteúdo adulto. Permitir nesta sala?", "Permitir desta vez", "Usar original", "Tamanho desconhecido"),
-            ["rus"] = new("Онлайн-кэш обликов", "Другой игрок использует [b]{0}[/b] ({1}), которого нет локально. Steam может временно загрузить его; Skin Changer извлечёт только проверенные изображения, атласы и скелеты, но не DLL, скрипты, шейдеры или пользовательские сцены. Возможен контент для взрослых. Разрешить для этой комнаты?", "Разрешить один раз", "Использовать оригинал", "Размер неизвестен"),
-            ["spa"] = new("Caché de aspectos en línea", "Otro jugador usa [b]{0}[/b] ({1}) y no está instalado. Steam puede descargarlo temporalmente; Skin Changer solo extraerá imágenes, atlas y esqueletos verificados, nunca DLL, scripts, shaders ni escenas personalizadas. Puede incluir contenido adulto. ¿Permitirlo en esta sala?", "Permitir esta vez", "Usar original", "Tamaño desconocido"),
-            ["tha"] = new("แคชสกินออนไลน์", "ผู้เล่นอื่นใช้ [b]{0}[/b] ({1}) ที่เครื่องนี้ไม่ได้ติดตั้ง Steam สามารถดาวน์โหลดชั่วคราวได้ โดย Skin Changer จะนำมาเฉพาะรูปภาพ แอตลาส และข้อมูลโครงกระดูกที่ตรวจสอบแล้ว และจะไม่โหลด DLL สคริปต์ Shader หรือฉากกำหนดเอง อาจมีเนื้อหาสำหรับผู้ใหญ่ อนุญาตสำหรับห้องนี้หรือไม่", "อนุญาตครั้งนี้", "ใช้ต้นฉบับ", "ไม่ทราบขนาด"),
-            ["tur"] = new("Çevrimiçi görünüm önbelleği", "Başka bir oyuncu yerelde kurulu olmayan [b]{0}[/b] ({1}) kullanıyor. Steam geçici olarak indirebilir; Skin Changer yalnızca doğrulanmış görselleri, atlasları ve iskelet verilerini çıkarır, DLL, betik, shader veya özel sahne yüklemez. Yetişkin içerik bulunabilir. Bu oda için izin verilsin mi?", "Bu kez izin ver", "Orijinali kullan", "Boyut bilinmiyor")
-        };
-
-    public static OnlinePromptLanguagePack Get() =>
-        Packs.GetValueOrDefault(ModLocalization.CurrentLanguage) ?? English;
 }

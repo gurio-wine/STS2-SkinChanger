@@ -255,6 +255,35 @@ internal static class SkinService
         }
     }
 
+    public static bool ShouldLoadOtherPlayersCustomSkins()
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            return Config.LoadOtherPlayersCustomSkins;
+        }
+    }
+
+    public static void SetLoadOtherPlayersCustomSkins(bool enabled)
+    {
+        bool changed;
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            changed = Config.LoadOtherPlayersCustomSkins != enabled;
+            if (changed)
+            {
+                Config.LoadOtherPlayersCustomSkins = enabled;
+                Config.Save(ConfigPath);
+            }
+        }
+
+        if (changed)
+        {
+            MultiplayerSkinSync.OnRemoteSkinLoadingPreferenceChanged(enabled);
+        }
+    }
+
     public static bool ShouldShowLoadOrderWarning(bool isBeforeAllSkinMods)
     {
         lock (Sync)

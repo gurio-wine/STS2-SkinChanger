@@ -109,6 +109,8 @@ internal sealed class SkinConfig
 
     public bool? LastKnownBeforeAllSkinMods { get; set; }
 
+    public bool LoadOtherPlayersCustomSkins { get; set; } = true;
+
     public static SkinConfig Load(string path)
     {
         var backupPath = path + ".bak";

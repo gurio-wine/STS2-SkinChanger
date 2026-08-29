@@ -63,7 +63,8 @@ internal enum ModText
     FollowModelScale,
     FollowModelMovement,
     DirectDragHint,
-    DirectDragIntentHint
+    DirectDragIntentHint,
+    LoadOtherPlayersCustomSkins
 }
 
 internal static class ModLocalization
@@ -855,8 +856,30 @@ internal static class ModLocalization
         }
     }
 
+    private static readonly IReadOnlyDictionary<string, string> MultiplayerSkinLoadingTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "Load other players' custom skins",
+            ["zhs"] = "加载其他玩家的自定义皮肤",
+            ["zht"] = "載入其他玩家的自訂外觀",
+            ["deu"] = "Eigene Skins anderer Spieler laden",
+            ["esp"] = "Cargar aspectos personalizados de otros jugadores",
+            ["fra"] = "Charger les skins personnalisés des autres joueurs",
+            ["ita"] = "Carica le skin personalizzate degli altri giocatori",
+            ["jpn"] = "他のプレイヤーのカスタムスキンを読み込む",
+            ["kor"] = "다른 플레이어의 사용자 스킨 불러오기",
+            ["pol"] = "Wczytuj niestandardowe skórki innych graczy",
+            ["ptb"] = "Carregar visuais personalizados de outros jogadores",
+            ["rus"] = "Загружать пользовательские облики других игроков",
+            ["spa"] = "Cargar aspectos personalizados de otros jugadores",
+            ["tha"] = "โหลดสกินกำหนดเองของผู้เล่นอื่น",
+            ["tur"] = "Diğer oyuncuların özel görünümlerini yükle"
+        };
+
     public static string Get(ModText text) =>
-        text >= ModText.ModelTransform
+        text == ModText.LoadOtherPlayersCustomSkins
+            ? MultiplayerSkinLoadingTexts[CurrentLanguage]
+            : text >= ModText.ModelTransform
             ? AdjustmentPacks[CurrentLanguage].Get(text)
             : text >= ModText.CharacterAppearance
             ? AppearancePacks[CurrentLanguage].Get(text)

@@ -19,6 +19,7 @@ namespace STS2SkinChanger.Ui;
 internal static partial class ContextualSkinControls
 {
     private const string SelectorName = "STS2SkinSelector";
+    private const string MultiplayerSkinLoadingToggleName = "MultiplayerSkinLoadingToggle";
     private const string DropdownName = "SkinDropdown";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
@@ -78,6 +79,7 @@ internal static partial class ContextualSkinControls
         }
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
+        RefreshMultiplayerSkinLoadingToggle(screen, group != null);
         if (group != null)
         {
             // 游戏的 SelectCharacter 每次点击都会清空 AnimatedBg 并重新实例化原版背景，
@@ -143,6 +145,7 @@ internal static partial class ContextualSkinControls
         var existing = infoPanel.GetNodeOrNull<HBoxContainer>(SelectorName);
         if (existing != null)
         {
+            EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
             return existing;
         }
 
@@ -156,8 +159,76 @@ internal static partial class ContextualSkinControls
         selector.OffsetRight = 122;
         selector.OffsetBottom = -36;
         infoPanel.AddChild(selector);
+        EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
         ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
         return selector;
+    }
+
+    private static void EnsureMultiplayerSkinLoadingToggle(
+        NCharacterSelectScreen screen,
+        Control infoPanel)
+    {
+        var toggle = infoPanel.GetNodeOrNull<CheckButton>(MultiplayerSkinLoadingToggleName);
+        if (!IsMultiplayerCharacterSelect(screen))
+        {
+            if (toggle != null)
+            {
+                toggle.Visible = false;
+            }
+            return;
+        }
+
+        if (toggle == null)
+        {
+            toggle = new CheckButton
+            {
+                Name = MultiplayerSkinLoadingToggleName,
+                AnchorLeft = 0.5f,
+                AnchorTop = 0f,
+                AnchorRight = 0.5f,
+                AnchorBottom = 0f,
+                OffsetLeft = -190f,
+                OffsetTop = -128f,
+                OffsetRight = 190f,
+                OffsetBottom = -84f,
+                Alignment = HorizontalAlignment.Center,
+                MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
+            };
+            toggle.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            toggle.AddThemeColorOverride("font_hover_color", Colors.White);
+            toggle.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
+            toggle.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+            toggle.AddThemeConstantOverride("outline_size", 3);
+            toggle.AddThemeFontSizeOverride("font_size", 18);
+            if (GameFont != null)
+            {
+                toggle.AddThemeFontOverride("font", GameFont);
+            }
+            toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
+            toggle.Toggled += SkinService.SetLoadOtherPlayersCustomSkins;
+            infoPanel.AddChild(toggle);
+            ModLocalization.Bind(toggle, () =>
+            {
+                toggle.Text = ModLocalization.Get(ModText.LoadOtherPlayersCustomSkins);
+                toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
+            });
+        }
+
+        toggle.Visible = true;
+    }
+
+    private static void RefreshMultiplayerSkinLoadingToggle(
+        NCharacterSelectScreen screen,
+        bool hasSkinGroup)
+    {
+        var toggle = screen.GetNodeOrNull<CheckButton>(
+            $"InfoPanel/{MultiplayerSkinLoadingToggleName}");
+        if (toggle != null)
+        {
+            toggle.Visible = hasSkinGroup && IsMultiplayerCharacterSelect(screen);
+            toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
+        }
     }
 
     private static HBoxContainer EnsureMonsterSelector(NBestiary screen)
@@ -372,6 +443,13 @@ internal static partial class ContextualSkinControls
         if (selector != null)
         {
             selector.Visible = false;
+        }
+
+        var toggle = screen.GetNodeOrNull<Control>(
+            $"InfoPanel/{MultiplayerSkinLoadingToggleName}");
+        if (toggle != null)
+        {
+            toggle.Visible = false;
         }
     }
 
