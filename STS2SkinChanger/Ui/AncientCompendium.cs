@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
@@ -546,6 +547,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         var root = new Control { Name = "RuntimeAncientBackground" };
         root.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        ManagedAncientStaticBackground.Mark(root);
         var image = new TextureRect
         {
             Name = "Image",
@@ -946,6 +948,7 @@ internal static class AncientRuntimeAppearance
             }
 
             container.AddChild(newRoot);
+            ManagedAncientStaticBackground.Fit(newRoot);
             ManagedAncientLayeredImage.TryApply(group.Id, newRoot);
             ManagedAncientSceneAnimation.TryStart(group.Id, newRoot);
             foreach (var oldRoot in oldRoots)
@@ -978,6 +981,66 @@ internal static class AncientRuntimeAppearance
     }
 }
 
+internal static class ManagedAncientStaticBackground
+{
+    private const string ManagedRootMeta = "sts2_skin_changer_static_ancient_background";
+
+    internal static void Mark(Control root) => root.SetMeta(ManagedRootMeta, true);
+
+    internal static void Fit(Node sceneRoot)
+    {
+        if (sceneRoot is not Control root ||
+            !root.HasMeta(ManagedRootMeta) ||
+            !root.GetMeta(ManagedRootMeta).AsBool())
+        {
+            return;
+        }
+
+        root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        if (root.GetParent() is not NAncientBgContainer container)
+        {
+            root.OffsetLeft = 0f;
+            root.OffsetTop = 0f;
+            root.OffsetRight = 0f;
+            root.OffsetBottom = 0f;
+            return;
+        }
+
+        // NAncientBgContainer deliberately scales and shifts the game's authored 2560x1200
+        // scenes for each window ratio. A generated full-rect image would be scaled a second
+        // time and expose the black room background. Expand it through the inverse container
+        // transform so its visible result still covers the complete event layout.
+        var scale = container.Scale;
+        if (Mathf.IsZeroApprox(scale.X) || Mathf.IsZeroApprox(scale.Y))
+        {
+            return;
+        }
+
+        var pivot = container.PivotOffset;
+        var position = container.Position;
+        var size = container.Size;
+        var topLeft = new Vector2(
+            pivot.X + (-position.X - pivot.X) / scale.X,
+            pivot.Y + (-position.Y - pivot.Y) / scale.Y);
+        var bottomRight = new Vector2(
+            pivot.X + (size.X - position.X - pivot.X) / scale.X,
+            pivot.Y + (size.Y - position.Y - pivot.Y) / scale.Y);
+
+        root.OffsetLeft = topLeft.X;
+        root.OffsetTop = topLeft.Y;
+        root.OffsetRight = bottomRight.X - size.X;
+        root.OffsetBottom = bottomRight.Y - size.Y;
+    }
+
+    internal static void FitChildren(NAncientBgContainer container)
+    {
+        foreach (Node child in container.GetChildren())
+        {
+            Fit(child);
+        }
+    }
+}
+
 [HarmonyPatch(typeof(NAncientEventLayout), "InitializeVisuals")]
 internal static class ManagedAncientSceneAnimationPatch
 {
@@ -994,6 +1057,7 @@ internal static class ManagedAncientSceneAnimationPatch
             var sceneRoot = container?.GetChildCount() > 0 ? container.GetChild(0) : null;
             if (sceneRoot != null)
             {
+                ManagedAncientStaticBackground.Fit(sceneRoot);
                 ManagedAncientLayeredImage.TryApply(group.Id, sceneRoot);
                 ManagedAncientSceneAnimation.TryStart(group.Id, sceneRoot);
             }
@@ -1003,6 +1067,13 @@ internal static class ManagedAncientSceneAnimationPatch
             ModLog.Warn("在游戏内启动先古 Spine 动画失败：" + exception.Message);
         }
     }
+}
+
+[HarmonyPatch(typeof(NAncientBgContainer), "OnWindowChange")]
+internal static class ManagedAncientStaticBackgroundWindowPatch
+{
+    private static void Postfix(NAncientBgContainer __instance) =>
+        ManagedAncientStaticBackground.FitChildren(__instance);
 }
 
 [HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu._Ready))]
