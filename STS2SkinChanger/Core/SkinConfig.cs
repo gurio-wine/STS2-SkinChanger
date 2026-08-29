@@ -71,9 +71,14 @@ internal sealed class SkinConfig
     public Dictionary<string, List<string>> MonsterSkinCategoryGroups { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // Legacy migration state from the short-lived region master switch implementation.
     public List<string> EnabledMonsterSkinPriorityCategories { get; set; } = [];
 
     public List<string> MonsterGroupsFollowingCategory { get; set; } = [];
+
+    public List<string> MonsterGroupsWithManualSelection { get; set; } = [];
+
+    public int MonsterPriorityDefaultsVersion { get; set; }
 
     public Dictionary<string, Dictionary<string, float>> MonsterScales { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
@@ -184,6 +189,11 @@ internal sealed class SkinConfig
             .ToList();
         config.MonsterGroupsFollowingCategory ??= [];
         config.MonsterGroupsFollowingCategory = config.MonsterGroupsFollowingCategory
+            .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        config.MonsterGroupsWithManualSelection ??= [];
+        config.MonsterGroupsWithManualSelection = config.MonsterGroupsWithManualSelection
             .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();

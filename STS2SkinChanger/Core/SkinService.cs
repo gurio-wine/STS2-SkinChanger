@@ -435,11 +435,22 @@ internal static class SkinService
                 StringComparer.OrdinalIgnoreCase);
             var previousVisualProviderPriority = Config.VisualProviderPriority.ToList();
             var previousFollowingGroups = Config.MonsterGroupsFollowingCategory.ToList();
+            var previousManualGroups = Config.MonsterGroupsWithManualSelection.ToList();
             var affectedGroups = updates.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
                 Config.MonsterGroupsFollowingCategory.RemoveAll(candidate =>
                     affectedGroups.Contains(candidate));
+                foreach (var affectedGroup in affectedGroups.Where(affectedGroup =>
+                             Config.MonsterSkinCategoryGroups.Values.Any(groupIds =>
+                                 groupIds.Contains(affectedGroup, StringComparer.OrdinalIgnoreCase)) &&
+                             !Config.MonsterGroupsWithManualSelection.Contains(
+                                 affectedGroup,
+                                 StringComparer.OrdinalIgnoreCase)))
+                {
+                    Config.MonsterGroupsWithManualSelection.Add(affectedGroup);
+                }
+
                 foreach (var update in updates)
                 {
                     Config.Selections[update.Key] = update.Value;
@@ -461,6 +472,7 @@ internal static class SkinService
                 }
                 Config.VisualProviderPriority = previousVisualProviderPriority;
                 Config.MonsterGroupsFollowingCategory = previousFollowingGroups;
+                Config.MonsterGroupsWithManualSelection = previousManualGroups;
 
                 TryRestoreOverlay(affectedGroups, cardOverlay: false);
                 LastError = exception.Message;
@@ -713,11 +725,10 @@ internal static class SkinService
                 return true;
             }
 
-            var priorityEnabled = IsMonsterSkinPriorityEnabled(categoryId);
             return ChangeMonsterPriorityConfiguration(
                 categoryId,
                 () => Config.MonsterSkinCategoryGroups[categoryId] = knownGroupIds,
-                adoptOriginalGroups: priorityEnabled);
+                adoptUnconfiguredGroups: true);
         }
     }
 
@@ -749,30 +760,6 @@ internal static class SkinService
         }
     }
 
-    public static bool IsMonsterSkinPriorityEnabled(string categoryId) =>
-        Config.EnabledMonsterSkinPriorityCategories.Contains(
-            categoryId,
-            StringComparer.OrdinalIgnoreCase);
-
-    public static bool SetMonsterSkinPriorityEnabled(string categoryId, bool enabled)
-    {
-        lock (Sync)
-        {
-            return ChangeMonsterPriorityConfiguration(
-                categoryId,
-                () =>
-                {
-                    Config.EnabledMonsterSkinPriorityCategories.RemoveAll(candidate =>
-                        candidate.Equals(categoryId, StringComparison.OrdinalIgnoreCase));
-                    if (enabled)
-                    {
-                        Config.EnabledMonsterSkinPriorityCategories.Add(categoryId);
-                    }
-                },
-                adoptOriginalGroups: enabled);
-        }
-    }
-
     public static bool SetMonsterPriorityOptionEnabled(
         string categoryId,
         string optionId,
@@ -794,7 +781,7 @@ internal static class SkinService
             return ChangeMonsterPriorityConfiguration(
                 categoryId,
                 () => Config.MonsterSkinPriorities[categoryId] = entries,
-                adoptOriginalGroups: false);
+                adoptUnconfiguredGroups: false);
         }
     }
 
@@ -817,7 +804,7 @@ internal static class SkinService
             return ChangeMonsterPriorityConfiguration(
                 categoryId,
                 () => Config.MonsterSkinPriorities[categoryId] = entries,
-                adoptOriginalGroups: false);
+                adoptUnconfiguredGroups: false);
         }
     }
 
@@ -843,6 +830,8 @@ internal static class SkinService
                 categoryId,
                 () =>
                 {
+                    Config.MonsterGroupsWithManualSelection.RemoveAll(candidate =>
+                        candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
                     if (!Config.MonsterGroupsFollowingCategory.Contains(
                             groupId,
                             StringComparer.OrdinalIgnoreCase))
@@ -850,14 +839,14 @@ internal static class SkinService
                         Config.MonsterGroupsFollowingCategory.Add(groupId);
                     }
                 },
-                adoptOriginalGroups: false);
+                adoptUnconfiguredGroups: false);
         }
     }
 
     private static bool ChangeMonsterPriorityConfiguration(
         string categoryId,
         Action mutation,
-        bool adoptOriginalGroups)
+        bool adoptUnconfiguredGroups)
     {
         var previousSelections = new Dictionary<string, string>(
             Config.Selections,
@@ -872,6 +861,7 @@ internal static class SkinService
             StringComparer.OrdinalIgnoreCase);
         var previousEnabledCategories = Config.EnabledMonsterSkinPriorityCategories.ToList();
         var previousFollowingGroups = Config.MonsterGroupsFollowingCategory.ToList();
+        var previousManualGroups = Config.MonsterGroupsWithManualSelection.ToList();
         var previousVisualProviderPriority = Config.VisualProviderPriority.ToList();
         var affectedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
@@ -882,12 +872,12 @@ internal static class SkinService
                 throw new InvalidOperationException($"未知的怪物图鉴分类：{categoryId}");
             }
 
-            if (adoptOriginalGroups)
+            if (adoptUnconfiguredGroups)
             {
                 foreach (var groupId in categoryGroups.Where(groupId =>
-                             Config.GetSelection(groupId).Equals(
-                                 SkinCatalog.BaseOptionId,
-                                 StringComparison.OrdinalIgnoreCase)))
+                             !Config.MonsterGroupsWithManualSelection.Contains(
+                                 groupId,
+                                 StringComparer.OrdinalIgnoreCase)))
                 {
                     if (!Config.MonsterGroupsFollowingCategory.Contains(
                             groupId,
@@ -930,6 +920,7 @@ internal static class SkinService
             Config.MonsterSkinCategoryGroups = previousCategories;
             Config.EnabledMonsterSkinPriorityCategories = previousEnabledCategories;
             Config.MonsterGroupsFollowingCategory = previousFollowingGroups;
+            Config.MonsterGroupsWithManualSelection = previousManualGroups;
             Config.VisualProviderPriority = previousVisualProviderPriority;
             foreach (var groupId in restoreGroups)
             {
@@ -3392,16 +3383,60 @@ internal static class SkinService
                 StringComparer.OrdinalIgnoreCase);
         var knownCategoryIds = Config.MonsterSkinCategoryGroups.Keys
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        Config.EnabledMonsterSkinPriorityCategories = Config.EnabledMonsterSkinPriorityCategories
+        var legacyEnabledCategoryIds = Config.EnabledMonsterSkinPriorityCategories
             .Where(knownCategoryIds.Contains)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var categorizedGroupIds = Config.MonsterSkinCategoryGroups.Values
             .SelectMany(groupIds => groupIds)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Config.MonsterGroupsWithManualSelection = Config.MonsterGroupsWithManualSelection
+            .Where(knownGroupIds.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         Config.MonsterGroupsFollowingCategory = Config.MonsterGroupsFollowingCategory
             .Where(categorizedGroupIds.Contains)
+            .Where(groupId => !Config.MonsterGroupsWithManualSelection.Contains(
+                groupId,
+                StringComparer.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (Config.MonsterPriorityDefaultsVersion < 1)
+        {
+            foreach (var groupId in categorizedGroupIds.Where(groupId =>
+                         !Config.MonsterGroupsFollowingCategory.Contains(
+                             groupId,
+                             StringComparer.OrdinalIgnoreCase) &&
+                         !Config.MonsterGroupsWithManualSelection.Contains(
+                             groupId,
+                             StringComparer.OrdinalIgnoreCase) &&
+                         !Config.GetSelection(groupId).Equals(
+                             SkinCatalog.BaseOptionId,
+                             StringComparison.OrdinalIgnoreCase)))
+            {
+                Config.MonsterGroupsWithManualSelection.Add(groupId);
+            }
+
+            foreach (var categoryId in knownCategoryIds)
+            {
+                var entries = GetMonsterPriorityEntriesInternal(categoryId).ToList();
+                if (!legacyEnabledCategoryIds.Contains(categoryId))
+                {
+                    Config.MonsterSkinPriorities[categoryId] = entries
+                        .Select(entry => entry with { Enabled = false })
+                        .ToList();
+                }
+            }
+
+            Config.MonsterPriorityDefaultsVersion = 1;
+        }
+
+        Config.EnabledMonsterSkinPriorityCategories.Clear();
+        Config.MonsterGroupsFollowingCategory = categorizedGroupIds
+            .Where(groupId => !Config.MonsterGroupsWithManualSelection.Contains(
+                groupId,
+                StringComparer.OrdinalIgnoreCase))
             .ToList();
 
         foreach (var categoryId in knownCategoryIds)
@@ -3428,7 +3463,7 @@ internal static class SkinService
         foreach (var option in options.Where(option => entries.All(entry =>
                      !entry.OptionId.Equals(option.OptionId, StringComparison.OrdinalIgnoreCase))))
         {
-            entries.Add(new MonsterSkinPriorityEntry(option.OptionId, Enabled: true));
+            entries.Add(new MonsterSkinPriorityEntry(option.OptionId, Enabled: false));
         }
 
         Config.MonsterSkinPriorities[categoryId] = MergeKnownMonsterPriorityEntries(
@@ -3481,7 +3516,6 @@ internal static class SkinService
         var workingSelections = new Dictionary<string, string>(
             Config.Selections,
             StringComparer.OrdinalIgnoreCase);
-        var categoryEnabled = IsMonsterSkinPriorityEnabled(categoryId);
         var entries = GetMonsterPriorityEntriesInternal(categoryId);
         var managedGroupIds = categoryGroupIds
             .Where(groupId => Config.MonsterGroupsFollowingCategory.Contains(
@@ -3498,15 +3532,13 @@ internal static class SkinService
                 {
                     var group = catalog.Groups.First(candidate =>
                         candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-                    return categoryEnabled
-                        ? entries.FirstOrDefault(entry =>
-                            entry.Enabled &&
-                            !excludedFullProviders.Contains(entry.OptionId) &&
-                            group.Options.Any(option => option.Id.Equals(
-                                entry.OptionId,
-                                StringComparison.OrdinalIgnoreCase)))?.OptionId ??
-                          SkinCatalog.BaseOptionId
-                        : SkinCatalog.BaseOptionId;
+                    return entries.FirstOrDefault(entry =>
+                        entry.Enabled &&
+                        !excludedFullProviders.Contains(entry.OptionId) &&
+                        group.Options.Any(option => option.Id.Equals(
+                            entry.OptionId,
+                            StringComparison.OrdinalIgnoreCase)))?.OptionId ??
+                        SkinCatalog.BaseOptionId;
                 },
                 StringComparer.OrdinalIgnoreCase);
             var invalidFullProviders = desiredSelections.Values

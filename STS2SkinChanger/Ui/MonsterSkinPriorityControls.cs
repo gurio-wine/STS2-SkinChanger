@@ -8,6 +8,8 @@ namespace STS2SkinChanger.Ui;
 
 internal static partial class ContextualSkinControls
 {
+    private const string MonsterPriorityHeaderName = "MonsterSkinPriorityHeader";
+    private const string MonsterPriorityRegionLabelName = "MonsterSkinPriorityRegionLabel";
     private const string MonsterPriorityButtonName = "MonsterSkinPriorityButton";
     private const string MonsterPriorityOverlayName = "MonsterSkinPriorityOverlay";
     private const string MonsterPriorityPanelName = "PriorityPanel";
@@ -26,16 +28,55 @@ internal static partial class ContextualSkinControls
 
     private static void AttachMonsterPriorityControls(NBestiary screen, HBoxContainer selector)
     {
+        var header = new Control
+        {
+            Name = MonsterPriorityHeaderName,
+            AnchorLeft = 0.5f,
+            AnchorRight = 0.5f,
+            OffsetLeft = -330,
+            OffsetTop = 72,
+            OffsetRight = 330,
+            OffsetBottom = 118,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            Visible = false,
+            ZIndex = 10
+        };
+        var regionLabel = new Label
+        {
+            Name = MonsterPriorityRegionLabelName,
+            AnchorLeft = 0.5f,
+            AnchorRight = 0.5f,
+            OffsetLeft = -295,
+            OffsetRight = -109,
+            OffsetBottom = 42,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        regionLabel.AddThemeFontSizeOverride("font_size", 23);
+        regionLabel.AddThemeColorOverride("font_color", new Color("efc850"));
+        regionLabel.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+        regionLabel.AddThemeConstantOverride("outline_size", 4);
+        if (GameFont != null)
+        {
+            regionLabel.AddThemeFontOverride("font", GameFont);
+        }
+        header.AddChild(regionLabel);
+
         var button = new Button
         {
             Name = MonsterPriorityButtonName,
-            CustomMinimumSize = new Vector2(190, 42),
+            AnchorLeft = 0.5f,
+            AnchorRight = 0.5f,
+            OffsetLeft = -95,
+            OffsetRight = 95,
+            OffsetBottom = 42,
             FocusMode = Control.FocusModeEnum.None,
-            MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-            Visible = false
+            MouseDefaultCursorShape = Control.CursorShape.PointingHand
         };
         ApplyCompactButtonTheme(button);
-        selector.AddChild(button);
+        header.AddChild(button);
+        screen.AddChild(header);
 
         var overlay = CreateMonsterPriorityOverlay();
         screen.AddChild(overlay);
@@ -128,8 +169,11 @@ internal static partial class ContextualSkinControls
 
     private static void RefreshMonsterPriorityButton(HBoxContainer selector)
     {
-        var button = selector.GetNodeOrNull<Button>(MonsterPriorityButtonName);
-        if (button == null)
+        var screen = selector.GetParent() as NBestiary;
+        var header = screen?.GetNodeOrNull<Control>(MonsterPriorityHeaderName);
+        var button = header?.GetNodeOrNull<Button>(MonsterPriorityButtonName);
+        var regionLabel = header?.GetNodeOrNull<Label>(MonsterPriorityRegionLabelName);
+        if (header == null || button == null || regionLabel == null)
         {
             return;
         }
@@ -138,10 +182,9 @@ internal static partial class ContextualSkinControls
         var options = string.IsNullOrWhiteSpace(categoryId)
             ? []
             : SkinService.GetMonsterPriorityOptions(categoryId);
-        button.Visible = options.Count > 0;
-        button.Text = string.Format(
-            ModLocalization.Get(ModText.MonsterSkinPriority),
-            options.Count(option => option.Enabled));
+        header.Visible = options.Count > 0;
+        regionLabel.Text = selector.GetMeta(MonsterCategoryNameMeta, string.Empty).AsString();
+        button.Text = ModLocalization.Get(ModText.MonsterSkinPriority);
         button.TooltipText = ModLocalization.Get(ModText.MonsterPriorityTooltip);
     }
 
@@ -186,9 +229,9 @@ internal static partial class ContextualSkinControls
             AnchorRight = 0.5f,
             AnchorBottom = 0.5f,
             OffsetLeft = -360,
-            OffsetTop = -270,
+            OffsetTop = -245,
             OffsetRight = 360,
-            OffsetBottom = 270
+            OffsetBottom = 245
         };
         panel.AddThemeStyleboxOverride(
             "panel",
@@ -240,9 +283,7 @@ internal static partial class ContextualSkinControls
 
         var title = new Label
         {
-            Text = categoryName + " · " + string.Format(
-                ModLocalization.Get(ModText.MonsterSkinPriority),
-                options.Count(option => option.Enabled)),
+            Text = categoryName + " · " + ModLocalization.Get(ModText.MonsterSkinPriority),
             HorizontalAlignment = HorizontalAlignment.Center,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
@@ -253,24 +294,6 @@ internal static partial class ContextualSkinControls
             title.AddThemeFontOverride("font", GameFont);
         }
         content.AddChild(title);
-
-        var usePriority = new CheckBox
-        {
-            Text = ModLocalization.Get(ModText.UseMonsterCategoryPriority),
-            ButtonPressed = SkinService.IsMonsterSkinPriorityEnabled(categoryId),
-            CustomMinimumSize = new Vector2(650, 38),
-            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter
-        };
-        ApplyGameTheme(usePriority);
-        usePriority.AddThemeFontSizeOverride("font_size", 19);
-        usePriority.AddThemeColorOverride("font_color", new Color("efc850"));
-        usePriority.Toggled += enabled => QueueMonsterPriorityChange(
-            screen,
-            selector,
-            overlay,
-            categoryId,
-            () => SkinService.SetMonsterSkinPriorityEnabled(categoryId, enabled));
-        content.AddChild(usePriority);
 
         var scroll = new ScrollContainer
         {

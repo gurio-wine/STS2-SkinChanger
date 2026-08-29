@@ -173,9 +173,9 @@ internal static partial class ContextualSkinControls
         AddMonsterScaleControls(screen, selector);
         selector.AnchorLeft = 0.5f;
         selector.AnchorRight = 0.5f;
-        selector.OffsetLeft = -470;
+        selector.OffsetLeft = -350;
         selector.OffsetTop = 168;
-        selector.OffsetRight = 470;
+        selector.OffsetRight = 350;
         selector.OffsetBottom = 212;
         screen.AddChild(selector);
         ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
