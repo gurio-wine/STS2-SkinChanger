@@ -120,6 +120,7 @@ internal static partial class ContextualSkinControls
     public static void ShowMonster(NBestiary screen, NBestiaryEntry entry)
     {
         var selector = EnsureMonsterSelector(screen);
+        SetMonsterPriorityContext(selector, ResolveMonsterSkinCategory(entry));
         var monster = entry.IsDiscovered ? entry.Entry.monsterModel : null;
         var group = monster == null
             ? null
@@ -168,12 +169,13 @@ internal static partial class ContextualSkinControls
         }
 
         var selector = BuildSelector();
+        AttachMonsterPriorityControls(screen, selector);
         AddMonsterScaleControls(screen, selector);
         selector.AnchorLeft = 0.5f;
         selector.AnchorRight = 0.5f;
-        selector.OffsetLeft = -350;
+        selector.OffsetLeft = -470;
         selector.OffsetTop = 168;
-        selector.OffsetRight = 350;
+        selector.OffsetRight = 470;
         selector.OffsetBottom = 212;
         screen.AddChild(selector);
         ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
@@ -234,6 +236,8 @@ internal static partial class ContextualSkinControls
         {
             reset.Text = ModLocalization.Get(ModText.Reset);
         }
+
+        RefreshMonsterPriorityButton(selector);
     }
 
     private static Label BuildCompactLabel(string text, float width)
@@ -409,8 +413,15 @@ internal static partial class ContextualSkinControls
         selector.SetMeta(UpdatingMeta, true);
         selector.SetMeta(GroupMeta, group.Id);
         dropdown.Clear();
+        if (HasMonsterPriorityContext(selector))
+        {
+            dropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
+            dropdown.SetItemMetadata(0, SkinService.InheritMonsterSelectionId);
+        }
+
+        var defaultIndex = dropdown.ItemCount;
         dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
-        dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
+        dropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
         foreach (var option in group.Options)
         {
             var index = dropdown.ItemCount;
@@ -418,7 +429,9 @@ internal static partial class ContextualSkinControls
             dropdown.SetItemMetadata(index, option.Id);
         }
 
-        var selected = SkinService.Config.GetSelection(group.Id);
+        var selected = HasMonsterPriorityContext(selector)
+            ? SkinService.GetMonsterOverrideSelection(group.Id)
+            : SkinService.Config.GetSelection(group.Id);
         var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
             .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
                 .Equals(selected, StringComparison.OrdinalIgnoreCase));
@@ -426,6 +439,7 @@ internal static partial class ContextualSkinControls
         PopulateMonsterScale(selector, group.Id);
         selector.SetMeta(UpdatingMeta, false);
         selector.Visible = true;
+        RefreshMonsterPriorityButton(selector);
     }
 
     private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
@@ -484,10 +498,17 @@ internal static partial class ContextualSkinControls
 
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
-        if (!SkinService.ApplySelection(groupId, optionId))
+        var applied = optionId.Equals(
+            SkinService.InheritMonsterSelectionId,
+            StringComparison.OrdinalIgnoreCase)
+            ? SkinService.FollowMonsterCategoryPriority(groupId)
+            : SkinService.ApplySelection(groupId, optionId);
+        if (!applied)
         {
             ModLog.Error($"界面切换失败：{SkinService.LastError}");
-            var current = SkinService.Config.GetSelection(groupId);
+            var current = HasMonsterPriorityContext(selector)
+                ? SkinService.GetMonsterOverrideSelection(groupId)
+                : SkinService.Config.GetSelection(groupId);
             var currentIndex = Enumerable.Range(0, dropdown.ItemCount)
                 .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString()
                     .Equals(current, StringComparison.OrdinalIgnoreCase));

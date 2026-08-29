@@ -1,0 +1,426 @@
+using Godot;
+using MegaCrit.Sts2.Core.Localization;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
+using STS2SkinChanger.Core;
+
+namespace STS2SkinChanger.Ui;
+
+internal static partial class ContextualSkinControls
+{
+    private const string MonsterPriorityButtonName = "MonsterSkinPriorityButton";
+    private const string MonsterPriorityOverlayName = "MonsterSkinPriorityOverlay";
+    private const string MonsterPriorityPanelName = "PriorityPanel";
+    private const string MonsterPriorityMarginName = "PriorityMargin";
+    private const string MonsterPriorityContentName = "PriorityContent";
+    private const string MonsterCategoryMeta = "sts2_skin_monster_category";
+    private const string MonsterCategoryNameMeta = "sts2_skin_monster_category_name";
+
+    private static readonly Color[] MonsterPriorityColors =
+    [
+        new("df6688"), new("58b9d1"), new("e1a95f"), new("78c891"),
+        new("ad83d4"), new("e47d67"), new("71a3e3"), new("c4c85f")
+    ];
+    private static readonly Dictionary<string, IReadOnlyList<string>> MonsterCategoryGroupCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static void AttachMonsterPriorityControls(NBestiary screen, HBoxContainer selector)
+    {
+        var button = new Button
+        {
+            Name = MonsterPriorityButtonName,
+            CustomMinimumSize = new Vector2(190, 42),
+            FocusMode = Control.FocusModeEnum.None,
+            MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+            Visible = false
+        };
+        ApplyCompactButtonTheme(button);
+        selector.AddChild(button);
+
+        var overlay = CreateMonsterPriorityOverlay();
+        screen.AddChild(overlay);
+        overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        button.Pressed += () => OpenMonsterPriorityOverlay(screen, selector, overlay);
+        ModLocalization.Bind(overlay, () =>
+        {
+            if (overlay.Visible)
+            {
+                BuildMonsterPriorityOverlay(screen, selector, overlay);
+            }
+        });
+    }
+
+    private static MonsterSkinCategory? ResolveMonsterSkinCategory(NBestiaryEntry entry)
+    {
+        var encounter = entry.Entry.encounterModel;
+        if (encounter == null)
+        {
+            return null;
+        }
+
+        foreach (var act in ModelDb.Acts)
+        {
+            if (act.AllEncounters.Any(candidate => candidate.Id.Equals(encounter.Id)))
+            {
+                return BuildMonsterSkinCategory(
+                    "act:" + act.Id.Entry.ToLowerInvariant(),
+                    act.Title.GetFormattedText(),
+                    act.AllMonsters);
+            }
+        }
+
+        var eventEncounters = GetEventEncounters().ToArray();
+        if (eventEncounters.Any(candidate => candidate.Id.Equals(encounter.Id)))
+        {
+            return BuildMonsterSkinCategory(
+                "events",
+                new LocString("bestiary", "EVENTS.title").GetFormattedText(),
+                eventEncounters.SelectMany(candidate => candidate.AllPossibleMonsters));
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<EncounterModel> GetEventEncounters() =>
+        typeof(ModelDb).GetProperty("EventEncounters")?.GetValue(null) as IEnumerable<EncounterModel> ?? [];
+
+    private static MonsterSkinCategory BuildMonsterSkinCategory(
+        string id,
+        string displayName,
+        IEnumerable<MonsterModel> monsters)
+    {
+        if (MonsterCategoryGroupCache.TryGetValue(id, out var cachedGroupIds))
+        {
+            return new MonsterSkinCategory(id, displayName, cachedGroupIds);
+        }
+
+        var groupIds = monsters
+            .Where(monster => monster.ShouldShowInCompendium)
+            .Select(monster => FindGroup(monster.Id.Entry, monster.GetType().Name))
+            .Where(group => group is { Options.Count: > 0 })
+            .Select(group => group!.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        MonsterCategoryGroupCache[id] = groupIds;
+        return new MonsterSkinCategory(id, displayName, groupIds);
+    }
+
+    private static void SetMonsterPriorityContext(
+        HBoxContainer selector,
+        MonsterSkinCategory? category)
+    {
+        if (category == null || category.GroupIds.Count == 0 ||
+            !SkinService.RegisterMonsterSkinCategory(category.Id, category.GroupIds))
+        {
+            selector.RemoveMeta(MonsterCategoryMeta);
+            selector.RemoveMeta(MonsterCategoryNameMeta);
+            RefreshMonsterPriorityButton(selector);
+            return;
+        }
+
+        selector.SetMeta(MonsterCategoryMeta, category.Id);
+        selector.SetMeta(MonsterCategoryNameMeta, category.DisplayName);
+        RefreshMonsterPriorityButton(selector);
+    }
+
+    private static bool HasMonsterPriorityContext(HBoxContainer selector) =>
+        !string.IsNullOrWhiteSpace(selector.GetMeta(MonsterCategoryMeta, string.Empty).AsString());
+
+    private static void RefreshMonsterPriorityButton(HBoxContainer selector)
+    {
+        var button = selector.GetNodeOrNull<Button>(MonsterPriorityButtonName);
+        if (button == null)
+        {
+            return;
+        }
+
+        var categoryId = selector.GetMeta(MonsterCategoryMeta, string.Empty).AsString();
+        var options = string.IsNullOrWhiteSpace(categoryId)
+            ? []
+            : SkinService.GetMonsterPriorityOptions(categoryId);
+        button.Visible = options.Count > 0;
+        button.Text = string.Format(
+            ModLocalization.Get(ModText.MonsterSkinPriority),
+            options.Count(option => option.Enabled));
+        button.TooltipText = ModLocalization.Get(ModText.MonsterPriorityTooltip);
+    }
+
+    private static Control CreateMonsterPriorityOverlay()
+    {
+        var overlay = new Control
+        {
+            Name = MonsterPriorityOverlayName,
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 2000
+        };
+        var mask = new ColorRect
+        {
+            Name = "Mask",
+            Color = new Color(0f, 0f, 0f, 0.68f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        mask.GuiInput += input =>
+        {
+            if (input is not InputEventMouseButton
+                {
+                    Pressed: true,
+                    ButtonIndex: MouseButton.Left
+                })
+            {
+                return;
+            }
+
+            overlay.Visible = false;
+            mask.AcceptEvent();
+        };
+        overlay.AddChild(mask);
+        mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        var panel = new PanelContainer
+        {
+            Name = MonsterPriorityPanelName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -360,
+            OffsetTop = -270,
+            OffsetRight = 360,
+            OffsetBottom = 270
+        };
+        panel.AddThemeStyleboxOverride(
+            "panel",
+            CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        overlay.AddChild(panel);
+        var margin = new MarginContainer { Name = MonsterPriorityMarginName };
+        margin.AddThemeConstantOverride("margin_left", 20);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_right", 20);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
+        panel.AddChild(margin);
+        var content = new VBoxContainer { Name = MonsterPriorityContentName };
+        content.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(content);
+        return overlay;
+    }
+
+    private static void OpenMonsterPriorityOverlay(
+        NBestiary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        BuildMonsterPriorityOverlay(screen, selector, overlay);
+        overlay.Visible = true;
+        overlay.MoveToFront();
+    }
+
+    private static void BuildMonsterPriorityOverlay(
+        NBestiary screen,
+        HBoxContainer selector,
+        Control overlay)
+    {
+        var categoryId = selector.GetMeta(MonsterCategoryMeta, string.Empty).AsString();
+        var categoryName = selector.GetMeta(MonsterCategoryNameMeta, string.Empty).AsString();
+        var content = overlay.GetNode<VBoxContainer>(
+            $"{MonsterPriorityPanelName}/{MonsterPriorityMarginName}/{MonsterPriorityContentName}");
+        foreach (var child in content.GetChildren())
+        {
+            content.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        var options = SkinService.GetMonsterPriorityOptions(categoryId);
+        if (string.IsNullOrWhiteSpace(categoryId) || options.Count == 0)
+        {
+            overlay.Visible = false;
+            return;
+        }
+
+        var title = new Label
+        {
+            Text = categoryName + " · " + string.Format(
+                ModLocalization.Get(ModText.MonsterSkinPriority),
+                options.Count(option => option.Enabled)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        title.AddThemeFontSizeOverride("font_size", 25);
+        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        if (GameFont != null)
+        {
+            title.AddThemeFontOverride("font", GameFont);
+        }
+        content.AddChild(title);
+
+        var usePriority = new CheckBox
+        {
+            Text = ModLocalization.Get(ModText.UseMonsterCategoryPriority),
+            ButtonPressed = SkinService.IsMonsterSkinPriorityEnabled(categoryId),
+            CustomMinimumSize = new Vector2(650, 38),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter
+        };
+        ApplyGameTheme(usePriority);
+        usePriority.AddThemeFontSizeOverride("font_size", 19);
+        usePriority.AddThemeColorOverride("font_color", new Color("efc850"));
+        usePriority.Toggled += enabled => QueueMonsterPriorityChange(
+            screen,
+            selector,
+            overlay,
+            categoryId,
+            () => SkinService.SetMonsterSkinPriorityEnabled(categoryId, enabled));
+        content.AddChild(usePriority);
+
+        var scroll = new ScrollContainer
+        {
+            CustomMinimumSize = new Vector2(670, 350),
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        content.AddChild(scroll);
+        var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        rows.AddThemeConstantOverride("separation", 6);
+        scroll.AddChild(rows);
+
+        foreach (var option in options)
+        {
+            var row = new HBoxContainer
+            {
+                CustomMinimumSize = new Vector2(650, 42),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            row.AddThemeConstantOverride("separation", 8);
+            rows.AddChild(row);
+            row.AddChild(new ColorRect
+            {
+                Color = MonsterPriorityColors[option.ColorIndex % MonsterPriorityColors.Length],
+                CustomMinimumSize = new Vector2(13, 32),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            });
+
+            var enabled = new CheckBox
+            {
+                ButtonPressed = option.Enabled,
+                Text = ModLocalization.Get(ModText.EnabledForCategory),
+                CustomMinimumSize = new Vector2(88, 32),
+                TooltipText = ModLocalization.DisplayOptionName(option.Name)
+            };
+            ApplyGameTheme(enabled);
+            enabled.AddThemeFontSizeOverride("font_size", 17);
+            enabled.Toggled += value => QueueMonsterPriorityChange(
+                screen,
+                selector,
+                overlay,
+                categoryId,
+                () => SkinService.SetMonsterPriorityOptionEnabled(
+                    categoryId,
+                    option.OptionId,
+                    value));
+            row.AddChild(enabled);
+
+            var name = new Label
+            {
+                Text = ModLocalization.DisplayOptionName(option.Name),
+                ClipText = true,
+                CustomMinimumSize = new Vector2(270, 36),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                VerticalAlignment = VerticalAlignment.Center,
+                TooltipText = ModLocalization.DisplayOptionName(option.Name)
+            };
+            name.AddThemeFontSizeOverride("font_size", 18);
+            name.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            row.AddChild(name);
+
+            var coverage = new Label
+            {
+                Text = $"{option.Coverage}/{option.TotalMonsters}",
+                CustomMinimumSize = new Vector2(70, 36),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
+            coverage.AddThemeFontSizeOverride("font_size", 16);
+            coverage.AddThemeColorOverride("font_color", new Color("afcdde"));
+            row.AddChild(coverage);
+
+            var up = new Button
+            {
+                Text = "↑",
+                Disabled = option == options[0],
+                CustomMinimumSize = new Vector2(42, 34)
+            };
+            ApplyGameTheme(up);
+            up.AddThemeFontSizeOverride("font_size", 18);
+            up.Pressed += () => QueueMonsterPriorityChange(
+                screen,
+                selector,
+                overlay,
+                categoryId,
+                () => SkinService.MoveMonsterPriority(categoryId, option.OptionId, -1));
+            row.AddChild(up);
+
+            var down = new Button
+            {
+                Text = "↓",
+                Disabled = option == options[^1],
+                CustomMinimumSize = new Vector2(42, 34)
+            };
+            ApplyGameTheme(down);
+            down.AddThemeFontSizeOverride("font_size", 18);
+            down.Pressed += () => QueueMonsterPriorityChange(
+                screen,
+                selector,
+                overlay,
+                categoryId,
+                () => SkinService.MoveMonsterPriority(categoryId, option.OptionId, 1));
+            row.AddChild(down);
+        }
+
+        var close = new Button
+        {
+            Text = ModLocalization.Get(ModText.Close),
+            CustomMinimumSize = new Vector2(180, 42),
+            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter
+        };
+        ApplyGameTheme(close);
+        close.AddThemeFontSizeOverride("font_size", 19);
+        close.Pressed += () => overlay.Visible = false;
+        content.AddChild(close);
+    }
+
+    private static void QueueMonsterPriorityChange(
+        NBestiary screen,
+        HBoxContainer selector,
+        Control overlay,
+        string categoryId,
+        Func<bool> change)
+    {
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !change())
+            {
+                ModLog.Error($"调整怪物皮肤优先级失败：{SkinService.LastError}");
+                return;
+            }
+
+            var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+            var group = string.IsNullOrWhiteSpace(groupId) ? null : FindGroup(groupId);
+            if (group != null)
+            {
+                Populate(selector, group);
+            }
+
+            BuildMonsterPriorityOverlay(screen, selector, overlay);
+            RefreshMonsterPriorityButton(selector);
+            if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
+            {
+                RunRefresh(refresh);
+            }
+        }).CallDeferred();
+    }
+
+    private sealed record MonsterSkinCategory(
+        string Id,
+        string DisplayName,
+        IReadOnlyList<string> GroupIds);
+}

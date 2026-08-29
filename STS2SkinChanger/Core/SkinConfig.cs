@@ -42,6 +42,10 @@ internal sealed record CardSkinPriorityEntry(
     string OptionId,
     bool Enabled);
 
+internal sealed record MonsterSkinPriorityEntry(
+    string OptionId,
+    bool Enabled);
+
 internal sealed class SkinConfig
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -60,6 +64,16 @@ internal sealed class SkinConfig
         new(StringComparer.OrdinalIgnoreCase);
 
     public int CardPriorityDefaultsVersion { get; set; }
+
+    public Dictionary<string, List<MonsterSkinPriorityEntry>> MonsterSkinPriorities { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, List<string>> MonsterSkinCategoryGroups { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public List<string> EnabledMonsterSkinPriorityCategories { get; set; } = [];
+
+    public List<string> MonsterGroupsFollowingCategory { get; set; } = [];
 
     public Dictionary<string, Dictionary<string, float>> MonsterScales { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
@@ -146,6 +160,33 @@ internal sealed class SkinConfig
                 .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
                 .ToList(),
             StringComparer.OrdinalIgnoreCase);
+        config.MonsterSkinPriorities ??=
+            new Dictionary<string, List<MonsterSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
+        config.MonsterSkinPriorities = config.MonsterSkinPriorities.ToDictionary(
+            pair => pair.Key,
+            pair => (pair.Value ?? [])
+                .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
+                .ToList(),
+            StringComparer.OrdinalIgnoreCase);
+        config.MonsterSkinCategoryGroups ??=
+            new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        config.MonsterSkinCategoryGroups = config.MonsterSkinCategoryGroups.ToDictionary(
+            pair => pair.Key,
+            pair => (pair.Value ?? [])
+                .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            StringComparer.OrdinalIgnoreCase);
+        config.EnabledMonsterSkinPriorityCategories ??= [];
+        config.EnabledMonsterSkinPriorityCategories = config.EnabledMonsterSkinPriorityCategories
+            .Where(categoryId => !string.IsNullOrWhiteSpace(categoryId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        config.MonsterGroupsFollowingCategory ??= [];
+        config.MonsterGroupsFollowingCategory = config.MonsterGroupsFollowingCategory
+            .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         config.MonsterScales ??=
             new Dictionary<string, Dictionary<string, float>>(StringComparer.OrdinalIgnoreCase);
         config.MonsterScales = config.MonsterScales.ToDictionary(
