@@ -42,6 +42,8 @@ internal struct SkinChangerNetMessage : INetMessage
     public string ProviderId;
     public ulong WorkshopItemId;
     public string SafeResourceFingerprint;
+    public string SafeResourceManifest;
+    public string OnlineFailure;
 
     public bool ShouldBroadcast => false;
     public NetTransferMode Mode => NetTransferMode.Reliable;
@@ -59,6 +61,8 @@ internal struct SkinChangerNetMessage : INetMessage
         writer.WriteString(ProviderId ?? string.Empty);
         writer.WriteULong(WorkshopItemId);
         writer.WriteString(SafeResourceFingerprint ?? string.Empty);
+        writer.WriteString(SafeResourceManifest ?? string.Empty);
+        writer.WriteString(OnlineFailure ?? string.Empty);
     }
 
     public void Deserialize(PacketReader reader)
@@ -72,6 +76,8 @@ internal struct SkinChangerNetMessage : INetMessage
         ProviderId = reader.ReadString();
         WorkshopItemId = reader.ReadULong();
         SafeResourceFingerprint = reader.ReadString();
+        SafeResourceManifest = reader.ReadString();
+        OnlineFailure = reader.ReadString();
     }
 }
 
@@ -83,13 +89,13 @@ internal sealed record SessionCharacterSelection(
 
 internal static class MultiplayerSkinSync
 {
-    internal const byte ProtocolVersion = 4;
+    internal const byte ProtocolVersion = 5;
     internal const int ReservedMessageId = 254;
     private const double ReadyGateQuietSeconds = 0.75;
     private const double ReadyGateTimeoutSeconds = 180.0;
 
     private static readonly byte[] CapabilityMagic =
-        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x34, 0x21]; // GSCAP04!
+        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x35, 0x21]; // GSCAP05!
     private static readonly HashSet<ulong> CapablePeers = [];
     private static readonly Dictionary<ulong, SkinChangerNetMessage> AdvertisedSelections = [];
     private static readonly Dictionary<ulong, SessionCharacterSelection> AvailableSelections = [];
@@ -324,6 +330,7 @@ internal static class MultiplayerSkinSync
         _snapshotElapsed += delta;
         var allowOnlineDownloads = UpdateReadyGate(delta);
         OnlineSkinCache.Tick(allowOnlineDownloads);
+        MultiplayerSkinFailureDialog.TryShow();
         ContextualSkinControls.RefreshMultiplayerSkinLoadingStatus();
         UpdateReadyGateCompletion();
         if ((_snapshotStage == 0 && _snapshotElapsed >= 0.75) ||
@@ -557,6 +564,7 @@ internal static class MultiplayerSkinSync
 
         if (wasActive)
         {
+            OnlineSkinCache.ClearBlockingFailures();
             ModLog.Info("有玩家取消准备；已取消本轮最终皮肤准备，返回选角等待状态。");
         }
     }
@@ -890,7 +898,9 @@ internal static class MultiplayerSkinSync
             !ValidateText(message.GroupId) ||
             !ValidateText(message.OptionId) ||
             !ValidateOptionalText(message.ProviderId) ||
-            !ValidateOptionalText(message.SafeResourceFingerprint))
+            !ValidateOptionalText(message.SafeResourceFingerprint) ||
+            !ValidateOptionalText(message.OnlineFailure) ||
+            message.SafeResourceManifest is { Length: > 65536 })
         {
             return;
         }
@@ -972,7 +982,14 @@ internal static class MultiplayerSkinSync
                 MarkReadyResolutionActivity();
             }
             else if (message.OptionId != SkinCatalog.BaseOptionId &&
-                     !OnlineSkinCache.HasDownloadMetadata(message) &&
+                     OnlineSkinCache.IsWaitingForDownloadMetadata(message) &&
+                     IsReadyGateActive())
+            {
+                OnlineSkinCache.ReportWaitingForMetadata(message);
+                MarkReadyResolutionActivity();
+            }
+            else if (message.OptionId != SkinCatalog.BaseOptionId &&
+                     !string.IsNullOrWhiteSpace(message.OnlineFailure) &&
                      IsReadyGateActive())
             {
                 OnlineSkinCache.ReportMissingMetadata(message);
@@ -1031,6 +1048,8 @@ internal static class MultiplayerSkinSync
         }
     }
 
+    internal static bool IsReadyGateActiveForOnlineCache() => IsReadyGateActive();
+
     private static void RememberLocalAdvertisement(bool includeOnlineMetadata = false)
     {
         if (!TryGetLocalCharacter(out var playerNetId, out var character))
@@ -1055,14 +1074,34 @@ internal static class MultiplayerSkinSync
             GroupId = group.Id,
             OptionId = SkinService.Config.GetSelection(group.Id)
         };
-        if (includeOnlineMetadata && OnlineSkinCache.TryDescribeLocalSelection(
+        if (includeOnlineMetadata &&
+            !message.OptionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        {
+            var state = OnlineSkinCache.TryDescribeLocalSelection(
                 message.GroupId,
                 message.OptionId,
-                out var source))
-        {
-            message.ProviderId = source.ProviderId;
-            message.WorkshopItemId = source.WorkshopItemId;
-            message.SafeResourceFingerprint = source.SafeResourceFingerprint;
+                out var source,
+                out var failureDetail);
+            if (source != null)
+            {
+                message.ProviderId = source.ProviderId;
+                message.WorkshopItemId = source.WorkshopItemId;
+                message.SafeResourceFingerprint = source.SafeResourceFingerprint;
+                message.SafeResourceManifest = source.SafeResourceManifest;
+            }
+            if (state is OnlineSkinDescriptionState.Unavailable or OnlineSkinDescriptionState.Failed)
+            {
+                message.ProviderId = string.IsNullOrWhiteSpace(message.ProviderId)
+                    ? message.OptionId
+                    : message.ProviderId;
+                message.OnlineFailure = failureDetail;
+                OnlineSkinCache.ReportLocalDescriptionFailure(
+                    message.GroupId,
+                    message.OptionId,
+                    message.ProviderId,
+                    message.WorkshopItemId,
+                    failureDetail);
+            }
         }
         RememberAdvertisement(message);
     }

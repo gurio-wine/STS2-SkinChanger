@@ -967,6 +967,65 @@ internal static class ModLocalization
                     "{0} yüklenemedi; özgün görünüm kullanılıyor")
             };
 
+    private sealed record MultiplayerFailureLanguagePack(string Title, string Message);
+
+    private static readonly IReadOnlyDictionary<string, MultiplayerFailureLanguagePack>
+        MultiplayerFailurePacks =
+            new Dictionary<string, MultiplayerFailureLanguagePack>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["eng"] = new(
+                    "Custom skin could not be loaded",
+                    "[b]{0}[/b] could not be loaded for this multiplayer run.\n\nReason: {1}\n\nAfter confirmation, this player will use the original skin on this computer."),
+                ["zhs"] = new(
+                    "无法加载联机皮肤",
+                    "本次联机无法加载 [b]{0}[/b]。\n\n原因：{1}\n\n确认后，该玩家将在本机使用原皮。"),
+                ["zht"] = new(
+                    "無法載入連線外觀",
+                    "本次連線無法載入 [b]{0}[/b]。\n\n原因：{1}\n\n確認後，該玩家將在此電腦使用原始外觀。"),
+                ["deu"] = new(
+                    "Online-Skin konnte nicht geladen werden",
+                    "[b]{0}[/b] konnte für diese Mehrspielerpartie nicht geladen werden.\n\nGrund: {1}\n\nNach der Bestätigung wird für diesen Spieler auf diesem PC der Original-Skin verwendet."),
+                ["esp"] = new(
+                    "No se pudo cargar el aspecto en línea",
+                    "No se pudo cargar [b]{0}[/b] en esta partida multijugador.\n\nMotivo: {1}\n\nTras confirmar, este jugador usará el aspecto original en este equipo."),
+                ["fra"] = new(
+                    "Impossible de charger le skin en ligne",
+                    "[b]{0}[/b] n’a pas pu être chargé pour cette partie multijoueur.\n\nRaison : {1}\n\nAprès confirmation, ce joueur utilisera le skin d’origine sur cet ordinateur."),
+                ["ita"] = new(
+                    "Impossibile caricare la skin online",
+                    "Impossibile caricare [b]{0}[/b] per questa partita multigiocatore.\n\nMotivo: {1}\n\nDopo la conferma, questo giocatore userà la skin originale su questo computer."),
+                ["jpn"] = new(
+                    "オンラインスキンを読み込めません",
+                    "このマルチプレイでは [b]{0}[/b] を読み込めませんでした。\n\n理由：{1}\n\n確認後、この端末では対象プレイヤーに原版スキンを使用します。"),
+                ["kor"] = new(
+                    "온라인 스킨을 불러올 수 없음",
+                    "이번 멀티플레이에서 [b]{0}[/b]을 불러올 수 없습니다.\n\n원인: {1}\n\n확인하면 이 컴퓨터에서는 해당 플레이어에게 원본 스킨을 사용합니다."),
+                ["pol"] = new(
+                    "Nie udało się wczytać skórki online",
+                    "Nie udało się wczytać [b]{0}[/b] w tej grze wieloosobowej.\n\nPowód: {1}\n\nPo potwierdzeniu ten gracz użyje na tym komputerze oryginalnej skórki."),
+                ["ptb"] = new(
+                    "Não foi possível carregar o visual online",
+                    "Não foi possível carregar [b]{0}[/b] nesta partida multijogador.\n\nMotivo: {1}\n\nApós confirmar, este jogador usará o visual original neste computador."),
+                ["rus"] = new(
+                    "Не удалось загрузить сетевой облик",
+                    "Не удалось загрузить [b]{0}[/b] для этой сетевой игры.\n\nПричина: {1}\n\nПосле подтверждения на этом компьютере для игрока будет использован оригинальный облик."),
+                ["spa"] = new(
+                    "No se pudo cargar el aspecto en línea",
+                    "No se pudo cargar [b]{0}[/b] en esta partida multijugador.\n\nMotivo: {1}\n\nTras confirmar, este jugador usará el aspecto original en este equipo."),
+                ["tha"] = new(
+                    "โหลดสกินออนไลน์ไม่สำเร็จ",
+                    "ไม่สามารถโหลด [b]{0}[/b] สำหรับเกมหลายผู้เล่นครั้งนี้ได้\n\nสาเหตุ: {1}\n\nหลังยืนยัน ผู้เล่นนี้จะใช้สกินดั้งเดิมบนเครื่องนี้"),
+                ["tur"] = new(
+                    "Çevrimiçi görünüm yüklenemedi",
+                    "Bu çok oyunculu oyun için [b]{0}[/b] yüklenemedi.\n\nNeden: {1}\n\nOnaydan sonra bu oyuncu bu bilgisayarda özgün görünümü kullanacak.")
+            };
+
+    internal static string GetOnlineSkinFailureTitle() =>
+        MultiplayerFailurePacks[CurrentLanguage].Title;
+
+    internal static string FormatOnlineSkinFailure(string providerId, string detail) =>
+        string.Format(MultiplayerFailurePacks[CurrentLanguage].Message, providerId, detail);
+
     internal static string FormatOnlineSkinCacheProgress(OnlineSkinCacheProgress progress)
     {
         var provider = string.IsNullOrWhiteSpace(progress.ProviderId)

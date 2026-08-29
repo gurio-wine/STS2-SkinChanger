@@ -15,7 +15,21 @@ namespace STS2SkinChanger.Core;
 internal sealed record OnlineSkinSource(
     string ProviderId,
     ulong WorkshopItemId,
-    string SafeResourceFingerprint);
+    string SafeResourceFingerprint,
+    string SafeResourceManifest);
+
+internal enum OnlineSkinDescriptionState
+{
+    Unavailable,
+    Preparing,
+    Ready,
+    Failed
+}
+
+internal sealed record OnlineSkinCacheFailure(
+    string Key,
+    string ProviderId,
+    string Detail);
 
 internal enum OnlineSkinCacheStage
 {
@@ -54,6 +68,10 @@ internal static partial class OnlineSkinCache
     private static readonly Queue<SkinChangerNetMessage> Pending = new();
     private static readonly HashSet<string> PendingKeys = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> DeclinedKeys = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, OnlineSkinCacheFailure> BlockingFailures =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> AcknowledgedFailureKeys =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, CachedProvider> Providers =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LocalSourceCacheEntry> LocalSources =
@@ -134,6 +152,8 @@ internal static partial class OnlineSkinCache
             Pending.Clear();
             PendingKeys.Clear();
             DeclinedKeys.Clear();
+            BlockingFailures.Clear();
+            AcknowledgedFailureKeys.Clear();
             providers = Providers.Values.ToArray();
             Providers.Clear();
             directory = _sessionDirectory;
@@ -198,7 +218,7 @@ internal static partial class OnlineSkinCache
         lock (Sync)
         {
             return LocalSourceBuilds.Count > 0 ||
-                   (allowDownloads && (_processing || Pending.Count > 0));
+                   (allowDownloads && (_processing || Pending.Count > 0 || BlockingFailures.Count > 0));
         }
     }
 
@@ -259,6 +279,7 @@ internal static partial class OnlineSkinCache
         {
             Pending.Clear();
             PendingKeys.Clear();
+            BlockingFailures.Clear();
             ResetProgressLocked();
         }
     }
@@ -267,11 +288,6 @@ internal static partial class OnlineSkinCache
     {
         lock (Sync)
         {
-            if (Pending.Count == 0)
-            {
-                return;
-            }
-
             var retained = Pending
                 .Where(message => message.PlayerNetId != playerNetId)
                 .ToArray();
@@ -281,6 +297,15 @@ internal static partial class OnlineSkinCache
             {
                 Pending.Enqueue(message);
                 PendingKeys.Add(RequestKey(message));
+            }
+
+            var failureKeys = BlockingFailures
+                .Where(pair => pair.Key.StartsWith($"remote:{playerNetId}:", StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Key)
+                .ToArray();
+            foreach (var failureKey in failureKeys)
+            {
+                BlockingFailures.Remove(failureKey);
             }
         }
     }
@@ -325,19 +350,111 @@ internal static partial class OnlineSkinCache
         message.WorkshopItemId != 0 &&
         !string.IsNullOrWhiteSpace(message.ProviderId) &&
         !string.IsNullOrWhiteSpace(message.SafeResourceFingerprint) &&
-        FingerprintRegex().IsMatch(message.SafeResourceFingerprint);
+        FingerprintRegex().IsMatch(message.SafeResourceFingerprint) &&
+        IsValidSafeResourceManifest(message.SafeResourceManifest);
+
+    internal static bool IsWaitingForDownloadMetadata(SkinChangerNetMessage message) =>
+        message.WorkshopItemId != 0 &&
+        !string.IsNullOrWhiteSpace(message.ProviderId) &&
+        string.IsNullOrWhiteSpace(message.SafeResourceFingerprint) &&
+        string.IsNullOrWhiteSpace(message.OnlineFailure);
 
     internal static void ReportMissingMetadata(SkinChangerNetMessage message)
     {
         var providerId = string.IsNullOrWhiteSpace(message.ProviderId)
             ? message.OptionId
             : message.ProviderId;
+        var detail = string.IsNullOrWhiteSpace(message.OnlineFailure)
+            ? "对方没有提供可下载的工坊资源信息。"
+            : message.OnlineFailure;
+        AddBlockingFailure(
+            $"remote:{message.PlayerNetId}:{message.GroupId}:{message.OptionId}",
+            providerId,
+            detail);
         SetProgress(
             OnlineSkinCacheStage.Failed,
             providerId,
             message.WorkshopItemId,
-            "对方没有提供可下载的工坊资源信息。",
-            TimeSpan.FromSeconds(8));
+            detail,
+            TimeSpan.FromDays(1));
+    }
+
+    internal static void ReportWaitingForMetadata(SkinChangerNetMessage message)
+    {
+        SetProgress(
+            OnlineSkinCacheStage.Preparing,
+            message.ProviderId,
+            message.WorkshopItemId);
+    }
+
+    internal static void ReportLocalDescriptionFailure(
+        string groupId,
+        string optionId,
+        string providerId,
+        ulong workshopItemId,
+        string detail)
+    {
+        if (!MultiplayerSkinSync.IsReadyGateActiveForOnlineCache())
+        {
+            return;
+        }
+
+        AddBlockingFailure(
+            $"local:{groupId}:{optionId}",
+            providerId,
+            detail);
+        SetProgress(
+            OnlineSkinCacheStage.Failed,
+            providerId,
+            workshopItemId,
+            detail,
+            TimeSpan.FromDays(1));
+    }
+
+    internal static bool TryPeekBlockingFailure(out OnlineSkinCacheFailure failure)
+    {
+        lock (Sync)
+        {
+            failure = BlockingFailures.Values.FirstOrDefault()!;
+            return failure != null;
+        }
+    }
+
+    internal static void AcknowledgeBlockingFailure(string key)
+    {
+        lock (Sync)
+        {
+            BlockingFailures.Remove(key);
+            AcknowledgedFailureKeys.Add(key);
+            if (BlockingFailures.Count == 0 && _progressStage == OnlineSkinCacheStage.Failed)
+            {
+                ResetProgressLocked();
+            }
+        }
+    }
+
+    internal static void ClearBlockingFailures()
+    {
+        lock (Sync)
+        {
+            BlockingFailures.Clear();
+            if (_progressStage == OnlineSkinCacheStage.Failed)
+            {
+                ResetProgressLocked();
+            }
+        }
+    }
+
+    private static void AddBlockingFailure(string key, string providerId, string detail)
+    {
+        lock (Sync)
+        {
+            if (AcknowledgedFailureKeys.Contains(key))
+            {
+                return;
+            }
+            BlockingFailures[key] = new OnlineSkinCacheFailure(key, providerId, detail);
+        }
     }
 
     internal static bool TryGetCachedOption(
@@ -357,22 +474,50 @@ internal static partial class OnlineSkinCache
         return false;
     }
 
-    internal static bool TryDescribeLocalSelection(
+    internal static OnlineSkinDescriptionState TryDescribeLocalSelection(
         string groupId,
         string optionId,
-        out OnlineSkinSource source)
+        out OnlineSkinSource source,
+        out string failureDetail)
     {
         source = null!;
+        failureDetail = string.Empty;
         var catalog = SkinService.Catalog;
-        if (catalog == null ||
-            !catalog.TryGetVisualProviderSource(
+        if (catalog == null)
+        {
+            failureDetail = "皮肤目录尚未初始化。";
+            return OnlineSkinDescriptionState.Unavailable;
+        }
+        if (!catalog.TryGetVisualProviderSource(
                 groupId,
                 optionId,
                 out var providerId,
-                out var pckPath) ||
-            !TryGetWorkshopItemId(pckPath, out var workshopItemId))
+                out var pckPath,
+                out var safeResourceRoots))
         {
-            return false;
+            catalog.TryGetVisualProviderId(groupId, optionId, out providerId);
+            providerId = string.IsNullOrWhiteSpace(providerId) ? optionId : providerId;
+            failureDetail = "找不到该皮肤实际所属的 PCK 资源包。";
+            source = new OnlineSkinSource(providerId, 0, string.Empty, string.Empty);
+            return OnlineSkinDescriptionState.Unavailable;
+        }
+        if (!TryGetWorkshopItemId(pckPath, out var workshopItemId))
+        {
+            failureDetail = "该皮肤不是从 Steam 创意工坊目录加载的，无法自动下载。";
+            source = new OnlineSkinSource(providerId, 0, string.Empty, string.Empty);
+            return OnlineSkinDescriptionState.Unavailable;
+        }
+
+        var safeResourceManifest = string.Join('\n', safeResourceRoots);
+        if (!IsValidSafeResourceManifest(safeResourceManifest))
+        {
+            failureDetail = "该皮肤的安全资源清单过大或格式无效。";
+            source = new OnlineSkinSource(
+                providerId,
+                workshopItemId,
+                string.Empty,
+                string.Empty);
+            return OnlineSkinDescriptionState.Failed;
         }
 
         var info = new FileInfo(pckPath);
@@ -383,17 +528,28 @@ internal static partial class OnlineSkinCache
                 cached.Length == info.Length && cached.LastWriteTimeUtc == info.LastWriteTimeUtc)
             {
                 source = cached.Source;
-                return true;
+                return OnlineSkinDescriptionState.Ready;
             }
             if (LocalSourceFailures.TryGetValue(cacheKey, out var failed) &&
                 failed.Length == info.Length && failed.LastWriteTimeUtc == info.LastWriteTimeUtc)
             {
-                return false;
+                failureDetail = failed.Detail;
+                source = new OnlineSkinSource(
+                    providerId,
+                    workshopItemId,
+                    string.Empty,
+                    safeResourceManifest);
+                return OnlineSkinDescriptionState.Failed;
             }
 
             if (!LocalSourceBuilds.Add(cacheKey))
             {
-                return false;
+                source = new OnlineSkinSource(
+                    providerId,
+                    workshopItemId,
+                    string.Empty,
+                    safeResourceManifest);
+                return OnlineSkinDescriptionState.Preparing;
             }
             SetLocalPreparationProgressLocked(
                 OnlineSkinCacheStage.Preparing,
@@ -405,11 +561,16 @@ internal static partial class OnlineSkinCache
         {
             try
             {
-                var package = BuildSafePackage(pckPath, groupId, outputPath: null);
+                var package = BuildSafePackage(
+                    pckPath,
+                    groupId,
+                    safeResourceRoots,
+                    outputPath: null);
                 var discovered = new OnlineSkinSource(
                     providerId,
                     workshopItemId,
-                    package.Fingerprint);
+                    package.Fingerprint,
+                    safeResourceManifest);
                 lock (Sync)
                 {
                     LocalSources[cacheKey] = new LocalSourceCacheEntry(
@@ -429,21 +590,31 @@ internal static partial class OnlineSkinCache
             }
             catch (Exception exception)
             {
+                var detail = exception.GetBaseException().Message;
                 lock (Sync)
                 {
                     LocalSourceFailures[cacheKey] = new LocalSourceFailureCacheEntry(
                         info.Length,
-                        info.LastWriteTimeUtc);
+                        info.LastWriteTimeUtc,
+                        detail);
                 }
+                LocalSourcesReady.Enqueue((groupId, optionId));
                 LocalSourceReports.Enqueue(
                     $"{providerId} 不支持安全联机缓存，将让缺少该皮肤的玩家显示原皮：" +
-                    exception.GetBaseException().Message);
+                    detail);
+                if (MultiplayerSkinSync.IsReadyGateActiveForOnlineCache())
+                {
+                    AddBlockingFailure(
+                        $"local:{groupId}:{optionId}",
+                        providerId,
+                        detail);
+                }
                 SetLocalPreparationProgress(
                     OnlineSkinCacheStage.Failed,
                     providerId,
                     workshopItemId,
-                    exception.GetBaseException().Message,
-                    TimeSpan.FromSeconds(8));
+                    detail,
+                    TimeSpan.FromDays(1));
             }
             finally
             {
@@ -453,7 +624,12 @@ internal static partial class OnlineSkinCache
                 }
             }
         });
-        return false;
+        source = new OnlineSkinSource(
+            providerId,
+            workshopItemId,
+            string.Empty,
+            safeResourceManifest);
+        return OnlineSkinDescriptionState.Preparing;
     }
 
     private static async Task ProcessRequest(
@@ -524,7 +700,11 @@ internal static partial class OnlineSkinCache
                 request.ProviderId,
                 request.WorkshopItemId);
             var package = await Task.Run(
-                () => BuildSafePackage(sourcePck, request.GroupId, outputPck),
+                () => BuildSafePackage(
+                    sourcePck,
+                    request.GroupId,
+                    ParseSafeResourceManifest(request.SafeResourceManifest),
+                    outputPck),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsCurrentSession(generation, cancellationToken))
@@ -585,6 +765,7 @@ internal static partial class OnlineSkinCache
         }
         catch (Exception exception)
         {
+            var detail = exception.GetBaseException().Message;
             lock (Sync)
             {
                 if (generation == _sessionGeneration)
@@ -594,13 +775,17 @@ internal static partial class OnlineSkinCache
             }
             ModLog.Warn(
                 $"无法在线缓存 {request.ProviderId}，远程玩家继续显示原皮：" +
-                exception.GetBaseException().Message);
+                detail);
+            AddBlockingFailure(
+                $"remote:{request.PlayerNetId}:{request.GroupId}:{request.OptionId}",
+                request.ProviderId,
+                detail);
             SetProgress(
                 OnlineSkinCacheStage.Failed,
                 request.ProviderId,
                 request.WorkshopItemId,
-                exception.GetBaseException().Message,
-                TimeSpan.FromSeconds(8));
+                detail,
+                TimeSpan.FromDays(1));
         }
         finally
         {
@@ -734,6 +919,7 @@ internal static partial class OnlineSkinCache
     private static SafePackage BuildSafePackage(
         string sourcePck,
         string groupId,
+        IReadOnlyCollection<string> explicitRoots,
         string? outputPath)
     {
         using var archive = PckArchive.Open(sourcePck, (uint)MaxArchiveEntries);
@@ -749,6 +935,15 @@ internal static partial class OnlineSkinCache
                      SkinCatalog.IsSafeOnlineResourceRootForGroup(path, groupId)))
         {
             Enqueue(path);
+        }
+        foreach (var path in explicitRoots)
+        {
+            var normalized = NormalizeResourcePath(path);
+            if (!archive.Contains(normalized))
+            {
+                throw new InvalidDataException($"安全资源清单引用了工坊包中不存在的文件：{normalized}。");
+            }
+            Enqueue(normalized);
         }
 
         while (queue.TryDequeue(out var path))
@@ -886,6 +1081,29 @@ internal static partial class OnlineSkinCache
             }
         }
     }
+
+    private static bool IsValidSafeResourceManifest(string? manifest)
+    {
+        if (manifest == null || manifest.Length > 64 * 1024)
+        {
+            return false;
+        }
+
+        var paths = ParseSafeResourceManifest(manifest);
+        return paths.Count <= MaxSafeFiles && paths.All(path =>
+            path.StartsWith("res://", StringComparison.OrdinalIgnoreCase) &&
+            !path.Contains("..", StringComparison.Ordinal) &&
+            path.Length <= 512 &&
+            AllowedExtensions.Contains(Path.GetExtension(path)));
+    }
+
+    private static IReadOnlyList<string> ParseSafeResourceManifest(string? manifest) =>
+        string.IsNullOrWhiteSpace(manifest)
+            ? []
+            : manifest
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
 
     private static bool ContainsForbiddenContent(string text) =>
         ForbiddenTextRegex().IsMatch(text);
@@ -1092,5 +1310,8 @@ internal static partial class OnlineSkinCache
         long Length,
         DateTime LastWriteTimeUtc,
         OnlineSkinSource Source);
-    private sealed record LocalSourceFailureCacheEntry(long Length, DateTime LastWriteTimeUtc);
+    private sealed record LocalSourceFailureCacheEntry(
+        long Length,
+        DateTime LastWriteTimeUtc,
+        string Detail);
 }

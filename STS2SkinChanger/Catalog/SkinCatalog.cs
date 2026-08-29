@@ -249,10 +249,12 @@ internal sealed partial class SkinCatalog : IDisposable
         string groupId,
         string optionId,
         out string providerId,
-        out string pckPath)
+        out string pckPath,
+        out IReadOnlyList<string> safeResourceRoots)
     {
         providerId = string.Empty;
         pckPath = string.Empty;
+        safeResourceRoots = [];
         var option = _groups.FirstOrDefault(group => group.Id.Equals(
                 groupId,
                 StringComparison.OrdinalIgnoreCase))?
@@ -267,10 +269,11 @@ internal sealed partial class SkinCatalog : IDisposable
         // Runtime registrations can expose an option ID chosen by the skin DLL instead of the
         // manifest ID. Resolve the PCK from the actual archive that owns the option's files
         // rather than guessing a loaded Mod by name.
-        var index = _cosmeticIndexes.FirstOrDefault(candidate => candidate.Mod.Id.Equals(
+        var indexes = _cosmeticIndexes.Concat(_baselineIndexes.Skip(1)).ToArray();
+        var index = indexes.FirstOrDefault(candidate => candidate.Mod.Id.Equals(
                         option.EffectiveProviderId,
                         StringComparison.OrdinalIgnoreCase)) ??
-                    _cosmeticIndexes.FirstOrDefault(candidate => option.Assets.Values
+                    indexes.FirstOrDefault(candidate => option.Assets.Values
                         .SelectMany(asset => asset.Files)
                         .Any(file => ReferenceEquals(file.Archive, candidate.Archive)));
         if (index?.Mod.PckPath == null || !File.Exists(index.Mod.PckPath))
@@ -280,6 +283,16 @@ internal sealed partial class SkinCatalog : IDisposable
 
         providerId = index.Mod.Id;
         pckPath = index.Mod.PckPath;
+        safeResourceRoots = option.Assets.Values
+            .SelectMany(asset => asset.Files)
+            .Where(file => ReferenceEquals(file.Archive, index.Archive))
+            .Select(file => file.Path)
+            .Concat(option.ManagedMonsterScene?.Files
+                .Where(file => ReferenceEquals(file.Archive, index.Archive))
+                .Select(file => file.Path) ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         return true;
     }
 
@@ -328,18 +341,20 @@ internal sealed partial class SkinCatalog : IDisposable
                 remapFilter: null);
             archive = null;
             var discovered = BuildGroups([index], _baselineIndexes);
-            if (discovered.Count != 1 ||
-                !discovered[0].Id.Equals(expectedGroupId, StringComparison.OrdinalIgnoreCase) ||
-                discovered[0].Options.Count != 1)
+            var matchingGroups = discovered
+                .Where(group => group.Id.Equals(expectedGroupId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matchingGroups.Length != 1 || matchingGroups[0].Options.Count != 1)
             {
-                error = "安全资源包未形成唯一且匹配的角色外观。";
+                error = "安全资源包未形成匹配的角色外观。";
                 return false;
             }
+            var discoveredGroup = matchingGroups[0];
 
             var target = _groups.FirstOrDefault(group => group.Id.Equals(
                 expectedGroupId,
                 StringComparison.OrdinalIgnoreCase));
-            if (!IsCharacterAppearanceOption(discovered[0].Options[0]))
+            if (!IsCharacterAppearanceOption(discoveredGroup.Options[0]))
             {
                 error = "找不到对应的角色外观分组。";
                 return false;
@@ -349,11 +364,11 @@ internal sealed partial class SkinCatalog : IDisposable
             // catalog has no group yet, but an online-only provider must still be attachable.
             if (target == null)
             {
-                target = new SkinGroup(discovered[0].Id, discovered[0].DisplayName);
+                target = new SkinGroup(discoveredGroup.Id, discoveredGroup.DisplayName);
                 _groups.Add(target);
             }
 
-            target.Options.Add(discovered[0].Options[0]);
+            target.Options.Add(discoveredGroup.Options[0]);
             target.Options.Sort((left, right) => string.Compare(
                 left.Name,
                 right.Name,
