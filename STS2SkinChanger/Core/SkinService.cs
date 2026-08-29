@@ -3383,10 +3383,6 @@ internal static class SkinService
                 StringComparer.OrdinalIgnoreCase);
         var knownCategoryIds = Config.MonsterSkinCategoryGroups.Keys
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var legacyEnabledCategoryIds = Config.EnabledMonsterSkinPriorityCategories
-            .Where(knownCategoryIds.Contains)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var categorizedGroupIds = Config.MonsterSkinCategoryGroups.Values
             .SelectMany(groupIds => groupIds)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -3418,18 +3414,23 @@ internal static class SkinService
                 Config.MonsterGroupsWithManualSelection.Add(groupId);
             }
 
+            Config.MonsterPriorityDefaultsVersion = 1;
+        }
+
+        if (Config.MonsterPriorityDefaultsVersion < 2)
+        {
             foreach (var categoryId in knownCategoryIds)
             {
                 var entries = GetMonsterPriorityEntriesInternal(categoryId).ToList();
-                if (!legacyEnabledCategoryIds.Contains(categoryId))
+                if (entries.Count > 0 && entries.All(entry => !entry.Enabled))
                 {
                     Config.MonsterSkinPriorities[categoryId] = entries
-                        .Select(entry => entry with { Enabled = false })
+                        .Select(entry => entry with { Enabled = true })
                         .ToList();
                 }
             }
 
-            Config.MonsterPriorityDefaultsVersion = 1;
+            Config.MonsterPriorityDefaultsVersion = 2;
         }
 
         Config.EnabledMonsterSkinPriorityCategories.Clear();
@@ -3463,7 +3464,7 @@ internal static class SkinService
         foreach (var option in options.Where(option => entries.All(entry =>
                      !entry.OptionId.Equals(option.OptionId, StringComparison.OrdinalIgnoreCase))))
         {
-            entries.Add(new MonsterSkinPriorityEntry(option.OptionId, Enabled: false));
+            entries.Add(new MonsterSkinPriorityEntry(option.OptionId, Enabled: true));
         }
 
         Config.MonsterSkinPriorities[categoryId] = MergeKnownMonsterPriorityEntries(
