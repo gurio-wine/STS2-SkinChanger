@@ -3,7 +3,7 @@
   "name": "皮肤切换器-Skin Changer",
   "author": "Gurio",
   "description": "切换角色、卡牌、怪物、先古场景和商人皮肤；可在对局内直接选择当前可见的角色、怪物、先古之民、同伴或商人，热切换皮肤并调整可用的模型、血条、怪物意图与选择框。界面支持 15 种语言，无需重启。 Switch character, card, monster, Ancient, and merchant skins; select a visible character, monster, Ancient, companion, or merchant in-run to hot-swap skins and adjust available models, health bars, monster intents, and targeting reticles. 15-language interface, no restart required.",
-  "version": "0.9.76",
+  "version": "0.9.78",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],
