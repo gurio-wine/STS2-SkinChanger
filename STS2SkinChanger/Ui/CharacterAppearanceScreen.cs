@@ -729,8 +729,13 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         EndComparison();
+        // A failure belongs to exactly one selection attempt. Clear it before starting the next
+        // one so a slow load or a successful retry is never presented as the previous skin's
+        // error.
+        SetStatus(string.Empty, warning: false);
         if (_targetMerchantButton != null)
         {
+            var previousOptionId = SkinService.Config.GetSelection(_group.Id);
             MerchantRuntimeAppearance.PrepareMerchantSelectionChange();
             if (!SkinService.ApplySelection(_group.Id, optionId))
             {
@@ -745,8 +750,25 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             PopulateSkinDropdown();
             if (!MerchantRuntimeAppearance.TryRefreshMerchant(out var merchantError))
             {
+                // Resource mounting succeeded but the selected merchant scene could still be
+                // malformed. Restore both the saved choice and the live shop so reopening the
+                // inventory cannot inherit a half-applied skin.
+                var selectionError = merchantError;
+                MerchantRuntimeAppearance.PrepareMerchantSelectionChange();
+                var rollbackApplied = SkinService.ApplySelection(_group.Id, previousOptionId);
+                string? rollbackError = null;
+                var rollbackRefreshed = rollbackApplied &&
+                                        MerchantRuntimeAppearance.TryRefreshMerchant(out rollbackError);
+                PopulateSkinDropdown();
+                _targetMerchantButton = NMerchantRoom.Instance?.MerchantButton;
+                if (!rollbackRefreshed)
+                {
+                    ModLog.Error("回滚商人皮肤选择失败：" +
+                                 (rollbackApplied ? rollbackError : SkinService.LastError));
+                }
+
                 SetStatus(
-                    ModLocalization.Get(ModText.AppearanceFailed) + ": " + merchantError,
+                    ModLocalization.Get(ModText.AppearanceFailed) + ": " + selectionError,
                     warning: true);
                 return;
             }

@@ -193,20 +193,25 @@ internal static class MerchantRuntimeAppearance
         NMerchantButton? newButton = null;
         NMerchantInventory? inventoryTemplate = null;
         Node2D? newHandContainer = null;
+        NMerchantButton? previousButton = null;
+        Node2D? previousHandContainer = null;
+        NMerchantHand? previousHand = null;
+        var buttonSwapped = false;
+        var handSwapped = false;
         try
         {
             newButton = InstantiateMerchantButton();
             inventoryTemplate = LoadRuntimeOrBaseScene(MerchantInventoryScenePath)
                 .Instantiate<NMerchantInventory>(PackedScene.GenEditState.Disabled);
-            var templateHand = inventoryTemplate.GetNode<NMerchantHand>("%MerchantHand");
-            newHandContainer = templateHand.GetParent<Node2D>();
+            newHandContainer = inventoryTemplate.GetNodeOrNull<Node2D>("MerchantHandContainer") ??
+                               FindMerchantHand(inventoryTemplate)?.GetParent() as Node2D ??
+                               throw new InvalidOperationException("商店库存场景缺少 MerchantHandContainer 节点");
             inventoryTemplate.RemoveChild(newHandContainer);
-            ClearOwnerRecursive(newHandContainer);
 
-            ReplaceMerchantButton(room, newButton);
-            newButton = null;
-            ReplaceMerchantHand(room.Inventory, newHandContainer);
-            newHandContainer = null;
+            ReplaceMerchantButton(room, newButton, out previousButton);
+            buttonSwapped = true;
+            ReplaceMerchantHand(room.Inventory, newHandContainer, out previousHandContainer, out previousHand);
+            handSwapped = true;
 
             var providerId = SkinService.GetSelectedFullRuntimeProvider(GroupId);
             if (providerId != null)
@@ -225,10 +230,67 @@ internal static class MerchantRuntimeAppearance
                 MakeProviderInventoryVisualsPassThrough();
             }
 
+            // Commit only after the complete replacement and provider replay succeeded. Keeping
+            // the old nodes alive until this point makes a malformed skin recoverable instead of
+            // leaving NMerchantRoom/NMerchantInventory pointing at half-initialized nodes.
+            previousButton.GetParent()?.RemoveChild(previousButton);
+            previousButton.QueueFree();
+            previousHandContainer.GetParent()?.RemoveChild(previousHandContainer);
+            previousHandContainer.QueueFree();
+            newButton = null;
+            newHandContainer = null;
+            buttonSwapped = false;
+            handSwapped = false;
+
             return true;
         }
         catch (Exception exception)
         {
+            try
+            {
+                // Remove the failed replacements before restoring the original names. Godot node
+                // names must be unique among siblings; restoring while both copies are still
+                // parented can silently rename the original and break later % lookups.
+                if (handSwapped && newHandContainer != null && GodotObject.IsInstanceValid(newHandContainer))
+                {
+                    newHandContainer.GetParent()?.RemoveChild(newHandContainer);
+                    newHandContainer.Free();
+                    newHandContainer = null;
+                }
+
+                if (buttonSwapped && newButton != null && GodotObject.IsInstanceValid(newButton))
+                {
+                    newButton.GetParent()?.RemoveChild(newButton);
+                    newButton.Free();
+                    newButton = null;
+                }
+
+                if (buttonSwapped && previousButton != null && GodotObject.IsInstanceValid(previousButton))
+                {
+                    MerchantButtonField.SetValue(room, previousButton);
+                    previousButton.Name = previousButton.Name.ToString().Replace(
+                        "__SkinChangerPrevious",
+                        string.Empty,
+                        StringComparison.Ordinal);
+                }
+
+                if (handSwapped && previousHand != null && GodotObject.IsInstanceValid(previousHand))
+                {
+                    MerchantHandField.SetValue(room.Inventory, previousHand);
+                    if (previousHandContainer != null && GodotObject.IsInstanceValid(previousHandContainer))
+                    {
+                        previousHandContainer.Name = previousHandContainer.Name.ToString().Replace(
+                            "__SkinChangerPrevious",
+                            string.Empty,
+                            StringComparison.Ordinal);
+                    }
+                }
+            }
+            catch (Exception rollbackException)
+            {
+                ModLog.Error("回滚商人外观失败：" + rollbackException);
+            }
+
             error = exception.GetBaseException().Message;
             ModLog.Error("刷新商人外观失败：" + exception);
             return false;
@@ -396,25 +458,51 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
-    private static void ReplaceMerchantButton(NMerchantRoom room, NMerchantButton replacement)
+    private static void ReplaceMerchantButton(
+        NMerchantRoom room,
+        NMerchantButton replacement,
+        out NMerchantButton previous)
     {
-        var previous = room.MerchantButton;
+        previous = room.MerchantButton ??
+                   throw new InvalidOperationException("merchant button is unavailable");
         var parent = previous.GetParent() ??
                      throw new InvalidOperationException("merchant button has no parent");
         var index = previous.GetIndex();
         var originalName = previous.Name;
-        previous.Name = originalName + "Previous";
+        var wasFocused = previous.HasFocus();
+        CopyControlVisualState(previous, replacement);
+        ManagedSceneCompatibility.CopyMissingUniqueNodes(previous, replacement);
+        CopyRequiredUniqueNode(previous, replacement, "MerchantVisual");
+        CopyRequiredUniqueNode(previous, replacement, "MerchantSelectionReticle");
+        SetOwnerRecursive(replacement, replacement);
+        if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
+            replacement.GetNodeOrNull<Node>("%MerchantSelectionReticle") == null)
+        {
+            throw new InvalidOperationException("商人场景缺少 MerchantVisual 或 MerchantSelectionReticle");
+        }
+
+        previous.Name = originalName + "__SkinChangerPrevious";
         replacement.Name = originalName;
-        parent.AddChild(replacement);
-        parent.MoveChild(replacement, index);
         replacement.IsLocalPlayerDead = previous.IsLocalPlayerDead;
         replacement.PlayerDeadLines = previous.PlayerDeadLines;
+        parent.AddChild(replacement);
+        parent.MoveChild(replacement, index);
+        CopyControlVisualState(previous, replacement);
+        if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
+            replacement.GetNodeOrNull<Node>("%MerchantSelectionReticle") == null)
+        {
+            throw new InvalidOperationException("商人场景初始化后丢失必要的视觉节点");
+        }
+
+        replacement.SetEnabled(previous.IsEnabled);
         replacement.Connect(
             NMerchantButton.SignalName.MerchantOpened,
             Callable.From<NMerchantButton>(_ => room.OpenInventory()));
         MerchantButtonField!.SetValue(room, replacement);
-        previous.GetParent()?.RemoveChild(previous);
-        previous.QueueFree();
+        if (wasFocused)
+        {
+            replacement.GrabFocus();
+        }
     }
 
     private static NMerchantButton InstantiateMerchantButton()
@@ -425,7 +513,9 @@ internal static class MerchantRuntimeAppearance
         var standalone = TryLoadRuntimeOrBaseScene(MerchantButtonScenePath);
         if (standalone != null)
         {
-            return standalone.Instantiate<NMerchantButton>(PackedScene.GenEditState.Disabled);
+            var button = standalone.Instantiate<NMerchantButton>(PackedScene.GenEditState.Disabled);
+            SetOwnerRecursive(button, button);
+            return button;
         }
 
         var roomScene = LoadRuntimeOrBaseScene(MerchantRoomScenePath);
@@ -434,7 +524,11 @@ internal static class MerchantRuntimeAppearance
         {
             var button = roomTemplate.GetNode<NMerchantButton>("SceneContainer/MerchantButton");
             button.GetParent()?.RemoveChild(button);
-            ClearOwnerRecursive(button);
+            // The formal build embeds this node in merchant_room.tscn. Give the extracted tree
+            // its own scene owner before freeing the temporary room; otherwise %MerchantVisual
+            // and %MerchantSelectionReticle resolve to the freed template and the button's
+            // _Ready path receives Nil.
+            SetOwnerRecursive(button, button);
             return button;
         }
         finally
@@ -460,10 +554,13 @@ internal static class MerchantRuntimeAppearance
                 return runtime;
             }
         }
-        catch (InvalidOperationException)
+        catch (Exception exception)
         {
             // The selected provider may only supply code patches, or this path may not exist in
-            // the current game version. Fall through to the immutable base-game scene.
+            // the current game version. Fall through to the base-game scene rather than leaving
+            // the live shop half-replaced.
+            ModLog.Warn($"加载商人场景 {scenePath} 失败，使用游戏场景兜底：" +
+                        exception.GetBaseException().Message);
         }
 
         return ResourceLoader.Load<PackedScene>(
@@ -494,30 +591,114 @@ internal static class MerchantRuntimeAppearance
 
     private static void ReplaceMerchantHand(
         NMerchantInventory inventory,
-        Node2D replacementContainer)
+        Node2D replacementContainer,
+        out Node2D previousContainer,
+        out NMerchantHand previousHand)
     {
-        var previousHand = inventory.MerchantHand;
-        var previousContainer = previousHand.GetParent<Node2D>();
+        previousHand = inventory.MerchantHand;
+        if (!GodotObject.IsInstanceValid(previousHand))
+        {
+            previousHand = FindMerchantHand(inventory) ??
+                           throw new InvalidOperationException("当前商店库存缺少 MerchantHand 节点");
+            MerchantHandField!.SetValue(inventory, previousHand);
+        }
+
+        previousContainer = previousHand.GetParent() as Node2D ??
+                            throw new InvalidOperationException("当前 MerchantHand 没有容器节点");
         var parent = previousContainer.GetParent() ??
                      throw new InvalidOperationException("merchant hand has no parent");
         var index = previousContainer.GetIndex();
         var originalName = previousContainer.Name;
-        previousContainer.Name = originalName + "Previous";
+        CopyNode2DVisualState(previousContainer, replacementContainer);
+        ManagedSceneCompatibility.CopyMissingUniqueNodes(previousContainer, replacementContainer);
+        if (FindMerchantHand(replacementContainer) == null)
+        {
+            var handClone = previousHand.Duplicate();
+            if (handClone != null)
+            {
+                handClone.Name = previousHand.Name;
+                handClone.UniqueNameInOwner = true;
+                replacementContainer.AddChild(handClone);
+            }
+        }
+
+        SetOwnerRecursive(replacementContainer, replacementContainer);
+        var replacementHand = FindMerchantHand(replacementContainer) ??
+                              throw new InvalidOperationException("替换后的商人手部缺少 MerchantHand 节点");
+        previousContainer.Name = originalName + "__SkinChangerPrevious";
         replacementContainer.Name = originalName;
         parent.AddChild(replacementContainer);
         parent.MoveChild(replacementContainer, index);
-        var replacementHand = replacementContainer.GetNode<NMerchantHand>("%MerchantHand");
+        if (!GodotObject.IsInstanceValid(replacementHand) ||
+            !replacementHand.IsInsideTree())
+        {
+            throw new InvalidOperationException("MerchantHand 在场景初始化后失效");
+        }
+
         MerchantHandField!.SetValue(inventory, replacementHand);
-        previousContainer.GetParent()?.RemoveChild(previousContainer);
-        previousContainer.QueueFree();
     }
 
-    private static void ClearOwnerRecursive(Node node)
+    private static NMerchantHand? FindMerchantHand(Node root) =>
+        EnumerateNodeTree(root).OfType<NMerchantHand>().FirstOrDefault();
+
+    private static void CopyCanvasItemVisualState(CanvasItem source, CanvasItem target)
     {
-        node.Owner = null;
+        target.Visible = source.Visible;
+        target.Modulate = source.Modulate;
+        target.SelfModulate = source.SelfModulate;
+        target.ZIndex = source.ZIndex;
+        target.ZAsRelative = source.ZAsRelative;
+    }
+
+    private static void CopyControlVisualState(Control source, Control target)
+    {
+        CopyCanvasItemVisualState(source, target);
+        target.Position = source.Position;
+        target.Size = source.Size;
+        target.Scale = source.Scale;
+        target.Rotation = source.Rotation;
+        target.PivotOffset = source.PivotOffset;
+        target.MouseFilter = source.MouseFilter;
+        target.FocusMode = source.FocusMode;
+    }
+
+    private static void CopyNode2DVisualState(Node2D source, Node2D target)
+    {
+        CopyCanvasItemVisualState(source, target);
+        target.Position = source.Position;
+        target.Scale = source.Scale;
+        target.Rotation = source.Rotation;
+    }
+
+    private static void CopyRequiredUniqueNode(Node baseline, Node replacement, string uniqueName)
+    {
+        if (replacement.GetNodeOrNull<Node>('%' + uniqueName) != null)
+        {
+            return;
+        }
+
+        var source = baseline.GetNodeOrNull<Node>('%' + uniqueName);
+        var clone = source?.Duplicate();
+        if (clone == null)
+        {
+            return;
+        }
+
+        clone.Name = uniqueName;
+        clone.UniqueNameInOwner = true;
+        replacement.AddChild(clone);
+    }
+
+    private static void SetOwnerRecursive(Node node, Node owner)
+    {
+        if (!ReferenceEquals(node, owner))
+        {
+            node.Owner = owner;
+        }
+
         foreach (var child in node.GetChildren())
         {
-            ClearOwnerRecursive(child);
+            SetOwnerRecursive(child, owner);
         }
     }
 
