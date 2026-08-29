@@ -88,7 +88,11 @@ internal sealed class SkinConfig
 
     public bool SuppressLoadOrderWarning { get; set; }
 
+    // Legacy state retained so the first run after upgrading can still detect a transition from a
+    // previously safe order. New versions only require Skin Changer to precede every skin provider.
     public bool? LastKnownFirstInLoadOrder { get; set; }
+
+    public bool? LastKnownBeforeAllSkinMods { get; set; }
 
     public static SkinConfig Load(string path)
     {

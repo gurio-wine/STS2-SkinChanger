@@ -57,7 +57,9 @@ internal static class ManagedSkinModLoader
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
 
-    public static bool IsFirstInLoadOrder { get; private set; } = true;
+    public static bool IsBeforeAllSkinProviders { get; private set; } = true;
+    public static IReadOnlyList<Mod> SkinProvidersBeforeSelf { get; private set; } = [];
+    public static IReadOnlyList<Mod> SkinProvidersInLoadOrder { get; private set; } = [];
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
 
     public static bool IsProviderAssemblyActive(Assembly assembly) =>
@@ -202,19 +204,26 @@ internal static class ManagedSkinModLoader
             ProvidersByRoot[NormalizePath(probe.RootPath)] = probe;
         }
 
-        var selfIndex = Array.FindIndex(mods, mod =>
-            mod.manifest?.id?.Equals(Entry.ModId, StringComparison.OrdinalIgnoreCase) == true);
-        IsFirstInLoadOrder = selfIndex == 0;
-        var alreadyLoaded = selfIndex <= 0
-            ? []
+        var selfIndex = Array.FindIndex(mods, mod => Entry.IsSelfModId(mod.manifest?.id));
+        SkinProvidersInLoadOrder = mods
+            .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
+            .Where(mod => IsManagedProvider(mod, out _))
+            .ToArray();
+        SkinProvidersBeforeSelf = selfIndex < 0
+            ? SkinProvidersInLoadOrder
             : mods.Take(selfIndex)
+                .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
                 .Where(mod => IsManagedProvider(mod, out _))
+                .ToArray();
+        IsBeforeAllSkinProviders = selfIndex >= 0 && SkinProvidersBeforeSelf.Count == 0;
+        if (SkinProvidersBeforeSelf.Count > 0)
+        {
+            var alreadyLoaded = SkinProvidersBeforeSelf
                 .Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path)
                 .ToArray();
-        if (alreadyLoaded.Length > 0)
-        {
             ModLog.Warn(
-                "托管加载模式仅能拦截排在本 Mod 后面的皮肤提供者。请把皮肤切换器-Skin Changer 移到 Mod 顺序最前并重启。" +
+                "托管加载模式仅能拦截排在本 Mod 后面的皮肤提供者。" +
+                "请把皮肤切换器-Skin Changer 移到所有皮肤 Mod 之前并重启，无需移到全部 Mod 最前。" +
                 $" 本次已提前加载：{string.Join("、", alreadyLoaded)}");
         }
 

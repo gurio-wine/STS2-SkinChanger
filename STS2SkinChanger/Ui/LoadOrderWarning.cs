@@ -27,13 +27,13 @@ internal static class LoadOrderWarningController
         }
 
         if (!SkinService.ShouldShowLoadOrderWarning(
-                ManagedSkinModLoader.IsFirstInLoadOrder))
+                ManagedSkinModLoader.IsBeforeAllSkinProviders))
         {
             return;
         }
 
         _pending = true;
-        ModLog.Info("检测到本 Mod 不在加载顺序第一位，准备显示顺序提示。");
+        ModLog.Info("检测到有皮肤 Mod 排在本 Mod 之前，准备显示顺序提示。");
         TryShow();
     }
 
@@ -79,7 +79,7 @@ internal static class LoadOrderWarningController
 
             verticalPopup.SetText(
                 ModLocalization.Get(ModText.LoadOrderTitle),
-                ModLocalization.Get(ModText.LoadOrderMessage));
+                BuildLoadOrderMessage());
             verticalPopup.YesButton.SetText(ModLocalization.Get(ModText.Acknowledge));
             verticalPopup.NoButton.SetText(ModLocalization.Get(ModText.DoNotShowAgain));
             AddPrioritizeAndRestartButton(verticalPopup);
@@ -115,7 +115,7 @@ internal static class LoadOrderWarningController
             "res://scenes/ui/abandon_run_yes_button.tscn");
         if (scene == null)
         {
-            ModLog.Warn("无法加载置顶并重启按钮场景。");
+            ModLog.Warn("无法加载调整皮肤 Mod 顺序并重启按钮场景。");
             return;
         }
 
@@ -125,9 +125,9 @@ internal static class LoadOrderWarningController
         button.AnchorTop = 1f;
         button.AnchorRight = 0.5f;
         button.AnchorBottom = 1f;
-        button.OffsetLeft = -110f;
+        button.OffsetLeft = -180f;
         button.OffsetTop = -78f;
-        button.OffsetRight = 110f;
+        button.OffsetRight = 180f;
         button.OffsetBottom = -6f;
         button.GrowHorizontal = Control.GrowDirection.Both;
         button.GrowVertical = Control.GrowDirection.Begin;
@@ -144,9 +144,9 @@ internal static class LoadOrderWarningController
     {
         try
         {
-            MoveSelfToFirst();
+            MoveSelfBeforeSkinProviders();
             StartRestartHelper();
-            ModLog.Info("已将皮肤切换器-Skin Changer 置顶，正在重启游戏。");
+            ModLog.Info("已将皮肤切换器-Skin Changer 移到所有皮肤 Mod 之前，正在重启游戏。");
             popup.GetParent()?.QueueFree();
             Callable.From(() =>
             {
@@ -162,7 +162,7 @@ internal static class LoadOrderWarningController
         }
         catch (Exception exception)
         {
-            ModLog.Error("置顶并重启失败：" + exception.GetBaseException().Message);
+            ModLog.Error("调整皮肤 Mod 顺序并重启失败：" + exception.GetBaseException().Message);
             popup.SetText(
                 ModLocalization.Get(ModText.LoadOrderTitle),
                 ModLocalization.Get(ModText.LoadOrderFailure) + "\n\n" +
@@ -170,10 +170,34 @@ internal static class LoadOrderWarningController
         }
     }
 
-    private static void MoveSelfToFirst()
+    private static string BuildLoadOrderMessage()
+    {
+        var providers = ManagedSkinModLoader.SkinProvidersBeforeSelf
+            .Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .Select(name => "• " + EscapeBbCode(name))
+            .ToArray();
+        return ModLocalization.Get(ModText.LoadOrderMessage)
+            .Replace("{0}", string.Join("\n", providers), StringComparison.Ordinal);
+    }
+
+    private static string EscapeBbCode(string value) => value
+        .Replace('[', '(')
+        .Replace(']', ')')
+        .Replace('\r', ' ')
+        .Replace('\n', ' ');
+
+    private static void MoveSelfBeforeSkinProviders()
     {
         var self = ModManager.Mods.FirstOrDefault(mod => Entry.IsSelfModId(mod.manifest?.id)) ??
                    throw new InvalidOperationException("当前 Mod 列表中找不到皮肤切换器-Skin Changer。");
+        var skinProviders = ManagedSkinModLoader.SkinProvidersInLoadOrder;
+        if (skinProviders.Count == 0)
+        {
+            throw new InvalidOperationException("当前 Mod 列表中找不到需要调整顺序的皮肤 Mod。");
+        }
+
         var settings = SaveManager.Instance.SettingsSave;
         settings.ModSettings ??= new ModSettings();
         var modList = settings.ModSettings.ModList;
@@ -181,7 +205,23 @@ internal static class LoadOrderWarningController
             .FirstOrDefault(entry => Entry.IsSelfModId(entry.Id) && entry.Source == self.modSource)?
             .IsEnabled ?? true;
         modList.RemoveAll(entry => Entry.IsSelfModId(entry.Id));
-        modList.Insert(0, new SettingsSaveMod(self) { IsEnabled = wasEnabled });
+        var insertionIndex = modList.FindIndex(entry => skinProviders.Any(provider =>
+            string.Equals(entry.Id, provider.manifest?.id, StringComparison.OrdinalIgnoreCase) &&
+            entry.Source == provider.modSource));
+        if (insertionIndex < 0)
+        {
+            // Older settings can omit the source on a retained entry. Fall back to the manifest
+            // id while preserving every unrelated mod's relative position.
+            insertionIndex = modList.FindIndex(entry => skinProviders.Any(provider =>
+                string.Equals(entry.Id, provider.manifest?.id, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        if (insertionIndex < 0)
+        {
+            throw new InvalidOperationException("无法在已保存的 Mod 顺序中定位皮肤 Mod。");
+        }
+
+        modList.Insert(insertionIndex, new SettingsSaveMod(self) { IsEnabled = wasEnabled });
         SaveManager.Instance.SaveSettings();
     }
 

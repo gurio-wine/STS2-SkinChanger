@@ -109,27 +109,28 @@ internal static class SkinService
         }
     }
 
-    public static bool ShouldShowLoadOrderWarning(bool isFirstInLoadOrder)
+    public static bool ShouldShowLoadOrderWarning(bool isBeforeAllSkinMods)
     {
         lock (Sync)
         {
             EnsureConfigLoaded();
-            var movedAwayFromFirst =
-                Config.LastKnownFirstInLoadOrder == true && !isFirstInLoadOrder;
-            var stateChanged = Config.LastKnownFirstInLoadOrder != isFirstInLoadOrder;
-            if (movedAwayFromFirst)
+            var previousSafeState = Config.LastKnownBeforeAllSkinMods ??
+                                    Config.LastKnownFirstInLoadOrder;
+            var movedBehindSkinMod = previousSafeState == true && !isBeforeAllSkinMods;
+            var stateChanged = Config.LastKnownBeforeAllSkinMods != isBeforeAllSkinMods;
+            if (movedBehindSkinMod)
             {
                 Config.SuppressLoadOrderWarning = false;
-                ModLog.Info("检测到本 Mod 从加载顺序第一位移出，已恢复加载顺序提醒。");
+                ModLog.Info("检测到有皮肤 Mod 被移到本 Mod 之前，已恢复加载顺序提醒。");
             }
 
-            Config.LastKnownFirstInLoadOrder = isFirstInLoadOrder;
-            if (stateChanged || movedAwayFromFirst)
+            Config.LastKnownBeforeAllSkinMods = isBeforeAllSkinMods;
+            if (stateChanged || movedBehindSkinMod)
             {
                 Config.Save(ConfigPath);
             }
 
-            return !isFirstInLoadOrder && !Config.SuppressLoadOrderWarning;
+            return !isBeforeAllSkinMods && !Config.SuppressLoadOrderWarning;
         }
     }
 
