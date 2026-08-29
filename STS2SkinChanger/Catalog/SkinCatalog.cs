@@ -245,6 +245,44 @@ internal sealed partial class SkinCatalog : IDisposable
         return option != null && !optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase);
     }
 
+    public bool TryGetVisualProviderSource(
+        string groupId,
+        string optionId,
+        out string providerId,
+        out string pckPath)
+    {
+        providerId = string.Empty;
+        pckPath = string.Empty;
+        var option = _groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(candidate => candidate.Id.Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase));
+        if (option == null || optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Runtime registrations can expose an option ID chosen by the skin DLL instead of the
+        // manifest ID. Resolve the PCK from the actual archive that owns the option's files
+        // rather than guessing a loaded Mod by name.
+        var index = _cosmeticIndexes.FirstOrDefault(candidate => candidate.Mod.Id.Equals(
+                        option.EffectiveProviderId,
+                        StringComparison.OrdinalIgnoreCase)) ??
+                    _cosmeticIndexes.FirstOrDefault(candidate => option.Assets.Values
+                        .SelectMany(asset => asset.Files)
+                        .Any(file => ReferenceEquals(file.Archive, candidate.Archive)));
+        if (index?.Mod.PckPath == null || !File.Exists(index.Mod.PckPath))
+        {
+            return false;
+        }
+
+        providerId = index.Mod.Id;
+        pckPath = index.Mod.PckPath;
+        return true;
+    }
+
     internal static bool IsSafeOnlineResourceRootForGroup(string resourcePath, string groupId)
     {
         var sourcePath = resourcePath;

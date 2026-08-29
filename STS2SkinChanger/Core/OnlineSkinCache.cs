@@ -365,21 +365,12 @@ internal static partial class OnlineSkinCache
         source = null!;
         var catalog = SkinService.Catalog;
         if (catalog == null ||
-            !catalog.TryGetVisualProviderId(groupId, optionId, out var providerId))
-        {
-            return false;
-        }
-
-        var mod = ModManager.GetLoadedMods().FirstOrDefault(candidate =>
-            candidate.manifest?.id?.Equals(providerId, StringComparison.OrdinalIgnoreCase) == true);
-        if (mod?.manifest?.hasPck != true ||
-            !TryGetWorkshopItemId(mod, out var workshopItemId))
-        {
-            return false;
-        }
-
-        var pckPath = Path.Combine(mod.path, providerId + ".pck");
-        if (!File.Exists(pckPath))
+            !catalog.TryGetVisualProviderSource(
+                groupId,
+                optionId,
+                out var providerId,
+                out var pckPath) ||
+            !TryGetWorkshopItemId(pckPath, out var workshopItemId))
         {
             return false;
         }
@@ -924,17 +915,10 @@ internal static partial class OnlineSkinCache
         return selected;
     }
 
-    private static bool TryGetWorkshopItemId(Mod mod, out ulong workshopItemId)
+    private static bool TryGetWorkshopItemId(string path, out ulong workshopItemId)
     {
         workshopItemId = 0;
-        var field = mod.GetType().GetField("workshopId");
-        if (field?.GetValue(mod) is ulong direct && direct != 0)
-        {
-            workshopItemId = direct;
-            return true;
-        }
-
-        var normalized = mod.path.Replace('\\', '/');
+        var normalized = path.Replace('\\', '/');
         var match = WorkshopPathRegex().Match(normalized);
         return match.Success && ulong.TryParse(match.Groups[1].Value, out workshopItemId);
     }
