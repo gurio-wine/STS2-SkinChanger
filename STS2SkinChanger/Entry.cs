@@ -125,12 +125,19 @@ internal static class ModelTypeCompatibility
         return ids;
     }
 
-    internal static Type[] Filter(IEnumerable<Type> types)
+    internal static Type[] Filter(
+        IEnumerable<Type> types,
+        bool includeAlreadyRegisteredModels = false)
     {
         var coreAssembly = typeof(AbstractModel).Assembly;
-        var seenIds = GetRegisteredModels()
-            .Select(model => model.Id)
-            .ToHashSet();
+        // ReflectionHelper.ModTypes is also used after ModelDb.Init by frameworks such as
+        // BaseLib to discover custom character scene conversions. Seeding this set from the
+        // live ModelDb in that path made every legitimate, already-initialized Mod model look
+        // like a duplicate and removed it from all later reflection scans. Only the actual
+        // ModelDb.Init boundary needs to account for models injected by earlier prefixes.
+        var seenIds = includeAlreadyRegisteredModels
+            ? GetRegisteredModels().Select(model => model.Id).ToHashSet()
+            : [];
         var filtered = new List<Type>();
 
         foreach (var type in types)
@@ -247,7 +254,9 @@ internal static class DuplicateModelInitCompatibilityPatch
             ? injected
             : ModelDb.AllAbstractModelSubtypes;
         var originalCount = candidates.Length;
-        var filtered = ModelTypeCompatibility.Filter(candidates);
+        var filtered = ModelTypeCompatibility.Filter(
+            candidates,
+            includeAlreadyRegisteredModels: true);
         var removedCount = originalCount - filtered.Length;
         if (__args.Length > 0)
         {

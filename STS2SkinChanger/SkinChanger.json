@@ -3,7 +3,7 @@
   "name": "皮肤切换器-Skin Changer",
   "author": "Gurio",
   "description": "切换角色、卡牌、怪物、先古场景和商人皮肤；多人游戏可按玩家同步角色皮肤，并在明确允许后为当前房间临时缓存安全静态素材。界面支持 15 种语言，无需重启。 Switch character, card, monster, Ancient, and merchant skins; multiplayer can sync character skins per player and, after explicit consent, temporarily cache safe static assets for the current room. 15-language interface, no restart required.",
-  "version": "0.9.80",
+  "version": "0.9.81",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],
