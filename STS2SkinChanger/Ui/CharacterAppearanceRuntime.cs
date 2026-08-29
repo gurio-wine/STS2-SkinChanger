@@ -138,6 +138,37 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
+    internal static bool PlayerMatchesCharacterSelection(
+        ulong playerNetId,
+        string characterId,
+        string groupId)
+    {
+        try
+        {
+            if (RunStateField?.GetValue(NRun.Instance) is not IRunState runState)
+            {
+                return false;
+            }
+
+            var player = runState.Players.FirstOrDefault(candidate =>
+                candidate.NetId == playerNetId);
+            var group = player == null
+                ? null
+                : ContextualSkinControls.FindGroup(
+                    player.Character.Id.Entry,
+                    player.Character.GetType().Name);
+            return player != null &&
+                   player.Character.Id.Entry.Equals(
+                       characterId,
+                       StringComparison.OrdinalIgnoreCase) &&
+                   group?.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase) == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     internal static void FocusRuntimeProviderBehaviorsOnRunCharacters()
     {
         try
@@ -198,6 +229,8 @@ internal static class CharacterAppearanceRuntime
 
     internal static void ClearPendingSelection() => _pendingSelection = null;
 
+    internal static bool CanApplySelectionImmediately() => CanApplySelectionNow();
+
     internal static void OnCreatureReady(NCreature creature)
     {
         if (!GodotObject.IsInstanceValid(creature.Visuals))
@@ -227,13 +260,13 @@ internal static class CharacterAppearanceRuntime
             return;
         }
 
-        ApplyPreviewTransform(creature, GetCreatureCombatTransform(binding));
+        ApplyPreviewTransform(creature, GetCreatureCombatTransform(creature, binding));
     }
 
     internal static CharacterCombatTransform GetCreatureCombatTransform(NCreature creature)
     {
         return TryGetCreatureAppearance(creature, out var binding)
-            ? GetCreatureCombatTransform(binding)
+            ? GetCreatureCombatTransform(creature, binding)
             : new CharacterCombatTransform();
     }
 
@@ -247,7 +280,9 @@ internal static class CharacterAppearanceRuntime
             return new CharacterCombatTransform();
         }
 
-        var optionId = SkinService.Config.GetSelection(binding.Group.Id);
+        var optionId = MultiplayerSkinSync.GetSelectionForCreature(
+            creature.Entity,
+            binding.Group.Id);
         if (!binding.UsesMonsterScale)
         {
             return SkinService.SetCharacterCombatTransform(
@@ -451,9 +486,12 @@ internal static class CharacterAppearanceRuntime
     }
 
     private static CharacterCombatTransform GetCreatureCombatTransform(
+        NCreature creature,
         CreatureAppearanceBinding binding)
     {
-        var optionId = SkinService.Config.GetSelection(binding.Group.Id);
+        var optionId = MultiplayerSkinSync.GetSelectionForCreature(
+            creature.Entity,
+            binding.Group.Id);
         var value = SkinService.GetCharacterCombatTransform(binding.TransformKey, optionId);
         return binding.UsesMonsterScale
             ? value with { Scale = SkinService.GetSelectedMonsterScale(binding.Group.Id) }
@@ -674,6 +712,7 @@ internal static class CharacterAppearanceRuntime
 
             var refreshErrors = RefreshLiveCreatures(affectedGroups);
             RefreshCurrentCharacterUi();
+            MultiplayerSkinSync.OnLocalCharacterSelectionChanged(groupId);
             if (refreshErrors.Count > 0)
             {
                 var error = string.Join("; ", refreshErrors);
@@ -756,6 +795,40 @@ internal static class CharacterAppearanceRuntime
         return errors;
     }
 
+    internal static void RefreshPlayerAppearance(ulong playerNetId)
+    {
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return;
+        }
+
+        var rebuilt = false;
+        foreach (var creature in room.CreatureNodes.Where(creature =>
+                     creature.Entity.Player?.NetId == playerNetId ||
+                     creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
+        {
+            if (creature.IsPlayingDeathAnimation)
+            {
+                continue;
+            }
+
+            if (TryRebuildCreatureVisuals(creature, out var error))
+            {
+                rebuilt = true;
+            }
+            else
+            {
+                ModLog.Warn($"刷新联机玩家 {playerNetId} 的外观失败：{error}");
+            }
+        }
+
+        if (rebuilt)
+        {
+            RefreshPlayerAndPetLayout(room);
+        }
+    }
+
     internal static void CapturePlayerAndPetLayout(float scaling, bool fullyCenterPlayers)
     {
         var room = NCombatRoom.Instance;
@@ -814,6 +887,9 @@ internal static class CharacterAppearanceRuntime
             error = "game visual fields unavailable";
             return false;
         }
+
+        using var multiplayerSelectionScope =
+            MultiplayerSkinSync.BeginCreatureSelectionScope(creature.Entity);
 
         var oldVisuals = creature.Visuals;
         var desiredVisualName = oldVisuals.Name;
@@ -1399,16 +1475,22 @@ internal static class InRunCharacterAppearanceRuntimePatch
     private static void Postfix(NRun __instance)
     {
         CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
-        if (__instance.GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime") != null)
+        if (__instance.GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime") == null)
         {
-            return;
+            __instance.AddChild(new CharacterAppearanceRuntimeNode
+            {
+                Name = "SkinChangerAppearanceRuntime",
+                ProcessMode = Node.ProcessModeEnum.Always
+            });
         }
-
-        __instance.AddChild(new CharacterAppearanceRuntimeNode
+        if (__instance.GetNodeOrNull<MultiplayerSkinSyncNode>("SkinChangerMultiplayerSkinSync") == null)
         {
-            Name = "SkinChangerAppearanceRuntime",
-            ProcessMode = Node.ProcessModeEnum.Always
-        });
+            __instance.AddChild(new MultiplayerSkinSyncNode
+            {
+                Name = "SkinChangerMultiplayerSkinSync",
+                ProcessMode = Node.ProcessModeEnum.Always
+            });
+        }
     }
 }
 

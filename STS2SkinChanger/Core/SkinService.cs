@@ -95,6 +95,69 @@ internal static class SkinService
         private set => _lastError = value;
     }
 
+    private static string GetVisualSelection(string groupId) =>
+        MultiplayerSkinSync.GetScopedSelection(groupId) ?? Config.GetSelection(groupId);
+
+    private static IReadOnlyDictionary<string, string> GetVisualSelections()
+    {
+        var scoped = MultiplayerSkinSync.GetScopedSelections();
+        if (scoped == null)
+        {
+            return Config.Selections;
+        }
+
+        var effective = new Dictionary<string, string>(
+            Config.Selections,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in scoped)
+        {
+            effective[pair.Key] = pair.Value;
+        }
+        return effective;
+    }
+
+    public static bool TryBuildSessionCharacterSelection(
+        string groupId,
+        string optionId,
+        out IReadOnlyDictionary<string, string> selectionOverrides)
+    {
+        lock (Sync)
+        {
+            selectionOverrides = null!;
+            var catalog = Catalog;
+            var group = catalog?.Groups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (catalog == null || group == null || !catalog.IsCharacterAppearanceGroup(group.Id) ||
+                (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                 group.Options.All(option => !option.Id.Equals(
+                     optionId,
+                     StringComparison.OrdinalIgnoreCase))))
+            {
+                return false;
+            }
+
+            var workingSelections = new Dictionary<string, string>(
+                Config.Selections,
+                StringComparer.OrdinalIgnoreCase);
+            selectionOverrides = catalog.BuildVisualSelectionTransaction(
+                group.Id,
+                optionId,
+                workingSelections);
+            return true;
+        }
+    }
+
+    public static void RefreshSessionRuntimeProviders()
+    {
+        lock (Sync)
+        {
+            if (Catalog != null)
+            {
+                MountOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            }
+        }
+    }
+
     private static string ConfigPath => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer.json");
     private static string LegacyConfigPath =>
         System.IO.Path.Combine(OS.GetUserDataDir(), "sts2_skin_switcher.json");
@@ -1191,7 +1254,7 @@ internal static class SkinService
                 return false;
             }
 
-            var selectedId = Config.GetSelection(groupId);
+            var selectedId = GetVisualSelection(groupId);
             return catalog.IsRuntimeProviderOption(groupId, selectedId) &&
                    catalog.ProviderUsesManagedCharacterScene(groupId, selectedId);
         }
@@ -2165,7 +2228,7 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            var mode = Catalog?.GetRuntimeMonsterVisualMode(groupId, Config.GetSelection(groupId));
+            var mode = Catalog?.GetRuntimeMonsterVisualMode(groupId, GetVisualSelection(groupId));
             return new[] { scenePath }
                 .Concat(mode?.ResourcePaths ?? [])
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2326,7 +2389,7 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            return Catalog?.IsRuntimeProviderOption(groupId, Config.GetSelection(groupId)) == true;
+            return Catalog?.IsRuntimeProviderOption(groupId, GetVisualSelection(groupId)) == true;
         }
     }
 
@@ -2339,10 +2402,10 @@ internal static class SkinService
                 return null;
             }
 
-            var selection = Config.GetSelection(groupId);
+            var selection = GetVisualSelection(groupId);
             return Catalog.IsRuntimeProviderOption(groupId, selection) &&
                    Catalog.ProviderUsesFullRuntime(selection) &&
-                   Catalog.IsFullRuntimeProviderFullySelected(selection, Config.Selections)
+                   Catalog.IsFullRuntimeProviderFullySelected(selection, GetVisualSelections())
                 ? selection
                 : null;
         }
@@ -2356,11 +2419,11 @@ internal static class SkinService
         string? providerId;
         lock (Sync)
         {
-            var selection = Config.GetSelection(groupId);
+            var selection = GetVisualSelection(groupId);
             var catalog = Catalog;
             providerId = catalog?.IsRuntimeProviderOption(groupId, selection) == true &&
                          (!catalog.ProviderUsesFullRuntime(selection) ||
-                          catalog.IsFullRuntimeProviderFullySelected(selection, Config.Selections))
+                          catalog.IsFullRuntimeProviderFullySelected(selection, GetVisualSelections()))
                 ? selection
                 : null;
         }
@@ -2398,7 +2461,7 @@ internal static class SkinService
                 return false;
             }
 
-            var selection = Config.GetSelection(groupId);
+            var selection = GetVisualSelection(groupId);
             return Catalog.IsRuntimeProviderOption(groupId, selection) &&
                    !Catalog.IsResourceBackedOption(groupId, selection) &&
                    Catalog.GetRuntimeImagePath(groupId, selection) != null;
@@ -2414,7 +2477,7 @@ internal static class SkinService
                 return false;
             }
 
-            var selection = Config.GetSelection(groupId);
+            var selection = GetVisualSelection(groupId);
             return Catalog.IsRuntimeProviderOption(groupId, selection) &&
                    Catalog.ProviderUsesInteractiveRuntime(selection);
         }
@@ -2426,7 +2489,7 @@ internal static class SkinService
         {
             var catalog = Catalog;
             return catalog != null &&
-                   catalog.IsResourceBackedOption(groupId, Config.GetSelection(groupId));
+                   catalog.IsResourceBackedOption(groupId, GetVisualSelection(groupId));
         }
     }
 
@@ -2627,7 +2690,7 @@ internal static class SkinService
         lock (Sync)
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-            var selection = Config.GetSelection(groupId);
+            var selection = GetVisualSelection(groupId);
             var imagePath = catalog.GetRuntimeImagePath(groupId, selection) ??
                             throw new InvalidOperationException($"{groupId}/{selection} 没有独立图片资源。");
             var cacheKey = RuntimeResourceKey(groupId, "external-image:" + imagePath);
@@ -2697,7 +2760,7 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            return Catalog?.GetRuntimeMonsterVisualMode(groupId, Config.GetSelection(groupId));
+            return Catalog?.GetRuntimeMonsterVisualMode(groupId, GetVisualSelection(groupId));
         }
     }
 
@@ -2708,7 +2771,7 @@ internal static class SkinService
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
             var paths = catalog.GetAncientLayeredImagePaths(
                 groupId,
-                Config.GetSelection(groupId));
+                GetVisualSelection(groupId));
             if (paths == null)
             {
                 return null;
@@ -2808,7 +2871,7 @@ internal static class SkinService
         {
             var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
             var loadStarted = Stopwatch.GetTimestamp();
-            var selection = Config.GetSelection(groupId);
+            var selection = GetVisualSelection(groupId);
             var prepared = GetOrPrepareRuntimeOverlay(
                 catalog,
                 groupId,
@@ -3079,6 +3142,16 @@ internal static class SkinService
             }
         }
 
+        // A remote player may use a managed character provider that is not selected in our
+        // persistent config. Its scripts still need registering before that player's isolated
+        // scene is instantiated; registering is idempotent and does not choose the provider for
+        // any local character.
+        foreach (var providerId in activeRuntimeProviders.Where(
+                     catalog.ProviderUsesManagedGodotScripts))
+        {
+            ManagedSkinModLoader.EnsureProviderGodotScripts(providerId);
+        }
+
         foreach (var providerId in activeRuntimeProviders.Where(
                      catalog.ProviderUsesScopedMonsterRuntime))
         {
@@ -3132,6 +3205,8 @@ internal static class SkinService
 
     private static HashSet<string> GetActiveRuntimeProviders(SkinCatalog catalog)
     {
+        var selectionSets = new List<IReadOnlyDictionary<string, string>> { Config.Selections };
+        selectionSets.AddRange(MultiplayerSkinSync.GetAvailableSelectionMaps());
         var selectedProviders = catalog.GetFullySelectedFullRuntimeProviders(Config.Selections)
             .Union(
                 catalog.GetSelectedInteractiveRuntimeProviders(Config.Selections),
@@ -3140,6 +3215,12 @@ internal static class SkinService
                 catalog.GetSelectedScopedMonsterRuntimeProviders(Config.Selections),
                 StringComparer.OrdinalIgnoreCase)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var selections in selectionSets.Skip(1))
+        {
+            selectedProviders.UnionWith(catalog.GetFullySelectedFullRuntimeProviders(selections));
+            selectedProviders.UnionWith(catalog.GetSelectedInteractiveRuntimeProviders(selections));
+            selectedProviders.UnionWith(catalog.GetSelectedScopedMonsterRuntimeProviders(selections));
+        }
         if (_runtimeCharacterBehaviorScope == null)
         {
             return selectedProviders;
@@ -3160,9 +3241,10 @@ internal static class SkinService
                 // back to the character groups on which this provider is directly selected.
                 characterGroups = catalog.Groups
                     .Where(group => catalog.IsCharacterAppearanceGroup(group.Id))
-                    .Where(group => Config.GetSelection(group.Id).Equals(
-                        providerId,
-                        StringComparison.OrdinalIgnoreCase))
+                    .Where(group => selectionSets.Any(selections =>
+                        selections.GetValueOrDefault(group.Id, SkinCatalog.BaseOptionId).Equals(
+                            providerId,
+                            StringComparison.OrdinalIgnoreCase)))
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
             }
@@ -3553,7 +3635,7 @@ internal static class SkinService
     }
 
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
-        groupId + "\n" + resourcePath;
+        groupId + "\n" + GetVisualSelection(groupId) + "\n" + resourcePath;
 
     private static string RuntimeOverlayKey(
         string groupId,

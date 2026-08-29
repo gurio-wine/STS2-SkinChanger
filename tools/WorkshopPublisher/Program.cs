@@ -64,7 +64,10 @@ _ = ComposeDescription(
     config.StatementHeading,
     config.Limitations,
     config.Version,
-    JoinFeatureUpdates(config.FeatureUpdate, config.CardPriorityUpdate));
+    JoinFeatureUpdates(
+        config.FeatureUpdate,
+        config.CardPriorityUpdate,
+        config.MultiplayerUpdate));
 foreach (var localization in localizations)
 {
     _ = ComposeDescription(
@@ -72,7 +75,10 @@ foreach (var localization in localizations)
         localization.StatementHeading,
         localization.Limitations,
         localization.Version,
-        JoinFeatureUpdates(localization.FeatureUpdate, localization.CardPriorityUpdate));
+        JoinFeatureUpdates(
+            localization.FeatureUpdate,
+            localization.CardPriorityUpdate,
+            localization.MultiplayerUpdate));
 }
 
 Environment.SetEnvironmentVariable("SteamAppId", config.AppId.ToString());
@@ -120,7 +126,10 @@ try
                 config.StatementHeading,
                 config.Limitations,
                 config.Version,
-                JoinFeatureUpdates(config.FeatureUpdate, config.CardPriorityUpdate))),
+                JoinFeatureUpdates(
+                    config.FeatureUpdate,
+                    config.CardPriorityUpdate,
+                    config.MultiplayerUpdate))),
         "SetItemDescription");
     Require(SteamUGC.SetItemVisibility(update, config.Visibility), "SetItemVisibility");
     Require(SteamUGC.SetItemContent(update, contentFolder), "SetItemContent");
@@ -144,7 +153,10 @@ try
             config.StatementHeading,
             config.Limitations,
             config.Version,
-            JoinFeatureUpdates(config.FeatureUpdate, config.CardPriorityUpdate)));
+            JoinFeatureUpdates(
+                config.FeatureUpdate,
+                config.CardPriorityUpdate,
+                config.MultiplayerUpdate)));
     foreach (var localization in localizations)
     {
         VerifyPublishedLocalization(
@@ -158,7 +170,8 @@ try
                 localization.Version,
                 JoinFeatureUpdates(
                     localization.FeatureUpdate,
-                    localization.CardPriorityUpdate)));
+                    localization.CardPriorityUpdate,
+                    localization.MultiplayerUpdate)));
     }
 
     Console.WriteLine($"PUBLISHED_FILE_ID={publishedFileId.m_PublishedFileId}");
@@ -266,7 +279,10 @@ static void PublishLocalization(
                 localization.StatementHeading,
                 localization.Limitations,
                 localization.Version,
-                JoinFeatureUpdates(localization.FeatureUpdate, localization.CardPriorityUpdate))),
+                JoinFeatureUpdates(
+                    localization.FeatureUpdate,
+                    localization.CardPriorityUpdate,
+                    localization.MultiplayerUpdate))),
         $"SetItemDescription({localization.Language})");
 
     var result = WaitForCallResult<SubmitItemUpdateResult_t>(
@@ -461,6 +477,7 @@ internal sealed class WorkshopConfig
     public string? Version { get; init; }
     public string? FeatureUpdate { get; init; }
     public string? CardPriorityUpdate { get; init; }
+    public string? MultiplayerUpdate { get; init; }
     public ERemoteStoragePublishedFileVisibility Visibility { get; init; }
     public required string ContentFolder { get; init; }
     public required string PreviewFile { get; init; }
@@ -479,4 +496,5 @@ internal sealed class WorkshopLocalization
     public string? Version { get; init; }
     public string? FeatureUpdate { get; init; }
     public string? CardPriorityUpdate { get; init; }
+    public string? MultiplayerUpdate { get; init; }
 }
