@@ -1657,7 +1657,19 @@ static void RunCardExportSelfTest(string gamePckPath)
             ["res://generated/framed.png"] = [4, 5, 6],
             ["res://generated/fallback.png"] = [7, 8, 9],
             ["res://generated/frame.tres"] = Encoding.UTF8.GetBytes(
-                "[gd_resource type=\"StyleBoxFlat\" format=3]\n")
+                "[gd_resource type=\"StyleBoxFlat\" format=3]\n"),
+            ["res://Tests.ExportedCardSkin/images/atlases/lance_cards.sprites/silent/shiv.tres.remap"] =
+                Encoding.UTF8.GetBytes(
+                    "[remap]\npath=\"res://.godot/exported/test-shiv.res\"\n"),
+            ["res://Tests.ExportedCardSkin/images/atlases/lance_cards.sprites/silent/strike.tres.remap"] =
+                Encoding.UTF8.GetBytes(
+                    "[remap]\npath=\"res://.godot/exported/test-strike.res\"\n"),
+            ["res://Tests.ExportedCardSkin/images/atlases/lance_cards.sprites/silent/acrobatics.tres.remap"] =
+                Encoding.UTF8.GetBytes(
+                    "[remap]\npath=\"res://.godot/exported/test-acrobatics.res\"\n"),
+            ["res://.godot/exported/test-shiv.res"] = [10, 11, 12],
+            ["res://.godot/exported/test-strike.res"] = [13, 14, 15],
+            ["res://.godot/exported/test-acrobatics.res"] = [16, 17, 18]
         };
         PckArchive.Write(providerPck, files);
 
@@ -1694,11 +1706,38 @@ static void RunCardExportSelfTest(string gamePckPath)
         }
 
         var cards = expectedPortraits.Keys.Select(cardType => new CardCatalogEntry(
-            cardType,
-            $"res://validation/{cardType.ToLowerInvariant()}.png",
-            "tests",
-            "tests",
-            "tests")).ToArray();
+                cardType,
+                $"res://validation/{cardType.ToLowerInvariant()}.png",
+                "tests",
+                "tests",
+                "tests"))
+            .Concat([
+                new CardCatalogEntry(
+                    "Shiv",
+                    "res://images/atlases/card_atlas.sprites/token/shiv.tres",
+                    "token",
+                    "misc",
+                    "misc"),
+                new CardCatalogEntry(
+                    "StrikeIronclad",
+                    "res://images/atlases/card_atlas.sprites/ironclad/strike.tres",
+                    "ironclad",
+                    "ironclad",
+                    "ironclad"),
+                new CardCatalogEntry(
+                    "StrikeSilent",
+                    "res://images/atlases/card_atlas.sprites/silent/strike.tres",
+                    "silent",
+                    "silent",
+                    "silent"),
+                new CardCatalogEntry(
+                    "Acrobatics",
+                    "res://images/atlases/card_atlas.sprites/silent/acrobatics.tres",
+                    "silent",
+                    "silent",
+                    "silent")
+            ])
+            .ToArray();
         catalog.FinalizeCardGroups(cards);
         var routed = catalog.CardGroups.Single(group => group.Id == "tests")
             .Options.Single(option => option.Id.Equals(
@@ -1709,6 +1748,50 @@ static void RunCardExportSelfTest(string gamePckPath)
                 !key.Equals("FramedCard", StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException("exported card routing leaked or lost mappings");
+        }
+
+        const string sharedPoolShiv =
+            "res://Tests.ExportedCardSkin/images/atlases/lance_cards.sprites/silent/shiv.tres";
+        var miscOption = catalog.CardGroups.Single(group => group.Id == "misc")
+            .Options.Single(option => option.Id.Equals(
+                sourceOption.Id,
+                StringComparison.OrdinalIgnoreCase));
+        if (!miscOption.NormalPortraits.TryGetValue("Shiv", out var routedShiv) ||
+            !routedShiv.Equals(sharedPoolShiv, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"unique shared-pool card routing failed: {routedShiv ?? "<missing>"}");
+        }
+        if (catalog.CardGroups.FirstOrDefault(group => group.Id == "ironclad")?
+                .Options.Any(option => option.Id.Equals(
+                    sourceOption.Id,
+                    StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            throw new InvalidOperationException(
+                "ambiguous cross-category card stem leaked into the Ironclad group");
+        }
+        var silentOption = catalog.CardGroups.Single(group => group.Id == "silent")
+            .Options.Single(option => option.Id.Equals(
+                sourceOption.Id,
+                StringComparison.OrdinalIgnoreCase));
+        if (!silentOption.Assets.Keys.Any(path => path.EndsWith(
+                "/silent/acrobatics.tres",
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException("normal same-category card routing regressed");
+        }
+
+        var sharedPoolOverlay = catalog.BuildIsolatedCardResource(
+            "misc",
+            miscOption.Id,
+            sharedPoolShiv,
+            useSelectedProvider: true,
+            "self-test/shared-pool-shiv");
+        if (!sharedPoolOverlay.ResourcePaths.ContainsKey(sharedPoolShiv) ||
+            sharedPoolOverlay.Files.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "shared-pool portrait isolation failed");
         }
 
         foreach (var expected in expectedPortraits)
@@ -1740,7 +1823,8 @@ static void RunCardExportSelfTest(string gamePckPath)
         }
 
         Console.WriteLine(
-            "card export self-test passed: static, BOM-framed, animation fallback and batched isolation");
+            "card export self-test passed: static, BOM-framed, animation fallback, " +
+            "unique shared-pool routing and batched isolation");
     }
     finally
     {

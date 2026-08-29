@@ -1709,6 +1709,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .Where(group => !string.IsNullOrWhiteSpace(group))
             .Cast<string>()
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var uniqueCardTypesByStem = BuildUniqueCardTypesByStem(cardEntries, knownCardGroups);
         var groups = new Dictionary<string, CardSkinGroup>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var configuredGroup in _configuredCardGroups)
@@ -1782,6 +1783,25 @@ internal sealed partial class SkinCatalog : IDisposable
                 var hasAncientPortrait = option.AncientPortraits.TryGetValue(
                     card.TypeName,
                     out var ancientPortrait);
+                if (assets.Length == 0 &&
+                    !hasNormalPortrait &&
+                    !hasAncientPortrait &&
+                    TryGetUniqueSharedPoolPortrait(
+                        option.Assets.Keys,
+                        card,
+                        knownCardGroups,
+                        uniqueCardTypesByStem,
+                        out var sharedPoolPortrait))
+                {
+                    // Some character-skin authors store generated/token cards under their
+                    // character directory (for example silent/shiv) even though the game owns
+                    // that card through a shared pool (token/shiv). Route an exact, globally
+                    // unambiguous stem as an explicit per-card portrait. Keeping it out of the
+                    // group's broad asset matcher prevents the cross-character/card-type leaks
+                    // that a blanket category bypass would reintroduce.
+                    hasNormalPortrait = true;
+                    normalPortrait = sharedPoolPortrait;
+                }
                 if (assets.Length == 0 &&
                     !hasNormalPortrait &&
                     !hasAncientPortrait &&
@@ -1868,6 +1888,106 @@ internal sealed partial class SkinCatalog : IDisposable
             group.Options.Sort((left, right) =>
                 string.Compare(left.Name, right.Name, StringComparison.CurrentCultureIgnoreCase));
         }
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildUniqueCardTypesByStem(
+        IReadOnlyList<CardCatalogEntry> cards,
+        IReadOnlySet<string> knownCardGroups)
+    {
+        var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var card in cards)
+        {
+            var stems = new[]
+                {
+                    NormalizeCardToken(card.TypeName),
+                    TryGetCardArtIdentity(card.PortraitPath, knownCardGroups)?.Stem
+                }
+                .Where(stem => !string.IsNullOrWhiteSpace(stem))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var stem in stems)
+            {
+                if (ambiguous.Contains(stem))
+                {
+                    continue;
+                }
+
+                if (owners.TryGetValue(stem, out var owner) &&
+                    !owner.Equals(card.TypeName, StringComparison.OrdinalIgnoreCase))
+                {
+                    owners.Remove(stem);
+                    ambiguous.Add(stem);
+                    continue;
+                }
+
+                owners[stem] = card.TypeName;
+            }
+        }
+
+        return owners;
+    }
+
+    private static bool TryGetUniqueSharedPoolPortrait(
+        IEnumerable<string> assetPaths,
+        CardCatalogEntry card,
+        IReadOnlySet<string> knownCardGroups,
+        IReadOnlyDictionary<string, string> uniqueCardTypesByStem,
+        out string portraitPath)
+    {
+        portraitPath = string.Empty;
+        if (card.PoolGroupId.Equals(card.FilterGroupId, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var portrait = TryGetCardArtIdentity(card.PortraitPath, knownCardGroups);
+        var typeStem = NormalizeCardToken(card.TypeName);
+        if (portrait == null)
+        {
+            return false;
+        }
+
+        var candidates = assetPaths
+            .Select(path => (Path: path, Identity: TryGetCardArtIdentity(path, knownCardGroups)))
+            .Where(candidate => candidate.Identity != null &&
+                                !string.IsNullOrWhiteSpace(candidate.Identity.Category) &&
+                                !candidate.Identity.Category.Equals(
+                                    card.PoolGroupId,
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                !candidate.Identity.Category.Equals(
+                                    portrait.Category,
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                (candidate.Identity.Stem.Equals(
+                                     typeStem,
+                                     StringComparison.OrdinalIgnoreCase) ||
+                                 candidate.Identity.Stem.Equals(
+                                     portrait.Stem,
+                                     StringComparison.OrdinalIgnoreCase)) &&
+                                uniqueCardTypesByStem.TryGetValue(
+                                    candidate.Identity.Stem,
+                                    out var owner) &&
+                                owner.Equals(card.TypeName, StringComparison.OrdinalIgnoreCase))
+            .Select(candidate => candidate.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => SharedPoolPortraitScore(path))
+            .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (candidates.Length == 0)
+        {
+            return false;
+        }
+
+        portraitPath = candidates[0];
+        return true;
+    }
+
+    private static int SharedPoolPortraitScore(string path)
+    {
+        var extension = System.IO.Path.GetExtension(path);
+        return extension.Equals(".tres", StringComparison.OrdinalIgnoreCase) ? 0 :
+            extension.Equals(".res", StringComparison.OrdinalIgnoreCase) ? 1 :
+            extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ? 2 : 3;
     }
 
     private static void AddCardOption(
