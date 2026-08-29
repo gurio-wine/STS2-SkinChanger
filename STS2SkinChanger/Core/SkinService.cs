@@ -152,6 +152,7 @@ internal static class SkinService
         string optionName,
         string pckPath,
         string groupId,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings,
         out string error)
     {
         lock (Sync)
@@ -167,7 +168,22 @@ internal static class SkinService
                 optionName,
                 pckPath,
                 groupId,
+                resourceBindings,
                 out error);
+        }
+    }
+
+    internal static bool TryReadBaseGameResource(string resourcePath, out byte[] bytes)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null || !Catalog.IsBaseGameResource(resourcePath))
+            {
+                bytes = [];
+                return false;
+            }
+
+            return Catalog.TryReadBaseGameResource(resourcePath, out bytes);
         }
     }
 

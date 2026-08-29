@@ -43,6 +43,7 @@ internal struct SkinChangerNetMessage : INetMessage
     public ulong WorkshopItemId;
     public string SafeResourceFingerprint;
     public string SafeResourceManifest;
+    public string SafeResourceBindings;
     public string OnlineFailure;
 
     public bool ShouldBroadcast => false;
@@ -62,6 +63,7 @@ internal struct SkinChangerNetMessage : INetMessage
         writer.WriteULong(WorkshopItemId);
         writer.WriteString(SafeResourceFingerprint ?? string.Empty);
         writer.WriteString(SafeResourceManifest ?? string.Empty);
+        writer.WriteString(SafeResourceBindings ?? string.Empty);
         writer.WriteString(OnlineFailure ?? string.Empty);
     }
 
@@ -77,6 +79,7 @@ internal struct SkinChangerNetMessage : INetMessage
         WorkshopItemId = reader.ReadULong();
         SafeResourceFingerprint = reader.ReadString();
         SafeResourceManifest = reader.ReadString();
+        SafeResourceBindings = reader.ReadString();
         OnlineFailure = reader.ReadString();
     }
 }
@@ -89,13 +92,13 @@ internal sealed record SessionCharacterSelection(
 
 internal static class MultiplayerSkinSync
 {
-    internal const byte ProtocolVersion = 5;
+    internal const byte ProtocolVersion = 6;
     internal const int ReservedMessageId = 254;
     private const double ReadyGateQuietSeconds = 0.75;
     private const double ReadyGateTimeoutSeconds = 180.0;
 
     private static readonly byte[] CapabilityMagic =
-        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x35, 0x21]; // GSCAP05!
+        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x36, 0x21]; // GSCAP06!
     private static readonly HashSet<ulong> CapablePeers = [];
     private static readonly Dictionary<ulong, SkinChangerNetMessage> AdvertisedSelections = [];
     private static readonly Dictionary<ulong, SessionCharacterSelection> AvailableSelections = [];
@@ -900,7 +903,8 @@ internal static class MultiplayerSkinSync
             !ValidateOptionalText(message.ProviderId) ||
             !ValidateOptionalText(message.SafeResourceFingerprint) ||
             !ValidateOptionalText(message.OnlineFailure) ||
-            message.SafeResourceManifest is { Length: > 65536 })
+            message.SafeResourceManifest is { Length: > 65536 } ||
+            message.SafeResourceBindings is { Length: > 65536 })
         {
             return;
         }
@@ -1088,6 +1092,7 @@ internal static class MultiplayerSkinSync
                 message.WorkshopItemId = source.WorkshopItemId;
                 message.SafeResourceFingerprint = source.SafeResourceFingerprint;
                 message.SafeResourceManifest = source.SafeResourceManifest;
+                message.SafeResourceBindings = source.SafeResourceBindings;
             }
             if (state is OnlineSkinDescriptionState.Unavailable or OnlineSkinDescriptionState.Failed)
             {
@@ -1172,15 +1177,13 @@ internal static class MultiplayerSkinSync
     {
         if (TryGetLobbyCharacter(message.PlayerNetId, out var character))
         {
-            var group = ContextualSkinControls.FindGroup(
-                character.Id.Entry,
-                character.GetType().Name);
             return character.Id.Entry.Equals(
                        message.CharacterId,
                        StringComparison.OrdinalIgnoreCase) &&
-                   group?.Id.Equals(
+                   ContextualSkinControls.MatchesGroupIdentity(
                        message.GroupId,
-                       StringComparison.OrdinalIgnoreCase) == true;
+                       character.Id.Entry,
+                       character.GetType().Name);
         }
 
         return CharacterAppearanceRuntime.PlayerMatchesCharacterSelection(

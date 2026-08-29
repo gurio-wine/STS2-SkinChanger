@@ -1267,13 +1267,24 @@ internal static partial class ContextualSkinControls
 
     internal static SkinGroup? FindGroup(string modelId, string? modelTypeName = null)
     {
-        var tokens = new[] { modelId, modelTypeName }
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => NormalizeToken(value!))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tokens = BuildModelIdentityTokens(modelId, modelTypeName);
         return SkinService.Catalog?.Groups.FirstOrDefault(group =>
             tokens.Contains(NormalizeToken(group.Id)));
     }
+
+    internal static bool MatchesGroupIdentity(
+        string groupId,
+        string modelId,
+        string? modelTypeName = null) =>
+        BuildModelIdentityTokens(modelId, modelTypeName).Contains(NormalizeToken(groupId));
+
+    private static HashSet<string> BuildModelIdentityTokens(
+        string modelId,
+        string? modelTypeName) =>
+        new[] { modelId, modelTypeName }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => NormalizeToken(value!))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static string NormalizeToken(string value) => NonAlphanumericRegex().Replace(value, string.Empty).ToLowerInvariant();
 

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Collections.Concurrent;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Multiplayer.Transport.Steam;
@@ -16,7 +17,8 @@ internal sealed record OnlineSkinSource(
     string ProviderId,
     ulong WorkshopItemId,
     string SafeResourceFingerprint,
-    string SafeResourceManifest);
+    string SafeResourceManifest,
+    string SafeResourceBindings);
 
 internal enum OnlineSkinDescriptionState
 {
@@ -24,6 +26,24 @@ internal enum OnlineSkinDescriptionState
     Preparing,
     Ready,
     Failed
+}
+
+[HarmonyPatch(typeof(ModManager), "OnSteamWorkshopItemInstalled")]
+internal static class OnlineSkinWorkshopInstallPatch
+{
+    private static bool Prefix(ItemInstalled_t ev)
+    {
+        var workshopItemId = ev.m_nPublishedFileId.m_PublishedFileId;
+        if (!OnlineSkinCache.ShouldSuppressRuntimeWorkshopInstall(workshopItemId))
+        {
+            return true;
+        }
+
+        ModLog.Info(
+            $"已拦截联机临时皮肤 {workshopItemId} 的运行时 Mod 安装通知；" +
+            "只会读取安全资源子包，不要求重启游戏。 ");
+        return false;
+    }
 }
 
 internal sealed record OnlineSkinCacheFailure(
@@ -82,15 +102,16 @@ internal static partial class OnlineSkinCache
     private static readonly ConcurrentQueue<(string GroupId, string OptionId)> LocalSourcesReady = new();
     private static readonly ConcurrentQueue<string> LocalSourceReports = new();
     private static readonly Dictionary<ulong, TaskCompletionSource<EResult>> DownloadWaiters = [];
+    private static readonly HashSet<ulong> SessionWorkshopInstalls = [];
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".png", ".webp", ".jpg", ".jpeg", ".ctex",
         ".spatlas", ".spskel", ".atlas", ".skel",
-        ".remap", ".import", ".tres", ".res", ".scn"
+        ".remap", ".import", ".tres", ".res", ".scn", ".tscn"
     };
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".remap", ".import", ".tres", ".atlas"
+        ".remap", ".import", ".tres", ".atlas", ".spatlas", ".tscn"
     };
     private static readonly HashSet<string> BinaryResourceExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -149,6 +170,7 @@ internal static partial class OnlineSkinCache
                 waiter.TrySetCanceled();
             }
             DownloadWaiters.Clear();
+            SessionWorkshopInstalls.Clear();
             Pending.Clear();
             PendingKeys.Clear();
             DeclinedKeys.Clear();
@@ -351,7 +373,11 @@ internal static partial class OnlineSkinCache
         !string.IsNullOrWhiteSpace(message.ProviderId) &&
         !string.IsNullOrWhiteSpace(message.SafeResourceFingerprint) &&
         FingerprintRegex().IsMatch(message.SafeResourceFingerprint) &&
-        IsValidSafeResourceManifest(message.SafeResourceManifest);
+        IsValidSafeResourceManifest(message.SafeResourceManifest) &&
+        TryParseSafeResourceBindings(
+            message.SafeResourceBindings,
+            message.GroupId,
+            out _);
 
     internal static bool IsWaitingForDownloadMetadata(SkinChangerNetMessage message) =>
         message.WorkshopItemId != 0 &&
@@ -493,18 +519,19 @@ internal static partial class OnlineSkinCache
                 optionId,
                 out var providerId,
                 out var pckPath,
-                out var safeResourceRoots))
+                out var safeResourceRoots,
+                out var resourceBindings))
         {
             catalog.TryGetVisualProviderId(groupId, optionId, out providerId);
             providerId = string.IsNullOrWhiteSpace(providerId) ? optionId : providerId;
             failureDetail = "找不到该皮肤实际所属的 PCK 资源包。";
-            source = new OnlineSkinSource(providerId, 0, string.Empty, string.Empty);
+            source = new OnlineSkinSource(providerId, 0, string.Empty, string.Empty, string.Empty);
             return OnlineSkinDescriptionState.Unavailable;
         }
         if (!TryGetWorkshopItemId(pckPath, out var workshopItemId))
         {
             failureDetail = "该皮肤不是从 Steam 创意工坊目录加载的，无法自动下载。";
-            source = new OnlineSkinSource(providerId, 0, string.Empty, string.Empty);
+            source = new OnlineSkinSource(providerId, 0, string.Empty, string.Empty, string.Empty);
             return OnlineSkinDescriptionState.Unavailable;
         }
 
@@ -519,12 +546,22 @@ internal static partial class OnlineSkinCache
         }
 
         var safeResourceManifest = string.Join('\n', manifestRoots);
-        if (!IsValidSafeResourceManifest(safeResourceManifest))
+        var filteredBindings = FilterLocalSafeResourceBindings(
+            resourceBindings,
+            manifestRoots,
+            groupId);
+        var safeResourceBindings = SerializeSafeResourceBindings(filteredBindings);
+        if (!IsValidSafeResourceManifest(safeResourceManifest) ||
+            !TryParseSafeResourceBindings(
+                safeResourceBindings,
+                groupId,
+                out _))
         {
             failureDetail = "该皮肤的安全资源清单过大或格式无效。";
             source = new OnlineSkinSource(
                 providerId,
                 workshopItemId,
+                string.Empty,
                 string.Empty,
                 string.Empty);
             return OnlineSkinDescriptionState.Failed;
@@ -548,7 +585,8 @@ internal static partial class OnlineSkinCache
                     providerId,
                     workshopItemId,
                     string.Empty,
-                    safeResourceManifest);
+                    safeResourceManifest,
+                    safeResourceBindings);
                 return OnlineSkinDescriptionState.Failed;
             }
 
@@ -558,7 +596,8 @@ internal static partial class OnlineSkinCache
                     providerId,
                     workshopItemId,
                     string.Empty,
-                    safeResourceManifest);
+                    safeResourceManifest,
+                    safeResourceBindings);
                 return OnlineSkinDescriptionState.Preparing;
             }
             SetLocalPreparationProgressLocked(
@@ -575,12 +614,14 @@ internal static partial class OnlineSkinCache
                     pckPath,
                     groupId,
                     manifestRoots,
+                    filteredBindings,
                     outputPath: null);
                 var discovered = new OnlineSkinSource(
                     providerId,
                     workshopItemId,
                     package.Fingerprint,
-                    safeResourceManifest);
+                    safeResourceManifest,
+                    safeResourceBindings);
                 lock (Sync)
                 {
                     LocalSources[cacheKey] = new LocalSourceCacheEntry(
@@ -631,7 +672,8 @@ internal static partial class OnlineSkinCache
             providerId,
             workshopItemId,
             string.Empty,
-            safeResourceManifest);
+            safeResourceManifest,
+            safeResourceBindings);
         return OnlineSkinDescriptionState.Preparing;
     }
 
@@ -698,6 +740,13 @@ internal static partial class OnlineSkinCache
                 BuildSessionOptionId(request));
             Directory.CreateDirectory(outputDirectory);
             var outputPck = Path.Combine(outputDirectory, "safe-resources.pck");
+            if (!TryParseSafeResourceBindings(
+                    request.SafeResourceBindings,
+                    request.GroupId,
+                    out var resourceBindings))
+            {
+                throw new InvalidDataException("对方提供的角色资源映射格式无效。 ");
+            }
             SetProgress(
                 OnlineSkinCacheStage.Verifying,
                 request.ProviderId,
@@ -707,6 +756,7 @@ internal static partial class OnlineSkinCache
                     sourcePck,
                     request.GroupId,
                     ParseSafeResourceManifest(request.SafeResourceManifest),
+                    resourceBindings,
                     outputPck),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -739,6 +789,7 @@ internal static partial class OnlineSkinCache
                     displayName + OnlineCacheSuffix(),
                     outputPck,
                     request.GroupId,
+                    resourceBindings,
                     out var error))
             {
                 throw new InvalidDataException(error);
@@ -868,6 +919,7 @@ internal static partial class OnlineSkinCache
             waiter = new TaskCompletionSource<EResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             DownloadWaiters[workshopItemId] = waiter;
+            SessionWorkshopInstalls.Add(workshopItemId);
         }
 
         if (!SteamUGC.DownloadItem(itemId, true))
@@ -885,6 +937,14 @@ internal static partial class OnlineSkinCache
             throw new IOException($"Steam 下载失败：{result}。");
         }
         return installed;
+    }
+
+    internal static bool ShouldSuppressRuntimeWorkshopInstall(ulong workshopItemId)
+    {
+        lock (Sync)
+        {
+            return SessionWorkshopInstalls.Contains(workshopItemId);
+        }
     }
 
     private static void EnsureDownloadCallback()
@@ -923,6 +983,7 @@ internal static partial class OnlineSkinCache
         string sourcePck,
         string groupId,
         IReadOnlyCollection<string> explicitRoots,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings,
         string? outputPath)
     {
         using var archive = PckArchive.Open(sourcePck, (uint)MaxArchiveEntries);
@@ -933,6 +994,18 @@ internal static partial class OnlineSkinCache
 
         var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<string>();
+        var preparedFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        var boundSources = resourceBindings
+            .SelectMany(binding => binding.Value.Select(resourcePath => new
+            {
+                ResourcePath = NormalizeResourcePath(resourcePath),
+                SourcePath = NormalizeResourcePath(binding.Key)
+            }))
+            .GroupBy(binding => binding.ResourcePath, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First().SourcePath,
+                StringComparer.OrdinalIgnoreCase);
         foreach (var path in archive.Paths.Where(path =>
                      AllowedExtensions.Contains(Path.GetExtension(path)) &&
                      SkinCatalog.IsSafeOnlineResourceRootForGroup(path, groupId)))
@@ -953,13 +1026,22 @@ internal static partial class OnlineSkinCache
         {
             ValidateFile(path);
             var extension = Path.GetExtension(path);
+            var bytes = archive.ReadFile(path);
+            if (extension.Equals(".tscn", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!boundSources.TryGetValue(path, out var sourcePath))
+                {
+                    throw new InvalidDataException($"在线场景缺少角色资源目标映射：{path}。");
+                }
+                bytes = SanitizeOnlineTextScene(sourcePath, path, bytes);
+            }
+            preparedFiles[path] = bytes;
             if (!TextExtensions.Contains(extension) &&
                 !BinaryResourceExtensions.Contains(extension))
             {
                 continue;
             }
 
-            var bytes = archive.ReadFile(path);
             if (TextExtensions.Contains(extension) && bytes.Length > MaxTextResourceSize)
             {
                 throw new InvalidDataException($"文本资源过大：{path}。");
@@ -968,7 +1050,9 @@ internal static partial class OnlineSkinCache
             // fields. UTF-8 decoding preserves non-ASCII asset names; invalid binary bytes are
             // replaced but do not affect the res:// dependency tokens we scan.
             var text = Encoding.UTF8.GetString(bytes);
-            if (TextExtensions.Contains(extension) && ContainsForbiddenContent(text))
+            if (TextExtensions.Contains(extension) &&
+                !extension.Equals(".tscn", StringComparison.OrdinalIgnoreCase) &&
+                ContainsForbiddenContent(text))
             {
                 throw new InvalidDataException($"资源含脚本、Shader 或可执行引用：{path}。");
             }
@@ -1003,6 +1087,13 @@ internal static partial class OnlineSkinCache
                     Enqueue(dependency + ".import");
                     continue;
                 }
+                if (extension.Equals(".spatlas", StringComparison.OrdinalIgnoreCase) &&
+                    dependency.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Godot's exported SpineAtlasResource embeds atlas_data and retains the
+                    // editor source_path only as metadata; the source .atlas is not exported.
+                    continue;
+                }
 
                 throw new InvalidDataException($"资源依赖未包含在同一工坊包中：{dependency}。");
             }
@@ -1010,7 +1101,10 @@ internal static partial class OnlineSkinCache
             if (extension.Equals(".spatlas", StringComparison.OrdinalIgnoreCase) ||
                 extension.Equals(".atlas", StringComparison.OrdinalIgnoreCase))
             {
-                foreach (var page in AtlasPageRegex().Matches(text).Cast<Match>()
+                var atlasText = extension.Equals(".spatlas", StringComparison.OrdinalIgnoreCase)
+                    ? text.Replace("\\n", "\n", StringComparison.Ordinal)
+                    : text;
+                foreach (var page in AtlasPageRegex().Matches(atlasText).Cast<Match>()
                              .Select(match => match.Groups[1].Value))
                 {
                     var directory = path[..(path.LastIndexOf('/') + 1)];
@@ -1022,6 +1116,10 @@ internal static partial class OnlineSkinCache
                     else if (archive.Contains(candidate + ".remap"))
                     {
                         Enqueue(candidate + ".remap");
+                    }
+                    else if (archive.Contains(candidate + ".import"))
+                    {
+                        Enqueue(candidate + ".import");
                     }
                 }
             }
@@ -1036,13 +1134,14 @@ internal static partial class OnlineSkinCache
         var fingerprints = new List<string>(selected.Count);
         foreach (var path in selected.Order(StringComparer.OrdinalIgnoreCase))
         {
-            var size = archive.GetFileSize(path);
+            var bytes = preparedFiles[path];
+            var size = checked((ulong)bytes.LongLength);
             totalBytes = checked(totalBytes + size);
             if (size > MaxSafeFileSize || totalBytes > MaxSafePackageSize)
             {
                 throw new InvalidDataException("安全资源缓存超过大小限制。 ");
             }
-            var hash = Convert.ToHexString(SHA256.HashData(archive.ReadFile(path)));
+            var hash = Convert.ToHexString(SHA256.HashData(bytes));
             fingerprints.Add(path.ToLowerInvariant() + "\n" + hash);
         }
 
@@ -1050,11 +1149,7 @@ internal static partial class OnlineSkinCache
             Encoding.UTF8.GetBytes(string.Join("\n", fingerprints))));
         if (outputPath != null)
         {
-            var files = selected.ToDictionary(
-                path => path,
-                path => (archive, path),
-                StringComparer.OrdinalIgnoreCase);
-            PckArchive.WriteFromArchives(outputPath, files);
+            PckArchive.Write(outputPath, preparedFiles);
         }
         return new SafePackage(fingerprint, selected.Count, totalBytes);
 
@@ -1122,6 +1217,167 @@ internal static partial class OnlineSkinCache
         }
 
         return accepted.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> FilterLocalSafeResourceBindings(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> bindings,
+        IReadOnlyCollection<string> acceptedRoots,
+        string groupId)
+    {
+        var accepted = acceptedRoots.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, IReadOnlyList<string>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var binding in bindings)
+        {
+            var sourcePath = NormalizeResourcePath(binding.Key);
+            if (sourcePath.Contains("..", StringComparison.Ordinal) ||
+                sourcePath.Length > 512 ||
+                !SkinCatalog.IsSafeOnlineResourceRootForGroup(sourcePath, groupId))
+            {
+                continue;
+            }
+
+            var resourcePaths = binding.Value
+                .Select(NormalizeResourcePath)
+                .Where(path => accepted.Contains(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (resourcePaths.Length > 0)
+            {
+                result[sourcePath] = resourcePaths;
+            }
+        }
+        return result;
+    }
+
+    private static string SerializeSafeResourceBindings(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> bindings) =>
+        string.Join('\n', bindings
+            .OrderBy(binding => binding.Key, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(binding => binding.Value.Select(resourcePath =>
+                binding.Key + "\t" + resourcePath)));
+
+    private static bool TryParseSafeResourceBindings(
+        string? manifest,
+        string groupId,
+        out IReadOnlyDictionary<string, IReadOnlyList<string>> bindings)
+    {
+        bindings = new Dictionary<string, IReadOnlyList<string>>(
+            StringComparer.OrdinalIgnoreCase);
+        if (manifest == null || manifest.Length > 64 * 1024)
+        {
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(manifest))
+        {
+            return true;
+        }
+
+        var parsed = new Dictionary<string, HashSet<string>>(
+            StringComparer.OrdinalIgnoreCase);
+        var lines = manifest.Split(
+            '\n',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length > MaxSafeFiles)
+        {
+            return false;
+        }
+        foreach (var line in lines)
+        {
+            var separator = line.IndexOf('\t');
+            if (separator <= 0 || separator != line.LastIndexOf('\t'))
+            {
+                return false;
+            }
+
+            var sourcePath = line[..separator];
+            var resourcePath = line[(separator + 1)..];
+            if (!sourcePath.Equals(
+                    NormalizeResourcePath(sourcePath),
+                    StringComparison.Ordinal) ||
+                !resourcePath.Equals(
+                    NormalizeResourcePath(resourcePath),
+                    StringComparison.Ordinal) ||
+                sourcePath.Contains("..", StringComparison.Ordinal) ||
+                resourcePath.Contains("..", StringComparison.Ordinal) ||
+                sourcePath.Length > 512 ||
+                resourcePath.Length > 512 ||
+                !AllowedExtensions.Contains(Path.GetExtension(resourcePath)) ||
+                !SkinCatalog.IsSafeOnlineResourceRootForGroup(sourcePath, groupId))
+            {
+                return false;
+            }
+
+            if (!parsed.TryGetValue(sourcePath, out var paths))
+            {
+                paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                parsed[sourcePath] = paths;
+            }
+            paths.Add(resourcePath);
+        }
+
+        bindings = parsed.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<string>)pair.Value
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+        return true;
+    }
+
+    private static byte[] SanitizeOnlineTextScene(
+        string sourcePath,
+        string providerPath,
+        byte[] providerBytes)
+    {
+        if (!SkinService.TryReadBaseGameResource(sourcePath, out var baselineBytes))
+        {
+            throw new InvalidDataException(
+                $"在线场景的角色目标不属于游戏原始资源：{sourcePath}。");
+        }
+
+        var providerText = Encoding.UTF8.GetString(providerBytes);
+        var baselineText = Encoding.UTF8.GetString(baselineBytes);
+        var baselineScripts = SceneExecutableResourceRegex().Matches(baselineText)
+            .Cast<Match>()
+            .Where(match => match.Groups[1].Value.Equals(
+                "Script",
+                StringComparison.OrdinalIgnoreCase))
+            .Select(match => match.Groups[2].Value)
+            .Where(SkinService.IsBaseGameResource)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var replacementIndex = 0;
+        providerText = SceneExecutableResourceRegex().Replace(providerText, match =>
+        {
+            var type = match.Groups[1].Value;
+            var path = match.Groups[2].Value;
+            if (SkinService.IsBaseGameResource(path))
+            {
+                return match.Value;
+            }
+            if (!type.Equals("Script", StringComparison.OrdinalIgnoreCase) ||
+                replacementIndex >= baselineScripts.Length)
+            {
+                throw new InvalidDataException(
+                    $"在线场景含无法替换的自定义 {type}：{providerPath} -> {path}。");
+            }
+
+            var replacement = baselineScripts[replacementIndex++];
+            return match.Value.Replace(path, replacement, StringComparison.Ordinal);
+        });
+
+        if (UnsafeTextSceneTokenRegex().IsMatch(providerText) ||
+            SceneExecutableResourceRegex().Matches(providerText)
+                .Cast<Match>()
+                .Any(match => !SkinService.IsBaseGameResource(match.Groups[2].Value)))
+        {
+            throw new InvalidDataException(
+                $"在线场景仍含不可安全加载的脚本、Shader 或扩展：{providerPath}。");
+        }
+
+        return Encoding.UTF8.GetBytes(providerText);
     }
 
     private static IReadOnlyList<string> ParseSafeResourceManifest(string? manifest) =>
@@ -1329,6 +1585,14 @@ internal static partial class OnlineSkinCache
 
     [GeneratedRegex("(?i)(?:GDScript|CSharpScript|GDExtension|ExtensionLibrary|local://Shader_)")]
     private static partial Regex ForbiddenBinaryResourceRegex();
+
+    [GeneratedRegex(
+        "(?im)^\\[ext_resource[^\\]]*type=\\\"(Script|Shader)\\\"[^\\]]*path=\\\"(res://[^\\\"]+)\\\"[^\\]]*\\]$")]
+    private static partial Regex SceneExecutableResourceRegex();
+
+    [GeneratedRegex(
+        "(?i)(?:GDExtension|ExtensionLibrary|type\\s*=\\s*\\\"(?:GDScript|CSharpScript|Shader)\\\"|shader/code\\s*=|(?m)^code\\s*=)")]
+    private static partial Regex UnsafeTextSceneTokenRegex();
 
     private sealed record WorkshopDetails(string Title, ulong Size);
     private sealed record SafePackage(string Fingerprint, int FileCount, ulong TotalBytes);

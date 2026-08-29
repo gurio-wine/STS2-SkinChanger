@@ -250,11 +250,14 @@ internal sealed partial class SkinCatalog : IDisposable
         string optionId,
         out string providerId,
         out string pckPath,
-        out IReadOnlyList<string> safeResourceRoots)
+        out IReadOnlyList<string> safeResourceRoots,
+        out IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings)
     {
         providerId = string.Empty;
         pckPath = string.Empty;
         safeResourceRoots = [];
+        resourceBindings = new Dictionary<string, IReadOnlyList<string>>(
+            StringComparer.OrdinalIgnoreCase);
         var option = _groups.FirstOrDefault(group => group.Id.Equals(
                 groupId,
                 StringComparison.OrdinalIgnoreCase))?
@@ -283,10 +286,24 @@ internal sealed partial class SkinCatalog : IDisposable
 
         providerId = index.Mod.Id;
         pckPath = index.Mod.PckPath;
-        safeResourceRoots = option.Assets.Values
-            .SelectMany(asset => asset.Files)
-            .Where(file => ReferenceEquals(file.Archive, index.Archive))
-            .Select(file => file.Path)
+        resourceBindings = option.Assets
+            .Select(pair => new
+            {
+                SourcePath = pair.Key,
+                Paths = (IReadOnlyList<string>)pair.Value.Files
+                    .Where(file => ReferenceEquals(file.Archive, index.Archive))
+                    .Select(file => file.Path)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Order(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            })
+            .Where(binding => binding.Paths.Count > 0)
+            .ToDictionary(
+                binding => binding.SourcePath,
+                binding => binding.Paths,
+                StringComparer.OrdinalIgnoreCase);
+        safeResourceRoots = resourceBindings.Values
+            .SelectMany(paths => paths)
             .Concat(option.ManagedMonsterScene?.Files
                 .Where(file => ReferenceEquals(file.Archive, index.Archive))
                 .Select(file => file.Path) ?? [])
@@ -314,11 +331,24 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public bool IsBaseGameResource(string resourcePath) => _gameArchive.Contains(resourcePath);
 
+    public bool TryReadBaseGameResource(string resourcePath, out byte[] bytes)
+    {
+        if (!_gameArchive.Contains(resourcePath))
+        {
+            bytes = [];
+            return false;
+        }
+
+        bytes = _gameArchive.ReadFile(resourcePath);
+        return true;
+    }
+
     public bool TryAddSessionVisualProvider(
         string optionId,
         string optionName,
         string pckPath,
         string expectedGroupId,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings,
         out string error)
     {
         error = string.Empty;
@@ -340,16 +370,58 @@ internal sealed partial class SkinCatalog : IDisposable
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 remapFilter: null);
             archive = null;
-            var discovered = BuildGroups([index], _baselineIndexes);
-            var matchingGroups = discovered
-                .Where(group => group.Id.Equals(expectedGroupId, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            if (matchingGroups.Length != 1 || matchingGroups[0].Options.Count != 1)
+            SkinGroup discoveredGroup;
+            if (resourceBindings.Count > 0)
             {
-                error = "安全资源包未形成匹配的角色外观。";
-                return false;
+                var boundAssets = new Dictionary<string, ResourceAsset>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var binding in resourceBindings)
+                {
+                    if (!IsSafeOnlineResourceRootForGroup(binding.Key, expectedGroupId))
+                    {
+                        error = $"联机资源映射不属于角色 {expectedGroupId}：{binding.Key}。";
+                        return false;
+                    }
+
+                    var asset = new ResourceAsset(binding.Key);
+                    foreach (var resourcePath in binding.Value)
+                    {
+                        if (!index.Archive.Contains(resourcePath))
+                        {
+                            error = $"安全资源包缺少映射文件：{resourcePath}。";
+                            return false;
+                        }
+                        asset.AddFile(index.Archive, resourcePath);
+                    }
+                    if (asset.Files.Count > 0)
+                    {
+                        boundAssets[binding.Key] = asset;
+                    }
+                }
+
+                discoveredGroup = new SkinGroup(
+                    expectedGroupId,
+                    TryGetPrimaryGroup(resourceBindings.Keys.FirstOrDefault() ?? string.Empty)
+                        ?.DisplayName ?? expectedGroupId);
+                discoveredGroup.Options.Add(new SkinOption(
+                    optionId,
+                    optionName,
+                    boundAssets,
+                    ProviderId: optionId));
             }
-            var discoveredGroup = matchingGroups[0];
+            else
+            {
+                var discovered = BuildGroups([index], _baselineIndexes);
+                var matchingGroups = discovered
+                    .Where(group => group.Id.Equals(expectedGroupId, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                if (matchingGroups.Length != 1 || matchingGroups[0].Options.Count != 1)
+                {
+                    error = "安全资源包未形成匹配的角色外观。";
+                    return false;
+                }
+                discoveredGroup = matchingGroups[0];
+            }
 
             var target = _groups.FirstOrDefault(group => group.Id.Equals(
                 expectedGroupId,
