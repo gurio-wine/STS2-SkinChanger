@@ -147,6 +147,88 @@ internal static class SkinService
         }
     }
 
+    internal static bool TryRegisterOnlineSessionProvider(
+        string optionId,
+        string optionName,
+        string pckPath,
+        string groupId,
+        out string error)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                error = "皮肤目录尚未初始化。";
+                return false;
+            }
+
+            return Catalog.TryAddSessionVisualProvider(
+                optionId,
+                optionName,
+                pckPath,
+                groupId,
+                out error);
+        }
+    }
+
+    internal static void RemoveOnlineSessionProvider(string optionId)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return;
+            }
+
+            var affectedGroups = Catalog.Groups
+                .Where(group => group.Options.Any(option => option.Id.Equals(
+                    optionId,
+                    StringComparison.OrdinalIgnoreCase)))
+                .Select(group => group.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (affectedGroups.Count > 0)
+            {
+                MountOverlay(affectedGroups);
+            }
+
+            Catalog.RemoveSessionVisualProvider(optionId);
+            var cacheMarker = "\n" + optionId + "\n";
+            foreach (var key in RuntimeResourceCache.Keys.Where(key =>
+                         key.Contains(cacheMarker, StringComparison.OrdinalIgnoreCase)).ToArray())
+            {
+                RuntimeResourceCache.Remove(key);
+            }
+            foreach (var key in PreparedRuntimeOverlays.Keys.Where(key =>
+                         key.Contains(cacheMarker, StringComparison.OrdinalIgnoreCase)).ToArray())
+            {
+                RuntimeResourceBundles.Remove(key);
+                var overlayPath = PreparedRuntimeOverlays[key].OverlayPath;
+                PreparedRuntimeOverlays.Remove(key);
+                if (overlayPath != null)
+                {
+                    try
+                    {
+                        File.Delete(overlayPath);
+                    }
+                    catch (Exception exception)
+                    {
+                        ModLog.Info(
+                            "联机皮肤运行缓存仍被 Godot 占用，将在下次启动时清理：" +
+                            exception.GetBaseException().Message);
+                    }
+                }
+            }
+        }
+    }
+
+    internal static bool IsBaseGameResource(string resourcePath)
+    {
+        lock (Sync)
+        {
+            return Catalog?.IsBaseGameResource(resourcePath) == true;
+        }
+    }
+
     public static void RefreshSessionRuntimeProviders()
     {
         lock (Sync)

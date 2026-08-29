@@ -34,6 +34,9 @@ internal struct SkinChangerNetMessage : INetMessage
     public string CharacterId;
     public string GroupId;
     public string OptionId;
+    public string ProviderId;
+    public ulong WorkshopItemId;
+    public string SafeResourceFingerprint;
 
     public bool ShouldBroadcast => false;
     public NetTransferMode Mode => NetTransferMode.Reliable;
@@ -48,6 +51,9 @@ internal struct SkinChangerNetMessage : INetMessage
         writer.WriteString(CharacterId ?? string.Empty);
         writer.WriteString(GroupId ?? string.Empty);
         writer.WriteString(OptionId ?? string.Empty);
+        writer.WriteString(ProviderId ?? string.Empty);
+        writer.WriteULong(WorkshopItemId);
+        writer.WriteString(SafeResourceFingerprint ?? string.Empty);
     }
 
     public void Deserialize(PacketReader reader)
@@ -58,6 +64,9 @@ internal struct SkinChangerNetMessage : INetMessage
         CharacterId = reader.ReadString();
         GroupId = reader.ReadString();
         OptionId = reader.ReadString();
+        ProviderId = reader.ReadString();
+        WorkshopItemId = reader.ReadULong();
+        SafeResourceFingerprint = reader.ReadString();
     }
 }
 
@@ -69,11 +78,11 @@ internal sealed record SessionCharacterSelection(
 
 internal static class MultiplayerSkinSync
 {
-    internal const byte ProtocolVersion = 1;
+    internal const byte ProtocolVersion = 2;
     internal const int ReservedMessageId = 254;
 
     private static readonly byte[] CapabilityMagic =
-        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x31, 0x21]; // GSCAP01!
+        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x32, 0x21]; // GSCAP02!
     private static readonly HashSet<ulong> CapablePeers = [];
     private static readonly Dictionary<ulong, SkinChangerNetMessage> AdvertisedSelections = [];
     private static readonly Dictionary<ulong, SessionCharacterSelection> AvailableSelections = [];
@@ -179,6 +188,7 @@ internal static class MultiplayerSkinSync
         }
 
         DetachFromRun(clearCapabilities: false);
+        OnlineSkinCache.BeginSession();
         _netService = service;
         _messageHandler = HandleMessage;
         service.RegisterMessageHandler(_messageHandler);
@@ -250,6 +260,8 @@ internal static class MultiplayerSkinSync
                     exception.GetBaseException().Message);
             }
         }
+
+        OnlineSkinCache.EndSession();
     }
 
     internal static void Tick(double delta)
@@ -261,6 +273,7 @@ internal static class MultiplayerSkinSync
         }
 
         _snapshotElapsed += delta;
+        OnlineSkinCache.Tick();
         if ((_snapshotStage == 0 && _snapshotElapsed >= 0.75) ||
             (_snapshotStage == 1 && _snapshotElapsed >= 3.0))
         {
@@ -403,7 +416,9 @@ internal static class MultiplayerSkinSync
             message.Kind != SkinSyncMessageKind.CharacterSelection ||
             !ValidateText(message.CharacterId) ||
             !ValidateText(message.GroupId) ||
-            !ValidateText(message.OptionId))
+            !ValidateText(message.OptionId) ||
+            !ValidateOptionalText(message.ProviderId) ||
+            !ValidateOptionalText(message.SafeResourceFingerprint))
         {
             return;
         }
@@ -434,6 +449,8 @@ internal static class MultiplayerSkinSync
 
     private static bool ValidateText(string? value) =>
         !string.IsNullOrWhiteSpace(value) && value.Length <= 512;
+
+    private static bool ValidateOptionalText(string? value) => value == null || value.Length <= 512;
 
     private static bool IsCapable(ulong peerId)
     {
@@ -466,10 +483,36 @@ internal static class MultiplayerSkinSync
             return;
         }
 
-        if (!SkinService.TryBuildSessionCharacterSelection(
+        var effectiveOptionId = message.OptionId;
+        var selectionAvailable = SkinService.TryBuildSessionCharacterSelection(
+            message.GroupId,
+            effectiveOptionId,
+            out var selectionOverrides);
+        if (!selectionAvailable &&
+            OnlineSkinCache.TryGetCachedOption(message, out var cachedOptionId))
+        {
+            effectiveOptionId = cachedOptionId;
+            selectionAvailable = SkinService.TryBuildSessionCharacterSelection(
                 message.GroupId,
-                message.OptionId,
-                out var selectionOverrides))
+                effectiveOptionId,
+                out selectionOverrides);
+        }
+
+        if (!selectionAvailable)
+        {
+            OnlineSkinCache.QueueMissingSelection(message);
+            // Cover a cache registration racing this advertisement before falling back.
+            if (OnlineSkinCache.TryGetCachedOption(message, out cachedOptionId))
+            {
+                effectiveOptionId = cachedOptionId;
+                selectionAvailable = SkinService.TryBuildSessionCharacterSelection(
+                    message.GroupId,
+                    effectiveOptionId,
+                    out selectionOverrides);
+            }
+        }
+
+        if (!selectionAvailable)
         {
             // The sender owns a skin we do not have. Keep a per-player base selection instead of
             // leaking our own skin for the same character onto that remote player.
@@ -486,6 +529,7 @@ internal static class MultiplayerSkinSync
                 }
                 return;
             }
+            effectiveOptionId = SkinCatalog.BaseOptionId;
         }
 
         lock (Sync)
@@ -493,7 +537,7 @@ internal static class MultiplayerSkinSync
             AvailableSelections[message.PlayerNetId] = new SessionCharacterSelection(
                 message.CharacterId,
                 message.GroupId,
-                message.OptionId,
+                effectiveOptionId,
                 selectionOverrides);
             PendingRefreshes.Add(message.PlayerNetId);
             _runtimeProvidersDirty = true;
@@ -525,7 +569,54 @@ internal static class MultiplayerSkinSync
             GroupId = group.Id,
             OptionId = SkinService.Config.GetSelection(group.Id)
         };
+        if (OnlineSkinCache.TryDescribeLocalSelection(
+                message.GroupId,
+                message.OptionId,
+                out var source))
+        {
+            message.ProviderId = source.ProviderId;
+            message.WorkshopItemId = source.WorkshopItemId;
+            message.SafeResourceFingerprint = source.SafeResourceFingerprint;
+        }
         RememberAdvertisement(message);
+    }
+
+    internal static void RetryCachedSelection(
+        SkinChangerNetMessage message,
+        string sessionOptionId)
+    {
+        lock (Sync)
+        {
+            if (!AdvertisedSelections.TryGetValue(message.PlayerNetId, out var current) ||
+                !current.CharacterId.Equals(message.CharacterId, StringComparison.OrdinalIgnoreCase) ||
+                !current.GroupId.Equals(message.GroupId, StringComparison.OrdinalIgnoreCase) ||
+                !current.OptionId.Equals(message.OptionId, StringComparison.OrdinalIgnoreCase) ||
+                current.WorkshopItemId != message.WorkshopItemId ||
+                !current.SafeResourceFingerprint.Equals(
+                    message.SafeResourceFingerprint,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        message.OptionId = sessionOptionId;
+        TryMakeSelectionAvailable(message);
+    }
+
+    internal static void OnLocalOnlineMetadataReady(string groupId, string optionId)
+    {
+        var player = CharacterAppearanceRuntime.GetLocalPlayer();
+        if (player == null ||
+            !SkinService.Config.GetSelection(groupId).Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        RememberLocalAdvertisement();
+        SendLocalAdvertisement();
     }
 
     private static void RememberAdvertisement(SkinChangerNetMessage message)

@@ -233,6 +233,120 @@ internal sealed partial class SkinCatalog : IDisposable
         .Cast<string>()
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    public bool TryGetVisualProviderId(string groupId, string optionId, out string providerId)
+    {
+        var option = _groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(candidate => candidate.Id.Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase));
+        providerId = option?.EffectiveProviderId ?? string.Empty;
+        return option != null && !optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsSafeOnlineResourceRootForGroup(string resourcePath, string groupId)
+    {
+        var sourcePath = resourcePath;
+        if (sourcePath.EndsWith(".remap", StringComparison.OrdinalIgnoreCase))
+        {
+            sourcePath = sourcePath[..^6];
+        }
+        else if (sourcePath.EndsWith(".import", StringComparison.OrdinalIgnoreCase))
+        {
+            sourcePath = sourcePath[..^7];
+        }
+
+        var identity = TryGetPrimaryGroup(NormalizeTakeoverPath(sourcePath));
+        return identity != null && identity.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public bool IsBaseGameResource(string resourcePath) => _gameArchive.Contains(resourcePath);
+
+    public bool TryAddSessionVisualProvider(
+        string optionId,
+        string optionName,
+        string pckPath,
+        string expectedGroupId,
+        out string error)
+    {
+        error = string.Empty;
+        if (_groups.SelectMany(group => group.Options).Any(option =>
+                option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = "外观选项已存在。";
+            return false;
+        }
+
+        PckArchive? archive = null;
+        PckResourceIndex? index = null;
+        try
+        {
+            archive = PckArchive.Open(pckPath);
+            index = PckResourceIndex.Build(
+                new SkinModDescriptor(optionId, optionName, pckPath, false),
+                archive,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                remapFilter: null);
+            archive = null;
+            var discovered = BuildGroups([index], _baselineIndexes);
+            if (discovered.Count != 1 ||
+                !discovered[0].Id.Equals(expectedGroupId, StringComparison.OrdinalIgnoreCase) ||
+                discovered[0].Options.Count != 1)
+            {
+                error = "安全资源包未形成唯一且匹配的角色外观。";
+                return false;
+            }
+
+            var target = _groups.FirstOrDefault(group => group.Id.Equals(
+                expectedGroupId,
+                StringComparison.OrdinalIgnoreCase));
+            if (target == null || !IsCharacterAppearanceGroup(target.Id))
+            {
+                error = "找不到对应的角色外观分组。";
+                return false;
+            }
+
+            target.Options.Add(discovered[0].Options[0]);
+            target.Options.Sort((left, right) => string.Compare(
+                left.Name,
+                right.Name,
+                StringComparison.CurrentCultureIgnoreCase));
+            _cosmeticIndexes.Add(index);
+            index = null;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            error = exception.GetBaseException().Message;
+            return false;
+        }
+        finally
+        {
+            index?.Dispose();
+            archive?.Dispose();
+        }
+    }
+
+    public IReadOnlyList<string> RemoveSessionVisualProvider(string optionId)
+    {
+        var affectedGroups = _groups
+            .Where(group => group.Options.RemoveAll(option => option.Id.Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase)) > 0)
+            .Select(group => group.Id)
+            .ToArray();
+        foreach (var index in _cosmeticIndexes.Where(index => index.Mod.Id.Equals(
+                     optionId,
+                     StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            _cosmeticIndexes.Remove(index);
+            index.Dispose();
+        }
+
+        return affectedGroups;
+    }
+
     public IReadOnlySet<string> GetSelectedLocalizationProviderIds(
         IReadOnlyDictionary<string, string> selections) =>
         Groups.Select(group =>

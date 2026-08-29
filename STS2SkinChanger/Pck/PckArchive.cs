@@ -26,7 +26,7 @@ internal sealed class PckArchive : IDisposable
 
     public IReadOnlyCollection<string> Paths => _entries.Keys;
 
-    public static PckArchive Open(string path)
+    public static PckArchive Open(string path, uint maxFileCount = 2_000_000)
     {
         // 保持源包在整个游戏会话中稳定，避免 Steam Workshop 更新在切换过程中替换 PCK；
         // 同时允许其它进程删除/替换文件（我们持有的句柄继续读取旧快照）。
@@ -75,8 +75,7 @@ internal sealed class PckArchive : IDisposable
             }
 
             var fileCount = reader.ReadUInt32();
-            const uint MaxFileCount = 2_000_000; // 防御性上限，正常导出远小于此值。
-            if (fileCount > MaxFileCount)
+            if (fileCount > maxFileCount)
             {
                 throw new InvalidDataException($"{path} 的 PCK 文件数量异常：{fileCount}。");
             }
