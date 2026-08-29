@@ -399,10 +399,10 @@ internal static partial class OnlineSkinCache
             return;
         }
 
-        AddBlockingFailure(
-            $"local:{groupId}:{optionId}",
-            providerId,
-            detail);
+        // The selected skin is already available to its owner. A local packaging failure only
+        // means peers that do not own it must fall back to the base skin, so do not show the
+        // owner the receiver-facing "could not load" blocking dialog. The failure still travels
+        // with the advertisement and is surfaced on machines that actually lack the skin.
         SetProgress(
             OnlineSkinCacheStage.Failed,
             providerId,
@@ -508,7 +508,17 @@ internal static partial class OnlineSkinCache
             return OnlineSkinDescriptionState.Unavailable;
         }
 
-        var safeResourceManifest = string.Join('\n', safeResourceRoots);
+        var manifestRoots = FilterLocalSafeResourceRoots(
+            safeResourceRoots,
+            out var ignoredRootCount);
+        if (ignoredRootCount > 0)
+        {
+            ModLog.Info(
+                $"{providerId} 的联机资源清单已忽略 {ignoredRootCount} 个非静态/不可共享附带文件；" +
+                "这些文件不会影响皮肤拥有者本机使用。 ");
+        }
+
+        var safeResourceManifest = string.Join('\n', manifestRoots);
         if (!IsValidSafeResourceManifest(safeResourceManifest))
         {
             failureDetail = "该皮肤的安全资源清单过大或格式无效。";
@@ -564,7 +574,7 @@ internal static partial class OnlineSkinCache
                 var package = BuildSafePackage(
                     pckPath,
                     groupId,
-                    safeResourceRoots,
+                    manifestRoots,
                     outputPath: null);
                 var discovered = new OnlineSkinSource(
                     providerId,
@@ -602,13 +612,6 @@ internal static partial class OnlineSkinCache
                 LocalSourceReports.Enqueue(
                     $"{providerId} 不支持安全联机缓存，将让缺少该皮肤的玩家显示原皮：" +
                     detail);
-                if (MultiplayerSkinSync.IsReadyGateActiveForOnlineCache())
-                {
-                    AddBlockingFailure(
-                        $"local:{groupId}:{optionId}",
-                        providerId,
-                        detail);
-                }
                 SetLocalPreparationProgress(
                     OnlineSkinCacheStage.Failed,
                     providerId,
@@ -1095,6 +1098,30 @@ internal static partial class OnlineSkinCache
             !path.Contains("..", StringComparison.Ordinal) &&
             path.Length <= 512 &&
             AllowedExtensions.Contains(Path.GetExtension(path)));
+    }
+
+    private static IReadOnlyList<string> FilterLocalSafeResourceRoots(
+        IEnumerable<string> roots,
+        out int ignoredCount)
+    {
+        var accepted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        ignoredCount = 0;
+        foreach (var root in roots)
+        {
+            var normalized = NormalizeResourcePath(root);
+            if (!normalized.StartsWith("res://", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("..", StringComparison.Ordinal) ||
+                normalized.Length > 512 ||
+                !AllowedExtensions.Contains(Path.GetExtension(normalized)))
+            {
+                ignoredCount++;
+                continue;
+            }
+
+            accepted.Add(normalized);
+        }
+
+        return accepted.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static IReadOnlyList<string> ParseSafeResourceManifest(string? manifest) =>
