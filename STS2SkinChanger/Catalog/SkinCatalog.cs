@@ -5302,11 +5302,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex MonsterPathRegex();
 
     [GeneratedRegex(
-        "^(?:res://animations/backgrounds/(?:fake_)?merchant_room/|" +
+        "^(?:res://animations/backgrounds/merchant_room/|" +
         "res://animations/customs/merchant/|" +
         "res://scenes/rooms/merchant_button\\.tscn$|" +
-        "res://scenes/merchant/(?!characters/)[^/]+\\.tscn$|" +
-        "res://scenes/events/custom/fake_merchant(?:_button|_inventory)?\\.tscn$)",
+        "res://scenes/merchant/(?!characters/)[^/]+\\.tscn$)",
         RegexOptions.IgnoreCase)]
     private static partial Regex MerchantAppearancePathRegex();
 

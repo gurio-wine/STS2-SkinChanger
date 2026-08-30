@@ -29,6 +29,7 @@ var catalogType = RequireType("STS2SkinChanger.Catalog.SkinCatalog");
 var skinServiceType = RequireType("STS2SkinChanger.Core.SkinService");
 var onlineCacheType = RequireType("STS2SkinChanger.Core.OnlineSkinCache");
 var multiplayerSyncType = RequireType("STS2SkinChanger.Core.MultiplayerSkinSync");
+ValidateAdvertisementMetadataDoesNotRegress();
 var providerPck = Directory.EnumerateFiles(providerRoot, "*.pck", SearchOption.TopDirectoryOnly)
     .Single();
 var providerId = Path.GetFileNameWithoutExtension(providerPck);
@@ -203,6 +204,55 @@ Console.WriteLine(
     $"provider={sourceArgs[2]} roots={((System.Collections.ICollection)filteredRoots).Count} " +
     $"ignored={filterRootArgs[1]} package={package} registered={registered}");
 return 0;
+
+void ValidateAdvertisementMetadataDoesNotRegress()
+{
+    var messageType = RequireType("STS2SkinChanger.Core.SkinChangerNetMessage");
+    var remember = RequireMethod(
+        multiplayerSyncType,
+        "RememberAdvertisement",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    var advertisements = (System.Collections.IDictionary)multiplayerSyncType
+        .GetField("AdvertisedSelections", BindingFlags.NonPublic | BindingFlags.Static)!
+        .GetValue(null)!;
+    advertisements.Clear();
+
+    var rich = Activator.CreateInstance(messageType)!;
+    Set(rich, "PlayerNetId", 42UL);
+    Set(rich, "CharacterId", "IRONCLAD");
+    Set(rich, "GroupId", "ironclad");
+    Set(rich, "OptionId", "ExampleSkin");
+    Set(rich, "ProviderId", "ExampleSkin");
+    Set(rich, "WorkshopItemId", 123UL);
+    Set(rich, "SafeResourceFingerprint", new string('A', 64));
+    Set(rich, "SafeResourceManifest", string.Empty);
+    Set(rich, "SafeResourceBindings", string.Empty);
+    Set(rich, "TransformManifest", "old-transform");
+    remember.Invoke(null, [rich]);
+
+    var ordinarySnapshot = Activator.CreateInstance(messageType)!;
+    Set(ordinarySnapshot, "PlayerNetId", 42UL);
+    Set(ordinarySnapshot, "CharacterId", "IRONCLAD");
+    Set(ordinarySnapshot, "GroupId", "ironclad");
+    Set(ordinarySnapshot, "OptionId", "ExampleSkin");
+    Set(ordinarySnapshot, "TransformManifest", "new-transform");
+    remember.Invoke(null, [ordinarySnapshot]);
+
+    var merged = advertisements[42UL] ??
+                 throw new InvalidOperationException("Advertisement merge lost the player entry.");
+    if ((string)messageType.GetField("SafeResourceFingerprint")!.GetValue(merged)! !=
+            new string('A', 64) ||
+        (ulong)messageType.GetField("WorkshopItemId")!.GetValue(merged)! != 123UL ||
+        (string)messageType.GetField("TransformManifest")!.GetValue(merged)! != "new-transform")
+    {
+        throw new InvalidOperationException(
+            "An ordinary multiplayer snapshot replaced richer online skin metadata.");
+    }
+    advertisements.Clear();
+
+    void Set(object target, string field, object value) =>
+        messageType.GetField(field)!.SetValue(target, value);
+}
 
 Type RequireType(string name) =>
     assembly.GetType(name, throwOnError: true)!;

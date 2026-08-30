@@ -1989,10 +1989,12 @@ internal static class MultiplayerSkinSync
                 !current.CharacterId.Equals(message.CharacterId, StringComparison.OrdinalIgnoreCase) ||
                 !current.GroupId.Equals(message.GroupId, StringComparison.OrdinalIgnoreCase) ||
                 !current.OptionId.Equals(message.OptionId, StringComparison.OrdinalIgnoreCase) ||
-                current.WorkshopItemId != message.WorkshopItemId ||
-                !current.SafeResourceFingerprint.Equals(
-                    message.SafeResourceFingerprint,
-                    StringComparison.OrdinalIgnoreCase))
+                (current.WorkshopItemId != 0 &&
+                 current.WorkshopItemId != message.WorkshopItemId) ||
+                (!string.IsNullOrWhiteSpace(current.SafeResourceFingerprint) &&
+                 !current.SafeResourceFingerprint.Equals(
+                     message.SafeResourceFingerprint,
+                     StringComparison.OrdinalIgnoreCase)))
             {
                 return;
             }
@@ -2120,9 +2122,35 @@ internal static class MultiplayerSkinSync
     {
         lock (Sync)
         {
+            if (AdvertisedSelections.TryGetValue(message.PlayerNetId, out var previous) &&
+                SameAdvertisedSelection(previous, message) &&
+                string.IsNullOrWhiteSpace(message.OnlineFailure) &&
+                !OnlineSkinCache.HasDownloadMetadata(message) &&
+                OnlineSkinCache.HasDownloadMetadata(previous))
+            {
+                // Ordinary lobby snapshots intentionally omit the downloadable resource
+                // description. They can arrive after the richer ready-gate advertisement, so
+                // replacing the dictionary entry outright made a completed download impossible
+                // to attach to the player. Preserve the richer description for the same exact
+                // selection while still accepting the newest transform manifest.
+                message.ProviderId = previous.ProviderId;
+                message.WorkshopItemId = previous.WorkshopItemId;
+                message.SafeResourceFingerprint = previous.SafeResourceFingerprint;
+                message.SafeResourceManifest = previous.SafeResourceManifest;
+                message.SafeResourceBindings = previous.SafeResourceBindings;
+                message.OnlineFailure = previous.OnlineFailure;
+            }
             AdvertisedSelections[message.PlayerNetId] = message;
         }
     }
+
+    private static bool SameAdvertisedSelection(
+        SkinChangerNetMessage left,
+        SkinChangerNetMessage right) =>
+        left.PlayerNetId == right.PlayerNetId &&
+        string.Equals(left.CharacterId, right.CharacterId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(left.GroupId, right.GroupId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(left.OptionId, right.OptionId, StringComparison.OrdinalIgnoreCase);
 
     private static void SendLocalAdvertisement()
     {

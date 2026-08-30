@@ -394,6 +394,18 @@ internal static partial class OnlineSkinCache
         var providerKey = ProviderKey(message);
         lock (Sync)
         {
+            // A metadata-free snapshot may have arrived just before the complete ready-gate
+            // advertisement. Once a valid description exists, its earlier "cannot download"
+            // dialog is stale and must not survive a successful cache operation.
+            var failureKey =
+                $"remote:{message.PlayerNetId}:{message.GroupId}:{message.OptionId}";
+            BlockingFailures.Remove(failureKey);
+            AcknowledgedFailureKeys.Remove(failureKey);
+            if (BlockingFailures.Count == 0 && _progressStage == OnlineSkinCacheStage.Failed)
+            {
+                ResetProgressLocked();
+            }
+
             if (Providers.ContainsKey(providerKey))
             {
                 return false;

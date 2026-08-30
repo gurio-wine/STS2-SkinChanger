@@ -1541,7 +1541,14 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
         AddProvider("Tests.Gameplay", "watcher", "New Character", affectsGameplay: true);
         AddProvider("Tests.IronSkinExtras", null, "Independent Translation");
         AddEventVisualProvider();
+        AddFakeMerchantEventReplacement();
         using var catalog = SkinCatalog.Build(gamePckPath, descriptors);
+        if (catalog.Groups.Any(group => group.Options.Any(option =>
+                option.Id.Equals("Tests.FakeMerchantEvent", StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new InvalidOperationException(
+                "a fake-merchant event replacement was classified as a shop merchant skin");
+        }
         var selections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         Check("unselected/startup", "Base Ironclad", "Base Silent");
@@ -1563,7 +1570,7 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
         selections["ironclad"] = "Tests.IronSkin";
         Check("reselect", "Skin Ironclad", "Base Silent");
 
-        Console.WriteLine("localization ownership self-test passed: 9 transitions in both eng/zhs, stale paths, card-only selection, event text and unrelated translations");
+        Console.WriteLine("localization ownership self-test passed: 9 transitions in both eng/zhs, stale paths, card-only selection, event text, fake-merchant event classification and unrelated translations");
 
         void AddProvider(string id, string? character, string title, bool affectsGameplay = false)
         {
@@ -1607,6 +1614,20 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
                 files[path] = JsonSerializer.SerializeToUtf8Bytes(entries);
             }
 
+            var pckPath = System.IO.Path.Combine(testRoot, id + ".pck");
+            PckArchive.Write(pckPath, files);
+            descriptors.Add(new SkinModDescriptor(id, id, pckPath, false, testRoot));
+        }
+
+        void AddFakeMerchantEventReplacement()
+        {
+            const string id = "Tests.FakeMerchantEvent";
+            var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://animations/backgrounds/fake_merchant_room/bottom/shop_fake_merchant_bottom.png"] =
+                    [1, 2, 3],
+                ["res://images/events/fake_merchant.png"] = [4, 5, 6]
+            };
             var pckPath = System.IO.Path.Combine(testRoot, id + ".pck");
             PckArchive.Write(pckPath, files);
             descriptors.Add(new SkinModDescriptor(id, id, pckPath, false, testRoot));
