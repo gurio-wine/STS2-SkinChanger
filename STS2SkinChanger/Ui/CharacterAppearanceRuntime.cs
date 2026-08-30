@@ -969,8 +969,11 @@ internal static class CharacterAppearanceRuntime
             return false;
         }
 
+        // Rebuilding must isolate the selected player's canonical scene, skeleton, atlas and
+        // provider dependencies as well as the option ID. A selection-only scope lets the local
+        // player's globally mounted skin leak onto another player of the same character.
         using var multiplayerSelectionScope =
-            MultiplayerSkinSync.BeginCreatureSelectionScope(creature.Entity);
+            MultiplayerSkinSync.BeginCreatureRuntimeScope(creature.Entity);
 
         var oldVisuals = creature.Visuals;
         var desiredVisualName = oldVisuals.Name;

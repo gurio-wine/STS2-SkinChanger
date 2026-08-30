@@ -198,7 +198,10 @@ internal static class MultiplayerSkinSync
 
         if (owner.NetId == service.NetId)
         {
-            return false;
+            // The local player may switch their own skin during a multiplayer run. The normal
+            // persistent selection path rebuilds only through per-player scopes and advertises
+            // the new choice to peers immediately.
+            return true;
         }
 
         lock (Sync)
@@ -211,8 +214,7 @@ internal static class MultiplayerSkinSync
         }
     }
 
-    internal static bool CanEditLocalPlayerSkinInRun() =>
-        _netService == null || !_netService.Type.IsMultiplayer();
+    internal static bool CanEditLocalPlayerSkinInRun() => true;
 
     internal static void RequestIconRefresh(ulong playerNetId)
     {
@@ -402,15 +404,6 @@ internal static class MultiplayerSkinSync
                 ? null
                 : ContextualSkinControls.FindGroup(modelId, modelTypeName);
             if (group == null)
-            {
-                return selectionScope;
-            }
-
-            // The original skin has no private overlay to mount.  Avoid rebuilding the global
-            // baseline for every remote player's _Ready when both peers use the base option.
-            if (GetScopedSelection(group.Id)?.Equals(
-                    SkinCatalog.BaseOptionId,
-                    StringComparison.OrdinalIgnoreCase) == true)
             {
                 return selectionScope;
             }
@@ -1958,8 +1951,12 @@ internal static class SkinChangerHostConnectionResetPatch
 [HarmonyPatch(typeof(Creature), nameof(Creature.CreateVisuals))]
 internal static class MultiplayerCreatureVisualScopePatch
 {
+    [HarmonyPriority(Priority.First)]
     private static void Prefix(Creature __instance, out IDisposable? __state) =>
-        __state = MultiplayerSkinSync.BeginCreatureSelectionScope(__instance);
+        // Keep both the per-player selection and its canonical scene/skeleton overlay active
+        // for the complete CreateVisuals call. Selection-only scoping still resolved the local
+        // player's globally mounted resources, especially when the remote player used base.
+        __state = MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance);
 
     private static Exception? Finalizer(Exception? __exception, IDisposable? __state)
     {
@@ -1976,6 +1973,7 @@ internal static class MultiplayerCreatureVisualScopePatch
 [HarmonyPatch(typeof(NCreature), nameof(NCreature._Ready))]
 internal static class MultiplayerCreatureReadyScopePatch
 {
+    [HarmonyPriority(Priority.First)]
     private static void Prefix(NCreature __instance, out IDisposable? __state) =>
         __state = __instance.Entity == null
             ? null
