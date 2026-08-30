@@ -84,13 +84,6 @@ var serializedBindings = (string)RequireMethod(
         "SerializeSafeResourceBindings",
         BindingFlags.NonPublic | BindingFlags.Static)
     .Invoke(null, [filteredBindings])!;
-Console.WriteLine(
-    $"safe-bindings={((System.Collections.IDictionary)filteredBindings).Count} " +
-    $"baseline-scene-fallbacks={filterBindingArgs[4]}");
-if (Environment.GetEnvironmentVariable("ONLINE_CACHE_PROBE_VERBOSE") == "1")
-{
-    Console.WriteLine(serializedBindings);
-}
 var parseBindingArgs = new object?[] { serializedBindings, groupId, null };
 var parsed = (bool)(RequireMethod(
         onlineCacheType,
