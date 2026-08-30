@@ -90,6 +90,14 @@ internal static partial class ContextualSkinControls
             // 游戏的 SelectCharacter 每次点击都会清空 AnimatedBg 并重新实例化原版背景，
             // 所以这里必须每次重建；资源已缓存在 SkinService，重建不会再次写盘或加载。
             ScheduleCharacterRefresh(screen, character, group.Id);
+            if (IsMultiplayerCharacterSelect(screen))
+            {
+                // SelectCharacter is also the point where the lobby changes the local player's
+                // character. Publish after that state settles so peers update this row immediately
+                // instead of waiting for ready or the next periodic snapshot.
+                Callable.From(() =>
+                    MultiplayerSkinSync.OnLocalCharacterSelectionChanged(group.Id)).CallDeferred();
+            }
         }
     }
 
@@ -600,6 +608,10 @@ internal static partial class ContextualSkinControls
         selector.SetMeta(UpdatingMeta, true);
         PopulateMonsterScale(selector, groupId);
         selector.SetMeta(UpdatingMeta, false);
+
+        // This method is shared by several selectors. The multiplayer sync method verifies that
+        // groupId belongs to the current local character, so non-character selectors are ignored.
+        MultiplayerSkinSync.OnLocalCharacterSelectionChanged(groupId);
 
         if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
         {

@@ -164,8 +164,8 @@ internal static partial class OnlineSkinCache
     /// <summary>
     /// Removes temporary packages left behind when the game was terminated before EndSession
     /// could run (for example Alt+F4). This is intentionally separate from Steam's workshop
-    /// install directory. Only source files recorded as newly downloaded by the interrupted
-    /// session are eligible for cleanup; player-owned/subscribed workshop items remain intact.
+    /// install directory. The retired transfer system may have left ownership markers behind,
+    /// but startup cleanup now removes only Skin Changer's own temporary package directories.
     /// </summary>
     internal static void CleanupStaleSessionsAtStartup() => CleanupOldSessionDirectories();
 
@@ -214,15 +214,13 @@ internal static partial class OnlineSkinCache
             }
         }
 
-        var workshopSourcesCleaned = CleanupSessionWorkshopSources(downloadedWorkshopSources);
-        if (workshopSourcesCleaned && TryDeleteDirectory(directory))
+        // Online Workshop transfer is retired. Never infer ownership from Steam's momentary item
+        // state and never remove a Workshop install directory: the player may have subscribed
+        // while an older session marker still exists.
+        _ = downloadedWorkshopSources;
+        if (TryDeleteDirectory(directory))
         {
-            ModLog.Info("已删除上一轮联机皮肤临时安全包及本轮临时下载的 Steam 工坊源文件；玩家原有工坊文件未受影响。 ");
-        }
-        else if (!workshopSourcesCleaned)
-        {
-            ModLog.Warn(
-                "部分本轮临时下载的 Steam 工坊源文件仍被占用；已保留清理标记，将在下次启动或进入新联机房间时重试。 ");
+            ModLog.Info("已删除上一轮联机皮肤临时安全包；Steam 工坊目录未触碰。 ");
         }
         else if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
         {
@@ -1763,14 +1761,6 @@ internal static partial class OnlineSkinCache
         foreach (var directory in Directory.EnumerateDirectories(root)
                      .Where(path => !path.Equals(_sessionDirectory, StringComparison.OrdinalIgnoreCase)))
         {
-            if (!TryReadSessionWorkshopSources(directory, out var workshopSources) ||
-                !CleanupSessionWorkshopSources(workshopSources))
-            {
-                // Keep the directory and its ownership marker for another attempt once Steam or
-                // Godot releases the source package. Never delete an unknown source directory.
-                continue;
-            }
-
             if (TryDeleteDirectory(directory))
             {
                 removed++;
@@ -1881,67 +1871,12 @@ internal static partial class OnlineSkinCache
 
     private static bool TryDeleteWorkshopInstallDirectory(ulong workshopItemId, string directory)
     {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
         {
-            return true;
+            ModLog.Info(
+                $"已保留 Steam 工坊目录 {workshopItemId}；联机下载功能停用后本 Mod 不再删除任何工坊物品。 ");
         }
-
-        string fullPath;
-        try
-        {
-            fullPath = Path.GetFullPath(directory).TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar);
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn(
-                $"联机临时工坊源文件 {workshopItemId} 路径无效，已跳过清理：" +
-                exception.GetBaseException().Message);
-            return true;
-        }
-
-        var normalized = fullPath.Replace('\\', '/');
-        var expectedSuffix = $"/workshop/content/{GameAppId}/{workshopItemId}";
-        if (!normalized.EndsWith(expectedSuffix, StringComparison.OrdinalIgnoreCase))
-        {
-            ModLog.Warn(
-                $"联机临时工坊源文件 {workshopItemId} 不在 Steam 工坊目录中，已跳过清理：{directory}");
-            return true;
-        }
-
-        try
-        {
-            var state = (EItemState)SteamUGC.GetItemState(
-                new PublishedFileId_t(workshopItemId));
-            if ((state & EItemState.k_EItemStateSubscribed) != 0)
-            {
-                ModLog.Info(
-                    $"联机临时工坊源文件 {workshopItemId} 已被玩家订阅，保留 Steam 文件：{directory}");
-                return true;
-            }
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn(
-                $"无法确认联机临时工坊源文件 {workshopItemId} 的订阅状态，暂不删除：" +
-                exception.GetBaseException().Message);
-            return false;
-        }
-
-        try
-        {
-            Directory.Delete(fullPath, recursive: true);
-            ModLog.Info($"已清理本轮临时下载的 Steam 工坊源文件：{workshopItemId}。 ");
-            return true;
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn(
-                $"临时 Steam 工坊源文件 {workshopItemId} 仍被占用，将稍后重试：" +
-                exception.GetBaseException().Message);
-            return false;
-        }
+        return true;
     }
 
     private static bool TryDeleteDirectory(string? directory)

@@ -103,7 +103,8 @@ internal static class MultiplayerSkinSync
     private static readonly HashSet<ulong> CapablePeers = [];
     private static readonly Dictionary<ulong, SkinChangerNetMessage> AdvertisedSelections = [];
     private static readonly Dictionary<ulong, SessionCharacterSelection> AvailableSelections = [];
-    private static readonly Dictionary<ulong, string> LocalFallbackSelections = [];
+    private static readonly Dictionary<(ulong PlayerId, string GroupId), string>
+        LocalFallbackSelections = [];
     private static readonly Dictionary<(ulong PlayerId, string TransformKey), CharacterCombatTransform>
         LocalFallbackTransforms = [];
     private static readonly HashSet<ulong> PendingRefreshes = [];
@@ -169,13 +170,18 @@ internal static class MultiplayerSkinSync
             return SkinService.Config.GetSelection(groupId);
         }
 
-        lock (Sync)
+        if (TryGetPlayerSelectionMap(player.NetId, player.Character, out var selections) &&
+            selections.TryGetValue(groupId, out var optionId))
         {
-            if (AvailableSelections.TryGetValue(player.NetId, out var selection) &&
-                selection.SelectionOverrides.TryGetValue(groupId, out var optionId))
-            {
-                return optionId;
-            }
+            return optionId;
+        }
+
+        var service = _netService;
+        if (service != null && service.Type.IsMultiplayer() && player.NetId != service.NetId)
+        {
+            // A remote player whose selection has not arrived yet must never inherit this
+            // machine's persistent choice for the same character.
+            return SkinCatalog.BaseOptionId;
         }
 
         return SkinService.Config.GetSelection(groupId);
@@ -190,10 +196,19 @@ internal static class MultiplayerSkinSync
             return true;
         }
 
-        // In multiplayer, each player owns their character skin. A peer either displays that
-        // exact locally-installed option or the original skin; local replacement skins would
-        // violate that rule and could leak one character's skin onto another player.
-        return false;
+        if (owner.NetId == service.NetId)
+        {
+            return false;
+        }
+
+        lock (Sync)
+        {
+            // The owner remains authoritative whenever their selected option exists locally.
+            // If it is unavailable, this client may choose a local-only fallback for that remote
+            // player without changing the owner's saved selection or any other player's skin.
+            return !AvailableSelections.TryGetValue(owner.NetId, out var selection) ||
+                   !selection.OwnerAppearanceLoaded;
+        }
     }
 
     internal static bool CanEditLocalPlayerSkinInRun() =>
@@ -329,7 +344,7 @@ internal static class MultiplayerSkinSync
 
         lock (Sync)
         {
-            LocalFallbackSelections[owner.NetId] = optionId;
+            LocalFallbackSelections[(owner.NetId, groupId)] = optionId;
             foreach (var key in LocalFallbackTransforms.Keys
                          .Where(key => key.PlayerId == owner.NetId)
                          .ToArray())
@@ -360,23 +375,7 @@ internal static class MultiplayerSkinSync
             return null;
         }
 
-        IReadOnlyDictionary<string, string>? selections = null;
-        lock (Sync)
-        {
-            if (AvailableSelections.TryGetValue(player.NetId, out var selection) &&
-                selection.CharacterId.Equals(
-                    player.Character.Id.Entry,
-                    StringComparison.OrdinalIgnoreCase) &&
-                ContextualSkinControls.MatchesGroupIdentity(
-                    selection.GroupId,
-                    player.Character.Id.Entry,
-                    player.Character.GetType().Name))
-            {
-                selections = selection.SelectionOverrides;
-            }
-        }
-
-        if (selections == null)
+        if (!TryGetPlayerSelectionMap(player.NetId, player.Character, out var selections))
         {
             return null;
         }
@@ -437,16 +436,7 @@ internal static class MultiplayerSkinSync
     /// </summary>
     internal static IDisposable? BeginPlayerSelectionScope(ulong playerNetId)
     {
-        IReadOnlyDictionary<string, string>? selections = null;
-        lock (Sync)
-        {
-            if (AvailableSelections.TryGetValue(playerNetId, out var selection))
-            {
-                selections = selection.SelectionOverrides;
-            }
-        }
-
-        if (selections == null)
+        if (!TryGetPlayerSelectionMap(playerNetId, character: null, out var selections))
         {
             return null;
         }
@@ -454,6 +444,58 @@ internal static class MultiplayerSkinSync
         _selectionScopes ??= new Stack<IReadOnlyDictionary<string, string>>();
         _selectionScopes.Push(selections);
         return new SelectionScope();
+    }
+
+    private static bool TryGetPlayerSelectionMap(
+        ulong playerNetId,
+        CharacterModel? character,
+        out IReadOnlyDictionary<string, string> selections)
+    {
+        var resolvedCharacter = character;
+        if (resolvedCharacter == null &&
+            TryGetPlayerCharacter(playerNetId, out var discoveredCharacter))
+        {
+            resolvedCharacter = discoveredCharacter;
+        }
+
+        lock (Sync)
+        {
+            if (AvailableSelections.TryGetValue(playerNetId, out var selection) &&
+                (resolvedCharacter == null ||
+                 selection.CharacterId.Equals(
+                     resolvedCharacter.Id.Entry,
+                     StringComparison.OrdinalIgnoreCase) &&
+                 ContextualSkinControls.MatchesGroupIdentity(
+                     selection.GroupId,
+                     resolvedCharacter.Id.Entry,
+                     resolvedCharacter.GetType().Name)))
+            {
+                selections = selection.SelectionOverrides;
+                return true;
+            }
+        }
+
+        var service = _netService;
+        if (service == null || !service.Type.IsMultiplayer() ||
+            playerNetId == service.NetId || resolvedCharacter == null)
+        {
+            selections = null!;
+            return false;
+        }
+
+        var group = ContextualSkinControls.FindGroup(
+            resolvedCharacter.Id.Entry,
+            resolvedCharacter.GetType().Name);
+        if (group != null && SkinService.TryBuildSessionCharacterSelection(
+                group.Id,
+                SkinCatalog.BaseOptionId,
+                out selections))
+        {
+            return true;
+        }
+
+        selections = null!;
+        return false;
     }
 
     internal static void AttachToRun()
@@ -666,6 +708,8 @@ internal static class MultiplayerSkinSync
             _snapshotStage++;
             BroadcastKnownSelections();
         }
+
+        RetryAdvertisementsWaitingForPlayerIdentity();
 
         ulong[] pending;
         ulong[] pendingTransforms;
@@ -1282,6 +1326,7 @@ internal static class MultiplayerSkinSync
             effectiveOptionId,
             out var selectionOverrides);
         var ownerAppearanceLoaded = allowRemoteSkin && selectionAvailable;
+        var fallbackKey = (message.PlayerNetId, message.GroupId);
 
         if (!selectionAvailable)
         {
@@ -1302,9 +1347,25 @@ internal static class MultiplayerSkinSync
                 }
             }
 
+            string? localFallbackOption;
+            lock (Sync)
+            {
+                LocalFallbackSelections.TryGetValue(fallbackKey, out localFallbackOption);
+            }
+            if (!string.IsNullOrWhiteSpace(localFallbackOption) &&
+                SkinService.TryBuildSessionCharacterSelection(
+                    message.GroupId,
+                    localFallbackOption,
+                    out selectionOverrides))
+            {
+                effectiveOptionId = localFallbackOption;
+                selectionAvailable = true;
+                ownerAppearanceLoaded = false;
+            }
+
             // The sender owns a skin we do not have. Build an explicit per-player base selection
             // instead of leaking this machine's current skin for the same character onto them.
-            if (!SkinService.TryBuildSessionCharacterSelection(
+            if (!selectionAvailable && !SkinService.TryBuildSessionCharacterSelection(
                     message.GroupId,
                     SkinCatalog.BaseOptionId,
                     out selectionOverrides))
@@ -1319,13 +1380,42 @@ internal static class MultiplayerSkinSync
                 }
                 return;
             }
-            effectiveOptionId = SkinCatalog.BaseOptionId;
-            ownerAppearanceLoaded = false;
+            if (!selectionAvailable)
+            {
+                effectiveOptionId = SkinCatalog.BaseOptionId;
+                ownerAppearanceLoaded = false;
+            }
         }
 
         var appearanceChanged = false;
         lock (Sync)
         {
+            if (AvailableSelections.TryGetValue(message.PlayerNetId, out var current) &&
+                (!current.CharacterId.Equals(
+                     message.CharacterId,
+                     StringComparison.OrdinalIgnoreCase) ||
+                 !current.GroupId.Equals(
+                     message.GroupId,
+                     StringComparison.OrdinalIgnoreCase)))
+            {
+                foreach (var key in LocalFallbackTransforms.Keys
+                             .Where(key => key.PlayerId == message.PlayerNetId)
+                             .ToArray())
+                {
+                    LocalFallbackTransforms.Remove(key);
+                }
+            }
+            if (ownerAppearanceLoaded)
+            {
+                LocalFallbackSelections.Remove(fallbackKey);
+                foreach (var key in LocalFallbackTransforms.Keys
+                             .Where(key => key.PlayerId == message.PlayerNetId)
+                             .ToArray())
+                {
+                    LocalFallbackTransforms.Remove(key);
+                }
+            }
+
             var next = new SessionCharacterSelection(
                 message.CharacterId,
                 message.GroupId,
@@ -1391,6 +1481,31 @@ internal static class MultiplayerSkinSync
             left.Count == right.Count && left.All(pair =>
                 right.TryGetValue(pair.Key, out var value) &&
                 value.Equals(pair.Value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void RetryAdvertisementsWaitingForPlayerIdentity()
+    {
+        SkinChangerNetMessage[] pending;
+        lock (Sync)
+        {
+            pending = AdvertisedSelections.Values
+                .Where(message => message.PlayerNetId != _netService?.NetId &&
+                                  (!AvailableSelections.TryGetValue(
+                                       message.PlayerNetId,
+                                       out var selection) ||
+                                   !selection.CharacterId.Equals(
+                                       message.CharacterId,
+                                       StringComparison.OrdinalIgnoreCase) ||
+                                   !selection.GroupId.Equals(
+                                       message.GroupId,
+                                       StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+        }
+
+        foreach (var message in pending)
+        {
+            TryMakeSelectionAvailable(message);
+        }
     }
 
     internal static bool IsReadyGateActiveForOnlineCache() => false;
@@ -1645,7 +1760,12 @@ internal static class MultiplayerSkinSync
             {
                 _runtimeProvidersDirty = true;
             }
-            LocalFallbackSelections.Remove(peerId);
+            foreach (var key in LocalFallbackSelections.Keys
+                         .Where(key => key.PlayerId == peerId)
+                         .ToArray())
+            {
+                LocalFallbackSelections.Remove(key);
+            }
             foreach (var key in LocalFallbackTransforms.Keys
                          .Where(key => key.PlayerId == peerId)
                          .ToArray())
