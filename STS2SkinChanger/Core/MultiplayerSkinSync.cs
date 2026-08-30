@@ -443,6 +443,16 @@ internal static class MultiplayerSkinSync
         AttachToService(service, "对局");
         _inRun = true;
         RememberLocalAdvertisement(includeOnlineMetadata: true);
+        // Lobby avatar nodes are intentionally discarded when the run scene is created. Queue
+        // every already-known remote player once more so the first combat HUD construction uses
+        // that player's selected icon instead of the lobby/base texture.
+        lock (Sync)
+        {
+            foreach (var playerId in AvailableSelections.Keys)
+            {
+                PendingIconRefreshes.Add(playerId);
+            }
+        }
     }
 
     internal static void AttachToLobby(StartRunLobby lobby)
