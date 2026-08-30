@@ -6,7 +6,9 @@ using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
@@ -1619,6 +1621,47 @@ internal static partial class ContextualSkinControls
         icon.Texture = character.IconTexture;
     }
 
+    internal static void RefreshMultiplayerVoteIcons(NMultiplayerVoteContainer container)
+    {
+        try
+        {
+            var votes = AccessTools.Field(typeof(NMultiplayerVoteContainer), "_votes")
+                ?.GetValue(container) as System.Collections.IEnumerable;
+            if (votes == null)
+            {
+                return;
+            }
+
+            foreach (var vote in votes)
+            {
+                if (vote == null)
+                {
+                    continue;
+                }
+
+                var voteType = vote.GetType();
+                var player = AccessTools.Field(voteType, "player")?.GetValue(vote) as Player;
+                var node = AccessTools.Field(voteType, "node")?.GetValue(vote) as TextureRect;
+                if (player == null || node == null || !GodotObject.IsInstanceValid(node))
+                {
+                    continue;
+                }
+
+                using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
+                node.Texture = player.Character.IconTexture;
+                var outline = node.GetNodeOrNull<TextureRect>("Outline");
+                if (outline != null && GodotObject.IsInstanceValid(outline))
+                {
+                    outline.Texture = player.Character.IconOutlineTexture;
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新联机投票头像失败：" + exception.GetBaseException().Message);
+        }
+    }
+
     internal static void ReplaceCharacterMapMarker(
         CharacterModel character,
         ref CompressedTexture2D result)
@@ -1808,6 +1851,13 @@ internal static class RemoteLobbyPlayerIconScopePatch
         __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
 
     private static void Postfix(IDisposable? __state) => __state?.Dispose();
+}
+
+[HarmonyPatch(typeof(NMultiplayerVoteContainer), nameof(NMultiplayerVoteContainer.RefreshPlayerVotes))]
+internal static class MultiplayerVoteIconRefreshPatch
+{
+    private static void Postfix(NMultiplayerVoteContainer __instance) =>
+        ContextualSkinControls.RefreshMultiplayerVoteIcons(__instance);
 }
 
 [HarmonyPatch(typeof(NMuteInBackgroundHandler), nameof(NMuteInBackgroundHandler._Notification))]
