@@ -1568,9 +1568,14 @@ internal static class InRunCharacterAppearanceRuntimePatch
                 ProcessMode = Node.ProcessModeEnum.Always
             });
         }
-        if (__instance.GetNodeOrNull<MultiplayerSkinSyncNode>("SkinChangerMultiplayerSkinSync") == null)
+        // Keep the multiplayer heartbeat on the persistent game root.  NRun can be rebuilt
+        // during the lobby-to-combat hand-off; a child node then stops processing and leaves
+        // live transform changes queued forever.  The root node survives those scene changes,
+        // while its _ExitTree still detaches the transport when the game itself exits.
+        var syncHost = (Node?)NGame.Instance ?? __instance.GetTree().Root;
+        if (syncHost.GetNodeOrNull<MultiplayerSkinSyncNode>("SkinChangerMultiplayerSkinSync") == null)
         {
-            __instance.AddChild(new MultiplayerSkinSyncNode
+            syncHost.AddChild(new MultiplayerSkinSyncNode
             {
                 Name = "SkinChangerMultiplayerSkinSync",
                 ProcessMode = Node.ProcessModeEnum.Always

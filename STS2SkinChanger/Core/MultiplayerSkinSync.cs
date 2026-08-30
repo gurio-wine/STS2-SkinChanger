@@ -839,6 +839,13 @@ internal static class MultiplayerSkinSync
         if (MarkLocalTransformAdvertisementDirty())
         {
             ModLog.Info($"已检测到本机 {groupId} 的外观参数变更，等待广播给其他玩家。");
+            // Character sliders can be used after the lobby node has left the tree.  Publish
+            // once from the change callback as a fallback; the regular game-loop tick still
+            // provides the low-frequency retry when a transport/resource is temporarily busy.
+            // Without this path a combat scene that does not host MultiplayerSkinSyncNode could
+            // leave the dirty flag set forever, making the local change look successful only on
+            // this machine.
+            FlushLocalTransformAdvertisement(0.05);
         }
     }
 
@@ -872,6 +879,7 @@ internal static class MultiplayerSkinSync
         if (MarkLocalTransformAdvertisementDirty())
         {
             ModLog.Info($"已检测到本机 {groupId} 的外观参数变更，等待广播给其他玩家。");
+            FlushLocalTransformAdvertisement(0.05);
         }
     }
 
@@ -2199,6 +2207,15 @@ internal static class MultiplayerSkinLobbyAttachPatch
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen._Process))]
 internal static class MultiplayerSkinLobbyTickPatch
 {
+    private static void Postfix(double delta) => MultiplayerSkinSync.Tick(delta);
+}
+
+[HarmonyPatch(typeof(NRun), nameof(NRun._Process))]
+internal static class MultiplayerSkinRunTickPatch
+{
+    // NRun is the persistent process owner for the live combat/map scene.  Keep this hook even
+    // when the optional sync node is recreated during a scene hand-off, so queued transform and
+    // avatar updates cannot wait on a child _Process callback that no longer exists.
     private static void Postfix(double delta) => MultiplayerSkinSync.Tick(delta);
 }
 
