@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Runs;
 using STS2SkinChanger.Catalog;
@@ -142,6 +143,7 @@ internal static class MultiplayerSkinSync
     // the same Steam net service.  Keep this hand-off marker separate from _inRun so the lobby
     // attach can still invalidate the previous round's temporary providers and advertisements.
     private static bool _needsLobbyRoundReset;
+    private static INetGameService? _detachedRunService;
 
     internal static string? GetScopedSelection(string groupId)
     {
@@ -425,6 +427,7 @@ internal static class MultiplayerSkinSync
         var service = RunManager.Instance.NetService;
         _lobby = null;
         _needsLobbyRoundReset = false;
+        _detachedRunService = null;
         if (!service.Type.IsMultiplayer())
         {
             return;
@@ -447,11 +450,12 @@ internal static class MultiplayerSkinSync
         // character-select lobby.  AttachToService therefore does not run again, so the old
         // per-run provider/cache state would otherwise survive and make the next "ready" phase
         // appear to finish instantly.  Start a fresh online-cache generation at this boundary.
-        if (_needsLobbyRoundReset && ReferenceEquals(service, _netService))
+        if (_needsLobbyRoundReset && ReferenceEquals(service, _detachedRunService))
         {
             ResetRoundStateForLobby();
         }
         _needsLobbyRoundReset = false;
+        _detachedRunService = null;
 
         var changedLobby = !ReferenceEquals(_lobby, lobby);
         AttachToService(service, "联机选角");
@@ -487,10 +491,10 @@ internal static class MultiplayerSkinSync
         }
 
         ResetReadyGateState();
-        // EndSession removes every temporary provider and deletes this round's private package;
-        // BeginSession creates a new generation so a later round cannot reuse it accidentally.
+        // EndSession removes every temporary provider and deletes this round's private package.
+        // AttachToService creates the replacement generation immediately afterward; keeping the
+        // creation there avoids opening two generations during the lobby scene hand-off.
         OnlineSkinCache.EndSession();
-        OnlineSkinCache.BeginSession();
         if (hadRemoteSelections)
         {
             try
@@ -563,6 +567,7 @@ internal static class MultiplayerSkinSync
         if (_inRun && service != null && !clearCapabilities)
         {
             _needsLobbyRoundReset = true;
+            _detachedRunService = service;
         }
         _netService = null;
         _lobby = null;
@@ -656,10 +661,46 @@ internal static class MultiplayerSkinSync
             refreshProviders = _runtimeProvidersDirty;
         }
 
+        // A newly registered online provider must be mounted before an avatar getter can resolve
+        // its icon.  Previously icon refresh ran first, so the node was marked handled while the
+        // old/base resource was still mounted.  Keep the icon request pending until this mount is
+        // allowed, then refresh it below.
+        if (refreshProviders && CharacterAppearanceRuntime.CanApplySelectionImmediately())
+        {
+            try
+            {
+                SkinService.RefreshSessionRuntimeProviders();
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    "刷新联机皮肤运行时失败，头像刷新将重试：" +
+                    exception.GetBaseException().Message);
+            }
+            finally
+            {
+                lock (Sync)
+                {
+                    _runtimeProvidersDirty = false;
+                }
+                refreshProviders = false;
+            }
+        }
+
         // Avatar nodes can exist in the lobby while the combat room is unavailable.  Refresh
         // them independently of the resource/rebuild gate so a received selection is visible
         // immediately instead of waiting for the run scene to finish loading.
-        foreach (var playerId in pendingIcons)
+        if (refreshProviders)
+        {
+            lock (Sync)
+            {
+                foreach (var playerId in pendingIcons)
+                {
+                    PendingIconRefreshes.Add(playerId);
+                }
+            }
+        }
+        foreach (var playerId in pendingIcons.Where(_ => !refreshProviders))
         {
             try
             {
@@ -686,7 +727,16 @@ internal static class MultiplayerSkinSync
         {
             try
             {
-                CharacterAppearanceRuntime.RefreshPlayerTransforms(playerId);
+                if (!CharacterAppearanceRuntime.RefreshPlayerTransforms(playerId) &&
+                    NRun.Instance?.CombatRoom == null)
+                {
+                    // Transform packets may arrive in the short lobby-to-run gap.  Keep them
+                    // until the combat room exists instead of dropping the first live update.
+                    lock (Sync)
+                    {
+                        PendingTransformRefreshes.Add(playerId);
+                    }
+                }
             }
             catch (Exception exception)
             {
@@ -1583,6 +1633,21 @@ internal static class MultiplayerSkinSync
                 ModLog.Info(
                     $"联机玩家 {message.PlayerNetId} 的皮肤 {message.OptionId} " +
                     "没有携带可下载资源信息，暂时显示原皮。");
+            }
+            else if (message.OptionId != SkinCatalog.BaseOptionId &&
+                     !OnlineSkinCache.HasDownloadMetadata(message) &&
+                     IsReadyGateActive())
+            {
+                // A non-base selection without a downloadable manifest must not be treated as
+                // an already-complete request.  That made the ready gate say “loaded” instantly
+                // while the remote player silently fell back to the original skin.  Surface the
+                // same explicit failure used for private/local-only skins and keep the gate open
+                // until the player acknowledges it.
+                OnlineSkinCache.ReportMissingMetadata(message);
+                ModLog.Info(
+                    $"联机玩家 {message.PlayerNetId} 的皮肤 {message.OptionId} " +
+                    "缺少可验证的在线资源清单，已暂停开局等待确认。");
+                MarkReadyResolutionActivity();
             }
             // Cover a cache registration racing this advertisement before falling back.
             if (OnlineSkinCache.TryGetCachedOption(message, out cachedOptionId))

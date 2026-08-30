@@ -211,6 +211,12 @@ internal static partial class OnlineSkinCache
         {
             ModLog.Info("已删除上一轮联机皮肤临时安全包；Steam 工坊原始文件不在本 Mod 清理范围内。");
         }
+        else if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+        {
+            ModLog.Warn(
+                $"上一轮联机皮肤临时安全包暂未删除：{directory}；" +
+                "游戏资源系统释放后会在下次启动继续清理。 ");
+        }
     }
 
     internal static void Tick(bool allowDownloads)

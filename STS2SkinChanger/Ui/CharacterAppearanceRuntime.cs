@@ -879,12 +879,12 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
-    internal static void RefreshPlayerTransforms(ulong playerNetId)
+    internal static bool RefreshPlayerTransforms(ulong playerNetId)
     {
         var room = NCombatRoom.Instance;
         if (room == null)
         {
-            return;
+            return false;
         }
 
         var refreshed = 0;
@@ -906,6 +906,8 @@ internal static class CharacterAppearanceRuntime
             // combat setup).  Refresh the HUD in the same tick so model and avatar never diverge.
             ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
         }
+
+        return refreshed > 0;
     }
 
     internal static void CapturePlayerAndPetLayout(float scaling, bool fullyCenterPlayers)
