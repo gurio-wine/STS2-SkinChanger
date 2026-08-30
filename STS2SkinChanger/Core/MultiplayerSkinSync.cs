@@ -138,6 +138,10 @@ internal static class MultiplayerSkinSync
     private static double _localTransformBroadcastCooldown;
     private static string? _lastSentTransformSignature;
     private static bool _inRun;
+    // The combat scene exits before the next StartRunLobby is attached, and both scenes reuse
+    // the same Steam net service.  Keep this hand-off marker separate from _inRun so the lobby
+    // attach can still invalidate the previous round's temporary providers and advertisements.
+    private static bool _needsLobbyRoundReset;
 
     internal static string? GetScopedSelection(string groupId)
     {
@@ -420,6 +424,7 @@ internal static class MultiplayerSkinSync
     {
         var service = RunManager.Instance.NetService;
         _lobby = null;
+        _needsLobbyRoundReset = false;
         if (!service.Type.IsMultiplayer())
         {
             return;
@@ -442,10 +447,11 @@ internal static class MultiplayerSkinSync
         // character-select lobby.  AttachToService therefore does not run again, so the old
         // per-run provider/cache state would otherwise survive and make the next "ready" phase
         // appear to finish instantly.  Start a fresh online-cache generation at this boundary.
-        if (_inRun && ReferenceEquals(service, _netService))
+        if (_needsLobbyRoundReset && ReferenceEquals(service, _netService))
         {
             ResetRoundStateForLobby();
         }
+        _needsLobbyRoundReset = false;
 
         var changedLobby = !ReferenceEquals(_lobby, lobby);
         AttachToService(service, "联机选角");
@@ -550,6 +556,14 @@ internal static class MultiplayerSkinSync
             }
         }
 
+        // Remember that this was a run-scene teardown before clearing the service reference.
+        // MultiplayerSkinSyncNode._ExitTree uses clearCapabilities:false and the game then
+        // creates a fresh lobby with the same Steam service; that boundary must start a new
+        // temporary-cache generation even though no disconnect callback is raised.
+        if (_inRun && service != null && !clearCapabilities)
+        {
+            _needsLobbyRoundReset = true;
+        }
         _netService = null;
         _lobby = null;
         _messageHandler = null;
@@ -649,7 +663,16 @@ internal static class MultiplayerSkinSync
         {
             try
             {
-                ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerId);
+                // A selection packet can arrive before the lobby/HUD scene has finished adding
+                // its avatar nodes.  Keep the request queued until a real icon is refreshed;
+                // otherwise the one-shot attempt leaves the base icon cached forever.
+                if (!ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerId))
+                {
+                    lock (Sync)
+                    {
+                        PendingIconRefreshes.Add(playerId);
+                    }
+                }
             }
             catch (Exception exception)
             {

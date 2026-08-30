@@ -1557,7 +1557,7 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    internal static void RefreshMultiplayerPlayerIcons(ulong playerNetId)
+    internal static bool RefreshMultiplayerPlayerIcons(ulong playerNetId)
     {
         try
         {
@@ -1569,7 +1569,7 @@ internal static partial class ContextualSkinControls
                        NGame.Instance?.GetTree().Root;
             if (root == null)
             {
-                return;
+                return false;
             }
 
             var stateCount = 0;
@@ -1612,16 +1612,18 @@ internal static partial class ContextualSkinControls
                 // This is expected while the run scene is being rebuilt.  The _Ready patches
                 // below apply the same scope when the nodes are created, so no global polling is
                 // needed here.
-                return;
+                return false;
             }
 
             ModLog.Info(
                 $"已刷新联机玩家 {playerNetId} 的头像：战斗栏 {stateCount}、" +
                 $"选角栏 {lobbyCount}、投票栏 {voteCount}。 ");
+            return true;
         }
         catch (Exception exception)
         {
             ModLog.Warn($"刷新联机玩家 {playerNetId} 的头像失败：{exception.GetBaseException().Message}");
+            return false;
         }
     }
 
