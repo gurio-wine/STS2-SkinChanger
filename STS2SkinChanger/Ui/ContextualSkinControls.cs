@@ -1673,23 +1673,29 @@ internal static partial class ContextualSkinControls
         // only TextureRect.Texture leaves the icon getter's cached/base resource in place when
         // the lobby node was created before the remote skin package became available.
         var refreshVisuals = AccessTools.Method(typeof(NRemoteLobbyPlayer), "RefreshVisuals");
-        try
+        // The local host has no entry in AvailableSelections, so there is no remote scope.  Do
+        // not re-enter the game's full RefreshVisuals from that path: its own Harmony callback
+        // queues another icon pass and can synchronously re-enter while the room is being built.
+        // Remote players do have a scope, and their refresh is safe and necessary to replace the
+        // already-created lobby node with the selected skin.
+        if (scope != null)
         {
-            // RefreshVisuals is Harmony-patched below.  Its fallback Postfix normally queues a
-            // second icon pass when no per-player scope exists (for example for the local host).
-            // Mark this intentional call so that Postfix cannot synchronously call back into this
-            // method and recurse until the main thread appears frozen while creating a room.
-            _refreshingRemoteLobbyVisuals = true;
-            refreshVisuals?.Invoke(node, null);
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn("调用游戏的远程选角外观刷新失败，将使用头像贴图兜底：" +
-                        exception.GetBaseException().Message);
-        }
-        finally
-        {
-            _refreshingRemoteLobbyVisuals = false;
+            try
+            {
+                // RefreshVisuals is Harmony-patched below.  Mark this intentional call so its
+                // fallback Postfix cannot synchronously call back into this method.
+                _refreshingRemoteLobbyVisuals = true;
+                refreshVisuals?.Invoke(node, null);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn("调用游戏的远程选角外观刷新失败，将使用头像贴图兜底：" +
+                            exception.GetBaseException().Message);
+            }
+            finally
+            {
+                _refreshingRemoteLobbyVisuals = false;
+            }
         }
 
         var icon = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_characterIcon")
