@@ -2402,6 +2402,7 @@ internal static class SkinService
                 selection,
                 resourcePaths,
                 includeProviderDependencies: true);
+            MountContextualFullRuntimeProviderPacks(catalog, selection);
             if (prepared.OverlayPath != null &&
                 !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
             {
@@ -3428,6 +3429,36 @@ internal static class SkinService
                     ModLog.Error($"恢复临时运行资源覆盖失败：{exception}");
                 }
             }
+        }
+    }
+
+    private static void MountContextualFullRuntimeProviderPacks(
+        SkinCatalog catalog,
+        string selection)
+    {
+        if (!catalog.ProviderUsesFullRuntime(selection) ||
+            catalog.IsFullRuntimeProviderFullySelected(selection, Config.Selections))
+        {
+            return;
+        }
+
+        // A multiplayer selection can differ from this client's persistent character selection.
+        // Full-runtime character scenes often reference hundreds of imported frames through
+        // prefix-compressed binary paths. The small alias overlay cannot discover or reproduce
+        // that import map, so mount the already-installed provider PCK at full priority for the
+        // lifetime of this creature-creation scope. The generated alias is mounted immediately
+        // afterwards and remains the authoritative entry scene; MountedRuntimeResourceScope then
+        // restores this client's configured provider/baseline resources.
+        foreach (var resourcePackPath in catalog.GetProviderResourcePackPaths(selection))
+        {
+            var normalizedPath = System.IO.Path.GetFullPath(resourcePackPath);
+            if (!ProjectSettings.LoadResourcePack(normalizedPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException(
+                    $"无法为联机玩家挂载 {selection} 的完整运行时资源包。");
+            }
+
+            ModLog.Info($"已为联机玩家临时挂载 {selection} 的完整运行时资源。");
         }
     }
 
