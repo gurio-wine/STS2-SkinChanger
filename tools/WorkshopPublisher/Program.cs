@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 using Steamworks;
 
 if (args.Length != 1)
@@ -31,6 +32,34 @@ var additionalPreviewFiles = (config.PreviewFiles ?? [])
 
 if (!Directory.Exists(contentFolder))
     throw new DirectoryNotFoundException(contentFolder);
+var contentManifestPath = Path.Combine(contentFolder, "SkinChanger.json");
+if (!File.Exists(contentManifestPath))
+    throw new FileNotFoundException(
+        "Workshop content manifest not found.",
+        contentManifestPath);
+using (var contentManifest = JsonDocument.Parse(File.ReadAllText(contentManifestPath)))
+{
+    if (!contentManifest.RootElement.TryGetProperty("version", out var contentVersionElement) ||
+        contentVersionElement.ValueKind != JsonValueKind.String)
+    {
+        throw new InvalidDataException(
+            $"Workshop content manifest has no string version: {contentManifestPath}");
+    }
+
+    var contentVersion = contentVersionElement.GetString();
+    if (!string.Equals(contentVersion, config.Version, StringComparison.Ordinal))
+    {
+        throw new InvalidDataException(
+            $"Workshop page version {config.Version} does not match content manifest " +
+            $"version {contentVersion}: {contentManifestPath}");
+    }
+}
+var contentDllPath = Path.Combine(contentFolder, "Gurio.SkinChanger.dll");
+if (!File.Exists(contentDllPath))
+    throw new FileNotFoundException("Workshop content DLL not found.", contentDllPath);
+Console.WriteLine(
+    $"Verified workshop package version {config.Version}; DLL SHA256=" +
+    Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(contentDllPath))));
 if (!File.Exists(previewFile))
     throw new FileNotFoundException("Workshop preview image not found.", previewFile);
 if (new FileInfo(previewFile).Length >= 1_000_000)
