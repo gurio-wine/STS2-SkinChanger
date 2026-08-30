@@ -68,8 +68,8 @@ internal static class EssentialInitializationPatch
 [HarmonyPatch(typeof(ModManager), nameof(ModManager.GetModdedLocTables))]
 internal static class CosmeticLocalizationOwnershipPatch
 {
-    // PCK namespaces remain mounted after a skin is deselected (and can also be mounted for
-    // card art alone). Filter the game's merge inputs rather than trying to unload those files.
+    // PCK namespaces remain mounted after a character skin is deselected. Filter only its
+    // characters.json table; events, cards and all other Mod text keep their normal lifetime.
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(ref IEnumerable<string> __result) =>
         __result = SkinService.FilterModdedLocalizationTables(__result);

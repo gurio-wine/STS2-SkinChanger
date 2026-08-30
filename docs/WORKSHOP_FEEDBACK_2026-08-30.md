@@ -27,7 +27,7 @@
 | 08-28 01:41 | 多来源外观 | 多个卡面/头像 Mod 同时生效；部分 Mod 只修改小图。 | **部分解决**：卡牌已有分类优先级、单卡来源和预设；独立头像来源组合仍未实现。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511724665) |
 | 08-28 12:42 | 性能 | 打开卡牌奖励时卡顿。 | **未解决**：现有优化主要覆盖卡牌图鉴和皮肤选择，奖励界面没有得到针对性复测。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511770586) |
 | 08-28 13:54 | 稳定性 | Save & Quit 或 Give Up 返回选角界面后白屏卡死，日志为已释放的 `Godot.FontVariation`。 | **信息不足**：作者未能复现；仍缺游戏版本和完整 Mod 列表。 | [Bug 讨论 #3](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045961806) |
-| 08-28 17:00 | 非皮肤 Mod 兼容 | `NSFW原版事件替换` / “自制拓展涩涩事件-Beta”等事件 Mod 的文本被恢复为原版，CG 仍可能正常；最新留言称修改或新增事件的 Mod 普遍可能受影响。 | **未解决（高优先级）**：这表明接管范围可能误包含事件文本或本地化资源，且 08-30 仍有重复报告。 | [Bug 讨论 #4](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045970377) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621055575) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621104432) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621153158) |
+| 08-28 17:00 | 非皮肤 Mod 兼容 | `NSFW原版事件替换` / “自制拓展涩涩事件-Beta”等事件 Mod 的文本被恢复为原版，CG 仍可能正常；最新留言称修改或新增事件的 Mod 普遍可能受影响。 | **已处理待复测**：已把本地化接管从“整个视觉 Mod”收窄到角色皮肤的 `characters.json`；事件、卡牌及其他文本表现在始终挂载，不再跟随皮肤选择隐藏。 | [Bug 讨论 #4](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045970377) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621055575) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621104432) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621153158) |
 | 08-29 03:49 | 卡牌外形 | 某些异画卡被错误套上先古蜡烛、黑色说明框和先古背景。 | **未解决**：需要检查卡牌类型/外形来源是否被错误继承。 | [Bug 讨论 #5](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046010390) |
 | 08-29 05:58 | 加载顺序提醒 | 多次开关 Mod 后，加载顺序提醒不再弹出，重新订阅也无效。 | **已处理待复测**：提醒逻辑已改为只检查排在 Skin Changer 前面的皮肤提供者，并重做状态变化判断。 | [Bug 讨论 #6](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046019968) |
 | 08-29 07:33 | 商店 | `Merchant2CuteII` 与本 Mod 同时使用时，商人或玩家模型错位、缩到右下角或飞到左上角；劣人 TV 还可能变成忍者阿塔。08-30 仍有多条重复反馈。 | **未解决（高优先级）**：近期虽重写过商店热切换，但最新反馈表明正式版和测试版仍可能出错。 | [Bug 讨论 #7/#10](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046025432) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621096892) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621097680) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621147290) · [留言 4](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621148445) |
@@ -41,13 +41,12 @@
 
 ## 建议处理顺序
 
-1. **事件 Mod 文本被还原**：它属于非皮肤功能被误接管，影响范围可能比单个皮肤大。
-2. **商店错位/左上角/串角色**：最新仍有多人重复反馈，且覆盖正式版与测试版。
-3. **Aeonglass 直接闪退**：先从日志确认是动画资源、运行时代码还是版本分支。
-4. **BaseLib 角色通用回归测试**：用留言列出的角色补测，确认“封兽鵺”修复是否真为通解。
-5. **卡牌外形与 Card Art Editor**：集中检查卡图、外壳、类型、先古特效是否坚持“单一来源胜出”。
-6. **Nekobinder / Moe-Necrobinder**：补齐预览骨骼和附件的进入/退出生命周期。
-7. 其余性能、界面与同 ID 多差分功能按风险和复现材料逐项推进。
+1. **商店错位/左上角/串角色**：最新仍有多人重复反馈，且覆盖正式版与测试版。
+2. **Aeonglass 直接闪退**：先从日志确认是动画资源、运行时代码还是版本分支。
+3. **BaseLib 角色通用回归测试**：用留言列出的角色补测，确认“封兽鵺”修复是否真为通解。
+4. **卡牌外形与 Card Art Editor**：集中检查卡图、外壳、类型、先古特效是否坚持“单一来源胜出”。
+5. **Nekobinder / Moe-Necrobinder**：补齐预览骨骼和附件的进入/退出生命周期。
+6. 其余性能、界面与同 ID 多差分功能按风险和复现材料逐项推进。
 
 ## 当前未纳入的内容
 

@@ -30,6 +30,8 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly List<CardSkinGroup> _cardGroups;
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationProviders;
+    private readonly IReadOnlySet<string> _cosmeticLocalizationPaths;
+    private readonly IReadOnlyDictionary<string, ResourceFile> _passthroughLocalizationFiles;
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
     private readonly IReadOnlySet<string> _scopedMonsterRuntimeProviders;
     private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
@@ -80,18 +82,34 @@ internal sealed partial class SkinCatalog : IDisposable
         // Otherwise a DLL that independently supplies several Ancient pictures looks like one
         // inseparable multi-group runtime merely because its PCK also contains per-Ancient icons.
         AddImageRuntimeProviderOptions(mods);
-        // Only selectable visual providers have a skin-owned localization lifetime. A standalone
-        // translation mod (or a gameplay mod adding characters) must keep its normal language tables.
-        var visualProviderIds = _groups.SelectMany(group => group.Options)
+        // Only the character table of an actual character appearance has a skin-owned lifetime.
+        // A visual provider can also add events, cards or other gameplay text; those tables must
+        // remain mounted regardless of which cosmetic option is selected.
+        var characterVisualProviderIds = _groups.SelectMany(group => group.Options)
+            .Where(IsCharacterAppearanceOption)
             .Select(option => option.EffectiveProviderId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _cosmeticLocalizationProviders = cosmeticIndexes
-            .Where(index => visualProviderIds.Contains(index.Mod.Id) &&
-                            index.Archive.Paths.Any(path =>
-                                path.Contains("/localization/", StringComparison.OrdinalIgnoreCase) &&
-                                path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
-            .Select(index => index.Mod.Id)
+        var providerLocalizationFiles = cosmeticIndexes
+            .SelectMany(index => index.Archive.Paths
+                .Where(path => IsProviderLocalizationFile(path, index.Mod.Id))
+                .Select(path => (Index: index, Path: path)))
+            .ToArray();
+        _cosmeticLocalizationPaths = providerLocalizationFiles
+            .Where(file => characterVisualProviderIds.Contains(file.Index.Mod.Id) &&
+                           IsCharacterLocalizationFile(file.Path))
+            .Select(file => file.Path)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _cosmeticLocalizationProviders = providerLocalizationFiles
+            .Where(file => _cosmeticLocalizationPaths.Contains(file.Path))
+            .Select(file => file.Index.Mod.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _passthroughLocalizationFiles = providerLocalizationFiles
+            .Where(file => !_cosmeticLocalizationPaths.Contains(file.Path))
+            .GroupBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => new ResourceFile(group.Last().Index.Archive, group.Last().Path),
+                StringComparer.OrdinalIgnoreCase);
         _managedGodotScriptProviders = cosmeticIndexes
             .Where(index => index.Mod.HasDll && CountManagedGodotScripts(index.Archive) > 0)
             .Select(index => index.Mod.Id)
@@ -513,10 +531,13 @@ internal sealed partial class SkinCatalog : IDisposable
 
         var selectedProviders = GetSelectedLocalizationProviderIds(selections);
         return paths.Where(path =>
+            !_cosmeticLocalizationPaths.Contains(path) ||
             !TryGetLocalizationProviderId(path, out var providerId) ||
-            !_cosmeticLocalizationProviders.Contains(providerId) ||
             selectedProviders.Contains(providerId)).ToArray();
     }
+
+    public bool IsManagedCosmeticLocalizationPath(string path) =>
+        _cosmeticLocalizationPaths.Contains(path);
 
     private static bool TryGetLocalizationProviderId(string path, out string providerId)
     {
@@ -1240,6 +1261,14 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlySet<string>? onlyGroups = null)
     {
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
+        // Skin providers are mounted through generated overlays instead of their original PCKs.
+        // Keep every non-character localization table visible at all times so event/card/gameplay
+        // text cannot disappear merely because the same provider also contains cosmetic assets.
+        foreach (var file in _passthroughLocalizationFiles)
+        {
+            files[file.Key] = file.Value;
+        }
+
         var includedGroups = Groups
             .Where(group => onlyGroups == null || onlyGroups.Contains(group.Id))
             .ToArray();
@@ -1796,14 +1825,13 @@ internal sealed partial class SkinCatalog : IDisposable
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
         var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        // Localization tables are discovered by LocManager rather than referenced from the
-        // character scenes, so dependency walking can never reach them. Mount every private
-        // table owned by the selected visual provider; localization ownership filtering below
-        // makes the same mounted paths disappear again as soon as another skin is selected.
+        // Character localization tables are discovered by LocManager rather than referenced from
+        // the character scenes, so dependency walking can never reach them. Other localization
+        // tables are mounted permanently by BuildOverlay and must never follow a skin selection.
         foreach (var index in indexes)
         {
             foreach (var path in index.Archive.Paths.Where(path =>
-                         IsProviderLocalizationFile(path, selected.EffectiveProviderId)))
+                         _cosmeticLocalizationPaths.Contains(path)))
             {
                 files[path] = new ResourceFile(index.Archive, path);
             }
@@ -1895,6 +1923,9 @@ internal sealed partial class SkinCatalog : IDisposable
                TryGetLocalizationProviderId(path, out var ownerId) &&
                ownerId.Equals(providerId, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsCharacterLocalizationFile(string path) =>
+        path.EndsWith("/characters.json", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsProviderProjectControlFile(string path)
     {

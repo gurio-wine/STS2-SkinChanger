@@ -1487,9 +1487,16 @@ static void ValidateLocalizationOwnership(
                 continue;
             }
 
-            var ownedPaths = paths.Where(path => path.StartsWith(
-                $"res://{option.EffectiveProviderId}/localization/",
-                StringComparison.OrdinalIgnoreCase)).ToArray();
+            var providerPaths = paths.Where(path => path.StartsWith(
+                    $"res://{option.EffectiveProviderId}/localization/",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            var ownedPaths = providerPaths
+                .Where(catalog.IsManagedCosmeticLocalizationPath)
+                .ToArray();
+            var passthroughPaths = providerPaths
+                .Where(path => !catalog.IsManagedCosmeticLocalizationPath(path))
+                .ToArray();
             var activePaths = catalog.FilterModdedLocalizationTables(paths, selections);
             var mountedPaths = catalog.BuildOverlay(selections).Keys
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1504,7 +1511,11 @@ static void ValidateLocalizationOwnership(
             if (ownedPaths.Any(path => basePaths.Contains(path) ||
                                        !activePaths.Contains(path) ||
                                        !mountedPaths.Contains(path) ||
-                                       restoredPaths.Contains(path)))
+                                       restoredPaths.Contains(path)) ||
+                passthroughPaths.Any(path => !basePaths.Contains(path) ||
+                                             !activePaths.Contains(path) ||
+                                             !mountedPaths.Contains(path) ||
+                                             !restoredPaths.Contains(path)))
             {
                 failures.Add(
                     $"{option.EffectiveProviderId}: localization was not mounted with, or outlived, its visual selection");
@@ -1529,6 +1540,7 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
         AddProvider("Tests.OtherIronSkin", "ironclad", "Other Ironclad");
         AddProvider("Tests.Gameplay", "watcher", "New Character", affectsGameplay: true);
         AddProvider("Tests.IronSkinExtras", null, "Independent Translation");
+        AddEventVisualProvider();
         using var catalog = SkinCatalog.Build(gamePckPath, descriptors);
         var selections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -1551,7 +1563,7 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
         selections["ironclad"] = "Tests.IronSkin";
         Check("reselect", "Skin Ironclad", "Base Silent");
 
-        Console.WriteLine("localization ownership self-test passed: 9 transitions in both eng/zhs, stale paths, card-only selection and unrelated translations");
+        Console.WriteLine("localization ownership self-test passed: 9 transitions in both eng/zhs, stale paths, card-only selection, event text and unrelated translations");
 
         void AddProvider(string id, string? character, string title, bool affectsGameplay = false)
         {
@@ -1576,6 +1588,30 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
             descriptors.Add(new SkinModDescriptor(id, id, pckPath, affectsGameplay, testRoot));
         }
 
+        void AddEventVisualProvider()
+        {
+            const string id = "Tests.EventVisual";
+            var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://scenes/events/background_scenes/neow.tscn"] =
+                    Encoding.UTF8.GetBytes("[gd_scene format=3]\n")
+            };
+            foreach (var language in new[] { "eng", "zhs" })
+            {
+                var path = $"res://{id}/localization/{language}/events.json";
+                var entries = new Dictionary<string, string>
+                {
+                    ["TEST_EVENT.body"] = "Event Replacement"
+                };
+                allTables[path] = entries;
+                files[path] = JsonSerializer.SerializeToUtf8Bytes(entries);
+            }
+
+            var pckPath = System.IO.Path.Combine(testRoot, id + ".pck");
+            PckArchive.Write(pckPath, files);
+            descriptors.Add(new SkinModDescriptor(id, id, pckPath, false, testRoot));
+        }
+
         void Check(string scenario, string expectedIronclad, string expectedSilent)
         {
             var selectedLocalizationProviders = catalog.GetSelectedLocalizationProviderIds(selections);
@@ -1592,11 +1628,26 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
                              $"res://{providerId}/localization/",
                              StringComparison.OrdinalIgnoreCase)))
                 {
-                    if (mountedPaths.Contains(path) != selectedLocalizationProviders.Contains(providerId))
+                    var shouldMount = !catalog.IsManagedCosmeticLocalizationPath(path) ||
+                                      selectedLocalizationProviders.Contains(providerId);
+                    if (mountedPaths.Contains(path) != shouldMount)
                     {
                         throw new InvalidOperationException(
                             $"localization mounting failed: {scenario}/{providerId}");
                     }
+                }
+            }
+
+            foreach (var eventPath in allTables.Keys.Where(path => path.StartsWith(
+                         "res://Tests.EventVisual/localization/",
+                         StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!mountedPaths.Contains(eventPath) ||
+                    catalog.IsManagedCosmeticLocalizationPath(eventPath) ||
+                    selectedLocalizationProviders.Contains("Tests.EventVisual"))
+                {
+                    throw new InvalidOperationException(
+                        $"event localization was tied to a cosmetic selection: {scenario}/{eventPath}");
                 }
             }
 
@@ -1618,7 +1669,8 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
                 if (translations["IRONCLAD.title"] != expectedIronclad ||
                     translations["SILENT.title"] != expectedSilent ||
                     translations.GetValueOrDefault("WATCHER.title") != "New Character" ||
-                    translations.GetValueOrDefault("TRANSLATION.title") != "Independent Translation")
+                    translations.GetValueOrDefault("TRANSLATION.title") != "Independent Translation" ||
+                    translations.GetValueOrDefault("TEST_EVENT.body") != "Event Replacement")
                 {
                     throw new InvalidOperationException($"localization ownership failed: {scenario}/{language}");
                 }
