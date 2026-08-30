@@ -38,15 +38,11 @@ internal static partial class ContextualSkinControls
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static bool _refreshingMonsterDisplay;
-    [ThreadStatic]
-    private static bool _refreshingRemoteLobbyVisuals;
     private static Font? _gameFont;
     private static WeakReference<NCharacterSelectScreen>? _multiplayerCharacterSelectScreen;
     private static ulong _lastMultiplayerStatusRefreshMsec;
 
     internal static bool IsRefreshingMonsterDisplay => _refreshingMonsterDisplay;
-
-    internal static bool IsRefreshingRemoteLobbyVisuals => _refreshingRemoteLobbyVisuals;
 
     internal static Font? GameFont =>
         _gameFont ??= ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
@@ -724,6 +720,7 @@ internal static partial class ContextualSkinControls
         {
             RebuildRuntimeProviderCharacterDisplay(screen, character);
             ReplaySelectedCharacterPresentation(screen, character, groupId);
+            RefreshLocalLobbyAvatar(screen);
             return;
         }
 
@@ -756,6 +753,7 @@ internal static partial class ContextualSkinControls
                 characterSelectPath,
                 characterSelectTextures);
             ReplaySelectedCharacterPresentation(screen, character, groupId);
+            RefreshLocalLobbyAvatar(screen);
             return;
         }
 
@@ -776,7 +774,33 @@ internal static partial class ContextualSkinControls
             },
             includeProviderDependencies: true);
         ReplaySelectedCharacterPresentation(screen, character, groupId);
+        RefreshLocalLobbyAvatar(screen);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    /// <summary>
+    /// The game only calls NRemoteLobbyPlayer.RefreshVisuals when the character changes.  A
+    /// Skin Changer selection does not change the CharacterModel, so the local row keeps the
+    /// texture that was assigned when the lobby was created.  Refresh the row explicitly after
+    /// the deferred character rebuild; this is a direct texture assignment and never re-enters
+    /// the game's full visual refresh (which can recurse while a lobby is being constructed).
+    /// </summary>
+    private static void RefreshLocalLobbyAvatar(NCharacterSelectScreen screen)
+    {
+        try
+        {
+            if (!IsMultiplayerCharacterSelect(screen))
+            {
+                return;
+            }
+
+            var playerId = screen.Lobby.LocalPlayer.id;
+            RefreshMultiplayerPlayerIcons(playerId);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新本机选角头像失败：" + exception.GetBaseException().Message);
+        }
     }
 
     private static void RebuildMountedFullRuntimeCharacterDisplay(
@@ -1654,8 +1678,32 @@ internal static partial class ContextualSkinControls
         }
 
         using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
-        icon.Texture = character.IconTexture;
+        icon.Texture = TryLoadManagedCharacterIconTexture(character) ?? character.IconTexture;
         return true;
+    }
+
+    private static Texture2D? TryLoadManagedCharacterIconTexture(CharacterModel character)
+    {
+        var group = FindGroup(character.Id.Entry, character.GetType().Name) ??
+                    FindGroup(character.Id.Entry);
+        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
+        {
+            return null;
+        }
+
+        var path = CanonicalImagePath(
+            "ui/top_panel/character_icon_" + character.Id.Entry.ToLowerInvariant() + ".png");
+        try
+        {
+            return SkinService.GetOrLoadRuntimeResource(group.Id, path) as Texture2D;
+        }
+        catch
+        {
+            // Some skins intentionally omit a separate top-panel icon.  In that case the
+            // game's current IconTexture (and any provider-specific presentation) is the
+            // correct fallback; do not turn a missing optional icon into a lobby error.
+            return null;
+        }
     }
 
     private static bool RefreshRemoteLobbyPlayerIcon(NRemoteLobbyPlayer node)
@@ -1668,36 +1716,6 @@ internal static partial class ContextualSkinControls
         }
 
         using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(node.PlayerId);
-        // The game owns this node's complete visual update (name, title, icon and ready state).
-        // Calling the same private method under the per-player scope is important: assigning
-        // only TextureRect.Texture leaves the icon getter's cached/base resource in place when
-        // the lobby node was created before the remote skin package became available.
-        var refreshVisuals = AccessTools.Method(typeof(NRemoteLobbyPlayer), "RefreshVisuals");
-        // The local host has no entry in AvailableSelections, so there is no remote scope.  Do
-        // not re-enter the game's full RefreshVisuals from that path: its own Harmony callback
-        // queues another icon pass and can synchronously re-enter while the room is being built.
-        // Remote players do have a scope, and their refresh is safe and necessary to replace the
-        // already-created lobby node with the selected skin.
-        if (scope != null)
-        {
-            try
-            {
-                // RefreshVisuals is Harmony-patched below.  Mark this intentional call so its
-                // fallback Postfix cannot synchronously call back into this method.
-                _refreshingRemoteLobbyVisuals = true;
-                refreshVisuals?.Invoke(node, null);
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn("调用游戏的远程选角外观刷新失败，将使用头像贴图兜底：" +
-                            exception.GetBaseException().Message);
-            }
-            finally
-            {
-                _refreshingRemoteLobbyVisuals = false;
-            }
-        }
-
         var icon = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_characterIcon")
                        ?.GetValue(node) as TextureRect ??
                    node.GetNodeOrNull<TextureRect>("%CharacterIcon");
@@ -1706,9 +1724,10 @@ internal static partial class ContextualSkinControls
             return false;
         }
 
-        // Keep an explicit assignment as a fallback for game versions where the private method
-        // was renamed or where the node has not completed _Ready yet.
-        icon.Texture = character.IconTexture;
+        // Keep an explicit assignment instead of invoking RefreshVisuals.  RefreshVisuals is
+        // also called by the game's lobby callbacks; invoking it here caused a synchronous
+        // re-entry loop while the room was being created.
+        icon.Texture = TryLoadManagedCharacterIconTexture(character) ?? character.IconTexture;
         return true;
     }
 
@@ -1954,14 +1973,8 @@ internal static class MultiplayerPlayerStateIconScopePatch
         __state?.Dispose();
         if (__instance.Player != null)
         {
-            // If the packet arrived while _Ready was constructing the node, retry after the
-            // game's own icon assignment instead of leaving the base texture cached forever.
-            // Queue one extra pass even when a scope existed: the selected provider may only be
-            // mounted after the game's _Ready callback returns.
-            if (__state == null)
-            {
-                ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.Player.NetId);
-            }
+            // Queue one pass after the game's own icon assignment.  The queue is drained from
+            // the normal process tick, avoiding scene-tree re-entry during _Ready.
             MultiplayerSkinSync.RequestIconRefresh(__instance.Player.NetId);
         }
     }
@@ -1978,10 +1991,8 @@ internal static class RemoteLobbyPlayerIconScopePatch
         IDisposable? __state)
     {
         __state?.Dispose();
-        if (__state == null && !ContextualSkinControls.IsRefreshingRemoteLobbyVisuals)
-        {
-            ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.PlayerId);
-        }
+        // The deferred queue is the single refresh path.  Calling back into the scene tree from
+        // _Ready can re-enter NRemoteLobbyPlayer while the lobby is still adding its children.
         MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
     }
 }
@@ -2001,10 +2012,6 @@ internal static class RemoteLobbyPlayerVisualRefreshScopePatch
         IDisposable? __state)
     {
         __state?.Dispose();
-        if (__state == null)
-        {
-            ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.PlayerId);
-        }
         MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
     }
 }

@@ -992,7 +992,7 @@ internal static class MultiplayerSkinSync
 
     internal static void OnLocalCharacterSelectionChanged(string groupId)
     {
-        if (!TryGetLocalCharacter(out _, out var character))
+        if (!TryGetLocalCharacter(out var playerNetId, out var character))
         {
             return;
         }
@@ -1007,6 +1007,10 @@ internal static class MultiplayerSkinSync
 
         RememberLocalAdvertisement();
         SendLocalAdvertisement();
+        // Changing a skin does not change StartRunLobbyPlayer.character, so the game's lobby
+        // listener does not call NRemoteLobbyPlayer.RefreshVisuals.  Refresh the local row from
+        // the normal process path instead of waiting for a character change packet.
+        ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
         AdvanceReadyGateRevisionAsHost();
     }
 
@@ -1042,7 +1046,12 @@ internal static class MultiplayerSkinSync
     /// </summary>
     internal static void EndMultiplayerRunSession()
     {
-        if (_netService?.Type.IsMultiplayer() != true && !_inRun && !_hasLobbySession)
+        // StartRunLobby.CleanUp(true) detaches the sync state before RunManager.CleanUp is
+        // reached.  The temporary online package is intentionally kept across that transport
+        // teardown, so include the cache marker here; otherwise abandoning a run leaves the old
+        // provider mounted and the next lobby can show its skin even though its maps were cleared.
+        if (_netService?.Type.IsMultiplayer() != true && !_inRun && !_hasLobbySession &&
+            !OnlineSkinCache.HasActiveSession)
         {
             return;
         }

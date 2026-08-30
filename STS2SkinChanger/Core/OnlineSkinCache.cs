@@ -129,6 +129,22 @@ internal static partial class OnlineSkinCache
     private static string _progressDetail = string.Empty;
     private static DateTime _progressExpiresAtUtc;
 
+    /// <summary>
+    /// True while a per-multiplayer-session cache generation is still mounted.  Lobby teardown
+    /// deliberately keeps this generation alive for a possible reconnect, so RunManager.CleanUp
+    /// cannot rely on the multiplayer node/session flags alone to decide whether it must clear it.
+    /// </summary>
+    internal static bool HasActiveSession
+    {
+        get
+        {
+            lock (Sync)
+            {
+                return _sessionDirectory != null || _sessionCancellation != null || Providers.Count > 0;
+            }
+        }
+    }
+
     internal static void BeginSession()
     {
         EndSession();
