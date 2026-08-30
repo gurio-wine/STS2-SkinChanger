@@ -1347,9 +1347,14 @@ internal static partial class ContextualSkinControls
 
         try
         {
-            var scene = SkinService.GetOrLoadRuntimeScene(group.Id, visualsPath);
-            RuntimeMonsterVisualModeBridge.ApplySelected(group.Id);
-            var replacement = scene.Instantiate<NCreatureVisuals>(PackedScene.GenEditState.Disabled);
+            // Instantiate while the selected player's temporary overlay is mounted. Binary
+            // scenes can defer external-resource resolution until Instantiate; loading a
+            // PackedScene first and instantiating it after the overlay is restored lets another
+            // player's skin occupy the same canonical path in between the two operations.
+            var replacement = SkinService.InstantiateRuntimeScene<NCreatureVisuals>(
+                group.Id,
+                visualsPath,
+                () => RuntimeMonsterVisualModeBridge.ApplySelected(group.Id));
             var copied = ManagedSceneCompatibility.CopyMissingUniqueNodes(result, replacement);
             if (copied > 0)
             {
@@ -1373,7 +1378,35 @@ internal static partial class ContextualSkinControls
         var group = FindGroup(modelId, modelTypeName);
         if (group != null)
         {
-            SkinService.ApplySelectedVisualPostfix(group.Id, model, ref visuals);
+            // A provider's replayed CreateVisuals postfix may instantiate an auxiliary scene or
+            // resolve a private attachment after the main visual has been created.  For a remote
+            // player that work must see the same canonical overlay as the main scene; otherwise
+            // only the root model is isolated and the provider can still bind the local player's
+            // skin.  Local creations keep the existing fast path.
+            IDisposable? resourceScope = null;
+            if (MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
+            {
+                var scenePath = model is MonsterModel monster
+                    ? GetMonsterVisualsPath(monster)
+                    : CanonicalScenePath("creature_visuals/" + modelId.ToLowerInvariant());
+                try
+                {
+                    resourceScope = SkinService.BeginRuntimeResourceScope(group.Id, scenePath);
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn($"为联机玩家挂载 {group.Id} 的视觉后处理资源失败：{exception.Message}");
+                }
+            }
+
+            try
+            {
+                SkinService.ApplySelectedVisualPostfix(group.Id, model, ref visuals);
+            }
+            finally
+            {
+                resourceScope?.Dispose();
+            }
         }
     }
 
@@ -1478,6 +1511,7 @@ internal static partial class ContextualSkinControls
         // pack has already been restored. The deferred character-screen rebuild owns this path,
         // so leave the cache result alone and let it replace the child under the correct mount.
         if (groupId == null ||
+            IsCreatureVisualScenePath(resourcePath) ||
             IsCharacterSelectBackgroundPath(resourcePath) ||
             ShouldSkipExternalRuntimeRedirect(groupId))
         {
@@ -1499,6 +1533,9 @@ internal static partial class ContextualSkinControls
         var fileName = Path.GetFileNameWithoutExtension(resourcePath);
         return fileName.StartsWith("char_select_bg_", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsCreatureVisualScenePath(string resourcePath) =>
+        resourcePath.Contains("/creature_visuals/", StringComparison.OrdinalIgnoreCase);
 
     internal static void ReplaceCachedTexture(string resourcePath, ref Texture2D result)
     {

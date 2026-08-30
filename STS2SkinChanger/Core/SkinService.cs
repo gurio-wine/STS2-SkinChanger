@@ -2353,6 +2353,86 @@ internal static class SkinService
                throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
     }
 
+    /// <summary>
+    /// Loads and instantiates a scene while its per-selection overlay is still mounted.
+    /// PackedScene keeps some binary external-resource references lazy; returning the scene and
+    /// instantiating it after <see cref="WithRuntimeResources{T}"/> restores the canonical packs
+    /// can therefore bind a remote player's model to the other player's currently mounted skin.
+    /// </summary>
+    public static T InstantiateRuntimeScene<T>(
+        string groupId,
+        string scenePath,
+        Action? beforeInstantiate = null)
+        where T : Node
+    {
+        var resourcePaths = RuntimeSceneResourcePaths(groupId, scenePath);
+        return WithRuntimeResources(
+            groupId,
+            resourcePaths,
+            resources =>
+            {
+                beforeInstantiate?.Invoke();
+                var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
+                            throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
+                return scene.Instantiate<T>(PackedScene.GenEditState.Disabled);
+            },
+            includeProviderDependencies: true);
+    }
+
+    /// <summary>
+    /// Mounts a selected visual's private resource overlay for a short-lived Godot lifecycle
+    /// callback (for example NCreature._Ready).  Unlike <see cref="WithRuntimeResources{T}"/>,
+    /// this does not load a root resource; it keeps canonical external references visible while
+    /// the already-instantiated scene is being attached to the tree, then restores the local
+    /// selection when the callback finishes.
+    /// </summary>
+    public static IDisposable BeginRuntimeResourceScope(string groupId, string scenePath)
+    {
+        var resourcePaths = RuntimeSceneResourcePaths(groupId, scenePath);
+        lock (Sync)
+        {
+            var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+            var selection = GetVisualSelection(groupId);
+            var prepared = GetOrPrepareRuntimeOverlay(
+                catalog,
+                groupId,
+                selection,
+                resourcePaths,
+                includeProviderDependencies: true);
+            if (prepared.OverlayPath != null &&
+                !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
+            }
+
+            if (prepared.CanonicalDependencyPaths.Count > 0)
+            {
+                if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
+                {
+                    trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
+                }
+
+                trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
+            }
+
+            // A remote provider is not necessarily selected in the local config, so its Godot
+            // scripts may not have been registered by the normal global mount yet.  Register
+            // them after the private files are visible, before any _Ready callback can resolve
+            // script-backed nodes.
+            if (catalog.IsRuntimeProviderOption(groupId, selection) &&
+                catalog.ProviderUsesManagedGodotScripts(selection))
+            {
+                ManagedSkinModLoader.EnsureProviderGodotScripts(selection);
+            }
+
+            var restoreGroups = prepared.RestoreGroups
+                .Append(groupId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return new MountedRuntimeResourceScope(restoreGroups);
+        }
+    }
+
     private static IReadOnlyList<string> RuntimeSceneResourcePaths(string groupId, string scenePath)
     {
         lock (Sync)
@@ -3320,6 +3400,32 @@ internal static class SkinService
             $"资源包={mountElapsed.TotalMilliseconds:F1} ms，" +
             $"本地化={localizationElapsed.TotalMilliseconds:F1} ms，" +
             $"总计={Stopwatch.GetElapsedTime(totalStarted).TotalMilliseconds:F1} ms。");
+    }
+
+    private sealed class MountedRuntimeResourceScope(IReadOnlySet<string> restoreGroups) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            lock (Sync)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                try
+                {
+                    MountOverlay(restoreGroups);
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Error($"恢复临时运行资源覆盖失败：{exception}");
+                }
+            }
+        }
     }
 
     private static void EnsureScopedRuntimeProviderResourcesMounted(

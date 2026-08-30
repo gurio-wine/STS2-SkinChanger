@@ -13,6 +13,7 @@ using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Runs;
 using STS2SkinChanger.Catalog;
@@ -402,6 +403,50 @@ internal static class MultiplayerSkinSync
         _selectionScopes ??= new Stack<IReadOnlyDictionary<string, string>>();
         _selectionScopes.Push(selections);
         return new SelectionScope();
+    }
+
+    internal static IDisposable? BeginCreatureRuntimeScope(Creature creature)
+    {
+        var selectionScope = BeginCreatureSelectionScope(creature);
+        if (selectionScope == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var modelId = creature.Player?.Character.Id.Entry ?? creature.Monster?.Id.Entry;
+            var modelTypeName = creature.Player?.Character.GetType().Name ??
+                                creature.Monster?.GetType().Name;
+            var group = modelId == null
+                ? null
+                : ContextualSkinControls.FindGroup(modelId, modelTypeName);
+            if (group == null)
+            {
+                return selectionScope;
+            }
+
+            // The original skin has no private overlay to mount.  Avoid rebuilding the global
+            // baseline for every remote player's _Ready when both peers use the base option.
+            if (GetScopedSelection(group.Id)?.Equals(
+                    SkinCatalog.BaseOptionId,
+                    StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return selectionScope;
+            }
+
+            var scenePath = creature.Player != null
+                ? ContextualSkinControls.CanonicalScenePath(
+                    "creature_visuals/" + modelId!.ToLowerInvariant())
+                : ContextualSkinControls.GetMonsterVisualsPath(creature.Monster!);
+            var resourceScope = SkinService.BeginRuntimeResourceScope(group.Id, scenePath);
+            return new CombinedScope(selectionScope, resourceScope);
+        }
+        catch
+        {
+            selectionScope.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -2277,6 +2322,23 @@ internal static class MultiplayerSkinSync
             }
         }
     }
+
+    private sealed class CombinedScope(IDisposable selectionScope, IDisposable resourceScope) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            resourceScope.Dispose();
+            selectionScope.Dispose();
+        }
+    }
 }
 
 internal partial class MultiplayerSkinSyncNode : Node
@@ -2428,6 +2490,26 @@ internal static class MultiplayerCreatureVisualScopePatch
 {
     private static void Prefix(Creature __instance, out IDisposable? __state) =>
         __state = MultiplayerSkinSync.BeginCreatureSelectionScope(__instance);
+
+    private static Exception? Finalizer(Exception? __exception, IDisposable? __state)
+    {
+        __state?.Dispose();
+        return __exception;
+    }
+}
+
+// Creature.CreateVisuals covers the initial scene construction, but NCreature._Ready then
+// attaches the scene and initializes its Spine/auxiliary nodes. Those nodes may resolve deferred
+// binary resources or run a provider's selected visual finishing code. Keep the same owner scope
+// active for the whole node initialization so a remote player's model cannot fall back to the
+// local player's skin between CreateVisuals and _Ready.
+[HarmonyPatch(typeof(NCreature), nameof(NCreature._Ready))]
+internal static class MultiplayerCreatureReadyScopePatch
+{
+    private static void Prefix(NCreature __instance, out IDisposable? __state) =>
+        __state = __instance.Entity == null
+            ? null
+            : MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance.Entity);
 
     private static Exception? Finalizer(Exception? __exception, IDisposable? __state)
     {
