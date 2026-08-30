@@ -1445,9 +1445,28 @@ internal static class MultiplayerSkinSync
                 lock (Sync)
                 {
                     _readyGateRevision = message.WorkshopItemId;
+                    _readyGateActive = true;
+                    _runReleaseCommitted = false;
+                    _readyGateElapsed = 0;
                     _localReadyResolutionComplete = false;
                     _readyGateQuietElapsed = 0;
                 }
+                // Selection advertisements can arrive just before the probe. Re-evaluate them
+                // now that the client gate is active; otherwise a missing manifest received in
+                // that small ordering window would have already fallen back to the base skin and
+                // the client would report "loaded" immediately.
+                SkinChangerNetMessage[] knownSelections;
+                lock (Sync)
+                {
+                    knownSelections = AdvertisedSelections.Values
+                        .Where(selection => selection.PlayerNetId != service.NetId)
+                        .ToArray();
+                }
+                foreach (var selection in knownSelections)
+                {
+                    TryMakeSelectionAvailable(selection);
+                }
+                MarkReadyResolutionActivity();
                 return;
             }
             if (message.Kind != SkinSyncMessageKind.CharacterSelection)
