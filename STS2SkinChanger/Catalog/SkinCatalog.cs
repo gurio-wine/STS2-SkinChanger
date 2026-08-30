@@ -331,6 +331,10 @@ internal sealed partial class SkinCatalog : IDisposable
         return identity != null && identity.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static bool IsCharacterImageResourceForProvider(string providerId, string resourcePath) =>
+        TryGetPrimaryGroup(NormalizeTakeoverPath(resourcePath)) != null ||
+        TryGetRuntimeProviderAsset(providerId, NormalizeTakeoverPath(resourcePath)) != null;
+
     public bool IsBaseGameResource(string resourcePath) => _gameArchive.Contains(resourcePath);
 
     public bool TryReadBaseGameResource(string resourcePath, out byte[] bytes)
@@ -4298,6 +4302,15 @@ internal sealed partial class SkinCatalog : IDisposable
     private static string NormalizeCardToken(string value) =>
         new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
+    private static bool IsDirectCharacterImagePath(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void AddPckRuntimeProviderOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
         IDictionary<string, SkinGroup> groups)
@@ -4334,12 +4347,19 @@ internal sealed partial class SkinCatalog : IDisposable
                 // Exported Godot projects commonly ship only `scene.tscn.remap` plus the
                 // `.godot/exported/*.scn` payload. Normalize the remap source so private scenes
                 // remain discoverable even when the source `.tscn` itself is absent from the PCK.
+                // The same pass includes raw images mentioned by the managed replacement
+                // scanner.  These are often private avatar/icon paths without a .import file;
+                // they cannot be recognized from their filename alone, but the scanner has
+                // already proved that the provider routes them to a character asset.
                 .Where(path => path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
-                               path.EndsWith(".tscn.remap", StringComparison.OrdinalIgnoreCase))
+                               path.EndsWith(".tscn.remap", StringComparison.OrdinalIgnoreCase) ||
+                               IsDirectCharacterImagePath(path))
                 .Select(path => path.EndsWith(".tscn.remap", StringComparison.OrdinalIgnoreCase)
                     ? path[..^6]
                     : path)
-                .Where(path => TryGetRuntimeProviderAsset(index.Mod.Id, path) != null)
+                .Where(path =>
+                    managedRuntimeMappings.ContainsKey(NormalizeTakeoverPath(path)) ||
+                    TryGetRuntimeProviderAsset(index.Mod.Id, path) != null)
                 .Select(index.TryBuildAsset)
                 .Where(asset => asset != null)
                 .Cast<ResourceAsset>()
@@ -5708,6 +5728,23 @@ internal sealed partial class PckResourceIndex : IDisposable
             }
         }
 
+        // A few character providers ship their portraits/icons as raw image files without a
+        // matching .import entry.  The old index only registered imported payloads, so those
+        // files never reached the character option and could not be included in a multiplayer
+        // safe package.  Keep this lazy and generic: only direct images that can be mapped to a
+        // known character/runtime-provider group are indexed; card art and unrelated images stay
+        // out of the catalog.
+        foreach (var path in archive.Paths.Where(IsDirectCharacterImageResource))
+        {
+            var sourcePath = SkinCatalog.NormalizeTakeoverPath(path);
+            if (!SkinCatalog.IsCharacterImageResourceForProvider(mod.Id, sourcePath))
+            {
+                continue;
+            }
+
+            index.GetAsset(sourcePath).AddFile(archive, path);
+        }
+
         return index;
     }
 
@@ -5808,6 +5845,15 @@ internal sealed partial class PckResourceIndex : IDisposable
          SkinCatalog.NormalizeTakeoverPath(path).StartsWith("res://scenes/", StringComparison.OrdinalIgnoreCase)) &&
         (path.EndsWith(".tres", StringComparison.OrdinalIgnoreCase) ||
          path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsDirectCharacterImageResource(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
+    }
 
     [GeneratedRegex("path(?:\\.[a-z0-9_]+)?\\s*=\\s*\"(res://[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex RemapTargetRegex();

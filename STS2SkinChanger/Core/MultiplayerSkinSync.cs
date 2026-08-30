@@ -1005,7 +1005,12 @@ internal static class MultiplayerSkinSync
             return;
         }
 
-        RememberLocalAdvertisement();
+        // Prepare the sender's safe-resource description as soon as the skin changes.  The
+        // client does not always execute the host-only ready-gate callback, so waiting until
+        // both players press Ready could leave the peer with only an option ID and no download
+        // metadata.  Packaging is asynchronous and does not download anything; the completed
+        // fingerprint is sent again by OnLocalOnlineMetadataReady.
+        RememberLocalAdvertisement(includeOnlineMetadata: true);
         SendLocalAdvertisement();
         // Changing a skin does not change StartRunLobbyPlayer.character, so the game's lobby
         // listener does not call NRemoteLobbyPlayer.RefreshVisuals.  Refresh the local row from
@@ -1943,6 +1948,19 @@ internal static class MultiplayerSkinSync
                 message.SafeResourceFingerprint = source.SafeResourceFingerprint;
                 message.SafeResourceManifest = source.SafeResourceManifest;
                 message.SafeResourceBindings = source.SafeResourceBindings;
+            }
+
+            // Keep the sender-side reason visible.  A receiver can only report that metadata is
+            // missing; without this line it is impossible to tell whether the provider has no
+            // Steam source, was still being packaged, or failed the safe-resource checks.
+            if (state != OnlineSkinDescriptionState.Ready)
+            {
+                ModLog.Info(
+                    $"本地联机皮肤描述：分组={message.GroupId}，选项={message.OptionId}，" +
+                    $"状态={state}，提供者={message.ProviderId}，工坊={message.WorkshopItemId}，" +
+                    $"清单={message.SafeResourceManifest?.Length ?? 0} 字符，映射={message.SafeResourceBindings?.Length ?? 0} 字符" +
+                    (string.IsNullOrWhiteSpace(failureDetail) ? string.Empty : $"，原因={failureDetail}") +
+                    "。 ");
             }
             if (state is OnlineSkinDescriptionState.Unavailable or OnlineSkinDescriptionState.Failed)
             {

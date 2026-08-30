@@ -430,7 +430,6 @@ internal static partial class OnlineSkinCache
             out _);
 
     internal static bool IsWaitingForDownloadMetadata(SkinChangerNetMessage message) =>
-        message.WorkshopItemId != 0 &&
         !string.IsNullOrWhiteSpace(message.ProviderId) &&
         string.IsNullOrWhiteSpace(message.SafeResourceFingerprint) &&
         string.IsNullOrWhiteSpace(message.OnlineFailure);

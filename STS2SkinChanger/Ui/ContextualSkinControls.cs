@@ -37,6 +37,8 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
+    private static readonly HashSet<string> LoggedMissingMultiplayerIcons =
+        new(StringComparer.OrdinalIgnoreCase);
     private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
     private static WeakReference<NCharacterSelectScreen>? _multiplayerCharacterSelectScreen;
@@ -1698,14 +1700,39 @@ internal static partial class ContextualSkinControls
             "ui/top_panel/character_icon_" + character.Id.Entry.ToLowerInvariant() + ".png");
         try
         {
-            return SkinService.GetOrLoadRuntimeResource(group.Id, path) as Texture2D;
+            var resource = SkinService.GetOrLoadRuntimeResource(group.Id, path);
+            if (resource is Texture2D texture)
+            {
+                return texture;
+            }
+
+            LogMissingMultiplayerIcon(group.Id, path, $"资源类型={resource.GetType().Name}");
+            return null;
         }
-        catch
+        catch (Exception exception)
         {
             // Some skins intentionally omit a separate top-panel icon.  In that case the
             // game's current IconTexture (and any provider-specific presentation) is the
             // correct fallback; do not turn a missing optional icon into a lobby error.
+            LogMissingMultiplayerIcon(group.Id, path, exception.GetBaseException().Message);
             return null;
+        }
+    }
+
+    private static void LogMissingMultiplayerIcon(string groupId, string path, string detail)
+    {
+        var selection = MultiplayerSkinSync.GetScopedSelection(groupId);
+        if (selection == null || !selection.StartsWith("__online_", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var key = groupId + "\n" + selection + "\n" + path;
+        if (LoggedMissingMultiplayerIcons.Add(key))
+        {
+            ModLog.Warn(
+                $"联机皮肤头像未能从安全资源包加载：分组={groupId}，选项={selection}，" +
+                $"路径={path}，原因={detail}。 ");
         }
     }
 
@@ -1771,7 +1798,8 @@ internal static partial class ContextualSkinControls
                 }
 
                 using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
-                node.Texture = player.Character.IconTexture;
+                node.Texture = TryLoadManagedCharacterIconTexture(player.Character) ??
+                               player.Character.IconTexture;
                 var outline = node.GetNodeOrNull<TextureRect>("Outline");
                 if (outline != null && GodotObject.IsInstanceValid(outline))
                 {
