@@ -1907,11 +1907,17 @@ internal static class MultiplayerPlayerStateIconScopePatch
         IDisposable? __state)
     {
         __state?.Dispose();
-        if (__state == null && __instance.Player != null)
+        if (__instance.Player != null)
         {
             // If the packet arrived while _Ready was constructing the node, retry after the
             // game's own icon assignment instead of leaving the base texture cached forever.
-            ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.Player.NetId);
+            // Queue one extra pass even when a scope existed: the selected provider may only be
+            // mounted after the game's _Ready callback returns.
+            if (__state == null)
+            {
+                ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.Player.NetId);
+            }
+            MultiplayerSkinSync.RequestIconRefresh(__instance.Player.NetId);
         }
     }
 }
@@ -1931,6 +1937,7 @@ internal static class RemoteLobbyPlayerIconScopePatch
         {
             ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.PlayerId);
         }
+        MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
     }
 }
 
@@ -1953,6 +1960,7 @@ internal static class RemoteLobbyPlayerVisualRefreshScopePatch
         {
             ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.PlayerId);
         }
+        MultiplayerSkinSync.RequestIconRefresh(__instance.PlayerId);
     }
 }
 

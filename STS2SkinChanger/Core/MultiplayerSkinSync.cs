@@ -139,11 +139,11 @@ internal static class MultiplayerSkinSync
     private static double _localTransformBroadcastCooldown;
     private static string? _lastSentTransformSignature;
     private static bool _inRun;
+    private static bool _hasLobbySession;
     // The combat scene exits before the next StartRunLobby is attached, and both scenes reuse
     // the same Steam net service.  Keep this hand-off marker separate from _inRun so the lobby
     // attach can still invalidate the previous round's temporary providers and advertisements.
     private static bool _needsLobbyRoundReset;
-    private static INetGameService? _detachedRunService;
 
     internal static string? GetScopedSelection(string groupId)
     {
@@ -214,6 +214,14 @@ internal static class MultiplayerSkinSync
 
     internal static bool CanEditLocalPlayerSkinInRun() =>
         _netService == null || !_netService.Type.IsMultiplayer();
+
+    internal static void RequestIconRefresh(ulong playerNetId)
+    {
+        lock (Sync)
+        {
+            PendingIconRefreshes.Add(playerNetId);
+        }
+    }
 
     internal static bool CanEditTransformForCreature(Creature creature)
     {
@@ -427,7 +435,6 @@ internal static class MultiplayerSkinSync
         var service = RunManager.Instance.NetService;
         _lobby = null;
         _needsLobbyRoundReset = false;
-        _detachedRunService = null;
         if (!service.Type.IsMultiplayer())
         {
             return;
@@ -446,20 +453,33 @@ internal static class MultiplayerSkinSync
             return;
         }
 
+        var changedLobby = !ReferenceEquals(_lobby, lobby);
         // The game keeps the same Steam net service while returning from a run to a new
         // character-select lobby.  AttachToService therefore does not run again, so the old
         // per-run provider/cache state would otherwise survive and make the next "ready" phase
         // appear to finish instantly.  Start a fresh online-cache generation at this boundary.
-        if (_needsLobbyRoundReset && ReferenceEquals(service, _detachedRunService))
+        // Some game versions tear down the multiplayer runtime node before it can set the
+        // hand-off marker; an actual new lobby is still an unambiguous round boundary once a
+        // previous lobby has existed.
+        var resetRound = _needsLobbyRoundReset || (changedLobby && _hasLobbySession);
+        var serviceAlreadyAttached = ReferenceEquals(service, _netService);
+        if (resetRound)
         {
             ResetRoundStateForLobby();
+            // AttachToService intentionally returns when Steam reuses the same connection.  In
+            // that case start the replacement cache generation here instead of accidentally
+            // leaving the new lobby with an ended session (or the previous round's instant-hit
+            // providers).
+            if (serviceAlreadyAttached)
+            {
+                OnlineSkinCache.BeginSession();
+            }
         }
         _needsLobbyRoundReset = false;
-        _detachedRunService = null;
 
-        var changedLobby = !ReferenceEquals(_lobby, lobby);
         AttachToService(service, "联机选角");
         _lobby = lobby;
+        _hasLobbySession = true;
         _inRun = false;
         if (changedLobby)
         {
@@ -567,7 +587,6 @@ internal static class MultiplayerSkinSync
         if (_inRun && service != null && !clearCapabilities)
         {
             _needsLobbyRoundReset = true;
-            _detachedRunService = service;
         }
         _netService = null;
         _lobby = null;
@@ -593,6 +612,7 @@ internal static class MultiplayerSkinSync
             _lastSentTransformSignature = null;
             if (clearCapabilities)
             {
+                _hasLobbySession = false;
                 CapablePeers.Clear();
             }
         }
@@ -725,13 +745,15 @@ internal static class MultiplayerSkinSync
 
         foreach (var playerId in pendingTransforms)
         {
+            var refreshed = false;
             try
             {
-                if (!CharacterAppearanceRuntime.RefreshPlayerTransforms(playerId) &&
-                    NRun.Instance?.CombatRoom == null)
+                refreshed = CharacterAppearanceRuntime.RefreshPlayerTransforms(playerId);
+                if (!refreshed)
                 {
-                    // Transform packets may arrive in the short lobby-to-run gap.  Keep them
-                    // until the combat room exists instead of dropping the first live update.
+                    // Transform packets may arrive before the combat room/creature nodes exist.
+                    // Keep them queued until a real creature has been refreshed; removing the
+                    // entry in the same tick made the first live update disappear permanently.
                     lock (Sync)
                     {
                         PendingTransformRefreshes.Add(playerId);
@@ -744,9 +766,12 @@ internal static class MultiplayerSkinSync
                     $"刷新联机玩家 {playerId} 的外观参数失败：" +
                     exception.GetBaseException().Message);
             }
-            lock (Sync)
+            if (refreshed)
             {
-                PendingTransformRefreshes.Remove(playerId);
+                lock (Sync)
+                {
+                    PendingTransformRefreshes.Remove(playerId);
+                }
             }
         }
 
@@ -1150,7 +1175,7 @@ internal static class MultiplayerSkinSync
     {
         var service = _netService;
         var hostId = (service as INetClientGameService)?.NetClient?.HostNetId;
-        if (service == null || !hostId.HasValue || !IsCapable(hostId.Value))
+        if (service == null || !hostId.HasValue)
         {
             return;
         }
@@ -2031,7 +2056,12 @@ internal static class MultiplayerSkinSync
         else
         {
             var hostId = (service as INetClientGameService)?.NetClient?.HostNetId;
-            if (hostId.HasValue && IsCapable(hostId.Value))
+            // The host may not have processed the capability trailer yet (some networking Mods
+            // replace the initial join packet).  Sending the reserved Skin Changer envelope is
+            // safe and lets HandleMessage establish capability from the message itself; gating
+            // this send on IsCapable made every later avatar/transform update disappear on those
+            // connections.
+            if (hostId.HasValue)
             {
                 service.SendMessage(message);
             }

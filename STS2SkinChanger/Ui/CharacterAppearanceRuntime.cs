@@ -328,7 +328,7 @@ internal static class CharacterAppearanceRuntime
             // creature's owner link can briefly be null or carry a stale NetId while a combat
             // node is being rebuilt; tying the broadcast to that transient link silently loses
             // otherwise valid slider/drag edits.
-            MultiplayerSkinSync.OnLocalTransformChanged(binding.Group.Id);
+            MultiplayerSkinSync.OnLocalTransformChanged(creature.Entity, binding.Group.Id);
             return characterTransform;
         }
 
@@ -341,7 +341,7 @@ internal static class CharacterAppearanceRuntime
             optionId,
             value with { Scale = 1f },
             save);
-        MultiplayerSkinSync.OnLocalTransformChanged(binding.Group.Id);
+        MultiplayerSkinSync.OnLocalTransformChanged(creature.Entity, binding.Group.Id);
         return normalized with { Scale = monsterScale };
     }
 
