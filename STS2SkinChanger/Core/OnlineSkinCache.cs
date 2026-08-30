@@ -1105,15 +1105,17 @@ internal static partial class OnlineSkinCache
                 group => group.Key,
                 group => group.First().SourcePath,
                 StringComparer.OrdinalIgnoreCase);
-        // Modern advertisements provide an explicit, validated root list. Selecting every file
-        // that merely resembles the character would pull rejected custom scenes back into the
-        // package and also made large skin packs needlessly expensive. Keep the broad scan only
-        // for legacy/diagnostic callers that do not provide roots.
-        foreach (var path in explicitRoots.Count == 0
-                     ? archive.Paths.Where(path =>
-                         AllowedExtensions.Contains(Path.GetExtension(path)) &&
-                         SkinCatalog.IsSafeOnlineResourceRootForGroup(path, groupId))
-                     : [])
+        // Keep scanning the provider archive for passive resources. Some DLL-driven skins do
+        // not expose every texture/audio file through a scene binding; removing this scan makes
+        // the error disappear while silently sending an incomplete skin. Executable scenes are
+        // excluded below, so the broad scan never reintroduces a provider script.
+        foreach (var path in archive.Paths.Where(path =>
+                     AllowedExtensions.Contains(Path.GetExtension(path)) &&
+                     SkinCatalog.IsSafeOnlineResourceRootForGroup(path, groupId) &&
+                     !SceneResourceChainRequiresExecutableResource(
+                         archive,
+                         path,
+                         new HashSet<string>(StringComparer.OrdinalIgnoreCase))))
         {
             Enqueue(path);
         }
@@ -1170,6 +1172,17 @@ internal static partial class OnlineSkinCache
             foreach (Match match in ResourcePathRegex().Matches(text))
             {
                 var dependency = NormalizeResourcePath(match.Value);
+                if (IsExecutableResourcePath(dependency) ||
+                    SceneResourceChainRequiresExecutableResource(
+                        archive,
+                        dependency,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
+                {
+                    // Remote skin packages may contain passive resources referenced from a
+                    // provider scene, but never copy or execute the provider's code-bearing
+                    // dependency chain.
+                    continue;
+                }
                 if (SkinService.IsBaseGameResource(dependency) ||
                     SkinService.IsBaseGameResource(dependency + ".remap") ||
                     SkinService.IsBaseGameResource(dependency + ".import"))
@@ -1384,18 +1397,32 @@ internal static partial class OnlineSkinCache
             return false;
         }
 
-        if (IsExecutableResourcePath(path))
+        if (IsExecutableResourcePath(path) &&
+            !SkinService.IsBaseGameResource(path))
         {
             return true;
         }
 
         var extension = Path.GetExtension(path);
         var text = Encoding.UTF8.GetString(archive.ReadFile(path));
-        if (extension.Equals(".scn", StringComparison.OrdinalIgnoreCase) &&
-            (ForbiddenBinaryResourceRegex().IsMatch(text) ||
-             BinaryExecutableResourcePathRegex().IsMatch(text)))
+        if (extension.Equals(".scn", StringComparison.OrdinalIgnoreCase))
         {
-            return true;
+            var executablePaths = BinaryExecutableResourcePathRegex().Matches(text)
+                .Cast<Match>()
+                .Select(match => NormalizeResourcePath(match.Value))
+                .ToArray();
+            if (executablePaths.Any(path => !SkinService.IsBaseGameResource(path)))
+            {
+                return true;
+            }
+
+            // Some binary scenes store only the resource type (without a readable path). Keep
+            // rejecting those code-bearing scenes, but do not reject an ordinary base-game
+            // Script reference whose path is present in the binary string table.
+            if (ForbiddenBinaryResourceRegex().IsMatch(text) && executablePaths.Length == 0)
+            {
+                return true;
+            }
         }
 
         if (!extension.Equals(".remap", StringComparison.OrdinalIgnoreCase))
@@ -1414,7 +1441,9 @@ internal static partial class OnlineSkinCache
 
     private static bool IsScenePath(string path) =>
         path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
-        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase);
+        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".tscn.remap", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".scn.remap", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsExecutableResourcePath(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is
@@ -1434,7 +1463,13 @@ internal static partial class OnlineSkinCache
             .Select(NormalizeResourcePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return candidateRoots
-            .Where(path => !originalBoundRoots.Contains(path) || acceptedBoundRoots.Contains(path))
+            // When a scene is rejected, retain its passive dependencies (textures, Spine and
+            // audio) as explicit roots. Only the executable scene/remap itself must disappear;
+            // otherwise DLL-driven skins lose assets that are referenced outside their catalog
+            // canonical paths.
+            .Where(path => !originalBoundRoots.Contains(path) ||
+                           acceptedBoundRoots.Contains(path) ||
+                           !IsScenePath(path))
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
