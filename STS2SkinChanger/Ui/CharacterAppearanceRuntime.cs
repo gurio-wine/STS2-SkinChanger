@@ -280,16 +280,30 @@ internal static class CharacterAppearanceRuntime
             return new CharacterCombatTransform();
         }
 
+        if (!MultiplayerSkinSync.CanEditTransformForCreature(creature.Entity))
+        {
+            return GetCreatureCombatTransform(creature, binding);
+        }
+
         var optionId = MultiplayerSkinSync.GetSelectionForCreature(
             creature.Entity,
             binding.Group.Id);
+        if (MultiplayerSkinSync.UsesLocalFallbackControls(creature.Entity))
+        {
+            return MultiplayerSkinSync.SetLocalFallbackTransform(
+                creature.Entity,
+                binding.TransformKey,
+                value);
+        }
         if (!binding.UsesMonsterScale)
         {
-            return SkinService.SetCharacterCombatTransform(
+            var characterTransform = SkinService.SetCharacterCombatTransform(
                 binding.TransformKey,
                 optionId,
                 value,
                 save);
+            MultiplayerSkinSync.OnLocalTransformChanged(binding.Group.Id);
+            return characterTransform;
         }
 
         var monsterScale = SkinService.SetSelectedMonsterScale(
@@ -489,6 +503,14 @@ internal static class CharacterAppearanceRuntime
         NCreature creature,
         CreatureAppearanceBinding binding)
     {
+        if (MultiplayerSkinSync.TryGetSyncedTransform(
+                creature.Entity,
+                binding.TransformKey,
+                out var synced))
+        {
+            return synced;
+        }
+
         var optionId = MultiplayerSkinSync.GetSelectionForCreature(
             creature.Entity,
             binding.Group.Id);
@@ -826,6 +848,25 @@ internal static class CharacterAppearanceRuntime
         if (rebuilt)
         {
             RefreshPlayerAndPetLayout(room);
+        }
+    }
+
+    internal static void RefreshPlayerTransforms(ulong playerNetId)
+    {
+        var room = NCombatRoom.Instance;
+        if (room == null)
+        {
+            return;
+        }
+
+        foreach (var creature in room.CreatureNodes.Where(creature =>
+                     creature.Entity.Player?.NetId == playerNetId ||
+                     creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
+        {
+            if (!creature.IsPlayingDeathAnimation)
+            {
+                ApplyStoredTransform(creature);
+            }
         }
     }
 

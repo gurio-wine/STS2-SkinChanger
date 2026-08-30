@@ -108,6 +108,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private bool _selectionMode = true;
     private bool _updating;
     private bool _comparing;
+    private bool _canEditSkin = true;
+    private bool _canEditTransform = true;
     private CharacterAppearanceDragTarget _dragTarget;
     private Vector2 _dragStartPosition;
     private Vector2 _dragStartOffset;
@@ -693,7 +695,11 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         var selection = CharacterAppearanceRuntime.GetRequestedOption(_group.Id) ??
-                        SkinService.Config.GetSelection(_group.Id);
+                        (_targetCreature != null
+                            ? MultiplayerSkinSync.GetSelectionForCreature(
+                                _targetCreature.Entity,
+                                _group.Id)
+                            : SkinService.Config.GetSelection(_group.Id));
         var selectedIndex = Enumerable.Range(0, _skinDropdown.ItemCount)
             .FirstOrDefault(index =>
                 _skinDropdown.GetItemMetadata(index).AsString()
@@ -723,8 +729,28 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private void RequestSkinSelection(string optionId)
     {
-        if (_group == null)
+        if (_group == null || !_canEditSkin)
         {
+            return;
+        }
+
+        if (_targetCreature != null &&
+            MultiplayerSkinSync.UsesLocalFallbackControls(_targetCreature.Entity))
+        {
+            if (!MultiplayerSkinSync.TrySetLocalFallbackSkin(
+                    _targetCreature.Entity,
+                    _group.Id,
+                    optionId,
+                    out var fallbackError))
+            {
+                SetStatus(
+                    ModLocalization.Get(ModText.AppearanceFailed) + ": " + fallbackError,
+                    warning: true);
+                return;
+            }
+            PopulateSkinDropdown();
+            SyncTransformControls();
+            SetAppliedStatus(null);
             return;
         }
 
@@ -1028,6 +1054,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetMerchantButton = null;
         _group = null;
         _transformKey = null;
+        _canEditSkin = true;
+        _canEditTransform = true;
         _panel.Visible = false;
         SetStatus(string.Empty, warning: false);
         UpdateDragSurfaceCreature();
@@ -1104,6 +1132,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetMerchantButton = null;
         _group = ancientGroup;
         _transformKey = null;
+        _canEditSkin = true;
+        _canEditTransform = false;
         SetTargetControlsVisible(
             supportsModel: false,
             isCreature: false,
@@ -1135,6 +1165,9 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetMerchantButton = null;
         _group = binding.Group;
         _transformKey = binding.TransformKey;
+        _canEditSkin = binding.CanSelectSkin &&
+                       MultiplayerSkinSync.CanEditSkinForCreature(creature.Entity);
+        _canEditTransform = MultiplayerSkinSync.CanEditTransformForCreature(creature.Entity);
         SetTargetControlsVisible(
             supportsModel: true,
             isCreature: true,
@@ -1180,6 +1213,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetMerchantButton = null;
         _group = group;
         _transformKey = null;
+        _canEditSkin = MultiplayerSkinSync.CanEditLocalPlayerSkinInRun();
+        _canEditTransform = true;
         SetTargetControlsVisible(
             supportsModel: true,
             isCreature: false,
@@ -1218,6 +1253,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetMerchantButton = merchantButton;
         _group = group;
         _transformKey = null;
+        _canEditSkin = true;
+        _canEditTransform = false;
         SetTargetControlsVisible(
             supportsModel: false,
             isCreature: false,
@@ -1499,9 +1536,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             : null;
         _dragSurface.SetShopPlayerVisual(shopPlayer);
         _dragSurface.SetSelectionMode(_selectionMode);
-        _dragSurface.SetDragEnabled(creature != null || shopPlayer != null);
+        _dragSurface.SetDragEnabled(
+            _canEditTransform && (creature != null || shopPlayer != null));
         var showSelectionHint = _selectionMode;
-        var showDragHint = creature != null || shopPlayer != null;
+        var showDragHint = _canEditTransform && (creature != null || shopPlayer != null);
         _selectionHint.Visible = showSelectionHint;
         _hint.Visible = showDragHint;
         RefreshHintPulse(_selectionHint, showSelectionHint, ref _selectionHintPulseTween);
@@ -1703,33 +1741,37 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private void SetTransformControlsEnabled(bool enabled)
     {
-        _scaleSlider.Editable = enabled;
-        _offsetX.Editable = enabled;
-        _offsetY.Editable = enabled;
-        _healthBarScaleSlider.Editable = enabled;
-        _healthBarOffsetX.Editable = enabled;
-        _healthBarOffsetY.Editable = enabled;
-        _healthBarFollowScale.Disabled = !enabled;
-        _healthBarFollowMovement.Disabled = !enabled;
-        _intentScaleSlider.Editable = enabled;
-        _intentOffsetX.Editable = enabled;
-        _intentOffsetY.Editable = enabled;
-        _intentFollowScale.Disabled = !enabled;
-        _intentFollowMovement.Disabled = !enabled;
-        _selectionReticleScaleSlider.Editable = enabled;
-        _selectionReticleOffsetX.Editable = enabled;
-        _selectionReticleOffsetY.Editable = enabled;
-        _selectionReticleFollowScale.Disabled = !enabled;
-        _selectionReticleFollowMovement.Disabled = !enabled;
-        _skinDropdown.Disabled = !enabled || _group == null || !_skinDropdown.Visible;
-        _dragSurface.SetDragEnabled(enabled && _targetCreature != null);
-        _skinResetButton.Disabled = !enabled || !_skinResetButton.Visible;
-        _modelResetButton.Disabled = !enabled;
-        _healthBarResetButton.Disabled = !enabled;
-        _intentResetButton.Disabled = !enabled || !_intentResetButton.Visible;
+        var transformEnabled = enabled && _canEditTransform;
+        var skinEnabled = enabled && _canEditSkin;
+        _scaleSlider.Editable = transformEnabled;
+        _offsetX.Editable = transformEnabled;
+        _offsetY.Editable = transformEnabled;
+        _healthBarScaleSlider.Editable = transformEnabled;
+        _healthBarOffsetX.Editable = transformEnabled;
+        _healthBarOffsetY.Editable = transformEnabled;
+        _healthBarFollowScale.Disabled = !transformEnabled;
+        _healthBarFollowMovement.Disabled = !transformEnabled;
+        _intentScaleSlider.Editable = transformEnabled;
+        _intentOffsetX.Editable = transformEnabled;
+        _intentOffsetY.Editable = transformEnabled;
+        _intentFollowScale.Disabled = !transformEnabled;
+        _intentFollowMovement.Disabled = !transformEnabled;
+        _selectionReticleScaleSlider.Editable = transformEnabled;
+        _selectionReticleOffsetX.Editable = transformEnabled;
+        _selectionReticleOffsetY.Editable = transformEnabled;
+        _selectionReticleFollowScale.Disabled = !transformEnabled;
+        _selectionReticleFollowMovement.Disabled = !transformEnabled;
+        _skinDropdown.Disabled = !skinEnabled || _group == null || !_skinDropdown.Visible;
+        _dragSurface.SetDragEnabled(
+            transformEnabled &&
+            (_targetCreature != null || _targetShopPlayerVisual != null));
+        _skinResetButton.Disabled = !skinEnabled || !_skinResetButton.Visible;
+        _modelResetButton.Disabled = !transformEnabled;
+        _healthBarResetButton.Disabled = !transformEnabled;
+        _intentResetButton.Disabled = !transformEnabled || !_intentResetButton.Visible;
         _selectionReticleResetButton.Disabled =
-            !enabled || !_selectionReticleResetButton.Visible;
-        _compareButton.Disabled = !enabled || _targetCreature == null;
+            !transformEnabled || !_selectionReticleResetButton.Visible;
+        _compareButton.Disabled = !transformEnabled || _targetCreature == null;
     }
 
     private void SetStatus(string text, bool warning)

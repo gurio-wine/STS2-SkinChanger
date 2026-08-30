@@ -1,11 +1,11 @@
 using System.Reflection;
 using System.Runtime.Loader;
 
-if (args.Length != 7)
+if (args.Length is not (7 or 8))
 {
     Console.Error.WriteLine(
         "usage: OnlineCacheProbe <skin-changer.dll> <game-assembly-dir> <game.pck> " +
-        "<provider-root> <group-id> <option-id> <output.pck>");
+        "<provider-root> <group-id> <option-id> <output.pck> [<runtime-overlay.pck>]");
     return 2;
 }
 
@@ -28,6 +28,7 @@ var descriptorType = RequireType("STS2SkinChanger.Catalog.SkinModDescriptor");
 var catalogType = RequireType("STS2SkinChanger.Catalog.SkinCatalog");
 var skinServiceType = RequireType("STS2SkinChanger.Core.SkinService");
 var onlineCacheType = RequireType("STS2SkinChanger.Core.OnlineSkinCache");
+var multiplayerSyncType = RequireType("STS2SkinChanger.Core.MultiplayerSkinSync");
 var providerPck = Directory.EnumerateFiles(providerRoot, "*.pck", SearchOption.TopDirectoryOnly)
     .Single();
 var providerId = Path.GetFileNameWithoutExtension(providerPck);
@@ -72,6 +73,42 @@ var filteredBindings = RequireMethod(
         "FilterLocalSafeResourceBindings",
         BindingFlags.NonPublic | BindingFlags.Static)
     .Invoke(null, filterBindingArgs)!;
+var serializedBindings = (string)RequireMethod(
+        onlineCacheType,
+        "SerializeSafeResourceBindings",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, [filteredBindings])!;
+var parseBindingArgs = new object?[] { serializedBindings, groupId, null };
+var parsed = (bool)(RequireMethod(
+        onlineCacheType,
+        "TryParseSafeResourceBindings",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, parseBindingArgs) ?? false);
+if (!parsed)
+{
+    throw new InvalidOperationException("Serialized online resource bindings did not round-trip.");
+}
+filteredBindings = parseBindingArgs[2]!;
+var transforms = RequireMethod(
+        skinServiceType,
+        "GetSessionCharacterCombatTransforms",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, [groupId, optionId])!;
+var transformManifest = (string)RequireMethod(
+        multiplayerSyncType,
+        "SerializeTransformManifest",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, [transforms])!;
+var parseTransformArgs = new object?[] { transformManifest, groupId, null };
+var transformsParsed = (bool)(RequireMethod(
+        multiplayerSyncType,
+        "TryParseTransformManifest",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, parseTransformArgs) ?? false);
+if (!transformsParsed || ((System.Collections.IDictionary)parseTransformArgs[2]!).Count == 0)
+{
+    throw new InvalidOperationException("Multiplayer appearance transforms did not round-trip.");
+}
 
 Directory.CreateDirectory(Path.GetDirectoryName(outputPck)!);
 var package = RequireMethod(
@@ -96,6 +133,28 @@ var registered = (bool)(RequireMethod(
 if (!registered)
 {
     throw new InvalidOperationException((string?)registerArgs[5] ?? "Online option registration failed.");
+}
+
+if (args.Length == 8)
+{
+    var bindingKeys = ((System.Collections.IDictionary)filteredBindings).Keys
+        .Cast<string>()
+        .Order(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    var overlay = RequireMethod(
+            catalogType,
+            "BuildRuntimeResourceOverlay",
+            BindingFlags.Public | BindingFlags.Instance)
+        .Invoke(catalog, [groupId, "__online_probe__", bindingKeys, "probe/runtime", true])!;
+    var overlayFiles = (IReadOnlyDictionary<string, byte[]>)overlay.GetType()
+        .GetProperty("Files", BindingFlags.Public | BindingFlags.Instance)!
+        .GetValue(overlay)!;
+    RequireMethod(
+            RequireType("STS2SkinChanger.Pck.PckArchive"),
+            "Write",
+            BindingFlags.Public | BindingFlags.Static)
+        .Invoke(null, [Path.GetFullPath(args[7]), overlayFiles]);
+    Console.WriteLine($"runtime-overlay={Path.GetFullPath(args[7])} files={overlayFiles.Count}");
 }
 
 Console.WriteLine(

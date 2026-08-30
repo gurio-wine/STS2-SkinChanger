@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -44,6 +45,7 @@ internal struct SkinChangerNetMessage : INetMessage
     public string SafeResourceFingerprint;
     public string SafeResourceManifest;
     public string SafeResourceBindings;
+    public string TransformManifest;
     public string OnlineFailure;
 
     public bool ShouldBroadcast => false;
@@ -64,6 +66,7 @@ internal struct SkinChangerNetMessage : INetMessage
         writer.WriteString(SafeResourceFingerprint ?? string.Empty);
         writer.WriteString(SafeResourceManifest ?? string.Empty);
         writer.WriteString(SafeResourceBindings ?? string.Empty);
+        writer.WriteString(TransformManifest ?? string.Empty);
         writer.WriteString(OnlineFailure ?? string.Empty);
     }
 
@@ -80,6 +83,7 @@ internal struct SkinChangerNetMessage : INetMessage
         SafeResourceFingerprint = reader.ReadString();
         SafeResourceManifest = reader.ReadString();
         SafeResourceBindings = reader.ReadString();
+        TransformManifest = reader.ReadString();
         OnlineFailure = reader.ReadString();
     }
 }
@@ -88,21 +92,27 @@ internal sealed record SessionCharacterSelection(
     string CharacterId,
     string GroupId,
     string OptionId,
-    IReadOnlyDictionary<string, string> SelectionOverrides);
+    IReadOnlyDictionary<string, string> SelectionOverrides,
+    IReadOnlyDictionary<string, CharacterCombatTransform> Transforms,
+    bool OwnerAppearanceLoaded);
 
 internal static class MultiplayerSkinSync
 {
-    internal const byte ProtocolVersion = 6;
+    internal const byte ProtocolVersion = 7;
     internal const int ReservedMessageId = 254;
     private const double ReadyGateQuietSeconds = 0.75;
     private const double ReadyGateTimeoutSeconds = 180.0;
 
     private static readonly byte[] CapabilityMagic =
-        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x36, 0x21]; // GSCAP06!
+        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x37, 0x21]; // GSCAP07!
     private static readonly HashSet<ulong> CapablePeers = [];
     private static readonly Dictionary<ulong, SkinChangerNetMessage> AdvertisedSelections = [];
     private static readonly Dictionary<ulong, SessionCharacterSelection> AvailableSelections = [];
+    private static readonly Dictionary<ulong, string> LocalFallbackSelections = [];
+    private static readonly Dictionary<(ulong PlayerId, string TransformKey), CharacterCombatTransform>
+        LocalFallbackTransforms = [];
     private static readonly HashSet<ulong> PendingRefreshes = [];
+    private static readonly HashSet<ulong> PendingTransformRefreshes = [];
     private static readonly HashSet<ulong> ReadyResolutionCompletePeers = [];
     private static readonly object Sync = new();
 
@@ -121,6 +131,8 @@ internal static class MultiplayerSkinSync
     private static double _readyGateElapsed;
     private static double _readyGateQuietElapsed;
     private static ulong _readyGateRevision;
+    private static bool _localTransformAdvertisementDirty;
+    private static double _localTransformBroadcastCooldown;
 
     internal static string? GetScopedSelection(string groupId)
     {
@@ -169,6 +181,165 @@ internal static class MultiplayerSkinSync
         return SkinService.Config.GetSelection(groupId);
     }
 
+    internal static bool CanEditSkinForCreature(Creature creature)
+    {
+        var owner = creature.Player ?? creature.PetOwner;
+        var service = _netService;
+        if (owner == null || service == null || !service.Type.IsMultiplayer())
+        {
+            return true;
+        }
+        if (owner.NetId == service.NetId)
+        {
+            return false;
+        }
+
+        lock (Sync)
+        {
+            return !AvailableSelections.TryGetValue(owner.NetId, out var selection) ||
+                   !selection.OwnerAppearanceLoaded;
+        }
+    }
+
+    internal static bool CanEditLocalPlayerSkinInRun() =>
+        _netService == null || !_netService.Type.IsMultiplayer();
+
+    internal static bool CanEditTransformForCreature(Creature creature)
+    {
+        var owner = creature.Player ?? creature.PetOwner;
+        var service = _netService;
+        if (owner == null || service == null || !service.Type.IsMultiplayer() ||
+            owner.NetId == service.NetId)
+        {
+            return true;
+        }
+
+        lock (Sync)
+        {
+            return !AvailableSelections.TryGetValue(owner.NetId, out var selection) ||
+                   !selection.OwnerAppearanceLoaded;
+        }
+    }
+
+    internal static bool UsesLocalFallbackControls(Creature creature)
+    {
+        var owner = creature.Player ?? creature.PetOwner;
+        var service = _netService;
+        return owner != null &&
+               service != null &&
+               service.Type.IsMultiplayer() &&
+               owner.NetId != service.NetId &&
+               CanEditTransformForCreature(creature);
+    }
+
+    internal static bool TryGetSyncedTransform(
+        Creature creature,
+        string transformKey,
+        out CharacterCombatTransform transform)
+    {
+        var owner = creature.Player ?? creature.PetOwner;
+        var service = _netService;
+        if (owner == null || service == null || !service.Type.IsMultiplayer() ||
+            owner.NetId == service.NetId)
+        {
+            transform = null!;
+            return false;
+        }
+
+        lock (Sync)
+        {
+            if (AvailableSelections.TryGetValue(owner.NetId, out var selection) &&
+                selection.OwnerAppearanceLoaded)
+            {
+                transform = selection.Transforms.GetValueOrDefault(transformKey) ??
+                            new CharacterCombatTransform();
+                return true;
+            }
+            if (LocalFallbackTransforms.TryGetValue((owner.NetId, transformKey), out transform!))
+            {
+                return true;
+            }
+        }
+
+        transform = null!;
+        return false;
+    }
+
+    internal static CharacterCombatTransform SetLocalFallbackTransform(
+        Creature creature,
+        string transformKey,
+        CharacterCombatTransform value)
+    {
+        var owner = creature.Player ?? creature.PetOwner;
+        if (owner == null || !CanEditTransformForCreature(creature))
+        {
+            return TryGetSyncedTransform(creature, transformKey, out var current)
+                ? current
+                : new CharacterCombatTransform();
+        }
+
+        var service = _netService;
+        if (service == null || !service.Type.IsMultiplayer() || owner.NetId == service.NetId)
+        {
+            return SkinService.NormalizeCharacterCombatTransform(value);
+        }
+
+        var normalized = SkinService.NormalizeCharacterCombatTransform(value);
+        lock (Sync)
+        {
+            LocalFallbackTransforms[(owner.NetId, transformKey)] = normalized;
+        }
+        return normalized;
+    }
+
+    internal static bool TrySetLocalFallbackSkin(
+        Creature creature,
+        string groupId,
+        string optionId,
+        out string? error)
+    {
+        error = null;
+        var owner = creature.Player ?? creature.PetOwner;
+        var service = _netService;
+        if (owner == null || service == null || owner.NetId == service.NetId ||
+            !service.Type.IsMultiplayer() || !CanEditSkinForCreature(creature))
+        {
+            error = "当前联机外观由角色所属玩家控制。";
+            return false;
+        }
+        if (!SkinService.TryBuildSessionCharacterSelection(
+                groupId,
+                optionId,
+                out var selections))
+        {
+            error = "找不到所选角色外观。";
+            return false;
+        }
+
+        lock (Sync)
+        {
+            LocalFallbackSelections[owner.NetId] = optionId;
+            foreach (var key in LocalFallbackTransforms.Keys
+                         .Where(key => key.PlayerId == owner.NetId)
+                         .ToArray())
+            {
+                LocalFallbackTransforms.Remove(key);
+            }
+            AvailableSelections[owner.NetId] = new SessionCharacterSelection(
+                owner.Character.Id.Entry,
+                groupId,
+                optionId,
+                selections,
+                new Dictionary<string, CharacterCombatTransform>(
+                    StringComparer.OrdinalIgnoreCase),
+                OwnerAppearanceLoaded: false);
+            PendingRefreshes.Add(owner.NetId);
+            PendingTransformRefreshes.Remove(owner.NetId);
+            _runtimeProvidersDirty = true;
+        }
+        return true;
+    }
+
     internal static IDisposable? BeginCreatureSelectionScope(Creature creature)
     {
         var player = creature.Player ?? creature.PetOwner;
@@ -184,10 +355,10 @@ internal static class MultiplayerSkinSync
                 selection.CharacterId.Equals(
                     player.Character.Id.Entry,
                     StringComparison.OrdinalIgnoreCase) &&
-                ContextualSkinControls.FindGroup(
+                ContextualSkinControls.MatchesGroupIdentity(
+                    selection.GroupId,
                     player.Character.Id.Entry,
-                    player.Character.GetType().Name) is { } playerGroup &&
-                playerGroup.Id.Equals(selection.GroupId, StringComparison.OrdinalIgnoreCase))
+                    player.Character.GetType().Name))
             {
                 selections = selection.SelectionOverrides;
             }
@@ -291,9 +462,14 @@ internal static class MultiplayerSkinSync
             hadRemoteSelections = AvailableSelections.Count > 0;
             AdvertisedSelections.Clear();
             AvailableSelections.Clear();
+            LocalFallbackSelections.Clear();
+            LocalFallbackTransforms.Clear();
             PendingRefreshes.Clear();
+            PendingTransformRefreshes.Clear();
             ReadyResolutionCompletePeers.Clear();
             _runtimeProvidersDirty = false;
+            _localTransformAdvertisementDirty = false;
+            _localTransformBroadcastCooldown = 0;
             if (clearCapabilities)
             {
                 CapablePeers.Clear();
@@ -330,6 +506,8 @@ internal static class MultiplayerSkinSync
             return;
         }
 
+        FlushLocalTransformAdvertisement(delta);
+
         _snapshotElapsed += delta;
         var allowOnlineDownloads = UpdateReadyGate(delta);
         OnlineSkinCache.Tick(allowOnlineDownloads);
@@ -344,11 +522,33 @@ internal static class MultiplayerSkinSync
         }
 
         ulong[] pending;
+        ulong[] pendingTransforms;
         bool refreshProviders;
         lock (Sync)
         {
             pending = PendingRefreshes.ToArray();
+            pendingTransforms = PendingTransformRefreshes
+                .Where(playerId => !PendingRefreshes.Contains(playerId))
+                .ToArray();
             refreshProviders = _runtimeProvidersDirty;
+        }
+
+        foreach (var playerId in pendingTransforms)
+        {
+            try
+            {
+                CharacterAppearanceRuntime.RefreshPlayerTransforms(playerId);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"刷新联机玩家 {playerId} 的外观参数失败：" +
+                    exception.GetBaseException().Message);
+            }
+            lock (Sync)
+            {
+                PendingTransformRefreshes.Remove(playerId);
+            }
         }
 
         if ((!refreshProviders && pending.Length == 0) ||
@@ -393,8 +593,60 @@ internal static class MultiplayerSkinSync
             lock (Sync)
             {
                 PendingRefreshes.Remove(playerId);
+                PendingTransformRefreshes.Remove(playerId);
             }
         }
+    }
+
+    internal static void OnLocalTransformChanged(string groupId)
+    {
+        var service = _netService;
+        if (service == null || !service.Type.IsMultiplayer() ||
+            !TryGetLocalCharacter(out _, out var character) ||
+            !ContextualSkinControls.MatchesGroupIdentity(
+                groupId,
+                character.Id.Entry,
+                character.GetType().Name))
+        {
+            return;
+        }
+
+        lock (Sync)
+        {
+            _localTransformAdvertisementDirty = true;
+        }
+    }
+
+    private static void FlushLocalTransformAdvertisement(double delta)
+    {
+        ulong localId;
+        SkinChangerNetMessage message;
+        lock (Sync)
+        {
+            _localTransformBroadcastCooldown = Math.Max(
+                0,
+                _localTransformBroadcastCooldown - delta);
+            if (!_localTransformAdvertisementDirty ||
+                _localTransformBroadcastCooldown > 0 ||
+                _netService == null ||
+                !AdvertisedSelections.TryGetValue(_netService.NetId, out message))
+            {
+                return;
+            }
+            localId = _netService.NetId;
+            _localTransformAdvertisementDirty = false;
+            _localTransformBroadcastCooldown = 0.05;
+        }
+
+        message.TransformManifest = SerializeTransformManifest(
+            SkinService.GetSessionCharacterCombatTransforms(
+                message.GroupId,
+                message.OptionId));
+        lock (Sync)
+        {
+            AdvertisedSelections[localId] = message;
+        }
+        SendLocalAdvertisement();
     }
 
     internal static void OnLocalCharacterSelectionChanged(string groupId)
@@ -904,7 +1156,9 @@ internal static class MultiplayerSkinSync
             !ValidateOptionalText(message.SafeResourceFingerprint) ||
             !ValidateOptionalText(message.OnlineFailure) ||
             message.SafeResourceManifest is { Length: > 65536 } ||
-            message.SafeResourceBindings is { Length: > 65536 })
+            message.SafeResourceBindings is { Length: > 65536 } ||
+            message.TransformManifest is { Length: > 65536 } ||
+            !TryParseTransformManifest(message.TransformManifest, message.GroupId, out _))
         {
             return;
         }
@@ -932,6 +1186,72 @@ internal static class MultiplayerSkinSync
 
     private static bool ValidateOptionalText(string? value) => value == null || value.Length <= 512;
 
+    private static string SerializeTransformManifest(
+        IReadOnlyDictionary<string, CharacterCombatTransform> transforms) =>
+        JsonSerializer.Serialize(transforms);
+
+    private static bool TryParseTransformManifest(
+        string? manifest,
+        string groupId,
+        out IReadOnlyDictionary<string, CharacterCombatTransform> transforms)
+    {
+        transforms = new Dictionary<string, CharacterCombatTransform>(
+            StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(manifest))
+        {
+            return true;
+        }
+        if (manifest.Length > 65536)
+        {
+            return false;
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, CharacterCombatTransform>>(
+                manifest);
+            if (parsed == null || parsed.Count > 64)
+            {
+                return false;
+            }
+
+            var companionPrefix = groupId + "::companion::";
+            var normalized = new Dictionary<string, CharacterCombatTransform>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in parsed)
+            {
+                if (pair.Value == null || pair.Key.Length is 0 or > 512 ||
+                    (!pair.Key.Equals(groupId, StringComparison.OrdinalIgnoreCase) &&
+                     !pair.Key.StartsWith(companionPrefix, StringComparison.OrdinalIgnoreCase)) ||
+                    !IsFinite(pair.Value))
+                {
+                    return false;
+                }
+                normalized[pair.Key] = SkinService.NormalizeCharacterCombatTransform(pair.Value);
+            }
+            transforms = normalized;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        static bool IsFinite(CharacterCombatTransform value) =>
+            float.IsFinite(value.Scale) &&
+            float.IsFinite(value.OffsetX) &&
+            float.IsFinite(value.OffsetY) &&
+            float.IsFinite(value.HealthBarScale) &&
+            float.IsFinite(value.HealthBarOffsetX) &&
+            float.IsFinite(value.HealthBarOffsetY) &&
+            float.IsFinite(value.IntentScale) &&
+            float.IsFinite(value.IntentOffsetX) &&
+            float.IsFinite(value.IntentOffsetY) &&
+            float.IsFinite(value.SelectionReticleScale) &&
+            float.IsFinite(value.SelectionReticleOffsetX) &&
+            float.IsFinite(value.SelectionReticleOffsetY);
+    }
+
     private static bool IsCapable(ulong peerId)
     {
         lock (Sync)
@@ -951,11 +1271,16 @@ internal static class MultiplayerSkinSync
             {
                 AvailableSelections.Remove(message.PlayerNetId);
                 PendingRefreshes.Remove(message.PlayerNetId);
+                PendingTransformRefreshes.Remove(message.PlayerNetId);
             }
             return;
         }
 
-        if (!PlayerMatchesCharacterSelection(message))
+        if (!PlayerMatchesCharacterSelection(message) ||
+            !TryParseTransformManifest(
+                message.TransformManifest,
+                message.GroupId,
+                out var transforms))
         {
             return;
         }
@@ -1012,6 +1337,34 @@ internal static class MultiplayerSkinSync
             }
         }
 
+        var ownerSelectedBase = message.OptionId.Equals(
+            SkinCatalog.BaseOptionId,
+            StringComparison.OrdinalIgnoreCase);
+        var effectiveIsBase = effectiveOptionId.Equals(
+            SkinCatalog.BaseOptionId,
+            StringComparison.OrdinalIgnoreCase);
+        var ownerAppearanceLoaded = allowRemoteSkin &&
+                                    selectionAvailable &&
+                                    ownerSelectedBase == effectiveIsBase;
+        if (!ownerAppearanceLoaded)
+        {
+            string? fallbackOptionId;
+            lock (Sync)
+            {
+                LocalFallbackSelections.TryGetValue(message.PlayerNetId, out fallbackOptionId);
+            }
+            if (!string.IsNullOrWhiteSpace(fallbackOptionId) &&
+                SkinService.TryBuildSessionCharacterSelection(
+                    message.GroupId,
+                    fallbackOptionId,
+                    out var fallbackSelections))
+            {
+                effectiveOptionId = fallbackOptionId;
+                selectionOverrides = fallbackSelections;
+                selectionAvailable = true;
+            }
+        }
+
         if (!selectionAvailable)
         {
             // The sender owns a skin we do not have. Keep a per-player base selection instead of
@@ -1025,6 +1378,7 @@ internal static class MultiplayerSkinSync
                 {
                     AvailableSelections.Remove(message.PlayerNetId);
                     PendingRefreshes.Add(message.PlayerNetId);
+                    PendingTransformRefreshes.Remove(message.PlayerNetId);
                     _runtimeProvidersDirty = true;
                 }
                 return;
@@ -1034,14 +1388,59 @@ internal static class MultiplayerSkinSync
 
         lock (Sync)
         {
-            AvailableSelections[message.PlayerNetId] = new SessionCharacterSelection(
+            if (ownerAppearanceLoaded)
+            {
+                LocalFallbackSelections.Remove(message.PlayerNetId);
+                foreach (var key in LocalFallbackTransforms.Keys
+                             .Where(key => key.PlayerId == message.PlayerNetId)
+                             .ToArray())
+                {
+                    LocalFallbackTransforms.Remove(key);
+                }
+            }
+
+            var next = new SessionCharacterSelection(
                 message.CharacterId,
                 message.GroupId,
                 effectiveOptionId,
-                selectionOverrides);
-            PendingRefreshes.Add(message.PlayerNetId);
-            _runtimeProvidersDirty = true;
+                selectionOverrides,
+                transforms,
+                ownerAppearanceLoaded);
+            var appearanceChanged = !AvailableSelections.TryGetValue(
+                                        message.PlayerNetId,
+                                        out var previous) ||
+                                    !previous.CharacterId.Equals(
+                                        next.CharacterId,
+                                        StringComparison.OrdinalIgnoreCase) ||
+                                    !previous.GroupId.Equals(
+                                        next.GroupId,
+                                        StringComparison.OrdinalIgnoreCase) ||
+                                    !previous.OptionId.Equals(
+                                        next.OptionId,
+                                        StringComparison.OrdinalIgnoreCase) ||
+                                    previous.OwnerAppearanceLoaded != next.OwnerAppearanceLoaded ||
+                                    !DictionaryEquals(
+                                        previous.SelectionOverrides,
+                                        next.SelectionOverrides);
+            AvailableSelections[message.PlayerNetId] = next;
+            if (appearanceChanged)
+            {
+                PendingRefreshes.Add(message.PlayerNetId);
+                PendingTransformRefreshes.Remove(message.PlayerNetId);
+                _runtimeProvidersDirty = true;
+            }
+            else
+            {
+                PendingTransformRefreshes.Add(message.PlayerNetId);
+            }
         }
+
+        static bool DictionaryEquals(
+            IReadOnlyDictionary<string, string> left,
+            IReadOnlyDictionary<string, string> right) =>
+            left.Count == right.Count && left.All(pair =>
+                right.TryGetValue(pair.Key, out var value) &&
+                value.Equals(pair.Value, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsReadyGateActive()
@@ -1078,6 +1477,10 @@ internal static class MultiplayerSkinSync
             GroupId = group.Id,
             OptionId = SkinService.Config.GetSelection(group.Id)
         };
+        message.TransformManifest = SerializeTransformManifest(
+            SkinService.GetSessionCharacterCombatTransforms(
+                message.GroupId,
+                message.OptionId));
         if (includeOnlineMetadata &&
             !message.OptionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
@@ -1332,7 +1735,15 @@ internal static class MultiplayerSkinSync
             {
                 _runtimeProvidersDirty = true;
             }
+            LocalFallbackSelections.Remove(peerId);
+            foreach (var key in LocalFallbackTransforms.Keys
+                         .Where(key => key.PlayerId == peerId)
+                         .ToArray())
+            {
+                LocalFallbackTransforms.Remove(key);
+            }
             PendingRefreshes.Remove(peerId);
+            PendingTransformRefreshes.Remove(peerId);
         }
     }
 

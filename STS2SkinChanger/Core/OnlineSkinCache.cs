@@ -983,7 +983,7 @@ internal static partial class OnlineSkinCache
         string sourcePck,
         string groupId,
         IReadOnlyCollection<string> explicitRoots,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings,
+        IReadOnlyDictionary<string, VisualResourceBinding> resourceBindings,
         string? outputPath)
     {
         using var archive = PckArchive.Open(sourcePck, (uint)MaxArchiveEntries);
@@ -996,7 +996,7 @@ internal static partial class OnlineSkinCache
         var queue = new Queue<string>();
         var preparedFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var boundSources = resourceBindings
-            .SelectMany(binding => binding.Value.Select(resourcePath => new
+            .SelectMany(binding => binding.Value.Files.Select(resourcePath => new
             {
                 ResourcePath = NormalizeResourcePath(resourcePath),
                 SourcePath = NormalizeResourcePath(binding.Key)
@@ -1219,25 +1219,29 @@ internal static partial class OnlineSkinCache
         return accepted.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<string>> FilterLocalSafeResourceBindings(
-        IReadOnlyDictionary<string, IReadOnlyList<string>> bindings,
+    private static IReadOnlyDictionary<string, VisualResourceBinding> FilterLocalSafeResourceBindings(
+        IReadOnlyDictionary<string, VisualResourceBinding> bindings,
         IReadOnlyCollection<string> acceptedRoots,
         string groupId)
     {
         var accepted = acceptedRoots.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var result = new Dictionary<string, IReadOnlyList<string>>(
+        var result = new Dictionary<string, VisualResourceBinding>(
             StringComparer.OrdinalIgnoreCase);
         foreach (var binding in bindings)
         {
-            var sourcePath = NormalizeResourcePath(binding.Key);
-            if (sourcePath.Contains("..", StringComparison.Ordinal) ||
+            var targetPath = NormalizeResourcePath(binding.Key);
+            var sourcePath = NormalizeResourcePath(binding.Value.SourcePath);
+            if (targetPath.Contains("..", StringComparison.Ordinal) ||
+                targetPath.Length > 512 ||
+                sourcePath.Contains("..", StringComparison.Ordinal) ||
                 sourcePath.Length > 512 ||
-                !SkinCatalog.IsSafeOnlineResourceRootForGroup(sourcePath, groupId))
+                !sourcePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase) ||
+                !SkinCatalog.IsSafeOnlineResourceRootForGroup(targetPath, groupId))
             {
                 continue;
             }
 
-            var resourcePaths = binding.Value
+            var resourcePaths = binding.Value.Files
                 .Select(NormalizeResourcePath)
                 .Where(path => accepted.Contains(path))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1245,25 +1249,25 @@ internal static partial class OnlineSkinCache
                 .ToArray();
             if (resourcePaths.Length > 0)
             {
-                result[sourcePath] = resourcePaths;
+                result[targetPath] = new VisualResourceBinding(sourcePath, resourcePaths);
             }
         }
         return result;
     }
 
     private static string SerializeSafeResourceBindings(
-        IReadOnlyDictionary<string, IReadOnlyList<string>> bindings) =>
+        IReadOnlyDictionary<string, VisualResourceBinding> bindings) =>
         string.Join('\n', bindings
             .OrderBy(binding => binding.Key, StringComparer.OrdinalIgnoreCase)
-            .SelectMany(binding => binding.Value.Select(resourcePath =>
-                binding.Key + "\t" + resourcePath)));
+            .SelectMany(binding => binding.Value.Files.Select(resourcePath =>
+                binding.Key + "\t" + binding.Value.SourcePath + "\t" + resourcePath)));
 
     private static bool TryParseSafeResourceBindings(
         string? manifest,
         string groupId,
-        out IReadOnlyDictionary<string, IReadOnlyList<string>> bindings)
+        out IReadOnlyDictionary<string, VisualResourceBinding> bindings)
     {
-        bindings = new Dictionary<string, IReadOnlyList<string>>(
+        bindings = new Dictionary<string, VisualResourceBinding>(
             StringComparer.OrdinalIgnoreCase);
         if (manifest == null || manifest.Length > 64 * 1024)
         {
@@ -1274,7 +1278,7 @@ internal static partial class OnlineSkinCache
             return true;
         }
 
-        var parsed = new Dictionary<string, HashSet<string>>(
+        var parsed = new Dictionary<string, (string SourcePath, HashSet<string> Files)>(
             StringComparer.OrdinalIgnoreCase);
         var lines = manifest.Split(
             '\n',
@@ -1285,43 +1289,56 @@ internal static partial class OnlineSkinCache
         }
         foreach (var line in lines)
         {
-            var separator = line.IndexOf('\t');
-            if (separator <= 0 || separator != line.LastIndexOf('\t'))
+            var fields = line.Split('\t');
+            if (fields.Length != 3)
             {
                 return false;
             }
 
-            var sourcePath = line[..separator];
-            var resourcePath = line[(separator + 1)..];
-            if (!sourcePath.Equals(
+            var targetPath = fields[0];
+            var sourcePath = fields[1];
+            var resourcePath = fields[2];
+            if (!targetPath.Equals(
+                    NormalizeResourcePath(targetPath),
+                    StringComparison.Ordinal) ||
+                !sourcePath.Equals(
                     NormalizeResourcePath(sourcePath),
                     StringComparison.Ordinal) ||
                 !resourcePath.Equals(
                     NormalizeResourcePath(resourcePath),
                     StringComparison.Ordinal) ||
+                targetPath.Contains("..", StringComparison.Ordinal) ||
                 sourcePath.Contains("..", StringComparison.Ordinal) ||
                 resourcePath.Contains("..", StringComparison.Ordinal) ||
+                targetPath.Length > 512 ||
                 sourcePath.Length > 512 ||
                 resourcePath.Length > 512 ||
+                !sourcePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase) ||
                 !AllowedExtensions.Contains(Path.GetExtension(resourcePath)) ||
-                !SkinCatalog.IsSafeOnlineResourceRootForGroup(sourcePath, groupId))
+                !SkinCatalog.IsSafeOnlineResourceRootForGroup(targetPath, groupId))
             {
                 return false;
             }
 
-            if (!parsed.TryGetValue(sourcePath, out var paths))
+            if (!parsed.TryGetValue(targetPath, out var binding))
             {
-                paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                parsed[sourcePath] = paths;
+                binding = (sourcePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                parsed[targetPath] = binding;
             }
-            paths.Add(resourcePath);
+            else if (!binding.SourcePath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            binding.Files.Add(resourcePath);
         }
 
         bindings = parsed.ToDictionary(
             pair => pair.Key,
-            pair => (IReadOnlyList<string>)pair.Value
-                .Order(StringComparer.OrdinalIgnoreCase)
-                .ToArray(),
+            pair => new VisualResourceBinding(
+                pair.Value.SourcePath,
+                pair.Value.Files
+                    .Order(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()),
             StringComparer.OrdinalIgnoreCase);
         return true;
     }

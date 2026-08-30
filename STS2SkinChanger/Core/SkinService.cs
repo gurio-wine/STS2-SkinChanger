@@ -152,7 +152,7 @@ internal static class SkinService
         string optionName,
         string pckPath,
         string groupId,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings,
+        IReadOnlyDictionary<string, VisualResourceBinding> resourceBindings,
         out string error)
     {
         lock (Sync)
@@ -2692,6 +2692,29 @@ internal static class SkinService
         }
     }
 
+    internal static IReadOnlyDictionary<string, CharacterCombatTransform>
+        GetSessionCharacterCombatTransforms(string groupId, string optionId)
+    {
+        lock (Sync)
+        {
+            var result = new Dictionary<string, CharacterCombatTransform>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                [groupId] = GetCharacterCombatTransform(groupId, optionId)
+            };
+            var companionPrefix = groupId + "::companion::";
+            foreach (var pair in Config.CharacterCombatTransforms.Where(pair =>
+                         pair.Key.StartsWith(companionPrefix, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (pair.Value.TryGetValue(optionId, out var value))
+                {
+                    result[pair.Key] = NormalizeCharacterCombatTransform(value);
+                }
+            }
+            return result;
+        }
+    }
+
     public static CharacterCombatTransform SetCharacterCombatTransform(
         string groupId,
         string optionId,
@@ -2732,7 +2755,7 @@ internal static class SkinService
         }
     }
 
-    private static CharacterCombatTransform NormalizeCharacterCombatTransform(
+    internal static CharacterCombatTransform NormalizeCharacterCombatTransform(
         CharacterCombatTransform value) =>
         new CharacterCombatTransform(
             Mathf.Clamp(

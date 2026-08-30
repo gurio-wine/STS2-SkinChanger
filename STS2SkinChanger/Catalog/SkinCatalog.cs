@@ -251,12 +251,12 @@ internal sealed partial class SkinCatalog : IDisposable
         out string providerId,
         out string pckPath,
         out IReadOnlyList<string> safeResourceRoots,
-        out IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings)
+        out IReadOnlyDictionary<string, VisualResourceBinding> resourceBindings)
     {
         providerId = string.Empty;
         pckPath = string.Empty;
         safeResourceRoots = [];
-        resourceBindings = new Dictionary<string, IReadOnlyList<string>>(
+        resourceBindings = new Dictionary<string, VisualResourceBinding>(
             StringComparer.OrdinalIgnoreCase);
         var option = _groups.FirstOrDefault(group => group.Id.Equals(
                 groupId,
@@ -289,7 +289,8 @@ internal sealed partial class SkinCatalog : IDisposable
         resourceBindings = option.Assets
             .Select(pair => new
             {
-                SourcePath = pair.Key,
+                TargetPath = pair.Key,
+                SourcePath = pair.Value.SourcePath,
                 Paths = (IReadOnlyList<string>)pair.Value.Files
                     .Where(file => ReferenceEquals(file.Archive, index.Archive))
                     .Select(file => file.Path)
@@ -299,11 +300,11 @@ internal sealed partial class SkinCatalog : IDisposable
             })
             .Where(binding => binding.Paths.Count > 0)
             .ToDictionary(
-                binding => binding.SourcePath,
-                binding => binding.Paths,
+                binding => binding.TargetPath,
+                binding => new VisualResourceBinding(binding.SourcePath, binding.Paths),
                 StringComparer.OrdinalIgnoreCase);
         safeResourceRoots = resourceBindings.Values
-            .SelectMany(paths => paths)
+            .SelectMany(binding => binding.Files)
             .Concat(option.ManagedMonsterScene?.Files
                 .Where(file => ReferenceEquals(file.Archive, index.Archive))
                 .Select(file => file.Path) ?? [])
@@ -348,7 +349,7 @@ internal sealed partial class SkinCatalog : IDisposable
         string optionName,
         string pckPath,
         string expectedGroupId,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> resourceBindings,
+        IReadOnlyDictionary<string, VisualResourceBinding> resourceBindings,
         out string error)
     {
         error = string.Empty;
@@ -383,8 +384,8 @@ internal sealed partial class SkinCatalog : IDisposable
                         return false;
                     }
 
-                    var asset = new ResourceAsset(binding.Key);
-                    foreach (var resourcePath in binding.Value)
+                    var asset = new ResourceAsset(binding.Value.SourcePath);
+                    foreach (var resourcePath in binding.Value.Files)
                     {
                         if (!index.Archive.Contains(resourcePath))
                         {
@@ -5618,6 +5619,10 @@ internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> SourceAliases,
     IReadOnlyDictionary<string, string> PayloadAliases,
     IReadOnlySet<string> CanonicalDependencyPaths);
+
+internal sealed record VisualResourceBinding(
+    string SourcePath,
+    IReadOnlyList<string> Files);
 
 internal sealed class ResourceAsset(string sourcePath)
 {
