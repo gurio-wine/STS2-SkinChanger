@@ -1958,6 +1958,21 @@ internal static class MultiplayerCreatureVisualScopePatch
         // player's globally mounted resources, especially when the remote player used base.
         __state = MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance);
 
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(
+        Creature __instance,
+        ref NCreatureVisuals? __result,
+        IDisposable? __state)
+    {
+        if (__state != null)
+        {
+            // CharacterModel is shared by every player using that character.  Make the final
+            // result owner-aware only after all CharacterModel postfixes have run, otherwise a
+            // later global provider can overwrite this player's isolated selection.
+            ContextualSkinControls.ReplaceCreatedCreatureVisuals(__instance, ref __result);
+        }
+    }
+
     private static Exception? Finalizer(Exception? __exception, IDisposable? __state)
     {
         __state?.Dispose();

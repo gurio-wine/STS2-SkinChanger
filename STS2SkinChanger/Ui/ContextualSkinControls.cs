@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -1303,6 +1304,54 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    /// <summary>
+    /// Applies the final visual selected for one concrete creature.  Multiplayer character
+    /// selections are owned by Player.NetId, not CharacterModel, so the owner-aware Creature
+    /// patch must be the last writer when a per-player selection scope is active.
+    /// </summary>
+    internal static void ReplaceCreatedCreatureVisuals(
+        Creature creature,
+        ref NCreatureVisuals? result)
+    {
+        if (result == null || MultiplayerSkinSync.GetScopedSelections() == null)
+        {
+            return;
+        }
+
+        var visuals = result;
+        if (creature.Player != null)
+        {
+            var character = creature.Player.Character;
+            ReplaceCreatedVisuals(
+                character.Id.Entry,
+                character.GetType().Name,
+                CanonicalScenePath("creature_visuals/" + character.Id.Entry.ToLowerInvariant()),
+                ref visuals);
+            ApplySelectedProviderVisualPostfix(
+                character.Id.Entry,
+                character.GetType().Name,
+                character,
+                ref visuals);
+        }
+        else if (creature.Monster != null)
+        {
+            var monster = creature.Monster;
+            ReplaceCreatedVisuals(
+                monster.Id.Entry,
+                monster.GetType().Name,
+                GetMonsterVisualsPath(monster),
+                ref visuals);
+            ApplySelectedProviderVisualPostfix(
+                monster.Id.Entry,
+                monster.GetType().Name,
+                monster,
+                ref visuals);
+            MarkAndApplyMonsterScale(monster.Id.Entry, monster.GetType().Name, visuals);
+        }
+
+        result = visuals;
+    }
+
     internal static void ApplySelectedProviderVisualPostfix(
         string modelId,
         string? modelTypeName,
@@ -1845,6 +1894,17 @@ internal static class CharacterVisualResultPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref NCreatureVisuals __result)
     {
+        var group = ContextualSkinControls.FindGroup(
+            __instance.Id.Entry,
+            __instance.GetType().Name);
+        if (group != null && MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
+        {
+            // The owner-aware Creature.CreateVisuals postfix is the sole final writer for a
+            // remote player.  Applying here would reduce the selection back to one value shared
+            // by every instance of this CharacterModel.
+            return;
+        }
+
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
             ContextualSkinControls.CanonicalScenePath("creature_visuals/" + __instance.Id.Entry.ToLowerInvariant()),
@@ -1863,6 +1923,16 @@ internal static class MonsterVisualResultPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result)
     {
+        var group = ContextualSkinControls.FindGroup(
+            __instance.Id.Entry,
+            __instance.GetType().Name);
+        if (group != null && MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
+        {
+            // Pets can also be owned by a remote player.  Their companion group is resolved from
+            // the owning player's complete selection transaction by the Creature-level patch.
+            return;
+        }
+
         ContextualSkinControls.ReplaceCreatedVisuals(
             __instance.Id.Entry,
             __instance.GetType().Name,
