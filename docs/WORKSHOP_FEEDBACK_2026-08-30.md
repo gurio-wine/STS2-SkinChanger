@@ -30,7 +30,7 @@
 | 08-28 17:00 | 非皮肤 Mod 兼容 | `NSFW原版事件替换` / “自制拓展涩涩事件-Beta”等事件 Mod 的文本或 CG 被恢复为原版；最新留言称修改或新增事件的 Mod 普遍可能受影响。 | **已处理待复测**：文本接管已收窄到角色皮肤的 `characters.json`；进一步用 `NSFW原版事件替换 V0.6` 确认其“假商人事件”背景曾被误判为商店商人皮肤，导致整个事件 PCK 被隔离。假商人事件现不再属于商人外观，事件文本与 CG 均由原事件 Mod 正常挂载。 | [Bug 讨论 #4](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045970377) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621055575) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621104432) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621153158) |
 | 08-29 03:49 | 卡牌外形 | 某些异画卡被错误套上先古蜡烛、黑色说明框和先古背景。 | **未解决**：需要检查卡牌类型/外形来源是否被错误继承。 | [Bug 讨论 #5](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046010390) |
 | 08-29 05:58 | 加载顺序提醒 | 多次开关 Mod 后，加载顺序提醒不再弹出，重新订阅也无效。 | **已处理待复测**：提醒逻辑已改为只检查排在 Skin Changer 前面的皮肤提供者，并重做状态变化判断。 | [Bug 讨论 #6](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046019968) |
-| 08-29 07:33 | 商店 | `Merchant2CuteII` 与本 Mod 同时使用时，商人或玩家模型错位、缩到右下角或飞到左上角；劣人 TV 还可能变成忍者阿塔。08-30 仍有多条重复反馈。 | **未解决（高优先级）**：近期虽重写过商店热切换，但最新反馈表明正式版和测试版仍可能出错。 | [Bug 讨论 #7/#10](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046025432) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621096892) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621097680) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621147290) · [留言 4](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621148445) |
+| 08-29 07:33 | 商店 | `Merchant2CuteII` 与本 Mod 同时使用时，商人或玩家模型错位、缩到右下角或飞到左上角；劣人 TV 还可能变成忍者阿塔。08-30 仍有多条重复反馈。 | **已处理待复测**：确认热切换曾在新节点 `_Ready` 前记录基准，并复制上一皮肤已修改的位置、缩放和缺失视觉节点；现改为完成场景与提供者初始化后再记录基准，使用游戏本地玩家固定商店锚点，不继承上一皮肤变换，且角色/商人/手部替换失败会完整回滚。 | [Bug 讨论 #7/#10](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046025432) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621096892) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621097680) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621147290) · [留言 4](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621148445) |
 | 08-29 13:09 | 卡牌 | 安装 `Card Art Editor` 后，多卡面环境中部分切换不变化，且无法悬浮预览。 | **未解决**：需要明确两者的资源覆盖顺序和编辑器生成资源的生命周期。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621060618) |
 | 08-29 14:42 | 角色预览 | `Nekobinder/necrobinder skin mod`（工坊物品 `3748419805`）切换后，选角界面变成散乱的衣服碎片。 | **未解决**：属于骨骼、附件或图集绑定没有完整恢复/重放。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061850) |
 | 08-29 14:44 | 残留素材 | 切换离开 `Moe-Necrobinder`（工坊物品 `3773814239`）后，小手素材仍被该 Mod 占用。 | **未解决**：需要把皮肤专属附件纳入退出时的完整回滚。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061952) |
@@ -41,12 +41,11 @@
 
 ## 建议处理顺序
 
-1. **商店错位/左上角/串角色**：最新仍有多人重复反馈，且覆盖正式版与测试版。
-2. **Aeonglass 直接闪退**：先从日志确认是动画资源、运行时代码还是版本分支。
-3. **BaseLib 角色通用回归测试**：用留言列出的角色补测，确认“封兽鵺”修复是否真为通解。
-4. **卡牌外形与 Card Art Editor**：集中检查卡图、外壳、类型、先古特效是否坚持“单一来源胜出”。
-5. **Nekobinder / Moe-Necrobinder**：补齐预览骨骼和附件的进入/退出生命周期。
-6. 其余性能、界面与同 ID 多差分功能按风险和复现材料逐项推进。
+1. **Aeonglass 直接闪退**：先从日志确认是动画资源、运行时代码还是版本分支。
+2. **BaseLib 角色通用回归测试**：用留言列出的角色补测，确认“封兽鵺”修复是否真为通解。
+3. **卡牌外形与 Card Art Editor**：集中检查卡图、外壳、类型、先古特效是否坚持“单一来源胜出”。
+4. **Nekobinder / Moe-Necrobinder**：补齐预览骨骼和附件的进入/退出生命周期。
+5. 其余性能、界面与同 ID 多差分功能按风险和复现材料逐项推进。
 
 ## 当前未纳入的内容
 

@@ -338,36 +338,44 @@ internal static class MerchantRuntimeAppearance
         }
 
         NMerchantCharacter? replacement = null;
+        NMerchantCharacter? previous = null;
+        Node? parent = null;
+        var previousName = string.Empty;
+        var previousIndex = -1;
+        var listSwapped = false;
+        var replacementAdded = false;
+        var replayedRoots = new List<Node>();
         try
         {
-            var previous = visuals[0];
-            CaptureLocalPlayerBaseline(previous);
-            var basePosition = previous
-                .GetMeta(PlayerBasePositionMeta, previous.Position)
-                .AsVector2();
-            var parent = previous.GetParent() ??
-                         throw new InvalidOperationException("merchant player visual has no parent");
-            var index = previous.GetIndex();
+            previous = visuals[0];
+            parent = previous.GetParent() ??
+                     throw new InvalidOperationException("merchant player visual has no parent");
+            previousIndex = previous.GetIndex();
+            previousName = previous.Name.ToString();
             replacement = SkinService
                 .GetOrLoadRuntimeScene(groupId, player.Character.MerchantAnimPath)
                 .Instantiate<NMerchantCharacter>(PackedScene.GenEditState.Disabled);
-            replacement.Position = basePosition;
+
+            // NMerchantRoom.AfterRoomIsLoaded always assigns the local player's slot to (0, 0).
+            // Do not inherit a previous skin's already-adjusted root position: that turns a
+            // provider-specific offset into the next skin's permanent anchor.
+            replacement.Position = Vector2.Zero;
             replacement.Visible = previous.Visible;
             replacement.Modulate = previous.Modulate;
             replacement.SelfModulate = previous.SelfModulate;
             replacement.ZIndex = previous.ZIndex;
             replacement.ZAsRelative = previous.ZAsRelative;
-            CaptureLocalPlayerBaseline(replacement);
-            ApplyLocalPlayerTransform(replacement, groupId);
 
-            previous.Name = previous.Name + "Previous";
-            parent.AddChild(replacement);
-            parent.MoveChild(replacement, index);
+            // Make the replacement visible through NMerchantRoom.PlayerVisuals while AddChild
+            // invokes its _Ready callbacks. Character providers commonly resolve their creature
+            // from that list during _Ready.
+            previous.Name = previousName + "__SkinChangerPrevious";
+            replacement.Name = previousName;
             visuals[0] = replacement;
-            previous.GetParent()?.RemoveChild(previous);
-            previous.QueueFree();
-            refreshedVisual = replacement;
-            replacement = null;
+            listSwapped = true;
+            parent.AddChild(replacement);
+            replacementAdded = true;
+            parent.MoveChild(replacement, previousIndex);
 
             // Complete character skins can attach a separate shop presentation from an
             // NMerchantRoom._Ready postfix. That callback already ran when the room was first
@@ -378,16 +386,63 @@ internal static class MerchantRuntimeAppearance
             {
                 foreach (var replay in ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(room, providerId))
                 {
-                    TrackProviderRoots(refreshedVisual!, replay.AddedRoots);
+                    replayedRoots.AddRange(replay.AddedRoots);
+                    TrackProviderRoots(replacement, replay.AddedRoots);
                 }
-
-                ApplyLocalPlayerTransform(refreshedVisual!, groupId);
             }
+
+            // Match initial room creation: first let the scene and provider finish _Ready, then
+            // capture their final authored pose as the baseline for the player's custom transform.
+            CaptureLocalPlayerBaseline(replacement);
+            ApplyLocalPlayerTransform(replacement, groupId);
+
+            previous.GetParent()?.RemoveChild(previous);
+            ShopProviderRoots.Remove(previous.GetInstanceId());
+            previous.QueueFree();
+            refreshedVisual = replacement;
+            replacement = null;
+            listSwapped = false;
+            replacementAdded = false;
 
             return true;
         }
         catch (Exception exception)
         {
+            // A failed character scene or provider callback must leave the live shop exactly as
+            // it was. Previously the old node had already been queued for deletion, so the caller
+            // received an error while the room kept a half-created replacement.
+            foreach (var replayedRoot in replayedRoots.Distinct().ToArray())
+            {
+                if (!GodotObject.IsInstanceValid(replayedRoot))
+                {
+                    continue;
+                }
+
+                replayedRoot.GetParent()?.RemoveChild(replayedRoot);
+                replayedRoot.Free();
+            }
+
+            if (replacement != null && GodotObject.IsInstanceValid(replacement))
+            {
+                ShopProviderRoots.Remove(replacement.GetInstanceId());
+                if (replacementAdded)
+                {
+                    replacement.GetParent()?.RemoveChild(replacement);
+                }
+                replacement.Free();
+                replacement = null;
+            }
+
+            if (listSwapped && previous != null && GodotObject.IsInstanceValid(previous))
+            {
+                visuals[0] = previous;
+                previous.Name = previousName;
+                if (parent != null && previous.GetParent() == parent && previousIndex >= 0)
+                {
+                    parent.MoveChild(previous, previousIndex);
+                }
+            }
+
             error = exception.GetBaseException().Message;
             ModLog.Error("刷新商店角色外观失败：" + exception);
             return false;
@@ -472,9 +527,7 @@ internal static class MerchantRuntimeAppearance
         var index = previous.GetIndex();
         var originalName = previous.Name;
         var wasFocused = previous.HasFocus();
-        CopyControlVisualState(previous, replacement);
-        ManagedSceneCompatibility.CopyMissingUniqueNodes(previous, replacement);
-        CopyRequiredUniqueNode(previous, replacement, "MerchantVisual");
+        CopyControlRuntimeState(previous, replacement);
         CopyRequiredUniqueNode(previous, replacement, "MerchantSelectionReticle");
         SetOwnerRecursive(replacement, replacement);
         if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
@@ -489,7 +542,7 @@ internal static class MerchantRuntimeAppearance
         replacement.PlayerDeadLines = previous.PlayerDeadLines;
         parent.AddChild(replacement);
         parent.MoveChild(replacement, index);
-        CopyControlVisualState(previous, replacement);
+        CopyControlRuntimeState(previous, replacement);
         if (replacement.GetNodeOrNull<Node>("%MerchantVisual") == null ||
             replacement.GetNodeOrNull<Node>("%MerchantSelectionReticle") == null)
         {
@@ -611,18 +664,7 @@ internal static class MerchantRuntimeAppearance
                      throw new InvalidOperationException("merchant hand has no parent");
         var index = previousContainer.GetIndex();
         var originalName = previousContainer.Name;
-        CopyNode2DVisualState(previousContainer, replacementContainer);
-        ManagedSceneCompatibility.CopyMissingUniqueNodes(previousContainer, replacementContainer);
-        if (FindMerchantHand(replacementContainer) == null)
-        {
-            var handClone = previousHand.Duplicate();
-            if (handClone != null)
-            {
-                handClone.Name = previousHand.Name;
-                handClone.UniqueNameInOwner = true;
-                replacementContainer.AddChild(handClone);
-            }
-        }
+        CopyCanvasItemVisualState(previousContainer, replacementContainer);
 
         SetOwnerRecursive(replacementContainer, replacementContainer);
         var replacementHand = FindMerchantHand(replacementContainer) ??
@@ -652,24 +694,14 @@ internal static class MerchantRuntimeAppearance
         target.ZAsRelative = source.ZAsRelative;
     }
 
-    private static void CopyControlVisualState(Control source, Control target)
+    private static void CopyControlRuntimeState(Control source, Control target)
     {
+        // Position, size, scale, rotation and pivot are authored by the newly selected scene.
+        // Copying them from the live previous skin leaks provider-specific transforms and makes
+        // repeated hot swaps accumulate offsets. Only preserve transient UI state.
         CopyCanvasItemVisualState(source, target);
-        target.Position = source.Position;
-        target.Size = source.Size;
-        target.Scale = source.Scale;
-        target.Rotation = source.Rotation;
-        target.PivotOffset = source.PivotOffset;
         target.MouseFilter = source.MouseFilter;
         target.FocusMode = source.FocusMode;
-    }
-
-    private static void CopyNode2DVisualState(Node2D source, Node2D target)
-    {
-        CopyCanvasItemVisualState(source, target);
-        target.Position = source.Position;
-        target.Scale = source.Scale;
-        target.Rotation = source.Rotation;
     }
 
     private static void CopyRequiredUniqueNode(Node baseline, Node replacement, string uniqueName)
