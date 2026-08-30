@@ -1561,12 +1561,20 @@ internal static partial class ContextualSkinControls
     {
         try
         {
-            var root = NGame.Instance?.GetTree().Root;
+            // The lobby and the in-run HUD are not always children of the same NGame node
+            // during the hand-off into a run.  Resolve the actual SceneTree root first and only
+            // use NGame as a fallback; otherwise a selection packet that arrives during that
+            // transition silently misses both avatar nodes.
+            var root = (Engine.GetMainLoop() as SceneTree)?.Root ??
+                       NGame.Instance?.GetTree().Root;
             if (root == null)
             {
                 return;
             }
 
+            var stateCount = 0;
+            var lobbyCount = 0;
+            var voteCount = 0;
             var pending = new Stack<Node>();
             pending.Push(root);
             while (pending.Count > 0)
@@ -1575,12 +1583,22 @@ internal static partial class ContextualSkinControls
                 if (node is NMultiplayerPlayerState state &&
                     state.Player?.NetId == playerNetId)
                 {
-                    RefreshMultiplayerPlayerStateIcon(state);
+                    if (RefreshMultiplayerPlayerStateIcon(state))
+                    {
+                        stateCount++;
+                    }
                 }
                 else if (node is NRemoteLobbyPlayer lobbyPlayer &&
                          lobbyPlayer.PlayerId == playerNetId)
                 {
-                    RefreshRemoteLobbyPlayerIcon(lobbyPlayer);
+                    if (RefreshRemoteLobbyPlayerIcon(lobbyPlayer))
+                    {
+                        lobbyCount++;
+                    }
+                }
+                else if (node is NMultiplayerVoteContainer voteContainer)
+                {
+                    voteCount += RefreshMultiplayerVoteIcons(voteContainer, playerNetId);
                 }
 
                 foreach (var child in node.GetChildren())
@@ -1588,6 +1606,18 @@ internal static partial class ContextualSkinControls
                     pending.Push(child);
                 }
             }
+
+            if (stateCount == 0 && lobbyCount == 0 && voteCount == 0)
+            {
+                // This is expected while the run scene is being rebuilt.  The _Ready patches
+                // below apply the same scope when the nodes are created, so no global polling is
+                // needed here.
+                return;
+            }
+
+            ModLog.Info(
+                $"已刷新联机玩家 {playerNetId} 的头像：战斗栏 {stateCount}、" +
+                $"选角栏 {lobbyCount}、投票栏 {voteCount}。 ");
         }
         catch (Exception exception)
         {
@@ -1595,41 +1625,61 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static void RefreshMultiplayerPlayerStateIcon(NMultiplayerPlayerState state)
+    private static bool RefreshMultiplayerPlayerStateIcon(NMultiplayerPlayerState state)
     {
-        var icon = state.GetNodeOrNull<TextureRect>("%CharacterIcon");
-        if (icon == null || !GodotObject.IsInstanceValid(icon) ||
-            !MultiplayerSkinSync.TryGetPlayerCharacter(state.Player.NetId, out var character))
+        // Prefer the game's already-resolved private field.  During a scene hand-off the
+        // unique-name lookup can briefly resolve against the old owner (or return null) even
+        // though NMultiplayerPlayerState has a live _characterIcon reference.
+        var icon = AccessTools.Field(typeof(NMultiplayerPlayerState), "_characterIcon")
+                       ?.GetValue(state) as TextureRect ??
+                   state.GetNodeOrNull<TextureRect>("%CharacterIcon");
+        // NMultiplayerPlayerState already owns the authoritative Player instance.  Looking it up
+        // through NRun reflection here races run creation and was the reason remote HUD avatars
+        // stayed on the base texture even though the selection packet had been received.
+        var player = state.Player;
+        var character = player?.Character;
+        if (icon == null || !GodotObject.IsInstanceValid(icon) || player == null || character == null)
         {
-            return;
+            return false;
         }
 
-        using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(state.Player.NetId);
+        using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
         icon.Texture = character.IconTexture;
+        return true;
     }
 
-    private static void RefreshRemoteLobbyPlayerIcon(NRemoteLobbyPlayer node)
+    private static bool RefreshRemoteLobbyPlayerIcon(NRemoteLobbyPlayer node)
     {
-        var icon = node.GetNodeOrNull<TextureRect>("%CharacterIcon");
-        if (icon == null || !GodotObject.IsInstanceValid(icon) ||
-            !MultiplayerSkinSync.TryGetPlayerCharacter(node.PlayerId, out var character))
+        var icon = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_characterIcon")
+                       ?.GetValue(node) as TextureRect ??
+                   node.GetNodeOrNull<TextureRect>("%CharacterIcon");
+        var character = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_character")
+            ?.GetValue(node) as CharacterModel;
+        if (icon == null || !GodotObject.IsInstanceValid(icon) || character == null)
         {
-            return;
+            return false;
         }
 
         using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(node.PlayerId);
         icon.Texture = character.IconTexture;
+        return true;
     }
 
-    internal static void RefreshMultiplayerVoteIcons(NMultiplayerVoteContainer container)
+    internal static void RefreshMultiplayerVoteIcons(NMultiplayerVoteContainer container) =>
+        RefreshMultiplayerVoteIcons(container, playerNetId: null);
+
+    private static int RefreshMultiplayerVoteIcons(
+        NMultiplayerVoteContainer container,
+        ulong? playerNetId)
     {
+        var refreshed = 0;
         try
         {
             var votes = AccessTools.Field(typeof(NMultiplayerVoteContainer), "_votes")
                 ?.GetValue(container) as System.Collections.IEnumerable;
             if (votes == null)
             {
-                return;
+                return 0;
             }
 
             foreach (var vote in votes)
@@ -1646,6 +1696,10 @@ internal static partial class ContextualSkinControls
                 {
                     continue;
                 }
+                if (playerNetId.HasValue && player.NetId != playerNetId.Value)
+                {
+                    continue;
+                }
 
                 using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
                 node.Texture = player.Character.IconTexture;
@@ -1654,12 +1708,15 @@ internal static partial class ContextualSkinControls
                 {
                     outline.Texture = player.Character.IconOutlineTexture;
                 }
+                refreshed++;
             }
         }
         catch (Exception exception)
         {
             ModLog.Warn("刷新联机投票头像失败：" + exception.GetBaseException().Message);
         }
+
+        return refreshed;
     }
 
     internal static void ReplaceCharacterMapMarker(
@@ -1839,9 +1896,22 @@ internal static class CharacterMapMarkerResultPatch
 internal static class MultiplayerPlayerStateIconScopePatch
 {
     private static void Prefix(NMultiplayerPlayerState __instance, out IDisposable? __state) =>
-        __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.Player.NetId);
+        __state = __instance.Player == null
+            ? null
+            : MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.Player.NetId);
 
-    private static void Postfix(IDisposable? __state) => __state?.Dispose();
+    private static void Postfix(
+        NMultiplayerPlayerState __instance,
+        IDisposable? __state)
+    {
+        __state?.Dispose();
+        if (__state == null && __instance.Player != null)
+        {
+            // If the packet arrived while _Ready was constructing the node, retry after the
+            // game's own icon assignment instead of leaving the base texture cached forever.
+            ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.Player.NetId);
+        }
+    }
 }
 
 [HarmonyPatch(typeof(NRemoteLobbyPlayer), nameof(NRemoteLobbyPlayer._Ready))]
@@ -1850,7 +1920,38 @@ internal static class RemoteLobbyPlayerIconScopePatch
     private static void Prefix(NRemoteLobbyPlayer __instance, out IDisposable? __state) =>
         __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
 
-    private static void Postfix(IDisposable? __state) => __state?.Dispose();
+    private static void Postfix(
+        NRemoteLobbyPlayer __instance,
+        IDisposable? __state)
+    {
+        __state?.Dispose();
+        if (__state == null)
+        {
+            ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.PlayerId);
+        }
+    }
+}
+
+// NRemoteLobbyPlayer.RefreshVisuals is also called when the lobby receives a character update,
+// after its _Ready callback has already run.  Keep the per-player selection scope around that
+// call as well; otherwise the game immediately overwrites a refreshed lobby avatar with the
+// unscoped character texture.
+[HarmonyPatch(typeof(NRemoteLobbyPlayer), "RefreshVisuals")]
+internal static class RemoteLobbyPlayerVisualRefreshScopePatch
+{
+    private static void Prefix(NRemoteLobbyPlayer __instance, out IDisposable? __state) =>
+        __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
+
+    private static void Postfix(
+        NRemoteLobbyPlayer __instance,
+        IDisposable? __state)
+    {
+        __state?.Dispose();
+        if (__state == null)
+        {
+            ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.PlayerId);
+        }
+    }
 }
 
 [HarmonyPatch(typeof(NMultiplayerVoteContainer), nameof(NMultiplayerVoteContainer.RefreshPlayerVotes))]

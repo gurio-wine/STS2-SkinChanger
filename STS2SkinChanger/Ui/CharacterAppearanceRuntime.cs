@@ -324,9 +324,11 @@ internal static class CharacterAppearanceRuntime
                 optionId,
                 value,
                 save);
-            MultiplayerSkinSync.OnLocalTransformChanged(
-                creature.Entity,
-                binding.Group.Id);
+            // Use the authoritative local-player lookup for the network advertisement.  The
+            // creature's owner link can briefly be null or carry a stale NetId while a combat
+            // node is being rebuilt; tying the broadcast to that transient link silently loses
+            // otherwise valid slider/drag edits.
+            MultiplayerSkinSync.OnLocalTransformChanged(binding.Group.Id);
             return characterTransform;
         }
 
@@ -339,9 +341,7 @@ internal static class CharacterAppearanceRuntime
             optionId,
             value with { Scale = 1f },
             save);
-        MultiplayerSkinSync.OnLocalTransformChanged(
-            creature.Entity,
-            binding.Group.Id);
+        MultiplayerSkinSync.OnLocalTransformChanged(binding.Group.Id);
         return normalized with { Scale = monsterScale };
     }
 
@@ -887,6 +887,7 @@ internal static class CharacterAppearanceRuntime
             return;
         }
 
+        var refreshed = 0;
         foreach (var creature in room.CreatureNodes.Where(creature =>
                      creature.Entity.Player?.NetId == playerNetId ||
                      creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
@@ -894,7 +895,16 @@ internal static class CharacterAppearanceRuntime
             if (!creature.IsPlayingDeathAnimation)
             {
                 ApplyStoredTransform(creature);
+                refreshed++;
             }
+        }
+
+        if (refreshed > 0)
+        {
+            // A transform refresh can be the first time a remote player's appearance becomes
+            // available in the HUD (for example when the selection packet arrives just after
+            // combat setup).  Refresh the HUD in the same tick so model and avatar never diverge.
+            ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
         }
     }
 

@@ -143,6 +143,7 @@ internal static partial class OnlineSkinCache
                 $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Environment.ProcessId}-" +
                 $"{Guid.NewGuid():N}-{_sessionGeneration:D3}");
             Directory.CreateDirectory(_sessionDirectory);
+            ModLog.Info($"已创建本轮联机皮肤临时缓存（第 {_sessionGeneration} 轮）。");
             try
             {
                 EnsureDownloadCallback();
@@ -206,7 +207,10 @@ internal static partial class OnlineSkinCache
             }
         }
 
-        TryDeleteDirectory(directory);
+        if (TryDeleteDirectory(directory))
+        {
+            ModLog.Info("已删除上一轮联机皮肤临时安全包；Steam 工坊原始文件不在本 Mod 清理范围内。");
+        }
     }
 
     internal static void Tick(bool allowDownloads)
@@ -704,6 +708,9 @@ internal static partial class OnlineSkinCache
             }
             if (alreadyCached != null)
             {
+                ModLog.Info(
+                    $"本轮已缓存 {request.ProviderId} 的联机皮肤，直接复用本轮安全包；" +
+                    "如已重新进入选角，说明缓存生命周期未跨回合保留。 ");
                 MultiplayerSkinSync.RetryCachedSelection(request, alreadyCached.OptionId);
                 return;
             }
@@ -918,6 +925,8 @@ internal static partial class OnlineSkinCache
             (state & EItemState.k_EItemStateNeedsUpdate) == 0 &&
             TryGetInstallDirectory(itemId, out var installed))
         {
+            ModLog.Info(
+                $"Steam 工坊皮肤 {workshopItemId} 已在本机；不会重复下载，但仍会为本轮重新生成安全资源包。 ");
             return installed;
         }
 
@@ -1568,27 +1577,37 @@ internal static partial class OnlineSkinCache
         {
             return;
         }
+        var removed = 0;
         foreach (var directory in Directory.EnumerateDirectories(root)
                      .Where(path => !path.Equals(_sessionDirectory, StringComparison.OrdinalIgnoreCase)))
         {
-            TryDeleteDirectory(directory);
+            if (TryDeleteDirectory(directory))
+            {
+                removed++;
+            }
+        }
+        if (removed > 0)
+        {
+            ModLog.Info($"已清理 {removed} 个过期的联机皮肤临时缓存目录。 ");
         }
     }
 
-    private static void TryDeleteDirectory(string? directory)
+    private static bool TryDeleteDirectory(string? directory)
     {
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
         {
-            return;
+            return false;
         }
         try
         {
             Directory.Delete(directory, recursive: true);
+            return true;
         }
         catch (Exception exception)
         {
             ModLog.Info("联机皮肤缓存仍被游戏资源系统占用，将在下次启动时清理：" +
                         exception.GetBaseException().Message);
+            return false;
         }
     }
 

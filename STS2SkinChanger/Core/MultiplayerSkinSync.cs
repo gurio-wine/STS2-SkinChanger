@@ -113,6 +113,9 @@ internal static class MultiplayerSkinSync
         LocalFallbackTransforms = [];
     private static readonly HashSet<ulong> PendingRefreshes = [];
     private static readonly HashSet<ulong> PendingTransformRefreshes = [];
+    private static readonly HashSet<ulong> PendingIconRefreshes = [];
+    private static readonly Dictionary<ulong, string> LastReceivedTransformSignatures = [];
+    private static readonly Dictionary<ulong, string> LastAppliedTransformSignatures = [];
     private static readonly HashSet<ulong> ReadyResolutionCompletePeers = [];
     private static readonly object Sync = new();
 
@@ -133,6 +136,8 @@ internal static class MultiplayerSkinSync
     private static ulong _readyGateRevision;
     private static bool _localTransformAdvertisementDirty;
     private static double _localTransformBroadcastCooldown;
+    private static string? _lastSentTransformSignature;
+    private static bool _inRun;
 
     internal static string? GetScopedSelection(string groupId)
     {
@@ -259,6 +264,16 @@ internal static class MultiplayerSkinSync
             {
                 return true;
             }
+            // A remote skin may still be downloading (or may be unavailable on this machine),
+            // but its owner can already have broadcast model/UI parameters.  Keep those values
+            // instead of silently dropping them just because the visual resource is not ready;
+            // they apply to the current base/fallback model and are replaced automatically once
+            // the safe skin package becomes available.
+            if (AvailableSelections.TryGetValue(owner.NetId, out selection) &&
+                selection.Transforms.TryGetValue(transformKey, out transform!))
+            {
+                return true;
+            }
         }
 
         transform = null!;
@@ -335,6 +350,7 @@ internal static class MultiplayerSkinSync
                 OwnerAppearanceLoaded: false);
             PendingRefreshes.Add(owner.NetId);
             PendingTransformRefreshes.Remove(owner.NetId);
+            PendingIconRefreshes.Add(owner.NetId);
             _runtimeProvidersDirty = true;
         }
         return true;
@@ -410,6 +426,7 @@ internal static class MultiplayerSkinSync
         }
 
         AttachToService(service, "对局");
+        _inRun = true;
         RememberLocalAdvertisement(includeOnlineMetadata: true);
     }
 
@@ -421,14 +438,68 @@ internal static class MultiplayerSkinSync
             return;
         }
 
+        // The game keeps the same Steam net service while returning from a run to a new
+        // character-select lobby.  AttachToService therefore does not run again, so the old
+        // per-run provider/cache state would otherwise survive and make the next "ready" phase
+        // appear to finish instantly.  Start a fresh online-cache generation at this boundary.
+        if (_inRun && ReferenceEquals(service, _netService))
+        {
+            ResetRoundStateForLobby();
+        }
+
         var changedLobby = !ReferenceEquals(_lobby, lobby);
         AttachToService(service, "联机选角");
         _lobby = lobby;
+        _inRun = false;
         if (changedLobby)
         {
             ResetReadyGateState();
         }
         RememberLocalAdvertisement();
+    }
+
+    private static void ResetRoundStateForLobby()
+    {
+        bool hadRemoteSelections;
+        lock (Sync)
+        {
+            hadRemoteSelections = AvailableSelections.Count > 0;
+            AdvertisedSelections.Clear();
+            AvailableSelections.Clear();
+            LocalFallbackSelections.Clear();
+            LocalFallbackTransforms.Clear();
+            PendingRefreshes.Clear();
+            PendingTransformRefreshes.Clear();
+            PendingIconRefreshes.Clear();
+            LastReceivedTransformSignatures.Clear();
+            LastAppliedTransformSignatures.Clear();
+            ReadyResolutionCompletePeers.Clear();
+            _runtimeProvidersDirty = false;
+            _localTransformAdvertisementDirty = false;
+            _localTransformBroadcastCooldown = 0;
+            _lastSentTransformSignature = null;
+        }
+
+        ResetReadyGateState();
+        // EndSession removes every temporary provider and deletes this round's private package;
+        // BeginSession creates a new generation so a later round cannot reuse it accidentally.
+        OnlineSkinCache.EndSession();
+        OnlineSkinCache.BeginSession();
+        if (hadRemoteSelections)
+        {
+            try
+            {
+                SkinService.RefreshSessionRuntimeProviders();
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn("清理上一局联机皮肤运行时失败：" + exception.GetBaseException().Message);
+            }
+        }
+
+        _snapshotElapsed = 0;
+        _snapshotStage = 0;
+        ModLog.Info("已进入新的联机选角回合；上一回合的临时皮肤和安全缓存已清理。");
     }
 
     private static void AttachToService(INetGameService service, string stage)
@@ -482,6 +553,7 @@ internal static class MultiplayerSkinSync
         _netService = null;
         _lobby = null;
         _messageHandler = null;
+        _inRun = false;
         bool hadRemoteSelections;
         lock (Sync)
         {
@@ -492,10 +564,14 @@ internal static class MultiplayerSkinSync
             LocalFallbackTransforms.Clear();
             PendingRefreshes.Clear();
             PendingTransformRefreshes.Clear();
+            PendingIconRefreshes.Clear();
+            LastReceivedTransformSignatures.Clear();
+            LastAppliedTransformSignatures.Clear();
             ReadyResolutionCompletePeers.Clear();
             _runtimeProvidersDirty = false;
             _localTransformAdvertisementDirty = false;
             _localTransformBroadcastCooldown = 0;
+            _lastSentTransformSignature = null;
             if (clearCapabilities)
             {
                 CapablePeers.Clear();
@@ -503,6 +579,11 @@ internal static class MultiplayerSkinSync
         }
 
         ResetReadyGateState();
+
+        // Providers must be removed from the catalog before rebuilding the canonical overlay.
+        // The previous order rebuilt while online providers were still present, leaving their
+        // resource paths mounted until the next unrelated skin switch.
+        OnlineSkinCache.EndSession();
 
         if (hadRemoteSelections && refreshRuntimeProviders)
         {
@@ -520,7 +601,6 @@ internal static class MultiplayerSkinSync
             }
         }
 
-        OnlineSkinCache.EndSession();
     }
 
     internal static void Tick(double delta)
@@ -549,6 +629,7 @@ internal static class MultiplayerSkinSync
 
         ulong[] pending;
         ulong[] pendingTransforms;
+        ulong[] pendingIcons;
         bool refreshProviders;
         lock (Sync)
         {
@@ -556,7 +637,26 @@ internal static class MultiplayerSkinSync
             pendingTransforms = PendingTransformRefreshes
                 .Where(playerId => !PendingRefreshes.Contains(playerId))
                 .ToArray();
+            pendingIcons = PendingIconRefreshes.ToArray();
+            PendingIconRefreshes.Clear();
             refreshProviders = _runtimeProvidersDirty;
+        }
+
+        // Avatar nodes can exist in the lobby while the combat room is unavailable.  Refresh
+        // them independently of the resource/rebuild gate so a received selection is visible
+        // immediately instead of waiting for the run scene to finish loading.
+        foreach (var playerId in pendingIcons)
+        {
+            try
+            {
+                ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerId);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"刷新联机玩家 {playerId} 的头像失败：" +
+                    exception.GetBaseException().Message);
+            }
         }
 
         foreach (var playerId in pendingTransforms)
@@ -620,6 +720,7 @@ internal static class MultiplayerSkinSync
             {
                 PendingRefreshes.Remove(playerId);
                 PendingTransformRefreshes.Remove(playerId);
+                PendingIconRefreshes.Remove(playerId);
             }
         }
     }
@@ -637,18 +738,31 @@ internal static class MultiplayerSkinSync
             return;
         }
 
-        lock (Sync)
+        if (MarkLocalTransformAdvertisementDirty())
         {
-            _localTransformAdvertisementDirty = true;
+            ModLog.Info($"已检测到本机 {groupId} 的外观参数变更，等待广播给其他玩家。");
         }
     }
 
     internal static void OnLocalTransformChanged(Creature creature, string groupId)
     {
         var service = _netService;
+        if (service == null || !service.Type.IsMultiplayer())
+        {
+            return;
+        }
+
+        // A few game versions populate Creature.Player one frame after the visual node.  The
+        // local-character overload still has an authoritative lobby/run lookup, so do not drop
+        // the edit merely because the creature owner link is not ready yet.
         var owner = creature.Player ?? creature.PetOwner;
-        if (service == null || !service.Type.IsMultiplayer() || owner == null ||
-            owner.NetId != service.NetId ||
+        if (owner == null)
+        {
+            OnLocalTransformChanged(groupId);
+            return;
+        }
+
+        if (owner.NetId != service.NetId ||
             !ContextualSkinControls.MatchesGroupIdentity(
                 groupId,
                 owner.Character.Id.Entry,
@@ -657,9 +771,23 @@ internal static class MultiplayerSkinSync
             return;
         }
 
+        if (MarkLocalTransformAdvertisementDirty())
+        {
+            ModLog.Info($"已检测到本机 {groupId} 的外观参数变更，等待广播给其他玩家。");
+        }
+    }
+
+    private static bool MarkLocalTransformAdvertisementDirty()
+    {
         lock (Sync)
         {
+            if (_localTransformAdvertisementDirty)
+            {
+                return false;
+            }
+
             _localTransformAdvertisementDirty = true;
+            return true;
         }
     }
 
@@ -713,9 +841,26 @@ internal static class MultiplayerSkinSync
             SkinService.GetSessionCharacterCombatTransforms(
                 message.GroupId,
                 message.OptionId));
+        var transformSignature = message.GroupId + "\n" + message.OptionId + "\n" +
+                                 message.TransformManifest;
+        var shouldLogTransform = false;
         lock (Sync)
         {
             AdvertisedSelections[localId] = message;
+            if (!string.Equals(_lastSentTransformSignature, transformSignature, StringComparison.Ordinal))
+            {
+                _lastSentTransformSignature = transformSignature;
+                shouldLogTransform = true;
+            }
+        }
+        // Keep one low-volume breadcrumb per actual parameter state.  This makes it possible to
+        // distinguish "the slider never sent a packet" from "the peer received but did not apply
+        // it" without logging every mouse-move frame.
+        if (shouldLogTransform)
+        {
+            ModLog.Info(
+                $"已广播本机 {message.GroupId} 的联机外观参数：{message.TransformManifest.Length} 字符，" +
+                $"状态={transformSignature.GetHashCode():X8}。");
         }
         SendLocalAdvertisement();
     }
@@ -1236,6 +1381,24 @@ internal static class MultiplayerSkinSync
 
         RememberAdvertisement(message);
         OnlineSkinCache.DiscardPendingSelectionsForPlayer(message.PlayerNetId);
+        var receivedTransformSignature = message.GroupId + "\n" + message.OptionId + "\n" +
+                                         message.TransformManifest;
+        var shouldLogTransform = false;
+        lock (Sync)
+        {
+            if (!LastReceivedTransformSignatures.TryGetValue(message.PlayerNetId, out var previous) ||
+                !previous.Equals(receivedTransformSignature, StringComparison.Ordinal))
+            {
+                LastReceivedTransformSignatures[message.PlayerNetId] = receivedTransformSignature;
+                shouldLogTransform = !string.IsNullOrWhiteSpace(message.TransformManifest);
+            }
+        }
+        if (shouldLogTransform)
+        {
+            ModLog.Info(
+                $"已收到联机玩家 {message.PlayerNetId} 的外观参数：" +
+                $"{message.TransformManifest.Length} 字符，状态={receivedTransformSignature.GetHashCode():X8}。");
+        }
         if (service.Type == NetGameType.Host)
         {
             RelayFromHost(message, exceptPeerId: senderId);
@@ -1343,6 +1506,7 @@ internal static class MultiplayerSkinSync
                 AvailableSelections.Remove(message.PlayerNetId);
                 PendingRefreshes.Remove(message.PlayerNetId);
                 PendingTransformRefreshes.Remove(message.PlayerNetId);
+                PendingIconRefreshes.Remove(message.PlayerNetId);
             }
             return;
         }
@@ -1450,6 +1614,7 @@ internal static class MultiplayerSkinSync
                     AvailableSelections.Remove(message.PlayerNetId);
                     PendingRefreshes.Add(message.PlayerNetId);
                     PendingTransformRefreshes.Remove(message.PlayerNetId);
+                    PendingIconRefreshes.Add(message.PlayerNetId);
                     _runtimeProvidersDirty = true;
                 }
                 return;
@@ -1457,6 +1622,7 @@ internal static class MultiplayerSkinSync
             effectiveOptionId = SkinCatalog.BaseOptionId;
         }
 
+        var appearanceChanged = false;
         lock (Sync)
         {
             if (ownerAppearanceLoaded)
@@ -1477,7 +1643,7 @@ internal static class MultiplayerSkinSync
                 selectionOverrides,
                 transforms,
                 ownerAppearanceLoaded);
-            var appearanceChanged = !AvailableSelections.TryGetValue(
+            appearanceChanged = !AvailableSelections.TryGetValue(
                                         message.PlayerNetId,
                                         out var previous) ||
                                     !previous.CharacterId.Equals(
@@ -1498,12 +1664,35 @@ internal static class MultiplayerSkinSync
             {
                 PendingRefreshes.Add(message.PlayerNetId);
                 PendingTransformRefreshes.Remove(message.PlayerNetId);
+                PendingIconRefreshes.Add(message.PlayerNetId);
                 _runtimeProvidersDirty = true;
             }
             else
             {
                 PendingTransformRefreshes.Add(message.PlayerNetId);
             }
+        }
+
+        var appliedTransformSignature = message.GroupId + "\n" + effectiveOptionId + "\n" +
+                                        message.TransformManifest;
+        var transformChanged = false;
+        lock (Sync)
+        {
+            if (!LastAppliedTransformSignatures.TryGetValue(
+                    message.PlayerNetId,
+                    out var previous) ||
+                !previous.Equals(appliedTransformSignature, StringComparison.Ordinal))
+            {
+                LastAppliedTransformSignatures[message.PlayerNetId] = appliedTransformSignature;
+                transformChanged = !string.IsNullOrWhiteSpace(message.TransformManifest);
+            }
+        }
+        if (appearanceChanged || transformChanged)
+        {
+            ModLog.Info(
+                $"已应用联机玩家 {message.PlayerNetId} 的角色 {message.CharacterId}：" +
+                $"皮肤={effectiveOptionId}，参数项={transforms.Count}，" +
+                $"头像刷新={(appearanceChanged ? "等待节点刷新" : "仅参数刷新")}。 ");
         }
 
         static bool DictionaryEquals(
@@ -1825,6 +2014,7 @@ internal static class MultiplayerSkinSync
             }
             PendingRefreshes.Remove(peerId);
             PendingTransformRefreshes.Remove(peerId);
+            PendingIconRefreshes.Remove(peerId);
         }
     }
 
@@ -1880,6 +2070,22 @@ internal static class MultiplayerSkinReadyGatePatch
 {
     private static bool Prefix(StartRunLobby __instance) =>
         MultiplayerSkinSync.ShouldAllowBeginRun(__instance);
+}
+
+[HarmonyPatch(typeof(StartRunLobby), nameof(StartRunLobby.CleanUp))]
+internal static class MultiplayerSkinLobbyCleanupPatch
+{
+    private static void Prefix(bool disconnectSession)
+    {
+        // CleanUp(false) is the normal lobby-to-run transition and must retain the remote
+        // providers until the run has built its creatures.  A real lobby exit, however, may
+        // reuse the same Steam service for the next lobby; clear the round immediately instead
+        // of waiting for the asynchronous Disconnected callback.
+        if (disconnectSession)
+        {
+            MultiplayerSkinSync.ResetConnectionState();
+        }
+    }
 }
 
 [HarmonyPatch(typeof(MessageTypes), nameof(MessageTypes.ToId))]
