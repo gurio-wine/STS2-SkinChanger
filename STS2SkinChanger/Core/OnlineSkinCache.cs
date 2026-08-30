@@ -110,6 +110,7 @@ internal static partial class OnlineSkinCache
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".png", ".webp", ".jpg", ".jpeg", ".ctex",
+        ".ogg", ".mp3", ".wav", ".oggvorbisstr", ".mp3str", ".sample",
         ".spatlas", ".spskel", ".atlas", ".skel",
         ".remap", ".import", ".tres", ".res", ".scn", ".tscn"
     };
@@ -596,7 +597,7 @@ internal static partial class OnlineSkinCache
             return OnlineSkinDescriptionState.Unavailable;
         }
 
-        var manifestRoots = FilterLocalSafeResourceRoots(
+        var candidateManifestRoots = FilterLocalSafeResourceRoots(
             safeResourceRoots,
             out var ignoredRootCount);
         if (ignoredRootCount > 0)
@@ -606,11 +607,27 @@ internal static partial class OnlineSkinCache
                 "这些文件不会影响皮肤拥有者本机使用。 ");
         }
 
-        var safeResourceManifest = string.Join('\n', manifestRoots);
         var filteredBindings = FilterLocalSafeResourceBindings(
             resourceBindings,
-            manifestRoots,
-            groupId);
+            candidateManifestRoots,
+            groupId,
+            pckPath,
+            out var baselineSceneFallbackCount);
+        if (baselineSceneFallbackCount > 0)
+        {
+            ModLog.Info(
+                $"{providerId} 的 {baselineSceneFallbackCount} 个场景引用了不可联机执行的脚本；" +
+                "远端将使用游戏原场景承载该皮肤的静态模型和贴图。 ");
+        }
+
+        // Scene bindings rejected above must not remain as standalone manifest roots. Otherwise
+        // BuildSafePackage would still discover their binary payloads and fail on the same custom
+        // script even though the runtime is meant to fall back to the baseline game scene.
+        var manifestRoots = FilterManifestRootsForBindings(
+            candidateManifestRoots,
+            resourceBindings,
+            filteredBindings);
+        var safeResourceManifest = string.Join('\n', manifestRoots);
         var safeResourceBindings = SerializeSafeResourceBindings(filteredBindings);
         if (!IsValidSafeResourceManifest(safeResourceManifest) ||
             !TryParseSafeResourceBindings(
@@ -1088,9 +1105,15 @@ internal static partial class OnlineSkinCache
                 group => group.Key,
                 group => group.First().SourcePath,
                 StringComparer.OrdinalIgnoreCase);
-        foreach (var path in archive.Paths.Where(path =>
-                     AllowedExtensions.Contains(Path.GetExtension(path)) &&
-                     SkinCatalog.IsSafeOnlineResourceRootForGroup(path, groupId)))
+        // Modern advertisements provide an explicit, validated root list. Selecting every file
+        // that merely resembles the character would pull rejected custom scenes back into the
+        // package and also made large skin packs needlessly expensive. Keep the broad scan only
+        // for legacy/diagnostic callers that do not provide roots.
+        foreach (var path in explicitRoots.Count == 0
+                     ? archive.Paths.Where(path =>
+                         AllowedExtensions.Contains(Path.GetExtension(path)) &&
+                         SkinCatalog.IsSafeOnlineResourceRootForGroup(path, groupId))
+                     : [])
         {
             Enqueue(path);
         }
@@ -1304,11 +1327,15 @@ internal static partial class OnlineSkinCache
     private static IReadOnlyDictionary<string, VisualResourceBinding> FilterLocalSafeResourceBindings(
         IReadOnlyDictionary<string, VisualResourceBinding> bindings,
         IReadOnlyCollection<string> acceptedRoots,
-        string groupId)
+        string groupId,
+        string sourcePck,
+        out int baselineSceneFallbackCount)
     {
+        baselineSceneFallbackCount = 0;
         var accepted = acceptedRoots.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = new Dictionary<string, VisualResourceBinding>(
             StringComparer.OrdinalIgnoreCase);
+        using var archive = PckArchive.Open(sourcePck, (uint)MaxArchiveEntries);
         foreach (var binding in bindings)
         {
             var targetPath = NormalizeResourcePath(binding.Key);
@@ -1329,12 +1356,87 @@ internal static partial class OnlineSkinCache
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Order(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            if (IsScenePath(targetPath) &&
+                resourcePaths.Any(path => SceneResourceChainRequiresExecutableResource(
+                    archive,
+                    path,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase))))
+            {
+                baselineSceneFallbackCount++;
+                continue;
+            }
             if (resourcePaths.Length > 0)
             {
                 result[targetPath] = new VisualResourceBinding(sourcePath, resourcePaths);
             }
         }
         return result;
+    }
+
+    private static bool SceneResourceChainRequiresExecutableResource(
+        PckArchive archive,
+        string path,
+        HashSet<string> visited)
+    {
+        path = NormalizeResourcePath(path);
+        if (!visited.Add(path) || !archive.Contains(path))
+        {
+            return false;
+        }
+
+        if (IsExecutableResourcePath(path))
+        {
+            return true;
+        }
+
+        var extension = Path.GetExtension(path);
+        var text = Encoding.UTF8.GetString(archive.ReadFile(path));
+        if (extension.Equals(".scn", StringComparison.OrdinalIgnoreCase) &&
+            (ForbiddenBinaryResourceRegex().IsMatch(text) ||
+             BinaryExecutableResourcePathRegex().IsMatch(text)))
+        {
+            return true;
+        }
+
+        if (!extension.Equals(".remap", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return ResourcePathRegex().Matches(text)
+            .Cast<Match>()
+            .Select(match => NormalizeResourcePath(match.Value))
+            .Any(dependency => SceneResourceChainRequiresExecutableResource(
+                archive,
+                dependency,
+                visited));
+    }
+
+    private static bool IsScenePath(string path) =>
+        path.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsExecutableResourcePath(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is
+            ".dll" or ".cs" or ".gd" or ".gdc" or ".gdshader" or ".gdextension";
+
+    private static IReadOnlyList<string> FilterManifestRootsForBindings(
+        IReadOnlyCollection<string> candidateRoots,
+        IReadOnlyDictionary<string, VisualResourceBinding> originalBindings,
+        IReadOnlyDictionary<string, VisualResourceBinding> filteredBindings)
+    {
+        var originalBoundRoots = originalBindings.Values
+            .SelectMany(binding => binding.Files)
+            .Select(NormalizeResourcePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var acceptedBoundRoots = filteredBindings.Values
+            .SelectMany(binding => binding.Files)
+            .Select(NormalizeResourcePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return candidateRoots
+            .Where(path => !originalBoundRoots.Contains(path) || acceptedBoundRoots.Contains(path))
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static string SerializeSafeResourceBindings(
@@ -1852,7 +1954,7 @@ internal static partial class OnlineSkinCache
     [GeneratedRegex("/workshop/content/2868840/([0-9]+)(?:/|$)", RegexOptions.IgnoreCase)]
     private static partial Regex WorkshopPathRegex();
 
-    [GeneratedRegex("res://[^\\x00\\\"'\\r\\n\\t \\]\\[(){}<>]+", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("res://[^\\x00\\\"'\\r\\n\\t\\]\\[(){}<>]+", RegexOptions.IgnoreCase)]
     private static partial Regex ResourcePathRegex();
 
     [GeneratedRegex("(?im)^([^\\r\\n]+\\.(?:png|webp|jpe?g))\\s*$")]
@@ -1864,6 +1966,10 @@ internal static partial class OnlineSkinCache
 
     [GeneratedRegex("(?i)(?:GDScript|CSharpScript|GDExtension|ExtensionLibrary|local://Shader_)")]
     private static partial Regex ForbiddenBinaryResourceRegex();
+
+    [GeneratedRegex(
+        "(?i)res://[^\\x00]*?\\.(?:dll|cs|gd|gdc|gdshader|gdextension)(?=\\x00|$)")]
+    private static partial Regex BinaryExecutableResourcePathRegex();
 
     [GeneratedRegex(
         "(?im)^\\[ext_resource[^\\]]*type=\\\"(Script|Shader)\\\"[^\\]]*path=\\\"(res://[^\\\"]+)\\\"[^\\]]*\\]$")]

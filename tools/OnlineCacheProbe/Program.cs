@@ -68,17 +68,29 @@ var filteredRoots = RequireMethod(
         "FilterLocalSafeResourceRoots",
         BindingFlags.NonPublic | BindingFlags.Static)
     .Invoke(null, filterRootArgs)!;
-var filterBindingArgs = new[] { bindings, filteredRoots, groupId };
+var filterBindingArgs = new object?[] { bindings, filteredRoots, groupId, pckPath, 0 };
 var filteredBindings = RequireMethod(
         onlineCacheType,
         "FilterLocalSafeResourceBindings",
         BindingFlags.NonPublic | BindingFlags.Static)
     .Invoke(null, filterBindingArgs)!;
+var effectiveRoots = RequireMethod(
+        onlineCacheType,
+        "FilterManifestRootsForBindings",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, [filteredRoots, bindings, filteredBindings])!;
 var serializedBindings = (string)RequireMethod(
         onlineCacheType,
         "SerializeSafeResourceBindings",
         BindingFlags.NonPublic | BindingFlags.Static)
     .Invoke(null, [filteredBindings])!;
+Console.WriteLine(
+    $"safe-bindings={((System.Collections.IDictionary)filteredBindings).Count} " +
+    $"baseline-scene-fallbacks={filterBindingArgs[4]}");
+if (Environment.GetEnvironmentVariable("ONLINE_CACHE_PROBE_VERBOSE") == "1")
+{
+    Console.WriteLine(serializedBindings);
+}
 var parseBindingArgs = new object?[] { serializedBindings, groupId, null };
 var parsed = (bool)(RequireMethod(
         onlineCacheType,
@@ -158,7 +170,7 @@ var package = RequireMethod(
         onlineCacheType,
         "BuildSafePackage",
         BindingFlags.NonPublic | BindingFlags.Static)
-    .Invoke(null, [pckPath, groupId, filteredRoots, filteredBindings, outputPck]);
+    .Invoke(null, [pckPath, groupId, effectiveRoots, filteredBindings, outputPck]);
 var registerArgs = new object?[]
 {
     "__online_probe__",
@@ -180,7 +192,10 @@ if (!registered)
 
 if (args.Length == 8)
 {
-    var bindingKeys = ((System.Collections.IDictionary)filteredBindings).Keys
+    // Request the original targets as the game would. Targets whose unsafe provider scenes were
+    // filtered out must resolve through the baseline game scene while retaining the accepted
+    // static model/texture bindings from the session provider.
+    var bindingKeys = ((System.Collections.IDictionary)bindings).Keys
         .Cast<string>()
         .Order(StringComparer.OrdinalIgnoreCase)
         .ToArray();
@@ -201,7 +216,7 @@ if (args.Length == 8)
 }
 
 Console.WriteLine(
-    $"provider={sourceArgs[2]} roots={((System.Collections.ICollection)filteredRoots).Count} " +
+    $"provider={sourceArgs[2]} roots={((System.Collections.ICollection)effectiveRoots).Count} " +
     $"ignored={filterRootArgs[1]} package={package} registered={registered}");
 return 0;
 
