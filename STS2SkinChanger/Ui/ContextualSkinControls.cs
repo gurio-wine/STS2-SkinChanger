@@ -794,7 +794,10 @@ internal static partial class ContextualSkinControls
                 return;
             }
 
-            var playerId = screen.Lobby.LocalPlayer.id;
+            // Do not call StartRunLobby.LocalPlayer here: its return type changed between the
+            // formal and public-beta game builds (LobbyPlayer vs StartRunLobbyPlayer), which
+            // makes an otherwise valid dual-version DLL fail with MissingMethodException.
+            var playerId = screen.Lobby.NetService.NetId;
             RefreshMultiplayerPlayerIcons(playerId);
         }
         catch (Exception exception)
