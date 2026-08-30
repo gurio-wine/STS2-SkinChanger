@@ -716,7 +716,7 @@ internal static partial class ContextualSkinControls
         ManagedSkinModLoader.RestoreCharacterPresentation(screen);
         RestoreCharacterInfoText(screen, character);
 
-        if (SkinService.IsExternalRuntimeProviderSelected(groupId))
+        if (ShouldSkipExternalRuntimeRedirect(groupId))
         {
             RebuildRuntimeProviderCharacterDisplay(screen, character);
             ReplaySelectedCharacterPresentation(screen, character, groupId);
@@ -1307,7 +1307,7 @@ internal static partial class ContextualSkinControls
         ref NCreatureVisuals result)
     {
         var group = FindGroup(modelId, modelTypeName);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
         {
             return;
         }
@@ -1446,7 +1446,7 @@ internal static partial class ContextualSkinControls
         // so leave the cache result alone and let it replace the child under the correct mount.
         if (groupId == null ||
             IsCharacterSelectBackgroundPath(resourcePath) ||
-            SkinService.IsExternalRuntimeProviderSelected(groupId))
+            ShouldSkipExternalRuntimeRedirect(groupId))
         {
             return;
         }
@@ -1470,7 +1470,7 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCachedTexture(string resourcePath, ref Texture2D result)
     {
         var groupId = SkinService.Catalog?.FindGroupIdForResourcePath(resourcePath);
-        if (groupId == null || SkinService.IsExternalRuntimeProviderSelected(groupId))
+        if (groupId == null || ShouldSkipExternalRuntimeRedirect(groupId))
         {
             return;
         }
@@ -1492,7 +1492,7 @@ internal static partial class ContextualSkinControls
         ref CompressedTexture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
         {
             return;
         }
@@ -1514,7 +1514,7 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCharacterIcon(CharacterModel character, ref Control result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
         {
             return;
         }
@@ -1541,7 +1541,7 @@ internal static partial class ContextualSkinControls
         ref Texture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || SkinService.IsExternalRuntimeProviderSelected(group.Id))
+        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
         {
             return;
         }
@@ -1556,6 +1556,10 @@ internal static partial class ContextualSkinControls
             ModLog.Error($"最终接管角色界面贴图 {resourcePath} 失败：{exception}");
         }
     }
+
+    private static bool ShouldSkipExternalRuntimeRedirect(string groupId) =>
+        MultiplayerSkinSync.GetScopedSelection(groupId) == null &&
+        SkinService.IsExternalRuntimeProviderSelected(groupId);
 
     internal static bool RefreshMultiplayerPlayerIcons(ulong playerNetId)
     {
@@ -1652,17 +1656,39 @@ internal static partial class ContextualSkinControls
 
     private static bool RefreshRemoteLobbyPlayerIcon(NRemoteLobbyPlayer node)
     {
-        var icon = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_characterIcon")
-                       ?.GetValue(node) as TextureRect ??
-                   node.GetNodeOrNull<TextureRect>("%CharacterIcon");
         var character = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_character")
             ?.GetValue(node) as CharacterModel;
-        if (icon == null || !GodotObject.IsInstanceValid(icon) || character == null)
+        if (character == null)
         {
             return false;
         }
 
         using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(node.PlayerId);
+        // The game owns this node's complete visual update (name, title, icon and ready state).
+        // Calling the same private method under the per-player scope is important: assigning
+        // only TextureRect.Texture leaves the icon getter's cached/base resource in place when
+        // the lobby node was created before the remote skin package became available.
+        var refreshVisuals = AccessTools.Method(typeof(NRemoteLobbyPlayer), "RefreshVisuals");
+        try
+        {
+            refreshVisuals?.Invoke(node, null);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("调用游戏的远程选角外观刷新失败，将使用头像贴图兜底：" +
+                        exception.GetBaseException().Message);
+        }
+
+        var icon = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_characterIcon")
+                       ?.GetValue(node) as TextureRect ??
+                   node.GetNodeOrNull<TextureRect>("%CharacterIcon");
+        if (icon == null || !GodotObject.IsInstanceValid(icon))
+        {
+            return false;
+        }
+
+        // Keep an explicit assignment as a fallback for game versions where the private method
+        // was renamed or where the node has not completed _Ready yet.
         icon.Texture = character.IconTexture;
         return true;
     }

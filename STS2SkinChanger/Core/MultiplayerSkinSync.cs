@@ -567,7 +567,8 @@ internal static class MultiplayerSkinSync
 
     internal static void DetachFromRun(
         bool clearCapabilities = true,
-        bool refreshRuntimeProviders = false)
+        bool refreshRuntimeProviders = false,
+        bool clearOnlineCache = false)
     {
         var service = _netService;
         if (service != null)
@@ -590,13 +591,18 @@ internal static class MultiplayerSkinSync
             }
         }
 
-        // Remember that this was a run-scene teardown before clearing the service reference.
-        // MultiplayerSkinSyncNode._ExitTree uses clearCapabilities:false and the game then
-        // creates a fresh lobby with the same Steam service; that boundary must start a new
-        // temporary-cache generation even though no disconnect callback is raised.
-        if (_inRun && service != null && !clearCapabilities)
+        // Leaving a lobby or tearing down a scene is not the end of the run.  Keep the online
+        // package and its providers alive so re-entering the same room does not immediately
+        // rebuild/download everything.  The next lobby is marked as a new round and will clear
+        // the old generation before it starts.  Explicit run cleanup is the only other point
+        // that removes the temporary package.
+        if (service != null && !clearOnlineCache)
         {
             _needsLobbyRoundReset = true;
+        }
+        else if (clearOnlineCache)
+        {
+            _needsLobbyRoundReset = false;
         }
         _netService = null;
         _lobby = null;
@@ -629,24 +635,27 @@ internal static class MultiplayerSkinSync
 
         ResetReadyGateState();
 
-        // Providers must be removed from the catalog before rebuilding the canonical overlay.
-        // The previous order rebuilt while online providers were still present, leaving their
-        // resource paths mounted until the next unrelated skin switch.
-        OnlineSkinCache.EndSession();
-
-        if (hadRemoteSelections && refreshRuntimeProviders)
+        if (clearOnlineCache)
         {
-            try
+            // Providers must be removed from the catalog before rebuilding the canonical
+            // overlay.  Do this only at an explicit run/new-game boundary; a room disconnect
+            // intentionally keeps the package available for the next connection.
+            OnlineSkinCache.EndSession();
+
+            if (hadRemoteSelections && refreshRuntimeProviders)
             {
-                // Remote-only DLL providers must not leak into the next lobby or single-player
-                // run after their per-player selections have been discarded.
-                SkinService.RefreshSessionRuntimeProviders();
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn(
-                    "清理联机皮肤运行时失败：" +
-                    exception.GetBaseException().Message);
+                try
+                {
+                    // Remote-only DLL providers must not leak into the next lobby or single-player
+                    // run after their per-player selections have been discarded.
+                    SkinService.RefreshSessionRuntimeProviders();
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        "清理联机皮肤运行时失败：" +
+                        exception.GetBaseException().Message);
+                }
             }
         }
 
@@ -1019,9 +1028,28 @@ internal static class MultiplayerSkinSync
         MarkReadyResolutionActivity();
     }
 
-    internal static void ResetConnectionState()
+    internal static void ResetConnectionState(bool clearOnlineCache = false)
     {
-        DetachFromRun(refreshRuntimeProviders: true);
+        DetachFromRun(
+            refreshRuntimeProviders: clearOnlineCache,
+            clearOnlineCache: clearOnlineCache);
+    }
+
+    /// <summary>
+    /// Ends the actual multiplayer run (abandon, finish, or return to the main menu).  This is
+    /// deliberately separate from a transport disconnect: Steam can disconnect while the room
+    /// UI is being rebuilt, and that must not throw away the downloaded appearance package.
+    /// </summary>
+    internal static void EndMultiplayerRunSession()
+    {
+        if (_netService?.Type.IsMultiplayer() != true && !_inRun && !_hasLobbySession)
+        {
+            return;
+        }
+
+        DetachFromRun(
+            refreshRuntimeProviders: true,
+            clearOnlineCache: true);
     }
 
     internal static bool ShouldAllowBeginRun(StartRunLobby lobby)
@@ -2174,7 +2202,7 @@ internal static class MultiplayerSkinSync
     }
 
     private static void OnDisconnected(NetErrorInfo _) =>
-        DetachFromRun(refreshRuntimeProviders: true);
+        DetachFromRun(refreshRuntimeProviders: false);
 
     private sealed class SelectionScope : IDisposable
     {
@@ -2204,7 +2232,7 @@ internal partial class MultiplayerSkinSyncNode : Node
 
     public override void _ExitTree() => MultiplayerSkinSync.DetachFromRun(
         clearCapabilities: false,
-        refreshRuntimeProviders: true);
+        refreshRuntimeProviders: false);
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), "AfterInitialized")]
@@ -2242,14 +2270,20 @@ internal static class MultiplayerSkinLobbyCleanupPatch
     private static void Prefix(bool disconnectSession)
     {
         // CleanUp(false) is the normal lobby-to-run transition and must retain the remote
-        // providers until the run has built its creatures.  A real lobby exit, however, may
-        // reuse the same Steam service for the next lobby; clear the round immediately instead
-        // of waiting for the asynchronous Disconnected callback.
+        // providers until the run has built its creatures.  CleanUp(true) only tears down the
+        // lobby transport; the temporary package is intentionally retained until a run ends or
+        // a new multiplayer lobby starts.
         if (disconnectSession)
         {
             MultiplayerSkinSync.ResetConnectionState();
         }
     }
+}
+
+[HarmonyPatch(typeof(RunManager), nameof(RunManager.CleanUp))]
+internal static class MultiplayerSkinRunCleanupPatch
+{
+    private static void Prefix() => MultiplayerSkinSync.EndMultiplayerRunSession();
 }
 
 [HarmonyPatch(typeof(MessageTypes), nameof(MessageTypes.ToId))]
@@ -2319,7 +2353,7 @@ internal static class SkinChangerCapabilityReceivePatch
 [HarmonyPatch(typeof(NetClientGameService), nameof(NetClientGameService.Initialize))]
 internal static class SkinChangerClientConnectionResetPatch
 {
-    private static void Prefix() => MultiplayerSkinSync.ResetConnectionState();
+    private static void Prefix() => MultiplayerSkinSync.ResetConnectionState(clearOnlineCache: true);
 }
 
 [HarmonyPatch]
@@ -2331,7 +2365,7 @@ internal static class SkinChangerHostConnectionResetPatch
         yield return AccessTools.Method(typeof(NetHostGameService), nameof(NetHostGameService.StartENetHost));
     }
 
-    private static void Prefix() => MultiplayerSkinSync.ResetConnectionState();
+    private static void Prefix() => MultiplayerSkinSync.ResetConnectionState(clearOnlineCache: true);
 }
 
 [HarmonyPatch(typeof(Creature), nameof(Creature.CreateVisuals))]
