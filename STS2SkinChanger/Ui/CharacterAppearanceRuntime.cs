@@ -11,6 +11,7 @@ using MegaCrit.Sts2.Core.Nodes.Orbs;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
@@ -136,6 +137,27 @@ internal static class CharacterAppearanceRuntime
             ModLog.Warn("读取当前玩家失败：" + exception.GetBaseException().Message);
             return null;
         }
+    }
+
+    internal static bool TryGetPlayerCharacter(ulong playerNetId, out CharacterModel character)
+    {
+        try
+        {
+            if (RunStateField?.GetValue(NRun.Instance) is IRunState runState &&
+                runState.Players.FirstOrDefault(player => player.NetId == playerNetId)
+                    is { } player)
+            {
+                character = player.Character;
+                return true;
+            }
+        }
+        catch
+        {
+            // The run state can be torn down while a UI node is being freed.
+        }
+
+        character = null!;
+        return false;
     }
 
     internal static bool PlayerMatchesCharacterSelection(
@@ -302,7 +324,9 @@ internal static class CharacterAppearanceRuntime
                 optionId,
                 value,
                 save);
-            MultiplayerSkinSync.OnLocalTransformChanged(binding.Group.Id);
+            MultiplayerSkinSync.OnLocalTransformChanged(
+                creature.Entity,
+                binding.Group.Id);
             return characterTransform;
         }
 
@@ -315,6 +339,9 @@ internal static class CharacterAppearanceRuntime
             optionId,
             value with { Scale = 1f },
             save);
+        MultiplayerSkinSync.OnLocalTransformChanged(
+            creature.Entity,
+            binding.Group.Id);
         return normalized with { Scale = monsterScale };
     }
 
@@ -819,6 +846,7 @@ internal static class CharacterAppearanceRuntime
 
     internal static void RefreshPlayerAppearance(ulong playerNetId)
     {
+        ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
         var room = NCombatRoom.Instance;
         if (room == null)
         {

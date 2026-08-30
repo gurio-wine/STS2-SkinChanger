@@ -76,7 +76,8 @@ internal static class SkinService
         "mock"
     };
     private static int _overlayGeneration;
-    private static string _sessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+    private static string _sessionId =
+        $"{DateTime.Now:yyyyMMdd-HHmmss}-{System.Environment.ProcessId}-{Guid.NewGuid():N}";
     private static bool _initialized;
     private static bool _configLoaded;
     private static bool _cardGroupsInitialized;
@@ -367,6 +368,7 @@ internal static class SkinService
                 _mountedLocalizationSignature = null;
                 CleanupOldOverlays();
                 CleanupPreparedRuntimeOverlayCache();
+                OnlineSkinCache.CleanupStaleSessionsAtStartup();
                 var gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
                 ModLog.Info($"已定位游戏主资源包：{gamePckPath}");
                 var loadedMods = ModManager.GetLoadedMods()

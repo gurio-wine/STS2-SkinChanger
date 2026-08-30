@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
@@ -1554,6 +1555,70 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static void RefreshMultiplayerPlayerIcons(ulong playerNetId)
+    {
+        try
+        {
+            var root = NGame.Instance?.GetTree().Root;
+            if (root == null)
+            {
+                return;
+            }
+
+            var pending = new Stack<Node>();
+            pending.Push(root);
+            while (pending.Count > 0)
+            {
+                var node = pending.Pop();
+                if (node is NMultiplayerPlayerState state &&
+                    state.Player?.NetId == playerNetId)
+                {
+                    RefreshMultiplayerPlayerStateIcon(state);
+                }
+                else if (node is NRemoteLobbyPlayer lobbyPlayer &&
+                         lobbyPlayer.PlayerId == playerNetId)
+                {
+                    RefreshRemoteLobbyPlayerIcon(lobbyPlayer);
+                }
+
+                foreach (var child in node.GetChildren())
+                {
+                    pending.Push(child);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"刷新联机玩家 {playerNetId} 的头像失败：{exception.GetBaseException().Message}");
+        }
+    }
+
+    private static void RefreshMultiplayerPlayerStateIcon(NMultiplayerPlayerState state)
+    {
+        var icon = state.GetNodeOrNull<TextureRect>("%CharacterIcon");
+        if (icon == null || !GodotObject.IsInstanceValid(icon) ||
+            !MultiplayerSkinSync.TryGetPlayerCharacter(state.Player.NetId, out var character))
+        {
+            return;
+        }
+
+        using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(state.Player.NetId);
+        icon.Texture = character.IconTexture;
+    }
+
+    private static void RefreshRemoteLobbyPlayerIcon(NRemoteLobbyPlayer node)
+    {
+        var icon = node.GetNodeOrNull<TextureRect>("%CharacterIcon");
+        if (icon == null || !GodotObject.IsInstanceValid(icon) ||
+            !MultiplayerSkinSync.TryGetPlayerCharacter(node.PlayerId, out var character))
+        {
+            return;
+        }
+
+        using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(node.PlayerId);
+        icon.Texture = character.IconTexture;
+    }
+
     internal static void ReplaceCharacterMapMarker(
         CharacterModel character,
         ref CompressedTexture2D result)
@@ -1725,6 +1790,24 @@ internal static class CharacterMapMarkerResultPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(CharacterModel __instance, ref CompressedTexture2D __result) =>
         ContextualSkinControls.ReplaceCharacterMapMarker(__instance, ref __result);
+}
+
+[HarmonyPatch(typeof(NMultiplayerPlayerState), nameof(NMultiplayerPlayerState._Ready))]
+internal static class MultiplayerPlayerStateIconScopePatch
+{
+    private static void Prefix(NMultiplayerPlayerState __instance, out IDisposable? __state) =>
+        __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.Player.NetId);
+
+    private static void Postfix(IDisposable? __state) => __state?.Dispose();
+}
+
+[HarmonyPatch(typeof(NRemoteLobbyPlayer), nameof(NRemoteLobbyPlayer._Ready))]
+internal static class RemoteLobbyPlayerIconScopePatch
+{
+    private static void Prefix(NRemoteLobbyPlayer __instance, out IDisposable? __state) =>
+        __state = MultiplayerSkinSync.BeginPlayerSelectionScope(__instance.PlayerId);
+
+    private static void Postfix(IDisposable? __state) => __state?.Dispose();
 }
 
 [HarmonyPatch(typeof(NMuteInBackgroundHandler), nameof(NMuteInBackgroundHandler._Notification))]

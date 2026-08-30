@@ -140,7 +140,8 @@ internal static partial class OnlineSkinCache
                 Path.GetTempPath(),
                 "Gurio.SkinChanger",
                 "online",
-                $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{_sessionGeneration:D3}");
+                $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Environment.ProcessId}-" +
+                $"{Guid.NewGuid():N}-{_sessionGeneration:D3}");
             Directory.CreateDirectory(_sessionDirectory);
             try
             {
@@ -155,6 +156,13 @@ internal static partial class OnlineSkinCache
         }
         CleanupOldSessionDirectories();
     }
+
+    /// <summary>
+    /// Removes temporary packages left behind when the game was terminated before EndSession
+    /// could run (for example Alt+F4). This is intentionally separate from Steam's workshop
+    /// install directory, which belongs to Steam and must remain available to the player.
+    /// </summary>
+    internal static void CleanupStaleSessionsAtStartup() => CleanupOldSessionDirectories();
 
     internal static void EndSession()
     {

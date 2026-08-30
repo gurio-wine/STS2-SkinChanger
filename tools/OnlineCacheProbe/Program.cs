@@ -110,6 +110,48 @@ if (!transformsParsed || ((System.Collections.IDictionary)parseTransformArgs[2]!
     throw new InvalidOperationException("Multiplayer appearance transforms did not round-trip.");
 }
 
+// Exercise a non-default value as well. A default-only probe would miss a serializer regression
+// that silently drops init-only UI fields or converts offsets back to zero.
+var transformType = RequireType("STS2SkinChanger.Core.CharacterCombatTransform");
+var customTransform = Activator.CreateInstance(
+    transformType,
+    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    args: [1.25f, 18f, -11f],
+    culture: null) ?? throw new InvalidOperationException("Could not construct transform probe.");
+transformType.GetProperty("HealthBarScale")!.SetValue(customTransform, 1.35f);
+transformType.GetProperty("HealthBarOffsetX")!.SetValue(customTransform, -7f);
+transformType.GetProperty("HealthBarFollowsModelScale")!.SetValue(customTransform, true);
+transformType.GetProperty("IntentOffsetY")!.SetValue(customTransform, 9f);
+var customMapType = typeof(Dictionary<,>).MakeGenericType(typeof(string), transformType);
+var customMap = (System.Collections.IDictionary)Activator.CreateInstance(customMapType)!;
+customMap.Add(groupId, customTransform);
+var customManifest = (string)RequireMethod(
+        multiplayerSyncType,
+        "SerializeTransformManifest",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, [customMap])!;
+var customParseArgs = new object?[] { customManifest, groupId, null };
+var customParsed = (bool)(RequireMethod(
+        multiplayerSyncType,
+        "TryParseTransformManifest",
+        BindingFlags.NonPublic | BindingFlags.Static)
+    .Invoke(null, customParseArgs) ?? false);
+if (!customParsed)
+{
+    throw new InvalidOperationException("Non-default multiplayer transform manifest did not parse.");
+}
+var parsedCustomTransform = ((System.Collections.IDictionary)customParseArgs[2]!)[groupId] ??
+                            throw new InvalidOperationException("Transform probe lost its group entry.");
+if (Math.Abs((float)transformType.GetProperty("Scale")!.GetValue(parsedCustomTransform)! - 1.25f) > 0.001f ||
+    Math.Abs((float)transformType.GetProperty("OffsetX")!.GetValue(parsedCustomTransform)! - 18f) > 0.001f ||
+    Math.Abs((float)transformType.GetProperty("OffsetY")!.GetValue(parsedCustomTransform)! + 11f) > 0.001f ||
+    Math.Abs((float)transformType.GetProperty("HealthBarScale")!.GetValue(parsedCustomTransform)! - 1.35f) > 0.001f ||
+    !(bool)transformType.GetProperty("HealthBarFollowsModelScale")!.GetValue(parsedCustomTransform)!)
+{
+    throw new InvalidOperationException("Non-default multiplayer transform values changed during round-trip.");
+}
+
 Directory.CreateDirectory(Path.GetDirectoryName(outputPck)!);
 var package = RequireMethod(
         onlineCacheType,

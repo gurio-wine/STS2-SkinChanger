@@ -374,6 +374,32 @@ internal static class MultiplayerSkinSync
         return new SelectionScope();
     }
 
+    /// <summary>
+    /// Temporarily selects a remote player's complete visual map while the game builds a UI
+    /// object for that player (for example the multiplayer health-bar avatar). CharacterModel's
+    /// icon getters do not receive a Player argument, so the caller must provide this context.
+    /// </summary>
+    internal static IDisposable? BeginPlayerSelectionScope(ulong playerNetId)
+    {
+        IReadOnlyDictionary<string, string>? selections = null;
+        lock (Sync)
+        {
+            if (AvailableSelections.TryGetValue(playerNetId, out var selection))
+            {
+                selections = selection.SelectionOverrides;
+            }
+        }
+
+        if (selections == null)
+        {
+            return null;
+        }
+
+        _selectionScopes ??= new Stack<IReadOnlyDictionary<string, string>>();
+        _selectionScopes.Push(selections);
+        return new SelectionScope();
+    }
+
     internal static void AttachToRun()
     {
         var service = RunManager.Instance.NetService;
@@ -617,10 +643,31 @@ internal static class MultiplayerSkinSync
         }
     }
 
+    internal static void OnLocalTransformChanged(Creature creature, string groupId)
+    {
+        var service = _netService;
+        var owner = creature.Player ?? creature.PetOwner;
+        if (service == null || !service.Type.IsMultiplayer() || owner == null ||
+            owner.NetId != service.NetId ||
+            !ContextualSkinControls.MatchesGroupIdentity(
+                groupId,
+                owner.Character.Id.Entry,
+                owner.Character.GetType().Name))
+        {
+            return;
+        }
+
+        lock (Sync)
+        {
+            _localTransformAdvertisementDirty = true;
+        }
+    }
+
     private static void FlushLocalTransformAdvertisement(double delta)
     {
         ulong localId;
         SkinChangerNetMessage message;
+        var needsAdvertisement = false;
         lock (Sync)
         {
             _localTransformBroadcastCooldown = Math.Max(
@@ -628,14 +675,38 @@ internal static class MultiplayerSkinSync
                 _localTransformBroadcastCooldown - delta);
             if (!_localTransformAdvertisementDirty ||
                 _localTransformBroadcastCooldown > 0 ||
-                _netService == null ||
-                !AdvertisedSelections.TryGetValue(_netService.NetId, out message))
+                _netService == null)
             {
                 return;
             }
             localId = _netService.NetId;
             _localTransformAdvertisementDirty = false;
             _localTransformBroadcastCooldown = 0.05;
+            if (!AdvertisedSelections.TryGetValue(localId, out message))
+            {
+                needsAdvertisement = true;
+                message = default;
+            }
+        }
+
+        if (needsAdvertisement)
+        {
+            // AttachToRun can race the first creation of the local Player. Recreate the base
+            // advertisement here instead of silently dropping the first transform edit forever.
+            RememberLocalAdvertisement();
+            lock (Sync)
+            {
+                if (!AdvertisedSelections.TryGetValue(localId, out message))
+                {
+                    return;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(message.GroupId) ||
+            string.IsNullOrWhiteSpace(message.OptionId))
+        {
+            return;
         }
 
         message.TransformManifest = SerializeTransformManifest(
@@ -1574,6 +1645,16 @@ internal static class MultiplayerSkinSync
         playerNetId = 0;
         character = null!;
         return false;
+    }
+
+    internal static bool TryGetPlayerCharacter(ulong playerNetId, out CharacterModel character)
+    {
+        if (TryGetLobbyCharacter(playerNetId, out character))
+        {
+            return true;
+        }
+
+        return CharacterAppearanceRuntime.TryGetPlayerCharacter(playerNetId, out character);
     }
 
     private static bool PlayerMatchesCharacterSelection(SkinChangerNetMessage message)

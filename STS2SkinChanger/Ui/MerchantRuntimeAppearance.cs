@@ -67,11 +67,13 @@ internal static class MerchantRuntimeAppearance
         bool save)
     {
         var optionId = SkinService.Config.GetSelection(groupId);
-        return SkinService.SetCharacterCombatTransform(
+        var normalized = SkinService.SetCharacterCombatTransform(
             GetLocalPlayerTransformKey(groupId),
             optionId,
             value,
             save);
+        MultiplayerSkinSync.OnLocalTransformChanged(groupId);
+        return normalized;
     }
 
     internal static void ApplyLocalPlayerTransform(
