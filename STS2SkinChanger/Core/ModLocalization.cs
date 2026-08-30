@@ -859,21 +859,21 @@ internal static class ModLocalization
     private static readonly IReadOnlyDictionary<string, string> MultiplayerSkinLoadingTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = "Load other players' custom skins",
-            ["zhs"] = "加载其他玩家的自定义皮肤",
-            ["zht"] = "載入其他玩家的自訂外觀",
-            ["deu"] = "Eigene Skins anderer Spieler laden",
-            ["esp"] = "Cargar aspectos personalizados de otros jugadores",
-            ["fra"] = "Charger les skins personnalisés des autres joueurs",
-            ["ita"] = "Carica le skin personalizzate degli altri giocatori",
-            ["jpn"] = "他のプレイヤーのカスタムスキンを読み込む",
-            ["kor"] = "다른 플레이어의 사용자 스킨 불러오기",
-            ["pol"] = "Wczytuj niestandardowe skórki innych graczy",
-            ["ptb"] = "Carregar visuais personalizados de outros jogadores",
-            ["rus"] = "Загружать пользовательские облики других игроков",
-            ["spa"] = "Cargar aspectos personalizados de otros jugadores",
-            ["tha"] = "โหลดสกินกำหนดเองของผู้เล่นอื่น",
-            ["tur"] = "Diğer oyuncuların özel görünümlerini yükle"
+            ["eng"] = "Show skins installed by both players",
+            ["zhs"] = "显示双方都已安装的皮肤",
+            ["zht"] = "顯示雙方都已安裝的外觀",
+            ["deu"] = "Auf beiden Seiten installierte Skins anzeigen",
+            ["esp"] = "Mostrar aspectos instalados por ambos jugadores",
+            ["fra"] = "Afficher les skins installés chez les deux joueurs",
+            ["ita"] = "Mostra le skin installate da entrambi",
+            ["jpn"] = "双方にインストール済みのスキンを表示",
+            ["kor"] = "양쪽에 모두 설치된 스킨 표시",
+            ["pol"] = "Pokaż skórki zainstalowane u obu graczy",
+            ["ptb"] = "Mostrar visuais instalados pelos dois jogadores",
+            ["rus"] = "Показывать облики, установленные у обоих игроков",
+            ["spa"] = "Mostrar aspectos instalados por ambos jugadores",
+            ["tha"] = "แสดงสกินที่ผู้เล่นทั้งสองฝ่ายติดตั้งไว้",
+            ["tur"] = "İki tarafta da yüklü görünümleri göster"
         };
 
     private sealed record MultiplayerProgressLanguagePack(

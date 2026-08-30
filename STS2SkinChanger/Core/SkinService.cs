@@ -368,6 +368,9 @@ internal static class SkinService
                 _mountedLocalizationSignature = null;
                 CleanupOldOverlays();
                 CleanupPreparedRuntimeOverlayCache();
+                // Protocol 8 no longer downloads multiplayer skins. Keep one startup sweep so
+                // files left by older releases are removed instead of becoming permanent disk
+                // usage after the feature is retired.
                 OnlineSkinCache.CleanupStaleSessionsAtStartup();
                 var gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
                 ModLog.Info($"已定位游戏主资源包：{gamePckPath}");

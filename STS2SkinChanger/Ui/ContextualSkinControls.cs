@@ -23,7 +23,6 @@ internal static partial class ContextualSkinControls
 {
     private const string SelectorName = "STS2SkinSelector";
     private const string MultiplayerSkinLoadingToggleName = "MultiplayerSkinLoadingToggle";
-    private const string MultiplayerSkinLoadingStatusName = "MultiplayerSkinLoadingStatus";
     private const string DropdownName = "SkinDropdown";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
@@ -41,8 +40,6 @@ internal static partial class ContextualSkinControls
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _refreshingMonsterDisplay;
     private static Font? _gameFont;
-    private static WeakReference<NCharacterSelectScreen>? _multiplayerCharacterSelectScreen;
-    private static ulong _lastMultiplayerStatusRefreshMsec;
 
     internal static bool IsRefreshingMonsterDisplay => _refreshingMonsterDisplay;
 
@@ -88,7 +85,6 @@ internal static partial class ContextualSkinControls
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
         RefreshMultiplayerSkinLoadingToggle(screen);
-        RefreshMultiplayerSkinLoadingStatus(force: true);
         if (group != null)
         {
             // 游戏的 SelectCharacter 每次点击都会清空 AnimatedBg 并重新实例化原版背景，
@@ -178,21 +174,14 @@ internal static partial class ContextualSkinControls
         Control infoPanel)
     {
         var toggle = infoPanel.GetNodeOrNull<CheckButton>(MultiplayerSkinLoadingToggleName);
-        var status = infoPanel.GetNodeOrNull<Label>(MultiplayerSkinLoadingStatusName);
         if (!IsMultiplayerCharacterSelect(screen))
         {
             if (toggle != null)
             {
                 toggle.Visible = false;
             }
-            if (status != null)
-            {
-                status.Visible = false;
-            }
             return;
         }
-
-        _multiplayerCharacterSelectScreen = new WeakReference<NCharacterSelectScreen>(screen);
 
         if (toggle == null)
         {
@@ -231,38 +220,7 @@ internal static partial class ContextualSkinControls
             });
         }
 
-        if (status == null)
-        {
-            status = new Label
-            {
-                Name = MultiplayerSkinLoadingStatusName,
-                AnchorLeft = 0.5f,
-                AnchorTop = 0f,
-                AnchorRight = 0.5f,
-                AnchorBottom = 0f,
-                OffsetLeft = -280f,
-                OffsetTop = -166f,
-                OffsetRight = 280f,
-                OffsetBottom = -126f,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                MouseFilter = Control.MouseFilterEnum.Ignore,
-                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
-                Visible = false
-            };
-            status.AddThemeColorOverride("font_color", new Color("f0c951"));
-            status.AddThemeColorOverride("font_outline_color", new Color("332f27"));
-            status.AddThemeConstantOverride("outline_size", 3);
-            status.AddThemeFontSizeOverride("font_size", 17);
-            if (GameFont != null)
-            {
-                status.AddThemeFontOverride("font", GameFont);
-            }
-            infoPanel.AddChild(status);
-        }
-
         toggle.Visible = true;
-        RefreshMultiplayerSkinLoadingStatus(force: true);
     }
 
     private static void RefreshMultiplayerSkinLoadingToggle(NCharacterSelectScreen screen)
@@ -274,42 +232,6 @@ internal static partial class ContextualSkinControls
             toggle.Visible = IsMultiplayerCharacterSelect(screen);
             toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
         }
-    }
-
-    internal static void RefreshMultiplayerSkinLoadingStatus(bool force = false)
-    {
-        var now = Time.GetTicksMsec();
-        if (!force && now - _lastMultiplayerStatusRefreshMsec < 100)
-        {
-            return;
-        }
-        _lastMultiplayerStatusRefreshMsec = now;
-
-        if (_multiplayerCharacterSelectScreen == null ||
-            !_multiplayerCharacterSelectScreen.TryGetTarget(out var screen) ||
-            !GodotObject.IsInstanceValid(screen))
-        {
-            return;
-        }
-
-        var status = screen.GetNodeOrNull<Label>(
-            $"InfoPanel/{MultiplayerSkinLoadingStatusName}");
-        if (status == null)
-        {
-            return;
-        }
-
-        var progress = OnlineSkinCache.GetProgress();
-        status.Visible = IsMultiplayerCharacterSelect(screen) && progress.IsVisible;
-        if (!status.Visible)
-        {
-            status.Text = string.Empty;
-            status.TooltipText = string.Empty;
-            return;
-        }
-
-        status.Text = ModLocalization.FormatOnlineSkinCacheProgress(progress);
-        status.TooltipText = progress.Detail;
     }
 
     private static HBoxContainer EnsureMonsterSelector(NBestiary screen)

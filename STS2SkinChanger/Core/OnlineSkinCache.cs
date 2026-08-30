@@ -2,9 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Collections.Concurrent;
-using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
-using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Multiplayer.Transport.Steam;
 using MegaCrit.Sts2.Core.Nodes;
 using STS2SkinChanger.Catalog;
@@ -26,24 +24,6 @@ internal enum OnlineSkinDescriptionState
     Preparing,
     Ready,
     Failed
-}
-
-[HarmonyPatch(typeof(ModManager), "OnSteamWorkshopItemInstalled")]
-internal static class OnlineSkinWorkshopInstallPatch
-{
-    private static bool Prefix(ItemInstalled_t ev)
-    {
-        var workshopItemId = ev.m_nPublishedFileId.m_PublishedFileId;
-        if (!OnlineSkinCache.ShouldSuppressRuntimeWorkshopInstall(workshopItemId))
-        {
-            return true;
-        }
-
-        ModLog.Info(
-            $"已拦截联机临时皮肤 {workshopItemId} 的运行时 Mod 安装通知；" +
-            "只会读取安全资源子包，不要求重启游戏。 ");
-        return false;
-    }
 }
 
 internal sealed record OnlineSkinCacheFailure(
