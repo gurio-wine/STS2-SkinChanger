@@ -326,7 +326,8 @@ internal sealed partial class SkinCatalog : IDisposable
             sourcePath = sourcePath[..^7];
         }
 
-        var identity = TryGetPrimaryGroup(NormalizeTakeoverPath(sourcePath));
+        var normalizedPath = NormalizeTakeoverPath(sourcePath);
+        var identity = TryGetPrimaryGroup(normalizedPath);
         return identity != null && identity.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -4875,6 +4876,27 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static GroupIdentity? TryGetPrimaryGroup(string sourcePath)
     {
+        // Character portraits and selection/map icons live under images/ rather than the
+        // animation/scene directories. They still belong to the same character group and must
+        // be accepted by the online-safe resource filter; otherwise remote players fall back to
+        // the base avatar even though the provider supplied a valid canonical icon binding.
+        foreach (var characterAssetRegex in new[]
+                 {
+                     CharacterSelectIconRegex(),
+                     CharacterUiTextureRegex(),
+                     CharacterIconSceneRegex(),
+                     CharacterMapMarkerRegex()
+                 })
+        {
+            var asset = characterAssetRegex.Match(sourcePath);
+            if (asset.Success)
+            {
+                return new GroupIdentity(
+                    asset.Groups[1].Value.ToLowerInvariant(),
+                    DisplayName(asset.Groups[1].Value));
+            }
+        }
+
         var character = CharacterPathRegex().Match(sourcePath);
         if (character.Success)
         {
