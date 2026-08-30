@@ -28,6 +28,12 @@ internal static class MerchantRuntimeAppearance
         AccessTools.Field(typeof(NMerchantRoom), "<MerchantButton>k__BackingField");
     private static readonly FieldInfo? MerchantHandField =
         AccessTools.Field(typeof(NMerchantInventory), "<MerchantHand>k__BackingField");
+    private static readonly FieldInfo? MerchantRoomModelField =
+        AccessTools.Field(typeof(NMerchantRoom), "<Room>k__BackingField");
+    private static readonly FieldInfo? MerchantRoomPlayersField =
+        AccessTools.Field(typeof(NMerchantRoom), "_players");
+    private static readonly FieldInfo? MerchantRoomDialogueField =
+        AccessTools.Field(typeof(NMerchantRoom), "_dialogue");
     private static readonly List<WeakReference<Node>> ReplayedInventoryAdditions = [];
     private static readonly Dictionary<ulong, HashSet<ulong>> InventoryReadyBaselines = [];
     private static readonly Dictionary<ulong, List<WeakReference<Node2D>>> ShopProviderRoots = [];
@@ -144,6 +150,68 @@ internal static class MerchantRuntimeAppearance
         }
 
         ReplayedInventoryAdditions.Clear();
+    }
+
+    internal static bool TryCreateCurrentMerchantRoom(
+        NMerchantRoom preloadCreatedRoom,
+        out NMerchantRoom? currentRoom,
+        out string? error)
+    {
+        currentRoom = null;
+        error = null;
+        if (MerchantRoomModelField == null ||
+            MerchantRoomPlayersField == null ||
+            MerchantRoomDialogueField == null)
+        {
+            error = "merchant room state fields unavailable";
+            return false;
+        }
+
+        try
+        {
+            // NMerchantRoom.Create normally instantiates PreloadManager's startup-cached scene.
+            // A merchant selection changed later in the same game process cannot invalidate that
+            // cache, so save/reload would recreate the startup skin while replaying the current
+            // provider's code. Build from SkinChanger's selection-keyed runtime scene instead.
+            var replacement = LoadRuntimeOrBaseScene(MerchantRoomScenePath)
+                .Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
+            try
+            {
+                MerchantRoomModelField.SetValue(
+                    replacement,
+                    MerchantRoomModelField.GetValue(preloadCreatedRoom));
+                MerchantRoomDialogueField.SetValue(
+                    replacement,
+                    MerchantRoomDialogueField.GetValue(preloadCreatedRoom));
+
+                var sourcePlayers = MerchantRoomPlayersField.GetValue(preloadCreatedRoom)
+                                        as IEnumerable<Player> ??
+                                    throw new InvalidOperationException(
+                                        "预加载商店房间缺少玩家列表");
+                var targetPlayers = MerchantRoomPlayersField.GetValue(replacement)
+                                        as List<Player> ??
+                                    throw new InvalidOperationException(
+                                        "当前商店房间缺少玩家列表");
+                targetPlayers.AddRange(sourcePlayers);
+
+                currentRoom = replacement;
+                replacement = null;
+                return true;
+            }
+            finally
+            {
+                if (replacement != null && GodotObject.IsInstanceValid(replacement))
+                {
+                    replacement.Free();
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            error = exception.GetBaseException().Message;
+            ModLog.Error("按当前皮肤创建商店房间失败：" + exception);
+            return false;
+        }
     }
 
     internal static void CaptureInventoryReadyBaseline(NMerchantInventory inventory)
@@ -746,6 +814,37 @@ internal static class MerchantRuntimeAppearance
                 yield return descendant;
             }
         }
+    }
+}
+
+[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom.Create))]
+internal static class MerchantRoomCreateAppearancePatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(ref NMerchantRoom? __result)
+    {
+        if (__result == null || !GodotObject.IsInstanceValid(__result))
+        {
+            return;
+        }
+
+        if (!MerchantRuntimeAppearance.TryCreateCurrentMerchantRoom(
+                __result,
+                out var currentRoom,
+                out var error) ||
+            currentRoom == null)
+        {
+            ModLog.Warn("保留游戏预加载的商店房间：" + error);
+            return;
+        }
+
+        var preloadCreatedRoom = __result;
+        __result = currentRoom;
+        preloadCreatedRoom.Free();
+        ModLog.Info(
+            "商店房间已绕过启动预加载缓存并按当前选择创建：" +
+            SkinService.Config.GetSelection(MerchantRuntimeAppearance.GroupId));
     }
 }
 
