@@ -3,7 +3,7 @@
   "name": "皮肤切换器-Skin Changer",
   "author": "Gurio",
   "description": "切换角色、卡牌、怪物、先古场景和商人皮肤；多人游戏可按玩家同步角色皮肤、头像和局内外观参数，双方都安装同一皮肤时显示所选皮肤，否则使用原皮，不会下载远端皮肤。界面支持 15 种语言，无需重启。 Switch character, card, monster, Ancient, and merchant skins; multiplayer syncs each player's character skin, avatar, and live model/UI transforms. A selected skin is shown only when both players have it installed; otherwise the original is used, with no remote skin downloads. 15-language interface, no restart required.",
-  "version": "0.9.107",
+  "version": "0.9.108",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],
