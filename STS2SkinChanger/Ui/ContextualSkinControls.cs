@@ -38,11 +38,15 @@ internal static partial class ContextualSkinControls
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static bool _refreshingMonsterDisplay;
+    [ThreadStatic]
+    private static bool _refreshingRemoteLobbyVisuals;
     private static Font? _gameFont;
     private static WeakReference<NCharacterSelectScreen>? _multiplayerCharacterSelectScreen;
     private static ulong _lastMultiplayerStatusRefreshMsec;
 
     internal static bool IsRefreshingMonsterDisplay => _refreshingMonsterDisplay;
+
+    internal static bool IsRefreshingRemoteLobbyVisuals => _refreshingRemoteLobbyVisuals;
 
     internal static Font? GameFont =>
         _gameFont ??= ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
@@ -1671,12 +1675,21 @@ internal static partial class ContextualSkinControls
         var refreshVisuals = AccessTools.Method(typeof(NRemoteLobbyPlayer), "RefreshVisuals");
         try
         {
+            // RefreshVisuals is Harmony-patched below.  Its fallback Postfix normally queues a
+            // second icon pass when no per-player scope exists (for example for the local host).
+            // Mark this intentional call so that Postfix cannot synchronously call back into this
+            // method and recurse until the main thread appears frozen while creating a room.
+            _refreshingRemoteLobbyVisuals = true;
             refreshVisuals?.Invoke(node, null);
         }
         catch (Exception exception)
         {
             ModLog.Warn("调用游戏的远程选角外观刷新失败，将使用头像贴图兜底：" +
                         exception.GetBaseException().Message);
+        }
+        finally
+        {
+            _refreshingRemoteLobbyVisuals = false;
         }
 
         var icon = AccessTools.Field(typeof(NRemoteLobbyPlayer), "_characterIcon")
@@ -1959,7 +1972,7 @@ internal static class RemoteLobbyPlayerIconScopePatch
         IDisposable? __state)
     {
         __state?.Dispose();
-        if (__state == null)
+        if (__state == null && !ContextualSkinControls.IsRefreshingRemoteLobbyVisuals)
         {
             ContextualSkinControls.RefreshMultiplayerPlayerIcons(__instance.PlayerId);
         }
