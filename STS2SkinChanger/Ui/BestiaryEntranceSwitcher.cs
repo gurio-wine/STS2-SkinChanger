@@ -32,17 +32,40 @@ internal static class BestiaryEntranceSwitcher
             return;
         }
 
-        foreach (var control in EnumerateDescendants(compendium).OfType<NClickableControl>())
+        try
         {
-            if (control is not NButton || control.Name.ToString().Equals(ToggleName, StringComparison.Ordinal))
+            foreach (var control in EnumerateDescendants(compendium).OfType<NClickableControl>())
             {
-                continue;
-            }
+                if (control is not NButton ||
+                    control.Name.ToString().Equals(ToggleName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            if (IsBestiaryEntrance(control))
-            {
-                EnsureAttached(control);
+                try
+                {
+                    if (IsBestiaryEntrance(control))
+                    {
+                        EnsureAttached(control);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    // A foreign UI may expose a native/custom Callable which GodotSharp cannot
+                    // fully materialize. One uninspectable button must never abort opening the
+                    // Compendium; skip only that candidate and keep the game menu functional.
+                    ModLog.Warn(
+                        $"跳过无法检查的图鉴入口 {control.Name}：" +
+                        exception.GetBaseException().Message);
+                }
             }
+        }
+        catch (Exception exception)
+        {
+            // This hook runs inside OnSubmenuOpened. Never let optional entrance decoration
+            // interrupt the game's own submenu stack after it has already pushed the page.
+            ModLog.Warn("检查怪物图鉴入口失败，已保留原界面：" +
+                        exception.GetBaseException().Message);
         }
 
         ScheduleScan(compendium);
@@ -113,22 +136,37 @@ internal static class BestiaryEntranceSwitcher
             return true;
         }
 
-        foreach (var connection in control.GetSignalConnectionList(NClickableControl.SignalName.Released))
+        var connections = control.GetSignalConnectionList(NClickableControl.SignalName.Released);
+        if (connections == null)
         {
-            if (!connection.TryGetValue("callable", out var raw))
+            return false;
+        }
+
+        foreach (var connection in connections)
+        {
+            if (connection == null || !connection.TryGetValue("callable", out var raw))
             {
                 continue;
             }
 
             var callable = raw.As<Callable>();
-            var methodName = callable.Method.ToString();
+            var methodName = callable.Method?.ToString() ?? string.Empty;
             if (methodName.Contains("Bestiary", StringComparison.OrdinalIgnoreCase) ||
                 methodName.Equals("OpenBestiary", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
 
-            var callback = callable.Delegate;
+            Delegate? callback;
+            try
+            {
+                callback = callable.Delegate;
+            }
+            catch
+            {
+                callback = null;
+            }
+
             if (callback?.Method.Name.Contains("Bestiary", StringComparison.OrdinalIgnoreCase) == true)
             {
                 return true;
