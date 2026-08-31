@@ -38,6 +38,11 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> CardPortraitCache =
         new(StringComparer.OrdinalIgnoreCase);
+    // A malformed or incomplete provider card must never throw through CardModel.Portrait.
+    // Cache the failed request for this session so every redraw does not rebuild the same
+    // overlay (and so the vanilla portrait remains usable in choice screens).
+    private static readonly HashSet<string> FailedCardPortraitRequests =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, CardCoverageState> CardCoverageCache =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IsolatedCardOverlayState> IsolatedCardOverlayCache =
@@ -374,6 +379,7 @@ internal static class SkinService
                 PreparedRuntimeOverlays.Clear();
                 RuntimeResourceBundles.Clear();
                 CardPortraitCache.Clear();
+                FailedCardPortraitRequests.Clear();
                 IsolatedCardOverlayCache.Clear();
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
                 AncientStyleMethods.Clear();
@@ -1810,25 +1816,48 @@ internal static class SkinService
             return cached;
         }
 
-        var loaded = LoadIsolatedCardPortrait(
-            request.GroupId,
-            request.Selection,
-            request.ResourcePath,
-            request.UseSelectedProvider);
-        if (loaded == null)
+        if (FailedCardPortraitRequests.Contains(request.CacheKey))
         {
             return null;
         }
 
-        var portrait = request.WrapAtlas && loaded is not AtlasTexture
-            ? new AtlasTexture
+        try
+        {
+            var loaded = LoadIsolatedCardPortrait(
+                request.GroupId,
+                request.Selection,
+                request.ResourcePath,
+                request.UseSelectedProvider);
+            if (loaded == null)
             {
-                Atlas = loaded,
-                Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
+                throw new InvalidOperationException("资源包未返回可用卡牌贴图。");
             }
-            : loaded;
-        CardPortraitCache[request.CacheKey] = portrait;
-        return portrait;
+
+            var portrait = request.WrapAtlas && loaded is not AtlasTexture
+                ? new AtlasTexture
+                {
+                    Atlas = loaded,
+                    Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
+                }
+                : loaded;
+            CardPortraitCache[request.CacheKey] = portrait;
+            return portrait;
+        }
+        catch (Exception exception)
+        {
+            if (FailedCardPortraitRequests.Add(request.CacheKey))
+            {
+                ModLog.Warn(
+                    $"卡牌皮肤资源不可用，已回退原版卡图：{request.GroupId}/{request.Selection}/" +
+                    $"{request.ResourcePath}；原因={exception.GetBaseException().Message}");
+            }
+
+            // Returning null leaves the original CardModel.Portrait value untouched. This is
+            // especially important for Skill Potion/card-choice overlays: an optional skin
+            // failure must not abort NCard construction and leave the action queue waiting for a
+            // choice that can no longer be shown.
+            return null;
+        }
     }
 
     private static int CardArtSelectionScore(
@@ -3987,6 +4016,9 @@ internal static class SkinService
         {
             CardPortraitCache.Remove(key);
         }
+
+        FailedCardPortraitRequests.RemoveWhere(key =>
+            key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string CardSelectionKey(string groupId) => "cards:" + groupId;
