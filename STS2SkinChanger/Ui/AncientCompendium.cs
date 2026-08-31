@@ -864,12 +864,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             var visual = moveScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
             visual.Name = "BestiaryMoveVisual";
-            visual.SetScript(default(Variant));
             visual.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
             visual.Size = new Vector2(210f, 48f);
             visual.MouseFilter = MouseFilterEnum.Ignore;
             visual.FocusMode = FocusModeEnum.None;
-            button.AddChild(visual);
+            // Removing a C# script disposes its typed wrapper. Re-fetch the same native node by
+            // instance id before using it again; otherwise layout code hits a disposed
+            // NBestiaryMoveButton and aborts the whole compendium page build.
+            var strippedVisual = StripPreviewScripts(visual) as Control;
+            if (strippedVisual != null)
+            {
+                button.AddChild(strippedVisual);
+            }
         }
 
         SetOtherActionButtonText(button, text);
@@ -980,7 +986,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
         // MerchantInventory model. Strip behaviour scripts before entering the tree so the
         // catalogue gets the original visual scene without opening a real shop or touching save
         // state. The authored controls, textures and slot layout remain intact.
-        StripPreviewScripts(inventory);
+        inventory = StripPreviewScripts(inventory) as Control ??
+                    throw new InvalidOperationException("无法安全移除商店预览脚本。");
         overlay.AddChild(inventory);
 
         // NMerchantInventory normally moves SlotsContainer from -1000 to 80 in Open(). Do the
@@ -1047,13 +1054,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
     }
 
-    private static void StripPreviewScripts(Node root)
+    private static Node StripPreviewScripts(Node root)
     {
-        root.SetScript(default(Variant));
-        foreach (var child in root.GetChildren().OfType<Node>())
+        var children = root.GetChildren().OfType<Node>().ToArray();
+        foreach (var child in children)
         {
             StripPreviewScripts(child);
         }
+
+        var instanceId = root.GetInstanceId();
+        root.SetScript(default(Variant));
+        return GodotObject.InstanceFromId(instanceId) as Node ??
+               throw new InvalidOperationException("移除预览脚本后无法重新获取节点。");
     }
 
     private static void FillPreviewShopSlots(Control inventory, bool fakeMerchant)
@@ -1239,7 +1251,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             var visual = entryScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
             visual.Name = "BestiaryEntryVisual";
-            visual.SetScript(default(Variant));
             visual.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
             visual.Size = new Vector2(280f, 36f);
             visual.MouseFilter = MouseFilterEnum.Ignore;
@@ -1251,7 +1262,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 label.MouseFilter = MouseFilterEnum.Ignore;
             }
 
-            button.AddChild(visual);
+            var strippedVisual = StripPreviewScripts(visual) as Control;
+            if (strippedVisual != null)
+            {
+                button.AddChild(strippedVisual);
+            }
         }
         else
         {
