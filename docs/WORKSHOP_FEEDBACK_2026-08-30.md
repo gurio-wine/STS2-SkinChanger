@@ -35,7 +35,7 @@
 | 08-29 14:44 | Moe-Necrobinder | 切换离开 `Moe-Necrobinder`（`3773814239`）后，小手素材仍被它占用。 | **未解决**：皮肤专属附件的退出回滚仍需检查。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061952) |
 | 08-30 12:06 | 崩溃 | 进入下一个房间时闪退。 | **信息不足**：缺角色、皮肤 Mod、前后房间类型、游戏版本和日志。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621141150) |
 | 08-30 18:01 | 同 ID 差分 | 多个差分 Mod 使用同一个 Mod ID，希望能全部加载并热切换。 | **建议评估**：需要按来源目录或包指纹区分，同时规避程序集和注册项冲突。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621161094) |
-| 08-30 19:47 | 正式版多人 | 创建多人房间后进入地图时所有人黑屏；续报确认发生在正式版。 | **已暂缓（高影响）**：测试版后来可以正常进入；正式版还出现过第二次抽牌卡死。由于正式版与测试版是两套运行时快照，目前明确先不继续处理，但工坊仍声明支持正式版，不能把此项视为已解决。 | [首报](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621168940) · [仍存在](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621184669) · [正式版确认](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621190360) |
+| 08-30 19:47 | 正式版多人 | 创建多人房间后进入地图时所有人黑屏；续报确认发生在正式版。 | **未解决（高影响）**：测试版后来可以正常进入；正式版还出现过第二次抽牌卡死。此前“先不测试正式版快照”只针对当时检查的特定依赖 Mod，并不表示 Skin Changer 暂缓正式版支持。正式版有大量玩家，必须继续作为完整支持目标排查。 | [首报](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621168940) · [仍存在](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621184669) · [正式版确认](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621190360) |
 | 08-30 20:07 | 先古 / 稳定性 | 安装多种先古美化后会卡死或闪退，取消 Skin Changer 后正常。 | **未解决**：没有具体 Mod 列表和日志；最新大型资源复用优化可能降低加载压力，但不足以关闭“卡死/闪退”。 | [Bug 讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939955001603913) |
 | 08-30 22:52 | 猎手皮肤 | 同时安装猫娘阿塔与劣人 TV 时，无法切出劣人 TV。 | **已处理待复测**：当前本机和多人测试中劣人 TV 可以加载，但原留言者没有确认其具体组合已恢复。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621182905) |
 | 08-31 00:43 | 卡牌 / 战斗阻断 | 测试版局内把劣人 TV 卡牌切回原版后，锻造和查看卡组会让卡牌全部消失，战斗中还会抽不出牌。 | **未复现 / 继续观察**：报告者后来未再复现，当前本机测试也正常。劣人 TV 只有视觉资源，没有 DLL 或卡组逻辑；Skin Changer 的切换路径也不修改卡组、抽牌堆或牌数量。正式版 v0.107.1 的卡牌 API 对照、构建和资源验证均通过。剩余可疑点是视觉重载可能偶发触发其他卡面 Mod 的补丁，需再次出现时结合当局日志和 Mod 列表定位。 | [卡牌消失](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621192292) · [无法抽牌](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621192741) · [复现补充](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621193396) |
@@ -49,7 +49,7 @@
 | 顺序 | 级别 | 待办 | 排序理由 / 下一步 |
 |---:|---|---|---|
 | 1 | P0 | 多种先古美化与本 Mod 同开时卡死或闪退 | 影响启动/运行稳定性；先向留言者取得具体 Mod 列表和日志，再验证大型资源复用是否只改善耗时而没有掩盖生命周期错误。 |
-| 2 | P1 | 正式版多人进入地图黑屏、抽第二张牌卡死 | 严重程度高，但当前已明确暂缓正式版；恢复正式版工作时应优先处理，同时在此之前重新评估工坊“支持正式版”的表述。 |
+| 2 | P1 | 正式版多人进入地图黑屏、抽第二张牌卡死 | 正式版是完整支持目标且有大量玩家；下一轮直接对照正式版运行时、多人建图和抽牌流程定位，不能用测试版正常代替正式版验证。 |
 | 3 | P1 | `Merchant2CuteII` 商人显示在左上角、交互区仍在原位 | 最新 public-beta 有完整邮件材料，优先读取日志和截图，核对报告是否发生在最新商店重建逻辑之后。 |
 | 4 | P1 | CZN / Chaos Zero 卡图、角色皮肤和怪物模型缺失 | 同一系列跨卡牌、角色和怪物三个域，且续报晚于已有兼容改动；应从共享资源包和代码注册入口做一次完整清点。 |
 | 5 | P1 | 返回选角界面无响应，只播放音乐 | 可能是界面生命周期阻断；先补问单人/多人、版本和日志。 |
