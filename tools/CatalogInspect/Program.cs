@@ -1054,28 +1054,43 @@ if (validateIndex >= 0)
                     .Concat(option.RuntimeMonsterVisualMode?.ResourcePaths ?? [])
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
+                var provider = descriptors.FirstOrDefault(descriptor =>
+                    descriptor.Id.Equals(
+                        option.EffectiveProviderId,
+                        StringComparison.OrdinalIgnoreCase));
+                using var providerArchive = provider?.PckPath != null && File.Exists(provider.PckPath)
+                    ? PckArchive.Open(provider.PckPath)
+                    : null;
+                var reuseCoherentProviderPackage =
+                    providerArchive != null &&
+                    catalog.ProviderRequiresCoherentRuntimePackage(option.EffectiveProviderId);
+                var coherentPublicPaths = reuseCoherentProviderPackage
+                    ? option.Assets.Keys
+                        .Select(SkinCatalog.NormalizeTakeoverPath)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    : null;
                 var overlay = catalog.BuildRuntimeResourceOverlay(
                     group.Id,
                     option.Id,
                     selectedResourcePaths,
                     $"validate/{validated:D4}",
-                    includeProviderDependencies: true);
+                    includeProviderDependencies: true,
+                    reuseMountedPrivateDependencies: reuseCoherentProviderPackage);
                 ValidatePrivateBaselineReferences(
                     catalog,
                     overlay,
                     $"{group.Id}/{option.Id}",
-                    failures);
+                    failures,
+                    reuseCoherentProviderPackage ? providerArchive : null,
+                    coherentPublicPaths);
                 if (option.ManagedMonsterScene != null &&
                     !overlay.ResourcePaths.ContainsKey(creaturePath))
                 {
                     failures.Add(
                         $"{group.Id}/{option.Id}: private monster scene was not mapped to {creaturePath}");
                 }
-                var provider = descriptors.FirstOrDefault(descriptor =>
-                    descriptor.Id.Equals(option.EffectiveProviderId, StringComparison.OrdinalIgnoreCase));
-                if (provider?.PckPath != null && File.Exists(provider.PckPath))
+                if (providerArchive != null)
                 {
-                    using var providerArchive = PckArchive.Open(provider.PckPath);
                     var providerCanonicalPaths = providerArchive.Paths
                         .Select(SkinCatalog.NormalizeTakeoverPath)
                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1128,6 +1143,7 @@ if (validateIndex >= 0)
                         {
                             var referencedPath = reference.Value;
                             if (ContainsProviderResource(providerArchive, referencedPath) &&
+                                !reuseCoherentProviderPackage &&
                                 !ContainsRuntimeResource(overlay, referencedPath))
                             {
                                 failures.Add(
@@ -1364,7 +1380,9 @@ if (validateIndex >= 0)
         SkinCatalog catalog,
         RuntimeResourceOverlay overlay,
         string context,
-        ICollection<string> failures)
+        ICollection<string> failures,
+        PckArchive? mountedProviderArchive = null,
+        IReadOnlySet<string>? mountedPublicPaths = null)
     {
         foreach (var file in overlay.Files.Where(pair =>
                      pair.Key.StartsWith(
@@ -1388,6 +1406,11 @@ if (validateIndex >= 0)
 
                 var sourcePath = StripRedirectSuffix(
                     SkinCatalog.NormalizeTakeoverPath(referencedPath));
+                if (mountedPublicPaths?.Contains(sourcePath) == true)
+                {
+                    continue;
+                }
+
                 var redirectedToPrivatePayload = new[] { ".remap", ".import" }
                     .Select(suffix => sourcePath + suffix)
                     .Any(redirectPath =>
@@ -1396,6 +1419,12 @@ if (validateIndex >= 0)
                             "res://sts2_skin_runtime/",
                             StringComparison.OrdinalIgnoreCase));
                 if (redirectedToPrivatePayload)
+                {
+                    continue;
+                }
+
+                if (mountedProviderArchive != null &&
+                    ContainsProviderResource(mountedProviderArchive, referencedPath))
                 {
                     continue;
                 }

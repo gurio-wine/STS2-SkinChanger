@@ -3572,20 +3572,27 @@ internal static class SkinService
             })
             .Where(selection => selection.Option != null)
             .ToArray();
-        var selectedPackPaths = selectedOptions
-            .SelectMany(selection => catalog.GetProviderResourcePackPaths(
-                selection.Option!.EffectiveProviderId))
-            .Select(System.IO.Path.GetFullPath)
-            .Where(path => new FileInfo(path).Length >= DirectRuntimeProviderPackThresholdBytes)
+        var directProviderPacks = selectedOptions
+            .SelectMany(selection =>
+            {
+                var providerId = selection.Option!.EffectiveProviderId;
+                var requiresCoherentPackage =
+                    catalog.ProviderRequiresCoherentRuntimePackage(providerId);
+                return catalog.GetProviderResourcePackPaths(providerId)
+                    .Select(System.IO.Path.GetFullPath)
+                    .Where(path =>
+                        requiresCoherentPackage ||
+                        new FileInfo(path).Length >= DirectRuntimeProviderPackThresholdBytes)
+                    .Select(path => (selection.GroupId, Path: path));
+            })
+            .ToArray();
+        var selectedPackPaths = directProviderPacks
+            .Select(pack => pack.Path)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var selectedPackPathSet = selectedPackPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var selectedGroupIds = selectedOptions
-            .Where(selection => catalog.GetProviderResourcePackPaths(
-                    selection.Option!.EffectiveProviderId)
-                .Select(System.IO.Path.GetFullPath)
-                .Any(selectedPackPathSet.Contains))
-            .Select(selection => selection.GroupId)
+        var selectedGroupIds = directProviderPacks
+            .Select(pack => pack.GroupId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var packPath in selectedPackPaths)
@@ -3603,11 +3610,11 @@ internal static class SkinService
             if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: true))
             {
                 throw new InvalidOperationException(
-                    $"无法直接挂载大型外观资源包：{System.IO.Path.GetFileName(packPath)}");
+                    $"无法直接挂载完整外观资源包：{System.IO.Path.GetFileName(packPath)}");
             }
 
             ModLog.Info(
-                $"已直接复用大型外观资源包 {System.IO.Path.GetFileName(packPath)}，" +
+                $"已直接复用完整外观资源包 {System.IO.Path.GetFileName(packPath)}，" +
                 "后续仅生成资源校正包。");
         }
 

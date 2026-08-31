@@ -351,6 +351,17 @@ internal static class ManagedSkinModLoader
         }
         catch (Exception exception)
         {
+            if (IsAlreadyRegisteredGodotScriptException(exception))
+            {
+                // The game or another legitimate loader may have discovered the same assembly
+                // first. ScriptManagerBridge uses a unique resource-path dictionary and reports
+                // that harmless race as a duplicate-key ArgumentException. Keep our local marker
+                // so every hot reload does not retry the same registration and emit another error.
+                ModLog.Info(
+                    $"{provider.Name} 的 Godot 场景脚本已经注册，复用现有注册结果。");
+                return true;
+            }
+
             RegisteredProviderAssemblies.Remove(provider.AssemblyPath);
             ModLog.Warn(
                 $"注册 {provider.Name} 的 Godot 场景脚本失败；" +
@@ -358,6 +369,28 @@ internal static class ManagedSkinModLoader
                 exception.GetBaseException().Message);
             return false;
         }
+    }
+
+    private static bool IsAlreadyRegisteredGodotScriptException(Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is not ArgumentException)
+            {
+                continue;
+            }
+
+            var message = current.Message;
+            if (message.Contains("same key", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("already been added", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("相同的键", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("已添加", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

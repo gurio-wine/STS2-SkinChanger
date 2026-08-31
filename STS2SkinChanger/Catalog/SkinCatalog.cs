@@ -1025,6 +1025,16 @@ internal sealed partial class SkinCatalog : IDisposable
     public bool ProviderUsesInteractiveRuntime(string optionId) =>
         _interactiveRuntimeProviders.Contains(optionId);
 
+    /// <summary>
+    /// Providers with scene behaviour or managed Godot scripts must keep their exported package
+    /// intact. Splitting only the selected scene into an alias overlay can strand public atlas,
+    /// skeleton and script references that are resolved dynamically at runtime.
+    /// </summary>
+    public bool ProviderRequiresCoherentRuntimePackage(string providerId) =>
+        ProviderUsesFullRuntime(providerId) ||
+        ProviderUsesInteractiveRuntime(providerId) ||
+        ProviderUsesManagedGodotScripts(providerId);
+
     public IReadOnlySet<string> GetSelectedInteractiveRuntimeProviders(
         IReadOnlyDictionary<string, string> selections) =>
         _groups

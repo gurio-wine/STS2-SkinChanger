@@ -234,6 +234,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     public override void OnSubmenuClosed()
     {
+        // Dynamic Ancient providers can register scene-tree-wide input hooks. Merely hiding the
+        // compendium leaves their preview nodes alive, so those hooks keep receiving input after
+        // the player returns to the compendium or enters a run. Release the preview scene at the
+        // same lifecycle boundary as the submenu itself; reopening rebuilds the selected preview.
+        ClearPreview();
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
         base.OnSubmenuClosed();
     }
@@ -577,6 +582,15 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _previewViewport.GuiDisableInput = true;
         foreach (var child in _previewViewport.GetChildren())
         {
+            // Some provider input routers inspect CanvasItem.Visible rather than
+            // IsVisibleInTree(). Hide and stop the subtree before detaching it so there is no
+            // one-frame window in which an old interactive preview can still consume input.
+            if (child is CanvasItem canvasItem)
+            {
+                canvasItem.Visible = false;
+            }
+
+            child.ProcessMode = ProcessModeEnum.Disabled;
             _previewViewport.RemoveChild(child);
             child.QueueFree();
         }
