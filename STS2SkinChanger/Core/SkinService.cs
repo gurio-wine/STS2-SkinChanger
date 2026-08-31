@@ -2122,6 +2122,24 @@ internal static class SkinService
         string resourcePath,
         bool useSelectedProvider)
     {
+        // Raw raster entries are not Godot resources. Calling ResourceLoader for them first emits
+        // two engine errors per card ("No loader found" + "Error loading resource") before the
+        // direct-image fallback gets a chance to run. Large card-art packs can therefore flood
+        // the log and stall the card library even though their bytes are perfectly valid. Resolve
+        // direct provider images first; imported .ctex/.tres resources still take the overlay path
+        // below because TryReadCardImageBytes deliberately accepts only raster source files.
+        var catalog = Catalog;
+        if (catalog != null && catalog.TryReadCardImageBytes(
+                groupId,
+                selection,
+                resourcePath,
+                useSelectedProvider,
+                out var directBytes))
+        {
+            using var image = LoadRasterImageFromBuffer(directBytes, resourcePath);
+            return ImageTexture.CreateFromImage(image);
+        }
+
         var overlay = EnsureIsolatedCardOverlay(
             groupId,
             selection,
@@ -2146,17 +2164,6 @@ internal static class SkinService
         // but ResourceLoader cannot decode that raw entry.  Read the selected provider's source
         // bytes directly and create an in-memory texture instead of falling back to the game
         // portrait.  This is deliberately provider-agnostic.
-        var catalog = Catalog;
-        if (catalog != null && catalog.TryReadCardImageBytes(
-                groupId,
-                selection,
-                resourcePath,
-                useSelectedProvider,
-                out var bytes))
-        {
-            return ImageTexture.CreateFromImage(LoadRasterImageFromBuffer(bytes, resourcePath));
-        }
-
         return null;
     }
 
@@ -2917,6 +2924,43 @@ internal static class SkinService
             var groupId = catalog.ResolveManagedMonsterGroupId(monsterId);
             return groupId != null && Config.GetSelection(groupId)
                 .Equals(providerId, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    public static void ApplyScopedMonsterRuntimeProviderSelection(
+        string providerId,
+        string monsterId,
+        bool enabled)
+    {
+        string? groupId;
+        string currentSelection;
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null || !catalog.ProviderUsesScopedMonsterRuntime(providerId))
+            {
+                return;
+            }
+
+            groupId = catalog.ResolveManagedMonsterGroupId(monsterId);
+            if (groupId == null)
+            {
+                return;
+            }
+
+            currentSelection = Config.GetSelection(groupId);
+        }
+
+        if (enabled)
+        {
+            if (!currentSelection.Equals(providerId, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplySelection(groupId, providerId);
+            }
+        }
+        else if (currentSelection.Equals(providerId, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplySelection(groupId, SkinCatalog.BaseOptionId);
         }
     }
 

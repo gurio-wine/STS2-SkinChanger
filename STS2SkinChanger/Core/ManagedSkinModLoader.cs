@@ -42,6 +42,7 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<Assembly, string> ScopedMonsterProviderAssemblies = new();
     private static readonly HashSet<MethodBase> ScopedMonsterIsEnabledMethods = [];
+    private static readonly HashSet<MethodBase> ScopedMonsterSetEnabledMethods = [];
     private static readonly Harmony ScopedMonsterSelectionHarmony =
         new($"{Entry.ModId}.scoped-monster-selection");
     // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
@@ -84,12 +85,16 @@ internal static class ManagedSkinModLoader
             var prefix = new HarmonyMethod(AccessTools.Method(
                 typeof(ManagedSkinModLoader),
                 nameof(ScopedMonsterIsEnabledPrefix)));
+            var setterPostfix = new HarmonyMethod(AccessTools.Method(
+                typeof(ManagedSkinModLoader),
+                nameof(ScopedMonsterSetEnabledPostfix)));
             var patched = 0;
-            foreach (var method in GetLoadableTypes(assembly)
-                         .SelectMany(type => type.GetMethods(
-                             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
-                             BindingFlags.DeclaredOnly))
-                         .Where(IsScopedMonsterIsEnabledMethod))
+            var methods = GetLoadableTypes(assembly)
+                .SelectMany(type => type.GetMethods(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.DeclaredOnly))
+                .ToArray();
+            foreach (var method in methods.Where(IsScopedMonsterIsEnabledMethod))
             {
                 if (!ScopedMonsterIsEnabledMethods.Add(method))
                 {
@@ -100,11 +105,24 @@ internal static class ManagedSkinModLoader
                 patched++;
             }
 
-            if (patched > 0)
+            var settersPatched = 0;
+            foreach (var method in methods.Where(IsScopedMonsterSetEnabledMethod))
+            {
+                if (!ScopedMonsterSetEnabledMethods.Add(method))
+                {
+                    continue;
+                }
+
+                ScopedMonsterSelectionHarmony.Patch(method, postfix: setterPostfix);
+                settersPatched++;
+            }
+
+            if (patched > 0 || settersPatched > 0)
             {
                 ModLog.Info(
                     $"已接管 {provider.Name} 的逐怪物启用判断；" +
-                    $"{patched} 个配置入口现在直接跟随每个怪物在皮肤切换器中的选择。");
+                    $"{patched} 个读取入口、{settersPatched} 个写入入口现在直接跟随" +
+                    "每个怪物在皮肤切换器中的选择。");
             }
         }
         catch (Exception exception)
@@ -120,6 +138,25 @@ internal static class ManagedSkinModLoader
         if (!method.Name.Equals("IsEnabled", StringComparison.Ordinal) ||
             method.ReturnType != typeof(bool) ||
             method.GetParameters() is not [{ ParameterType: var profileType }])
+        {
+            return false;
+        }
+
+        var targetProperty = profileType.GetProperty(
+            "Target",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return targetProperty?.PropertyType.GetProperty(
+            "MonsterId",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.PropertyType == typeof(string);
+    }
+
+    private static bool IsScopedMonsterSetEnabledMethod(MethodInfo method)
+    {
+        if (!method.Name.Equals("SetEnabled", StringComparison.Ordinal) ||
+            method.ReturnType != typeof(void) ||
+            method.GetParameters() is not
+                [{ ParameterType: var profileType }, { ParameterType: var enabledType }] ||
+            enabledType != typeof(bool))
         {
             return false;
         }
@@ -163,6 +200,38 @@ internal static class ManagedSkinModLoader
         catch
         {
             return true;
+        }
+    }
+
+    private static void ScopedMonsterSetEnabledPostfix(
+        MethodBase __originalMethod,
+        object __0,
+        bool __1)
+    {
+        try
+        {
+            var assembly = __originalMethod.DeclaringType?.Assembly;
+            if (assembly == null ||
+                !ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var providerId))
+            {
+                return;
+            }
+
+            var target = __0.GetType().GetProperty(
+                "Target",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(__0);
+            var monsterId = target?.GetType().GetProperty(
+                "MonsterId",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(target) as string;
+            if (!string.IsNullOrWhiteSpace(monsterId))
+            {
+                SkinService.ApplyScopedMonsterRuntimeProviderSelection(providerId, monsterId, __1);
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "同步提供者怪物开关失败：" + exception.GetBaseException().Message);
         }
     }
 

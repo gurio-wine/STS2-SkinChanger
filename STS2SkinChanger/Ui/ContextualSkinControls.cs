@@ -693,7 +693,6 @@ internal static partial class ContextualSkinControls
                 groupId,
                 characterSelectPath,
                 characterSelectTextures);
-            ReplaySelectedCharacterPresentation(screen, character, groupId);
             RefreshLocalLobbyAvatar(screen);
             return;
         }
@@ -711,10 +710,14 @@ internal static partial class ContextualSkinControls
                 // previous character skin even though the PackedScene itself loaded correctly.
                 ReplaceCharacterBackground(screen, character, scene, resources);
                 RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
+                // CZN and similar complete packs create their own background variant and toolbar
+                // from this callback. Keep the provider overlay mounted while replaying it so
+                // those dynamically loaded scenes/textures resolve to the selected pack rather
+                // than a stale canonical or previously selected skin.
+                ReplaySelectedCharacterPresentation(screen, character, groupId);
                 return true;
             },
             includeProviderDependencies: true);
-        ReplaySelectedCharacterPresentation(screen, character, groupId);
         RefreshLocalLobbyAvatar(screen);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
@@ -770,6 +773,10 @@ internal static partial class ContextualSkinControls
                 // object is insufficient to prevent a previous skin's skeleton/atlas binding.
                 ReplaceCharacterBackground(screen, character, scene, resources);
                 RefreshCharacterButtonIcon(screen, character, texturePaths, resources);
+                // Replay provider-owned character-select presentation before WithRuntimeResources
+                // restores canonical paths. This is required for CZN's dynamic preview/background
+                // scenes and keeps their two toolbar controls tied to the selected package.
+                ReplaySelectedCharacterPresentation(screen, character, groupId);
                 return true;
             },
             includeProviderDependencies: true);
@@ -856,6 +863,9 @@ internal static partial class ContextualSkinControls
             return;
         }
 
+        var existingNodes = EnumerateNodes(screen)
+            .Select(node => node.GetInstanceId())
+            .ToHashSet();
         var button = FindCharacterButton(screen, character);
         if (button != null)
         {
@@ -865,6 +875,7 @@ internal static partial class ContextualSkinControls
                 button,
                 character);
         }
+        StabilizeProviderCharacterSelectControls(screen, existingNodes, providerId);
 
         var animatedBackground = screen.GetNodeOrNull<Node>("AnimatedBg");
         var sceneRoot = animatedBackground?.GetChildCount() > 0
@@ -874,6 +885,74 @@ internal static partial class ContextualSkinControls
         {
             ManagedCharacterAnimationBridge.TryStartCharacterSelectLoops(sceneRoot, providerId);
         }
+    }
+
+    /// <summary>
+    /// Some complete DLL skins create their own compact character-select toolbar from the
+    /// SelectCharacter callback (background variant, presentation mode, and similar controls).
+    /// UI replacements may clip that toolbar or draw a later full-screen layer above it. Keep
+    /// newly replayed interactive roots visible and above presentation art without recognizing a
+    /// particular Mod, node name, or button label.
+    /// </summary>
+    private static void StabilizeProviderCharacterSelectControls(
+        NCharacterSelectScreen screen,
+        IReadOnlySet<ulong> existingNodes,
+        string providerId)
+    {
+        var interactiveRoots = EnumerateNodes(screen)
+            .Where(node => !existingNodes.Contains(node.GetInstanceId()))
+            .OfType<Control>()
+            .Where(root =>
+                root.Name.ToString().Contains("CharacterSelectOptionsPanel", StringComparison.OrdinalIgnoreCase) ||
+                root.GetNodeOrNull<Node>("Options") != null ||
+                root.GetNodeOrNull<Node>("ButtonContainer") != null)
+            .ToArray();
+        if (interactiveRoots.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var root in interactiveRoots)
+        {
+            StabilizeProviderCharacterSelectControl(screen, root);
+        }
+
+        // Container layouts and third-party UI patches can run after the provider callback. Apply
+        // the same normalization once more after the tree has settled; this changes no authored
+        // size or position unless the whole control ended up outside the visible viewport.
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen))
+            {
+                return;
+            }
+
+            foreach (var root in interactiveRoots)
+            {
+                if (GodotObject.IsInstanceValid(root) && root.IsInsideTree())
+                {
+                    StabilizeProviderCharacterSelectControl(screen, root);
+                }
+            }
+        }).CallDeferred();
+
+        ModLog.Info($"已保留 {providerId} 的 {interactiveRoots.Length} 个选角交互面板。");
+    }
+
+    private static void StabilizeProviderCharacterSelectControl(
+        NCharacterSelectScreen screen,
+        Control control)
+    {
+        control.Visible = true;
+        control.ZAsRelative = false;
+        control.ZIndex = Math.Max(control.ZIndex, 100);
+        control.MoveToFront();
+
+        // Keep the provider-authored parent and transform. Reparenting or clamping to the
+        // viewport changes the intentional CZN toolbar placement and was the source of several
+        // historical "button moved" regressions. Only remove clipping on the newly-created
+        // toolbar itself; its ancestors remain owned by the game/provider.
+        control.ClipContents = false;
     }
 
     private static void RebuildRuntimeProviderCharacterDisplay(
