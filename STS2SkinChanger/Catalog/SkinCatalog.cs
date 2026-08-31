@@ -2987,6 +2987,55 @@ internal sealed partial class SkinCatalog : IDisposable
         return overlay;
     }
 
+    /// <summary>
+    /// Reads a provider's original raster card image without going through Godot's imported
+    /// resource loader.  Exported card projects are allowed to ship a plain PNG/JPEG/WebP with
+    /// no .import/.ctex pair; those files are valid card sources but cannot be loaded from a
+    /// generated PCK via ResourceLoader.Load&lt;Texture2D&gt;.
+    /// </summary>
+    public bool TryReadCardImageBytes(
+        string groupId,
+        string selectionId,
+        string resourcePath,
+        bool useSelectedProvider,
+        out byte[] bytes)
+    {
+        bytes = [];
+        ResourceAsset? asset;
+        if (useSelectedProvider)
+        {
+            var option = CardGroups
+                .FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+                .Options.FirstOrDefault(candidate =>
+                    candidate.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+            option ??= _pckCardOptions.FirstOrDefault(candidate =>
+                candidate.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+            asset = option == null ? null : ResolveCardProviderAsset(option, resourcePath);
+        }
+        else
+        {
+            asset = ResolveBaseline(resourcePath);
+        }
+
+        var directFile = asset == null ? null : FindDirectFile(asset, resourcePath);
+        if (directFile == null || !IsRasterImagePath(directFile.Path))
+        {
+            return false;
+        }
+
+        bytes = directFile.Archive.ReadFile(directFile.Path);
+        return bytes.Length > 0;
+    }
+
+    private static bool IsRasterImagePath(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".webp", StringComparison.OrdinalIgnoreCase);
+    }
+
     public RuntimeResourceOverlay BuildIsolatedCardResources(
         string groupId,
         string selectionId,
@@ -3790,7 +3839,9 @@ internal sealed partial class SkinCatalog : IDisposable
             var presentations = LoadCardPresentations(
                 index,
                 providerBehavior.Presentations,
-                exportedPortraits.Keys);
+                exportedPortraits.Normal.Keys
+                    .Concat(exportedPortraits.Ancient.Keys)
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
             var standardAssets = index.Assets.Values
                 .Where(asset => IsCardArtSourcePath(asset.SourcePath))
                 .ToArray();
@@ -3809,7 +3860,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 : allAssets.Where(asset => AssetDiffersFromBaseline(asset, baselineIndexes)).ToArray();
             if (changedAssets.Length == 0 &&
                 presentations.Count == 0 &&
-                exportedPortraits.Count == 0)
+                exportedPortraits.Normal.Count == 0 &&
+                exportedPortraits.Ancient.Count == 0)
             {
                 continue;
             }
@@ -3836,7 +3888,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 .ToArray();
             // An exported project is already one intentional package. Its manifest is
             // authoritative, so filename-derived variant splitting must not fragment it.
-            var splitVariants = exportedPortraits.Count == 0 &&
+            var splitVariants = exportedPortraits.Normal.Count == 0 &&
+                                exportedPortraits.Ancient.Count == 0 &&
                                 variants.Length > 1 &&
                                 VariantsOverlap(variants);
             var optionVariants = splitVariants
@@ -3862,9 +3915,11 @@ internal sealed partial class SkinCatalog : IDisposable
                     variantId,
                     variantName,
                     new Dictionary<string, string>(
-                        exportedPortraits,
+                        exportedPortraits.Normal,
                         StringComparer.OrdinalIgnoreCase),
-                    providerBehavior.AncientPortraits
+                    MergeAncientPortraits(
+                        providerBehavior.AncientPortraits,
+                        exportedPortraits.Ancient)
                         .Where(pair => !splitVariants || variant.Stems.Contains(
                             NormalizeCardPresentationType(pair.Key)))
                         .ToDictionary(
@@ -3888,6 +3943,40 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return options;
+    }
+
+    private static IReadOnlyDictionary<string, AncientCardPortrait> MergeAncientPortraits(
+        IReadOnlyDictionary<string, AncientCardPortrait> inferred,
+        IReadOnlyDictionary<string, AncientCardPortrait> exported)
+    {
+        if (inferred.Count == 0)
+        {
+            return exported;
+        }
+
+        if (exported.Count == 0)
+        {
+            return inferred;
+        }
+
+        var merged = new Dictionary<string, AncientCardPortrait>(
+            inferred,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in exported)
+        {
+            if (merged.TryGetValue(pair.Key, out var existing))
+            {
+                merged[pair.Key] = new AncientCardPortrait(
+                    pair.Value.NormalPortrait ?? existing.NormalPortrait,
+                    pair.Value.AncientPortrait ?? existing.AncientPortrait);
+            }
+            else
+            {
+                merged[pair.Key] = pair.Value;
+            }
+        }
+
+        return merged;
     }
 
     private static string NormalizeIndexedSourcePath(string path)
@@ -4018,10 +4107,12 @@ internal sealed partial class SkinCatalog : IDisposable
             ? bytes.AsMemory(Encoding.UTF8.Preamble.Length)
             : bytes;
 
-    private static IReadOnlyDictionary<string, string> LoadExportedCardPortraits(
+    private static ExportedCardPortraits LoadExportedCardPortraits(
         PckResourceIndex index)
     {
-        var portraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var normalPortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ancientPortraits = new Dictionary<string, AncientCardPortrait>(
+            StringComparer.OrdinalIgnoreCase);
 
         foreach (var configPath in index.Archive.Paths.Where(path =>
                      path.EndsWith("/card_replacements.json", StringComparison.OrdinalIgnoreCase)))
@@ -4029,8 +4120,10 @@ internal sealed partial class SkinCatalog : IDisposable
             ReadExportedPortraitEntries(
                 index,
                 configPath,
-                portraits,
+                normalPortraits,
+                ancientPortraits,
                 ["image", "portrait"],
+                ["ancientImage", "ancientPortrait"],
                 requireStaticKind: true,
                 overwrite: true);
         }
@@ -4041,8 +4134,10 @@ internal sealed partial class SkinCatalog : IDisposable
             ReadExportedPortraitEntries(
                 index,
                 configPath,
-                portraits,
+                normalPortraits,
+                ancientPortraits,
                 ["portrait", "image"],
+                [],
                 requireStaticKind: false,
                 overwrite: true);
         }
@@ -4055,20 +4150,24 @@ internal sealed partial class SkinCatalog : IDisposable
             ReadExportedPortraitEntries(
                 index,
                 configPath,
-                portraits,
+                normalPortraits,
+                ancientPortraits,
                 ["fallbackImage", "image", "portrait"],
+                [],
                 requireStaticKind: false,
                 overwrite: false);
         }
 
-        return portraits;
+        return new ExportedCardPortraits(normalPortraits, ancientPortraits);
     }
 
     private static void ReadExportedPortraitEntries(
         PckResourceIndex index,
         string configPath,
-        IDictionary<string, string> portraits,
+        IDictionary<string, string> normalPortraits,
+        IDictionary<string, AncientCardPortrait> ancientPortraits,
         IReadOnlyList<string> portraitProperties,
+        IReadOnlyList<string> ancientPortraitProperties,
         bool requireStaticKind,
         bool overwrite)
     {
@@ -4104,21 +4203,47 @@ internal sealed partial class SkinCatalog : IDisposable
                 var portrait = portraitProperties
                     .Select(property => TryGetJsonString(entry, property))
                     .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
-                if (string.IsNullOrWhiteSpace(portrait) ||
-                    (!portrait.StartsWith("res://", StringComparison.OrdinalIgnoreCase) &&
-                     !portrait.StartsWith("uid://", StringComparison.OrdinalIgnoreCase)))
+                var ancientPortrait = ancientPortraitProperties
+                    .Select(property => TryGetJsonString(entry, property))
+                    .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+                if (string.IsNullOrWhiteSpace(portrait) && string.IsNullOrWhiteSpace(ancientPortrait))
+                {
+                    continue;
+                }
+
+                if (!IsResourceReference(portrait) || !IsResourceReference(ancientPortrait))
                 {
                     continue;
                 }
 
                 var cardType = NormalizeCardPresentationType(cardId);
-                if (overwrite)
+                if (!string.IsNullOrWhiteSpace(portrait))
                 {
-                    portraits[cardType] = portrait;
+                    if (overwrite)
+                    {
+                        normalPortraits[cardType] = portrait;
+                    }
+                    else
+                    {
+                        normalPortraits.TryAdd(cardType, portrait);
+                    }
                 }
-                else
+
+                if (!string.IsNullOrWhiteSpace(ancientPortrait))
                 {
-                    portraits.TryAdd(cardType, portrait);
+                    if (overwrite || !ancientPortraits.ContainsKey(cardType))
+                    {
+                        ancientPortraits[cardType] = new AncientCardPortrait(
+                            portrait,
+                            ancientPortrait);
+                    }
+                    else
+                    {
+                        var existing = ancientPortraits[cardType];
+                        ancientPortraits[cardType] = new AncientCardPortrait(
+                            existing.NormalPortrait ?? portrait,
+                            existing.AncientPortrait ?? ancientPortrait);
+                    }
                 }
             }
         }
@@ -4127,6 +4252,11 @@ internal sealed partial class SkinCatalog : IDisposable
             System.Diagnostics.Debug.WriteLine(
                 $"无法读取卡牌管理器导出配置 {configPath}: {exception.Message}");
         }
+
+        static bool IsResourceReference(string? path) =>
+            string.IsNullOrWhiteSpace(path) ||
+            path.StartsWith("res://", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("uid://", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? TryGetJsonString(JsonElement element, string propertyName) =>
@@ -5666,6 +5796,10 @@ internal sealed record CardCatalogEntry(
     string FilterGroupId);
 
 internal sealed record AncientCardPortrait(string? NormalPortrait, string? AncientPortrait);
+
+internal sealed record ExportedCardPortraits(
+    IReadOnlyDictionary<string, string> Normal,
+    IReadOnlyDictionary<string, AncientCardPortrait> Ancient);
 
 internal sealed record CardPresentationDefinition(
     bool UseAncientLayout = false,

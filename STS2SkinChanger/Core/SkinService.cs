@@ -2118,10 +2118,73 @@ internal static class SkinService
             return null;
         }
 
-        return ResourceLoader.Load<Texture2D>(
+        var loaded = ResourceLoader.Load<Texture2D>(
             isolatedPath,
             null,
             ResourceLoader.CacheMode.IgnoreDeep);
+        if (loaded != null)
+        {
+            return loaded;
+        }
+
+        // Some exported card providers ship raw raster files without Godot's imported
+        // .import/.ctex pair.  The generated PCK is still useful for the normal resource path,
+        // but ResourceLoader cannot decode that raw entry.  Read the selected provider's source
+        // bytes directly and create an in-memory texture instead of falling back to the game
+        // portrait.  This is deliberately provider-agnostic.
+        var catalog = Catalog;
+        if (catalog != null && catalog.TryReadCardImageBytes(
+                groupId,
+                selection,
+                resourcePath,
+                useSelectedProvider,
+                out var bytes))
+        {
+            return ImageTexture.CreateFromImage(LoadRasterImageFromBuffer(bytes, resourcePath));
+        }
+
+        return null;
+    }
+
+    private static Image LoadRasterImageFromBuffer(byte[] bytes, string imagePath)
+    {
+        if (bytes.Length == 0)
+        {
+            throw new InvalidOperationException($"独立卡牌图片为空：{imagePath}");
+        }
+
+        var image = new Image();
+        Error error;
+        if (HasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+        {
+            error = image.LoadPngFromBuffer(bytes);
+        }
+        else if (HasPrefix(bytes, [0xff, 0xd8, 0xff]))
+        {
+            error = image.LoadJpgFromBuffer(bytes);
+        }
+        else if (bytes.Length >= 12 &&
+                 HasPrefix(bytes, [(byte)'R', (byte)'I', (byte)'F', (byte)'F']) &&
+                 bytes.AsSpan(8, 4).SequenceEqual([(byte)'W', (byte)'E', (byte)'B', (byte)'P']))
+        {
+            error = image.LoadWebpFromBuffer(bytes);
+        }
+        else
+        {
+            image.Dispose();
+            throw new InvalidOperationException($"无法识别独立卡牌图片格式：{imagePath}");
+        }
+
+        if (error != Error.Ok || image.IsEmpty())
+        {
+            image.Dispose();
+            throw new InvalidOperationException($"无法解码独立卡牌图片（{error}）：{imagePath}");
+        }
+
+        return image;
+
+        static bool HasPrefix(byte[] value, ReadOnlySpan<byte> prefix) =>
+            value.Length >= prefix.Length && value.AsSpan(0, prefix.Length).SequenceEqual(prefix);
     }
 
     private static IsolatedCardOverlayState EnsureIsolatedCardOverlay(

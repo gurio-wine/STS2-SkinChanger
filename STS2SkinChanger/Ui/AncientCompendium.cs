@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
@@ -22,36 +23,63 @@ internal static class AncientCompendiumEntry
     private const string ButtonName = "STS2AncientCompendiumButton";
     private const string ScreenName = "STS2AncientCompendium";
     private static readonly System.Reflection.FieldInfo StackField = AccessTools.Field(typeof(NSubmenu), "_stack");
+    private static readonly ConditionalWeakTable<NCompendiumSubmenu, AttachmentState> AttachmentStates = new();
     private static NCompendiumBottomButton? _entryButton;
 
     public static void Attach(NCompendiumSubmenu compendium)
     {
-        if (compendium.GetNodeOrNull<NCompendiumBottomButton>(
-                $"MarginContainer/VBoxContainer/BottomRow/{ButtonName}") != null)
+        if (!GodotObject.IsInstanceValid(compendium))
         {
             return;
         }
 
+        var state = AttachmentStates.GetOrCreateValue(compendium);
+        var button = FindOwnButton(compendium) ?? state.Button;
+        if (!GodotObject.IsInstanceValid(button))
+        {
+            button = null;
+        }
+
+        var nativeRow = compendium.GetNodeOrNull<HBoxContainer>("MarginContainer/VBoxContainer/BottomRow");
+        var visibleAnchor = FindVisibleArchiveButton(compendium);
+        var visibleHost = visibleAnchor == null
+            ? null
+            : FindInsertionHost(visibleAnchor, compendium);
+        if (button == null)
+        {
+            if (nativeRow == null && visibleHost == null)
+            {
+                ScheduleDeferredAttach(compendium, state);
+                return;
+            }
+
+            button = CreateButton(compendium);
+            state.Button = button;
+            if (nativeRow != null)
+            {
+                nativeRow.AddChild(button);
+            }
+            else
+            {
+                visibleHost!.AddChild(button);
+            }
+        }
+
+        state.Button = button;
+        _entryButton = button;
+        if (!TryAttachToVisibleHost(compendium, button, visibleAnchor, visibleHost))
+        {
+            ScheduleDeferredAttach(compendium, state);
+        }
+    }
+
+    private static NCompendiumBottomButton CreateButton(NCompendiumSubmenu compendium)
+    {
         var scenePath = SceneHelper.GetScenePath("screens/main_menu/compendium_bottom_button");
         var button = PreloadManager.Cache.GetScene(scenePath)
             .Instantiate<NCompendiumBottomButton>(PackedScene.GenEditState.Disabled);
         button.Name = ButtonName;
         button.FocusMode = Control.FocusModeEnum.All;
-
-        var bottomRow = compendium.GetNodeOrNull<HBoxContainer>("MarginContainer/VBoxContainer/BottomRow");
-        if (bottomRow == null)
-        {
-            ModLog.Error("图鉴底部缺少按钮行节点，先古图鉴入口未添加。");
-            return;
-        }
-
-        bottomRow.AddChild(button);
-        var statistics = compendium.GetNodeOrNull<NCompendiumBottomButton>("%StatisticsButton");
-        var runHistory = compendium.GetNodeOrNull<NCompendiumBottomButton>("%RunHistoryButton");
-        if (statistics != null && runHistory != null)
-        {
-            bottomRow.MoveChild(button, statistics.GetIndex() + 1);
-        }
 
         var buttonLabel = button.GetNodeOrNull<MegaLabel>("Label");
         buttonLabel?.SetTextAutoSize(ModLocalization.Get(ModText.AncientCompendium));
@@ -75,12 +103,98 @@ internal static class AncientCompendiumEntry
             }
         }
 
-        _entryButton = button;
-
         button.Connect(
             NClickableControl.SignalName.Released,
             Callable.From((Action<NButton>)(_ => Open(compendium))));
+        return button;
+    }
 
+    private static bool TryAttachToVisibleHost(
+        NCompendiumSubmenu compendium,
+        NCompendiumBottomButton button,
+        Node? visibleAnchor,
+        Node? visibleHost)
+    {
+        if (!GodotObject.IsInstanceValid(button))
+        {
+            return false;
+        }
+
+        visibleAnchor ??= FindVisibleArchiveButton(compendium);
+        visibleHost ??= visibleAnchor == null
+            ? null
+            : FindInsertionHost(visibleAnchor, compendium);
+        if (visibleHost == null || !IsVisibleInTree(visibleHost))
+        {
+            // The vanilla layout may be the only valid host. It is often not visible during
+            // _Ready, so defer until the submenu has entered the tree instead of declaring the
+            // button lost.
+            var nativeRow = compendium.GetNodeOrNull<HBoxContainer>("MarginContainer/VBoxContainer/BottomRow");
+            if (nativeRow == null || !IsVisibleInTree(nativeRow))
+            {
+                return false;
+            }
+
+            button.Show();
+            ConfigureFocus(compendium, button, nativeRow);
+            return true;
+        }
+
+        var parent = button.GetParent();
+        if (parent != visibleHost)
+        {
+            parent?.RemoveChild(button);
+            visibleHost.AddChild(button);
+        }
+
+        button.Show();
+        if (visibleAnchor?.GetParent() == visibleHost)
+        {
+            visibleHost.MoveChild(button, Math.Min(
+                visibleAnchor.GetIndex() + 1,
+                Math.Max(visibleHost.GetChildCount() - 1, 0)));
+
+            // A custom page may use a plain Control instead of a Container.  Keep the entry
+            // beside the visible archive tile in that case; otherwise a newly added child
+            // would default to (0, 0) and appear to be missing under the page decorations.
+            if (visibleHost is not Container &&
+                visibleAnchor is Control anchorControl &&
+                button is Control buttonControl)
+            {
+                buttonControl.Size = anchorControl.Size;
+                buttonControl.Position = anchorControl.Position +
+                                          new Vector2(anchorControl.Size.X + 24f, 0f);
+            }
+        }
+
+        ConfigureFocus(compendium, button, visibleHost);
+        return true;
+    }
+
+    private static void ConfigureFocus(
+        NCompendiumSubmenu compendium,
+        NCompendiumBottomButton button,
+        Node host)
+    {
+        var controls = host.GetChildren()
+            .OfType<Control>()
+            .Where(control => control != button)
+            .ToArray();
+        var index = button.GetIndex();
+        var previous = controls.LastOrDefault(control => control.GetIndex() < index);
+        var next = controls.FirstOrDefault(control => control.GetIndex() > index);
+        if (previous != null)
+        {
+            button.FocusNeighborLeft = previous.GetPath();
+        }
+
+        if (next != null)
+        {
+            button.FocusNeighborRight = next.GetPath();
+        }
+
+        var statistics = compendium.GetNodeOrNull<NCompendiumBottomButton>("%StatisticsButton");
+        var runHistory = compendium.GetNodeOrNull<NCompendiumBottomButton>("%RunHistoryButton");
         if (statistics == null || runHistory == null)
         {
             return;
@@ -97,6 +211,80 @@ internal static class AncientCompendiumEntry
         {
             bestiary.FocusNeighborBottom = button.GetPath();
         }
+    }
+
+    private static void ScheduleDeferredAttach(
+        NCompendiumSubmenu compendium,
+        AttachmentState state)
+    {
+        if (state.DeferredScheduled || state.DeferredAttempts >= 12)
+        {
+            return;
+        }
+
+        state.DeferredScheduled = true;
+        state.DeferredAttempts++;
+        Callable.From(() =>
+        {
+            state.DeferredScheduled = false;
+            if (GodotObject.IsInstanceValid(compendium))
+            {
+                Attach(compendium);
+            }
+        }).CallDeferred();
+    }
+
+    private static NCompendiumBottomButton? FindOwnButton(Node root) =>
+        EnumerateDescendants(root)
+            .OfType<NCompendiumBottomButton>()
+            .FirstOrDefault(button => button.Name.ToString().Equals(ButtonName, StringComparison.Ordinal));
+
+    private static Node? FindVisibleArchiveButton(Node root) =>
+        EnumerateDescendants(root)
+            .Where(node => node is NCompendiumBottomButton or NShortSubmenuButton)
+            .Where(node => !node.Name.ToString().Equals(ButtonName, StringComparison.Ordinal) &&
+                           IsVisibleInTree(node))
+            .OrderBy(node => node.GetPath().ToString().Length)
+            .FirstOrDefault();
+
+    private static Node? FindInsertionHost(Node anchor, Node root)
+    {
+        var current = anchor.GetParent();
+        while (current != null && current != root)
+        {
+            if (current is Container && IsVisibleInTree(current))
+            {
+                return current;
+            }
+
+            current = current.GetParent();
+        }
+
+        return anchor.GetParent() is { } parent && IsVisibleInTree(parent)
+            ? parent
+            : null;
+    }
+
+    private static bool IsVisibleInTree(Node node) =>
+        node is CanvasItem canvasItem && canvasItem.IsVisibleInTree();
+
+    private static IEnumerable<Node> EnumerateDescendants(Node root)
+    {
+        foreach (var child in root.GetChildren())
+        {
+            yield return child;
+            foreach (var descendant in EnumerateDescendants(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private sealed class AttachmentState
+    {
+        public NCompendiumBottomButton? Button { get; set; }
+        public int DeferredAttempts { get; set; }
+        public bool DeferredScheduled { get; set; }
     }
 
     private static void Open(NCompendiumSubmenu compendium)
@@ -1093,6 +1281,13 @@ internal static class ManagedAncientStaticBackgroundWindowPatch
 [HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu._Ready))]
 internal static class AncientCompendiumEntryPatch
 {
+    private static void Postfix(NCompendiumSubmenu __instance) => AncientCompendiumEntry.Attach(__instance);
+}
+
+[HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu.OnSubmenuOpened))]
+internal static class AncientCompendiumEntryOpenedPatch
+{
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(NCompendiumSubmenu __instance) => AncientCompendiumEntry.Attach(__instance);
 }
 
