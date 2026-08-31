@@ -14,14 +14,14 @@ internal static class RelicSkinResources
     {
         try
         {
-            result = SkinService.GetSelectedRelicIcon(resourcePath) ?? result;
+            result = SkinService.GetRelicIconOverride(resourcePath) ?? result;
         }
         catch (Exception exception)
         {
             if (ReportedFailures.Add(resourcePath))
             {
                 ModLog.Warn(
-                    $"隔离加载皮肤附带的遗物图标失败，已保留游戏图标 {resourcePath}：" +
+                    $"隔离加载遗物图标失败，已保留当前图标 {resourcePath}：" +
                     exception.GetBaseException().Message);
             }
         }

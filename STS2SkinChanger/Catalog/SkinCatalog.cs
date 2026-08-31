@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text;
@@ -44,6 +45,10 @@ internal sealed partial class SkinCatalog : IDisposable
         _providerRelicAssets = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlySet<string>>
         _isolatedRelicProviderPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string?>
+        _relicOwnerGroups = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, BaselineRelicTextureDefinition?>
+        _baselineRelicTextureDefinitions = new(StringComparer.OrdinalIgnoreCase);
 
     private SkinCatalog(
         PckArchive gameArchive,
@@ -1552,6 +1557,83 @@ internal sealed partial class SkinCatalog : IDisposable
         return candidates[^1].Group.Id;
     }
 
+    public string? FindRelicIconOwnerGroup(string resourcePath)
+    {
+        var normalizedPath = NormalizeTakeoverPath(resourcePath);
+        if (!IsRelicAtlasSpritePath(normalizedPath))
+        {
+            return null;
+        }
+
+        if (_relicOwnerGroups.TryGetValue(normalizedPath, out var cached))
+        {
+            return cached;
+        }
+
+        var owner = Groups.FirstOrDefault(group => group.Options.Any(option =>
+            IsCharacterAppearanceOption(option) &&
+            TryResolveProviderAsset(option, normalizedPath, out _)))?.Id;
+        _relicOwnerGroups[normalizedPath] = owner;
+        return owner;
+    }
+
+    public bool TryGetBaselineRelicTextureDefinition(
+        string resourcePath,
+        out BaselineRelicTextureDefinition definition)
+    {
+        var normalizedPath = NormalizeTakeoverPath(resourcePath);
+        if (_baselineRelicTextureDefinitions.TryGetValue(normalizedPath, out var cached))
+        {
+            definition = cached!;
+            return cached != null;
+        }
+
+        BaselineRelicTextureDefinition? parsed = null;
+        var baseline = ResolveBaseline(normalizedPath);
+        var directFile = baseline == null ? null : FindDirectFile(baseline, normalizedPath);
+        if (directFile != null)
+        {
+            var text = Encoding.UTF8.GetString(directFile.Archive.ReadFile(directFile.Path));
+            var atlasPath = EmbeddedResourcePathRegex()
+                .Matches(text)
+                .Select(match => match.Value)
+                .FirstOrDefault(IsRelicAtlasTexturePath);
+            var region = ParseAtlasTextureRect(text, "region");
+            if (atlasPath != null && region != null)
+            {
+                parsed = new BaselineRelicTextureDefinition(
+                    atlasPath,
+                    region.Value,
+                    ParseAtlasTextureRect(text, "margin") ?? default,
+                    AtlasTextureFilterClipRegex().IsMatch(text));
+            }
+        }
+
+        _baselineRelicTextureDefinitions[normalizedPath] = parsed;
+        definition = parsed!;
+        return parsed != null;
+    }
+
+    private static RelicTextureRect? ParseAtlasTextureRect(string text, string property)
+    {
+        var match = AtlasTextureRectRegex().Match(text);
+        while (match.Success)
+        {
+            if (match.Groups["property"].Value.Equals(property, StringComparison.OrdinalIgnoreCase) &&
+                float.TryParse(match.Groups["x"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var x) &&
+                float.TryParse(match.Groups["y"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var y) &&
+                float.TryParse(match.Groups["width"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var width) &&
+                float.TryParse(match.Groups["height"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var height))
+            {
+                return new RelicTextureRect(x, y, width, height);
+            }
+
+            match = match.NextMatch();
+        }
+
+        return null;
+    }
+
     internal bool TryResolveProviderAsset(
         SkinOption selected,
         string sourcePath,
@@ -2543,10 +2625,12 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyCollection<string> resourcePaths,
         string aliasToken)
     {
-        if (resourcePaths.Any(path => !IsRelicAtlasSpritePath(path)))
+        if (resourcePaths.Any(path =>
+                !IsRelicAtlasSpritePath(path) &&
+                !IsRelicAtlasTexturePath(path)))
         {
             throw new ArgumentException(
-                "遗物私有资源包只能包含遗物图集切片。",
+                "遗物私有资源包只能包含遗物图集或其切片。",
                 nameof(resourcePaths));
         }
 
@@ -5620,6 +5704,14 @@ internal sealed partial class SkinCatalog : IDisposable
         RegexOptions.IgnoreCase)]
     private static partial Regex RelicAtlasTextureRegex();
 
+    [GeneratedRegex(
+        "(?m)^\\s*(?<property>region|margin)\\s*=\\s*Rect2\\(\\s*(?<x>-?[0-9.]+)\\s*,\\s*(?<y>-?[0-9.]+)\\s*,\\s*(?<width>-?[0-9.]+)\\s*,\\s*(?<height>-?[0-9.]+)\\s*\\)",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex AtlasTextureRectRegex();
+
+    [GeneratedRegex("(?m)^\\s*filter_clip\\s*=\\s*true\\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex AtlasTextureFilterClipRegex();
+
     [GeneratedRegex("^res://scenes/ui/character_icons/([^/.]+?)_icon\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterIconSceneRegex();
 
@@ -5959,6 +6051,14 @@ internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, string> SourceAliases,
     IReadOnlyDictionary<string, string> PayloadAliases,
     IReadOnlySet<string> CanonicalDependencyPaths);
+
+internal readonly record struct RelicTextureRect(float X, float Y, float Width, float Height);
+
+internal sealed record BaselineRelicTextureDefinition(
+    string AtlasPath,
+    RelicTextureRect Region,
+    RelicTextureRect Margin,
+    bool FilterClip);
 
 internal sealed record VisualResourceBinding(
     string SourcePath,

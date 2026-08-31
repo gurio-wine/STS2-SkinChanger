@@ -825,6 +825,38 @@ if (validateIndex >= 0)
                                 $"validated provider relic takeover {group.Id}/{option.Id}: " +
                                 $"{providerRelicSpritePaths.Count} slices");
                         }
+
+                        if (!catalog.TryGetBaselineRelicTextureDefinition(
+                                providerOnlyRelicPath,
+                                out var baselineDefinition))
+                        {
+                            failures.Add(
+                                $"{group.Id}/{option.Id}: cannot parse baseline relic layout " +
+                                providerOnlyRelicPath);
+                        }
+                        else
+                        {
+                            var baselineAtlas = catalog.BuildIsolatedRelicResourceOverlay(
+                                resolvedRelicGroupId,
+                                SkinCatalog.BaseOptionId,
+                                [baselineDefinition.AtlasPath],
+                                $"validate/baseline-relic-atlas/{validated:D4}");
+                            if (!baselineAtlas.ResourcePaths.ContainsKey(
+                                    baselineDefinition.AtlasPath) ||
+                                baselineAtlas.CanonicalDependencyPaths.Count > 0 ||
+                                baselineAtlas.Files.Keys.Any(path => path.StartsWith(
+                                    "res://images/atlases/relic_",
+                                    StringComparison.OrdinalIgnoreCase)))
+                            {
+                                failures.Add(
+                                    $"{group.Id}/{option.Id}: baseline relic atlas was not isolated " +
+                                    baselineDefinition.AtlasPath);
+                            }
+                            else
+                            {
+                                validated++;
+                            }
+                        }
                     }
                     catch (Exception exception)
                     {
@@ -1399,7 +1431,8 @@ if (validateIndex >= 0)
                         StringComparison.OrdinalIgnoreCase) ||
                     referencedPath.EndsWith(".gd", StringComparison.OrdinalIgnoreCase) ||
                     referencedPath.EndsWith(".gdc", StringComparison.OrdinalIgnoreCase) ||
-                    referencedPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                    referencedPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
+                    referencedPath.EndsWith(".gdshader", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }

@@ -38,6 +38,10 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> CardPortraitCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Texture2D> BaselineRelicAtlasCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Texture2D> BaselineRelicIconCache =
+        new(StringComparer.OrdinalIgnoreCase);
     // A malformed or incomplete provider card must never throw through CardModel.Portrait.
     // Cache the failed request for this session so every redraw does not rebuild the same
     // overlay (and so the vanilla portrait remains usable in choice screens).
@@ -379,6 +383,8 @@ internal static class SkinService
                 PreparedRuntimeOverlays.Clear();
                 RuntimeResourceBundles.Clear();
                 CardPortraitCache.Clear();
+                BaselineRelicAtlasCache.Clear();
+                BaselineRelicIconCache.Clear();
                 FailedCardPortraitRequests.Clear();
                 IsolatedCardOverlayCache.Clear();
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
@@ -2650,7 +2656,7 @@ internal static class SkinService
         }
     }
 
-    public static Texture2D? GetSelectedRelicIcon(string resourcePath)
+    public static Texture2D? GetRelicIconOverride(string resourcePath)
     {
         lock (Sync)
         {
@@ -2659,9 +2665,14 @@ internal static class SkinService
                 resourcePath,
                 Config.Selections,
                 Config.VisualProviderPriority);
-            if (catalog == null || groupId == null)
+            if (catalog == null)
             {
                 return null;
+            }
+
+            if (groupId == null)
+            {
+                return GetBaselineRelicIcon(catalog, resourcePath);
             }
 
             var cacheKey = RuntimeResourceKey(groupId, resourcePath);
@@ -2675,6 +2686,71 @@ internal static class SkinService
             return cached as Texture2D ?? throw new InvalidOperationException(
                 $"隔离的遗物图标不是贴图：{resourcePath}");
         }
+    }
+
+    private static Texture2D? GetBaselineRelicIcon(SkinCatalog catalog, string resourcePath)
+    {
+        if (BaselineRelicIconCache.TryGetValue(resourcePath, out var cached) &&
+            GodotObject.IsInstanceValid(cached))
+        {
+            return cached;
+        }
+
+        BaselineRelicIconCache.Remove(resourcePath);
+        var ownerGroupId = catalog.FindRelicIconOwnerGroup(resourcePath);
+        if (ownerGroupId == null ||
+            !catalog.TryGetBaselineRelicTextureDefinition(resourcePath, out var definition))
+        {
+            return null;
+        }
+
+        if (!BaselineRelicAtlasCache.TryGetValue(definition.AtlasPath, out var atlas) ||
+            !GodotObject.IsInstanceValid(atlas))
+        {
+            BaselineRelicAtlasCache.Remove(definition.AtlasPath);
+            var prepared = GetOrPrepareRuntimeOverlay(
+                catalog,
+                ownerGroupId,
+                SkinCatalog.BaseOptionId,
+                [definition.AtlasPath],
+                includeProviderDependencies: false,
+                isolateRelicCanonicalPaths: true);
+            if (prepared.OverlayPath != null &&
+                !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException("Godot 拒绝加载原版遗物私有图集。");
+            }
+
+            if (!prepared.ResourcePaths.TryGetValue(definition.AtlasPath, out var atlasAlias))
+            {
+                throw new InvalidOperationException($"无法隔离原版遗物图集：{definition.AtlasPath}");
+            }
+
+            atlas = ResourceLoader.Load<Texture2D>(
+                        atlasAlias,
+                        null,
+                        ResourceLoader.CacheMode.IgnoreDeep) ??
+                    throw new InvalidOperationException($"无法加载原版遗物私有图集：{atlasAlias}");
+            BaselineRelicAtlasCache[definition.AtlasPath] = atlas;
+        }
+
+        var result = new AtlasTexture
+        {
+            Atlas = atlas,
+            Region = new Rect2(
+                definition.Region.X,
+                definition.Region.Y,
+                definition.Region.Width,
+                definition.Region.Height),
+            Margin = new Rect2(
+                definition.Margin.X,
+                definition.Margin.Y,
+                definition.Margin.Width,
+                definition.Margin.Height),
+            FilterClip = definition.FilterClip
+        };
+        BaselineRelicIconCache[resourcePath] = result;
+        return result;
     }
 
     private static void LoadSelectedRelicBundle(SkinCatalog catalog, string groupId)
@@ -3374,6 +3450,7 @@ internal static class SkinService
         var reuseMountedPrivateDependencies =
             !isolateRelicCanonicalPaths &&
             catalog.IsRuntimeProviderOption(groupId, selection) &&
+            catalog.ProviderRequiresCoherentRuntimePackage(selection) &&
             Config.GetSelection(groupId).Equals(
                 selection,
                 StringComparison.OrdinalIgnoreCase);
@@ -4092,6 +4169,7 @@ internal static class SkinService
     private static void ClearRuntimeResourceCache(string groupId)
     {
         var prefix = groupId + "\n";
+        RestoreCachedRelicTexturesToBaseline(groupId, prefix);
         foreach (var key in RuntimeResourceCache.Keys
                      .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                      .ToArray())
@@ -4104,6 +4182,63 @@ internal static class SkinService
         {
             PreparedRuntimeOverlays.Remove(key);
             RuntimeResourceBundles.Remove(key);
+        }
+    }
+
+    private static void RestoreCachedRelicTexturesToBaseline(string groupId, string cachePrefix)
+    {
+        if (Catalog == null)
+        {
+            return;
+        }
+
+        var restored = 0;
+        foreach (var pair in RuntimeResourceCache.Where(pair =>
+                     pair.Key.StartsWith(cachePrefix, StringComparison.OrdinalIgnoreCase) &&
+                     pair.Value is AtlasTexture))
+        {
+            var pathStart = pair.Key.IndexOf('\n', cachePrefix.Length);
+            if (pathStart < 0 || pathStart + 1 >= pair.Key.Length)
+            {
+                continue;
+            }
+
+            var resourcePath = pair.Key[(pathStart + 1)..];
+            if (!SkinCatalog.IsRelicAtlasSpritePath(resourcePath) ||
+                pair.Value is not AtlasTexture existing)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (GetBaselineRelicIcon(Catalog, resourcePath) is not AtlasTexture baseline)
+                {
+                    continue;
+                }
+
+                // TextureRect nodes can keep the old AtlasTexture object after the character
+                // selection changes. Mutate that still-referenced object back to the game's
+                // atlas and coordinates before dropping our cache entry; merely remounting the
+                // original PCK cannot update an already constructed Godot Resource.
+                existing.Atlas = baseline.Atlas;
+                existing.Region = baseline.Region;
+                existing.Margin = baseline.Margin;
+                existing.FilterClip = baseline.FilterClip;
+                existing.EmitChanged();
+                restored++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"回退 {resourcePath} 的遗物图集缓存失败，将在下次创建图标时恢复：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        if (restored > 0)
+        {
+            ModLog.Info($"已将 {groupId} 的 {restored} 个存量遗物图标恢复到游戏图集。");
         }
     }
 
