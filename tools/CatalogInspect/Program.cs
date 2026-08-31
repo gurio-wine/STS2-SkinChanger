@@ -27,15 +27,19 @@ if (args.Length < 2)
 {
     Console.Error.WriteLine(
         "usage: CatalogInspect <game.pck> <mod-root> [<mod-root> ...] " +
-        "[--runtime-scene <group> <selection> <scene> <output.pck> | --validate-runtime] " +
+        "[--runtime-scene <group> <selection> <scene> <output.pck> | " +
+        "--visual-overlay <group> <selection> <output.pck> | --validate-runtime] " +
         "or CatalogInspect <game.pck> --self-test-card-export | --self-test-localization " +
         "or CatalogInspect --self-test-game-pack-locator");
     return;
 }
 
 var runtimeIndex = Array.IndexOf(args, "--runtime-scene");
+var visualOverlayIndex = Array.IndexOf(args, "--visual-overlay");
 var validateIndex = Array.IndexOf(args, "--validate-runtime");
-var optionIndexes = new[] { runtimeIndex, validateIndex }.Where(index => index >= 0).ToArray();
+var optionIndexes = new[] { runtimeIndex, visualOverlayIndex, validateIndex }
+    .Where(index => index >= 0)
+    .ToArray();
 var firstOptionIndex = optionIndexes.Length == 0 ? args.Length : optionIndexes.Min();
 var modRoots = args.Skip(1).Take(firstOptionIndex - 1);
 var manifests = new List<InspectedManifest>();
@@ -226,14 +230,73 @@ if (runtimeIndex >= 0)
     var includeProviderDependencies = !args
         .Skip(runtimeIndex + 5)
         .Contains("--no-provider-dependencies", StringComparer.OrdinalIgnoreCase);
+    var reuseMountedPrivateDependencies = args
+        .Skip(runtimeIndex + 5)
+        .Contains("--reuse-mounted-private-dependencies", StringComparer.OrdinalIgnoreCase);
     var overlay = catalog.BuildRuntimeResourceOverlay(
         args[runtimeIndex + 1],
         args[runtimeIndex + 2],
         scenePaths,
         "inspect/001",
-        includeProviderDependencies);
+        includeProviderDependencies,
+        reuseMountedPrivateDependencies);
     PckArchive.Write(args[runtimeIndex + 4], overlay.Files);
     Console.WriteLine($"runtime resources: {string.Join(", ", overlay.ResourcePaths.Values)} ({overlay.Files.Count} files)");
+}
+
+if (visualOverlayIndex >= 0)
+{
+    if (args.Length < visualOverlayIndex + 4)
+    {
+        throw new ArgumentException("--visual-overlay requires: <group> <selection> <output.pck>");
+    }
+
+    var groupId = args[visualOverlayIndex + 1];
+    var selectionId = args[visualOverlayIndex + 2];
+    var selectedFiles = catalog.BuildOverlay(
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [groupId] = selectionId
+        },
+        new HashSet<string>([groupId], StringComparer.OrdinalIgnoreCase));
+    var files = selectedFiles;
+    if (args.Skip(visualOverlayIndex + 4).Contains(
+            "--reuse-source-archive",
+            StringComparer.OrdinalIgnoreCase))
+    {
+        var providerPack = selectedFiles.Values
+            .GroupBy(file => file.Archive.Path, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(group => group.Count())
+            .Select(group => group.Key)
+            .First();
+        using var providerArchive = PckArchive.Open(providerPack);
+        files = catalog.BuildBaselineDependencyOverlay(providerArchive.Paths);
+        foreach (var selectedFile in selectedFiles)
+        {
+            if (selectedFile.Value.Archive.Path.Equals(
+                    providerPack,
+                    StringComparison.OrdinalIgnoreCase) &&
+                selectedFile.Key.Equals(
+                    selectedFile.Value.Path,
+                    StringComparison.OrdinalIgnoreCase) &&
+                selectedFile.Key.StartsWith(
+                    "res://.godot/imported/",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                files.Remove(selectedFile.Key);
+                continue;
+            }
+
+            files[selectedFile.Key] = selectedFile.Value;
+        }
+    }
+    PckArchive.WriteFromArchives(
+        args[visualOverlayIndex + 3],
+        files.ToDictionary(
+            pair => pair.Key,
+            pair => (pair.Value.Archive, pair.Value.Path),
+            StringComparer.OrdinalIgnoreCase));
+    Console.WriteLine($"visual overlay: {files.Count} files");
 }
 
 if (validateIndex >= 0)

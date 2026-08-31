@@ -27,6 +27,7 @@ internal static class SkinService
     public const string InheritCardSelectionId = "__inherit__";
     public const string InheritMonsterSelectionId = "__monster_category__";
     public const int CardSkinPresetNameMaxLength = 40;
+    private const long DirectRuntimeProviderPackThresholdBytes = 64L * 1024L * 1024L;
 
     private static readonly object Sync = new();
     private static readonly Dictionary<string, Resource> RuntimeResourceCache =
@@ -52,6 +53,8 @@ internal static class SkinService
     private static readonly Dictionary<string, string> MountedOverlayCache =
         new(StringComparer.Ordinal);
     private static readonly HashSet<string> MountedScopedRuntimeProviderPacks =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, MountedProviderPackState> MountedLargeRuntimeProviderPacks =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, HashSet<string>> RuntimeCanonicalDependencyPaths =
         new(StringComparer.OrdinalIgnoreCase);
@@ -362,6 +365,7 @@ internal static class SkinService
                 FailedAncientStyleMethods.Clear();
                 MountedOverlayCache.Clear();
                 MountedScopedRuntimeProviderPacks.Clear();
+                MountedLargeRuntimeProviderPacks.Clear();
                 RuntimeCanonicalDependencyPaths.Clear();
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
@@ -2441,12 +2445,42 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            var mode = Catalog?.GetRuntimeMonsterVisualMode(groupId, GetVisualSelection(groupId));
+            var catalog = Catalog;
+            var selection = GetVisualSelection(groupId);
+            var mode = catalog?.GetRuntimeMonsterVisualMode(groupId, selection);
+            IEnumerable<string> modeResourcePaths = catalog != null &&
+                                                    CanReuseMountedLargeProviderPack(
+                                                        catalog,
+                                                        groupId,
+                                                        selection)
+                ? []
+                : mode?.ResourcePaths ?? [];
             return new[] { scenePath }
-                .Concat(mode?.ResourcePaths ?? [])
+                .Concat(modeResourcePaths)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
+    }
+
+    private static bool CanReuseMountedLargeProviderPack(
+        SkinCatalog catalog,
+        string groupId,
+        string selection)
+    {
+        if (!Config.GetSelection(groupId).Equals(
+                selection,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var option = catalog.Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option =>
+                option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+        return option != null && catalog.GetProviderResourcePackPaths(option.EffectiveProviderId)
+            .Select(System.IO.Path.GetFullPath)
+            .Any(MountedLargeRuntimeProviderPacks.ContainsKey);
     }
 
     public static Resource GetOrLoadRuntimeResource(
@@ -3192,11 +3226,18 @@ internal static class SkinService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var reuseMountedPrivateDependencies =
+            !isolateRelicCanonicalPaths &&
+            catalog.IsRuntimeProviderOption(groupId, selection) &&
+            Config.GetSelection(groupId).Equals(
+                selection,
+                StringComparison.OrdinalIgnoreCase);
         var key = RuntimeOverlayKey(
             groupId,
             selection,
             normalizedPaths,
             includeProviderDependencies,
+            reuseMountedPrivateDependencies,
             isolateRelicCanonicalPaths);
         if (PreparedRuntimeOverlays.TryGetValue(key, out var cached) &&
             (cached.OverlayPath == null || File.Exists(cached.OverlayPath)))
@@ -3219,7 +3260,8 @@ internal static class SkinService
                 selection,
                 normalizedPaths,
                 aliasToken,
-                includeProviderDependencies);
+                includeProviderDependencies,
+                reuseMountedPrivateDependencies);
         var restoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
             groupId,
             overlay.CanonicalDependencyPaths);
@@ -3336,16 +3378,37 @@ internal static class SkinService
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
         EnsureScopedRuntimeProviderResourcesMounted(catalog, activeRuntimeProviders);
+        var largeProviderMountPlan = MountSelectedLargeRuntimeProviderPacks(catalog);
+        var overlayGroups = groups
+            .Union(largeProviderMountPlan.GroupIds)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var buildStarted = Stopwatch.GetTimestamp();
         var staleCanonicalPaths = groups
             .Where(RuntimeCanonicalDependencyPaths.ContainsKey)
             .SelectMany(group => RuntimeCanonicalDependencyPaths[group])
+            .Concat(MountedLargeRuntimeProviderPacks.Values
+                .SelectMany(pack => pack.ResourcePaths))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var files = catalog.BuildBaselineDependencyOverlay(staleCanonicalPaths);
-        foreach (var selectedFile in catalog.BuildOverlay(Config.Selections, groups))
+        foreach (var selectedFile in catalog.BuildOverlay(Config.Selections, overlayGroups))
         {
+            if (largeProviderMountPlan.PackPaths.Contains(selectedFile.Value.Archive.Path) &&
+                selectedFile.Key.Equals(
+                    selectedFile.Value.Path,
+                    StringComparison.OrdinalIgnoreCase) &&
+                IsDirectProviderPayloadPath(selectedFile.Key))
+            {
+                // Imported payloads make up almost all of a large animated PCK. The selected pack
+                // was just remounted at highest priority, so copying the identical payload into the
+                // correction overlay only duplicates it. Keep scenes, imports, localization and
+                // mapped/takeover paths in the small overlay so normal refresh and ownership logic
+                // still observes them.
+                files.Remove(selectedFile.Key);
+                continue;
+            }
+
             // Baseline dependency restoration must happen before the current selection is applied.
             // The current provider therefore remains authoritative for paths it still owns.
             files[selectedFile.Key] = selectedFile.Value;
@@ -3494,6 +3557,65 @@ internal static class SkinService
             }
         }
     }
+
+    private static LargeProviderMountPlan MountSelectedLargeRuntimeProviderPacks(
+        SkinCatalog catalog)
+    {
+        var selectedOptions = catalog.Groups
+            .Select(group =>
+            {
+                var selection = Config.GetSelection(group.Id);
+                var option = group.Options.FirstOrDefault(option =>
+                    option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
+                    option.IsRuntimeProvider);
+                return (GroupId: group.Id, Option: option);
+            })
+            .Where(selection => selection.Option != null)
+            .ToArray();
+        var selectedPackPaths = selectedOptions
+            .SelectMany(selection => catalog.GetProviderResourcePackPaths(
+                selection.Option!.EffectiveProviderId))
+            .Select(System.IO.Path.GetFullPath)
+            .Where(path => new FileInfo(path).Length >= DirectRuntimeProviderPackThresholdBytes)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var selectedPackPathSet = selectedPackPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedGroupIds = selectedOptions
+            .Where(selection => catalog.GetProviderResourcePackPaths(
+                    selection.Option!.EffectiveProviderId)
+                .Select(System.IO.Path.GetFullPath)
+                .Any(selectedPackPathSet.Contains))
+            .Select(selection => selection.GroupId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var packPath in selectedPackPaths)
+        {
+            if (!MountedLargeRuntimeProviderPacks.ContainsKey(packPath))
+            {
+                using var archive = PckArchive.Open(packPath);
+                MountedLargeRuntimeProviderPacks[packPath] = new MountedProviderPackState(
+                    archive.Paths.ToArray());
+            }
+
+            // Re-loading an existing pack is cheap and moves it to the top of Godot's pack stack.
+            // A small generated correction overlay is mounted immediately afterwards to restore
+            // every card/game path that this visual selection does not own.
+            if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException(
+                    $"无法直接挂载大型外观资源包：{System.IO.Path.GetFileName(packPath)}");
+            }
+
+            ModLog.Info(
+                $"已直接复用大型外观资源包 {System.IO.Path.GetFileName(packPath)}，" +
+                "后续仅生成资源校正包。");
+        }
+
+        return new LargeProviderMountPlan(selectedPackPathSet, selectedGroupIds);
+    }
+
+    private static bool IsDirectProviderPayloadPath(string path) =>
+        path.StartsWith("res://.godot/imported/", StringComparison.OrdinalIgnoreCase);
 
     private static HashSet<string> GetActiveRuntimeProviders(SkinCatalog catalog)
     {
@@ -3934,9 +4056,10 @@ internal static class SkinService
         string selection,
         IReadOnlyCollection<string> resourcePaths,
         bool includeProviderDependencies,
+        bool reuseMountedPrivateDependencies,
         bool isolateRelicCanonicalPaths = false) =>
         groupId + "\n" + selection + "\n" + includeProviderDependencies + "\n" +
-        isolateRelicCanonicalPaths + "\n" +
+        reuseMountedPrivateDependencies + "\n" + isolateRelicCanonicalPaths + "\n" +
         string.Join("\n", resourcePaths);
 
     private static string[] CharacterSelectResourcePaths(string characterId) =>
@@ -4487,6 +4610,13 @@ internal static class SkinService
         }
     }
 }
+
+internal sealed record MountedProviderPackState(
+    IReadOnlyList<string> ResourcePaths);
+
+internal sealed record LargeProviderMountPlan(
+    IReadOnlySet<string> PackPaths,
+    IReadOnlySet<string> GroupIds);
 
 internal sealed record AncientLayeredImageTextures(
     Texture2D Character,

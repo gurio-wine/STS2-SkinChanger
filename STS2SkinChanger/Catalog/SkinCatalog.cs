@@ -2439,7 +2439,8 @@ internal sealed partial class SkinCatalog : IDisposable
         string selectionId,
         IReadOnlyCollection<string> resourcePaths,
         string aliasToken,
-        bool includeProviderDependencies = false)
+        bool includeProviderDependencies = false,
+        bool reuseMountedPrivateDependencies = false)
     {
         var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         var selected = group.Options.FirstOrDefault(option =>
@@ -2474,11 +2475,15 @@ internal sealed partial class SkinCatalog : IDisposable
             resources.Add(CreateRuntimeResource(sourcePath, primary, baseline));
         }
 
-        IncludeAliasedDependencyChain(selected, resources);
+        IncludeAliasedDependencyChain(
+            selected,
+            resources,
+            reuseMountedPrivateDependencies);
 
         var overlay = BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
         if (selected == null ||
             !includeProviderDependencies ||
+            reuseMountedPrivateDependencies ||
             ProviderUsesFullRuntime(selected.Id))
         {
             // A coherent full-runtime selection is mounted once by BuildOverlay before any
@@ -2583,7 +2588,8 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private void IncludeAliasedDependencyChain(
         SkinOption? selected,
-        List<RuntimeResource> resources)
+        List<RuntimeResource> resources,
+        bool reuseMountedPrivateDependencies = false)
     {
         var selectedIndexes = selected == null
             ? []
@@ -2593,10 +2599,29 @@ internal sealed partial class SkinCatalog : IDisposable
                     StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
-        var resourcesByPath = resources.ToDictionary(
+        var discoveredResourcesByPath = resources.ToDictionary(
             resource => resource.SourcePath,
             StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<RuntimeResource>(resources);
+        var selectableProviderFiles = reuseMountedPrivateDependencies
+            ? Groups
+                .SelectMany(group => group.Options)
+                .Where(option => option.IsRuntimeProvider)
+                .SelectMany(option => option.Assets.Values)
+                .SelectMany(asset => asset.Files)
+                .Concat(_pckCardOptions
+                    .SelectMany(option => option.Assets.Values)
+                    .SelectMany(asset => asset.Files))
+                .Concat(_configuredCardGroups
+                    .SelectMany(group => group.Options)
+                    .SelectMany(option => option.Assets.Values)
+                    .SelectMany(asset => asset.Files))
+                .Select(file => NormalizeTakeoverPath(file.Path))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : [];
+        IReadOnlySet<string> isolatedRelicProviderPaths = selected == null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : GetIsolatedRelicProviderPaths(selected);
 
         while (queue.TryDequeue(out var resource))
         {
@@ -2617,7 +2642,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 var allowImportedPayloadAlias = IsRewritableTextResource(dependencyFile.Path);
                 foreach (var sourcePath in EnumerateDependencyPaths(dependencyFile))
                 {
-                    if (resourcesByPath.ContainsKey(sourcePath) ||
+                    if (discoveredResourcesByPath.ContainsKey(sourcePath) ||
                         !CanAliasDependency(sourcePath, allowImportedPayloadAlias))
                     {
                         continue;
@@ -2645,7 +2670,7 @@ internal sealed partial class SkinCatalog : IDisposable
             ResourceAsset asset,
             PckResourceIndex? index)
         {
-            if (resourcesByPath.ContainsKey(sourcePath))
+            if (discoveredResourcesByPath.ContainsKey(sourcePath))
             {
                 return;
             }
@@ -2656,9 +2681,22 @@ internal sealed partial class SkinCatalog : IDisposable
                 return;
             }
 
-            resourcesByPath[sourcePath] = runtimeResource;
-            resources.Add(runtimeResource);
+            discoveredResourcesByPath[sourcePath] = runtimeResource;
             queue.Enqueue(runtimeResource);
+
+            // The globally mounted visual overlay already exposes the selected provider's
+            // dependency graph at canonical paths. Keep walking those resources so a dependency
+            // filtered out of the global mount is still isolated, but do not copy the mounted
+            // payloads into every temporary alias PCK. Explicit runtime loads use
+            // CacheMode.IgnoreDeep, so even shared game/provider paths are read fresh from the
+            // currently authoritative overlay instead of reusing an older cached object.
+            if (reuseMountedPrivateDependencies &&
+                CanReuseMountedPrivateDependency(asset, index))
+            {
+                return;
+            }
+
+            resources.Add(runtimeResource);
 
             if (index == null)
             {
@@ -2709,6 +2747,36 @@ internal sealed partial class SkinCatalog : IDisposable
             asset = null!;
             index = null;
             return false;
+        }
+
+        bool CanReuseMountedPrivateDependency(
+            ResourceAsset asset,
+            PckResourceIndex? index)
+        {
+            if (selected == null ||
+                index == null ||
+                !index.Mod.Id.Equals(
+                    selected.EffectiveProviderId,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !asset.Files.Any(file => ReferenceEquals(file.Archive, index.Archive)))
+            {
+                return false;
+            }
+
+            var providerFiles = asset.Files
+                .Where(file => ReferenceEquals(file.Archive, index.Archive))
+                .ToArray();
+            if (providerFiles.Length == 0)
+            {
+                return false;
+            }
+
+            // Mirror BuildOverlay's filtering exactly. Provider resources excluded there (for
+            // example another independently selectable creature or an isolated relic atlas)
+            // cannot be reused canonically and therefore stay in this private alias package.
+            return providerFiles.All(file =>
+                !isolatedRelicProviderPaths.Contains(NormalizeTakeoverPath(file.Path)) &&
+                ShouldMountProviderDependency(selected, file.Path, selectableProviderFiles));
         }
     }
 
