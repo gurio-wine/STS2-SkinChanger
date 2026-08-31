@@ -736,10 +736,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
         };
         _otherActionSelector.AddThemeConstantOverride("separation", 10);
         _otherActionSelector.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
-        // 与怪物图鉴一致：动作在模型左侧从上到下排列，第一项是站姿。
+        // 与怪物图鉴一致：只有确实存在的非默认动作才显示；异鸟宝宝默认进入站姿，
+        // 不再提供一个重复的“站姿”按钮。
         _otherActionSelector.Position = new Vector2(650f, 430f);
         AddChild(_otherActionSelector);
-        AddOtherActionButton(OtherPreviewText.Standing, ["idle_loop", "idle", "stand", "standing"], loop: true);
         AddOtherActionButton(OtherPreviewText.Attack, ["attack", "attack1", "attack_1", "atk", "bite"], loop: false);
 
         var sidebar = new MarginContainer
@@ -808,10 +808,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
         var previewText = OtherPreviewText;
         _merchantClickArea.TooltipText = previewText.OpenShop;
-        if (_otherActionButtons.Count >= 2)
+        if (_otherActionButtons.Count > 0)
         {
-            _otherActionButtons[0].Button.Text = previewText.Standing;
-            _otherActionButtons[1].Button.Text = previewText.Attack;
+            _otherActionButtons[0].Button.Text = previewText.Attack;
         }
         foreach (var pair in _categoryButtons)
         {
@@ -870,6 +869,21 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void OpenSimulatedShopPreview()
     {
+        try
+        {
+            OpenSimulatedShopPreviewCore();
+        }
+        catch (Exception exception)
+        {
+            // A provider may replace the inventory scene with a resource that cannot be
+            // displayed outside a live run. Never leave the catalogue behind a dead black mask.
+            ModLog.Error($"商店预览打开失败：{exception}");
+            CloseSimulatedShopPreview();
+        }
+    }
+
+    private void OpenSimulatedShopPreviewCore()
+    {
         if (_selectedOther == null ||
             (!_selectedOther.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
              !_selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)) ||
@@ -927,6 +941,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 throw new InvalidOperationException($"无法加载原版商店界面：{inventoryPath}");
             inventory = inventoryScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
         }
+        inventory = StripPreviewScripts(inventory) as Control ??
+                    throw new InvalidOperationException("商店预览脚本隔离后节点已失效。");
         inventory.Name = "VanillaMerchantInventory";
         inventory.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         inventory.MouseFilter = MouseFilterEnum.Ignore;
@@ -934,7 +950,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         // MerchantInventory model. Strip behaviour scripts before entering the tree so the
         // catalogue gets the original visual scene without opening a real shop or touching save
         // state. The authored controls, textures and slot layout remain intact.
-        StripPreviewScripts(inventory);
         overlay.AddChild(inventory);
 
         // NMerchantInventory normally moves SlotsContainer from -1000 to 80 in Open(). Do the
@@ -991,13 +1006,28 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
     }
 
-    private static void StripPreviewScripts(Node root)
+    private static Node StripPreviewScripts(Node root)
     {
-        root.SetScript(default(Variant));
-        foreach (var child in root.GetChildren().OfType<Node>())
+        // SetScript disposes the managed wrapper for that node. Snapshot every instance id
+        // first, then reacquire each wrapper independently; otherwise the next GetChildren call
+        // observes a disposed NMerchantInventory/NBackButton and the whole preview aborts.
+        var rootInstanceId = root.GetInstanceId();
+        var nodes = new[] { root }
+            .Concat(EnumerateNodeTree(root))
+            .Where(node => GodotObject.IsInstanceValid(node))
+            .Select(node => node.GetInstanceId())
+            .ToArray();
+        foreach (var instanceId in nodes.Reverse())
         {
-            StripPreviewScripts(child);
+            if (GodotObject.InstanceFromId(instanceId) is Node node &&
+                GodotObject.IsInstanceValid(node))
+            {
+                node.SetScript(default(Variant));
+            }
         }
+
+        return GodotObject.InstanceFromId(rootInstanceId) as Node ??
+               throw new InvalidOperationException("商店预览根节点无法重新获取。");
     }
 
     private static void FillPreviewShopSlots(Control inventory, bool fakeMerchant)
@@ -1168,7 +1198,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Text = title,
             CustomMinimumSize = new Vector2(312, 58),
             FocusMode = FocusModeEnum.All,
-            Alignment = HorizontalAlignment.Center
+            Alignment = HorizontalAlignment.Left,
+            Flat = true
         };
         ApplyEntryTheme(button, selected: false);
         return button;
@@ -1185,7 +1216,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
             CustomMinimumSize = new Vector2(96, 44),
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             FocusMode = FocusModeEnum.All,
-            Alignment = HorizontalAlignment.Center
+            Alignment = HorizontalAlignment.Center,
+            Flat = true
         };
         button.Pressed += () => SelectCategory(category);
         _categoryButtons[category] = button;
@@ -1310,12 +1342,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
         button.AddThemeStyleboxOverride(
             "normal",
             ContextualSkinControls.CreateStyleBox(
-                selected ? new Color("45104eb8") : new Color("00000000"),
-                selected ? gold : new Color("00000000"),
-                selected ? 2 : 0));
+                Colors.Transparent,
+                Colors.Transparent,
+                0));
         button.AddThemeStyleboxOverride(
             "hover",
-            ContextualSkinControls.CreateStyleBox(new Color("3c627eaa"), new Color("afcdde"), 2));
+            ContextualSkinControls.CreateStyleBox(new Color("3c627e44"), Colors.Transparent, 0));
+        button.AddThemeStyleboxOverride(
+            "pressed",
+            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
+        button.AddThemeStyleboxOverride(
+            "focus",
+            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
         var font = ContextualSkinControls.GameFont;
         if (font != null)
         {
@@ -1421,27 +1459,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // PackedScene external resources (notably Spine skeleton data) can resolve lazily
             // during Instantiate. Keep the selected provider overlay mounted for the complete
             // load+instantiate operation so a previous skin cannot leak its skeleton into this
-            // preview.
-            Node instance;
-            var selection = group == null
-                ? SkinCatalog.BaseOptionId
-                : SkinService.Config.GetSelection(group.Id);
-            if (group != null && !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
-            {
-                instance = SkinService.InstantiateRuntimeScene<Node>(
-                    group.Id,
-                    entry.ScenePath);
-            }
-            else
-            {
-                var scene = ResourceLoader.Load<PackedScene>(
-                    entry.ScenePath,
-                    null,
-                    ResourceLoader.CacheMode.IgnoreDeep) ??
-                            throw new InvalidOperationException(
-                                $"无法加载其它图鉴场景：{entry.ScenePath}");
-                instance = scene.Instantiate(PackedScene.GenEditState.Disabled);
-            }
+            // preview. v0.111 has standalone merchant button scenes; v0.107 embeds the same
+            // button in the room/event scene, so try the standalone resource first and fall back
+            // to the shared scene without assuming either version.
+            Node instance = InstantiateOtherPreviewScene(entry, group);
             if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase))
             {
                 // The room scene is a full shop layout. Display only the merchant's own Spine
@@ -1453,6 +1474,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
             else if (entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
             {
                 instance = ExtractPreviewNode(instance, "MerchantVisual", "MerchantButton");
+            }
+            else if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+            {
+                // Byrdpip's root is NCreatureVisuals. That root expects a combat creature and
+                // can overwrite a provider's skeleton during _Ready. The authored Visuals node
+                // already contains the selected Spine resource, so preview it in isolation.
+                instance = ExtractPreviewNode(instance, "Visuals", "SpineSprite");
             }
 
             instance.Name = "OtherCompendiumPreview";
@@ -1490,7 +1518,19 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 instance,
                 group?.Id,
                 _otherActionButtons);
-            if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+            if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
+                entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+            {
+                // NMerchantButton normally starts this animation from _Ready. The preview
+                // intentionally removes that script, so explicitly select the neutral pose for
+                // both the default merchant and custom merchant providers.
+                ManagedAncientSceneAnimation.TryPlay(
+                    instance,
+                    group?.Id,
+                    ["idle_loop", "idle", "stand", "standing", "default", "animation"],
+                    loop: true);
+            }
+            else if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
             {
                 // The creature catalogue opens in its neutral standing pose, matching the
                 // monster bestiary. Attack remains an optional action when the selected Spine
@@ -1509,6 +1549,49 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             ModLog.Error($"其它图鉴预览 {entry.Id} 失败：{exception}");
         }
+    }
+
+    private static Node InstantiateOtherPreviewScene(OtherEntry entry, SkinGroup? group)
+    {
+        var scenePaths = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
+            ? new[] { "res://scenes/rooms/merchant_button.tscn", entry.ScenePath }
+            : entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
+                ? new[] { "res://scenes/events/custom/fake_merchant_button.tscn", entry.ScenePath }
+                : new[] { entry.ScenePath };
+        var selection = group == null
+            ? SkinCatalog.BaseOptionId
+            : SkinService.Config.GetSelection(group.Id);
+        Exception? lastException = null;
+        foreach (var scenePath in scenePaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (group != null &&
+                    !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return SkinService.InstantiateRuntimeScene<Node>(group.Id, scenePath);
+                }
+
+                var scene = ResourceLoader.Load<PackedScene>(
+                    scenePath,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep);
+                if (scene != null)
+                {
+                    return scene.Instantiate(PackedScene.GenEditState.Disabled);
+                }
+
+                lastException = new InvalidOperationException($"无法加载其它图鉴场景：{scenePath}");
+            }
+            catch (Exception exception)
+            {
+                lastException = exception;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"无法加载其它图鉴场景：{entry.Id}。",
+            lastException);
     }
 
     private static Node ExtractPreviewNode(Node root, params string[] names)
@@ -1691,18 +1774,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
         button.AddThemeStyleboxOverride(
             "normal",
             ContextualSkinControls.CreateStyleBox(
-                selected ? new Color("45104eb8") : new Color("00000000"),
-                selected ? gold : new Color("00000000"),
-                selected ? 3 : 0));
+                Colors.Transparent,
+                Colors.Transparent,
+                0));
         button.AddThemeStyleboxOverride(
             "hover",
-            ContextualSkinControls.CreateStyleBox(new Color("3c627eaa"), new Color("afcdde"), 2));
+            ContextualSkinControls.CreateStyleBox(new Color("3c627e44"), Colors.Transparent, 0));
         button.AddThemeStyleboxOverride(
             "pressed",
-            ContextualSkinControls.CreateStyleBox(new Color("45104e"), gold, 2));
+            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
         button.AddThemeStyleboxOverride(
             "focus",
-            ContextualSkinControls.CreateStyleBox(new Color("2a465faa"), gold, 3));
+            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
     }
 
 }
@@ -1874,6 +1957,15 @@ internal static class ManagedAncientSceneAnimation
                         ? null
                         : aliases.Select(alias => FindAnimation(animationNames, alias))
                             .FirstOrDefault(candidate => candidate != null);
+                    // Some skin providers keep the authored animation but rename their neutral
+                    // loop. Only the idle/standing action may use a generic fallback; attack
+                    // buttons must stay hidden when no attack animation was supplied.
+                    if (animation == null && aliases.Any(IsIdleAlias))
+                    {
+                        animation = animationNames?.FirstOrDefault(name =>
+                            !name.Equals("Dummy", StringComparison.OrdinalIgnoreCase) &&
+                            !name.StartsWith("Touch_", StringComparison.OrdinalIgnoreCase));
+                    }
                     if (animation == null)
                     {
                         ModLog.Warn($"{groupId ?? "其它图鉴"} 没有匹配动作：{string.Join(", ", aliases)}");
@@ -1887,7 +1979,10 @@ internal static class ManagedAncientSceneAnimation
                             ? null
                             : FindAnimation(animationNames, "idle_loop") ??
                               FindAnimation(animationNames, "idle") ??
-                              FindAnimation(animationNames, "stand");
+                              FindAnimation(animationNames, "stand") ??
+                              FindAnimation(animationNames, "standing") ??
+                              FindAnimation(animationNames, "default") ??
+                              FindAnimation(animationNames, "animation");
                         if (idle != null)
                         {
                             AddAnimationCompat(animationState, idle, delay: 0f, loop: true);
@@ -2046,6 +2141,14 @@ internal static class ManagedAncientSceneAnimation
         string expectedName) =>
         animationNames.FirstOrDefault(name =>
             name.Equals(expectedName, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsIdleAlias(string alias) =>
+        alias.Equals("idle_loop", StringComparison.OrdinalIgnoreCase) ||
+        alias.Equals("idle", StringComparison.OrdinalIgnoreCase) ||
+        alias.Equals("stand", StringComparison.OrdinalIgnoreCase) ||
+        alias.Equals("standing", StringComparison.OrdinalIgnoreCase) ||
+        alias.Equals("default", StringComparison.OrdinalIgnoreCase) ||
+        alias.Equals("animation", StringComparison.OrdinalIgnoreCase);
 
     private static IEnumerable<Node> DescendantsAndSelf(Node root)
     {
