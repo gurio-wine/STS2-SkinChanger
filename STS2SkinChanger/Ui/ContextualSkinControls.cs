@@ -917,6 +917,16 @@ internal static partial class ContextualSkinControls
             StabilizeProviderCharacterSelectControl(screen, root);
         }
 
+        foreach (var root in interactiveRoots)
+        {
+            var parent = root.GetParent();
+            var parentVisible = parent is CanvasItem parentCanvas ? parentCanvas.Visible : true;
+            ModLog.Info(
+                $"选角交互面板诊断 provider={providerId} 节点={root.GetPath()} " +
+                $"visible={root.Visible} parentVisible={parentVisible} " +
+                $"position={root.Position} size={root.Size} z={root.ZIndex}");
+        }
+
         // Container layouts and third-party UI patches can run after the provider callback. Apply
         // the same normalization once more after the tree has settled; this changes no authored
         // size or position unless the whole control ended up outside the visible viewport.

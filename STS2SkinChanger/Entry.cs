@@ -12,6 +12,10 @@ public static class Entry
 {
     public const string ModId = "Gurio.SkinChanger";
     public const string LegacyModId = "STS2SkinChanger";
+    // Four-part versions are kept out of the game's manifest version field because older
+    // loaders only accept three-part SemanticVersion values. This marker is embedded in the
+    // assembly and printed at startup so an internal deployment can be identified unambiguously.
+    public const string InternalTestVersion = "0.9.119.1";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -20,6 +24,10 @@ public static class Entry
 
     public static void Initialize()
     {
+        var assembly = typeof(Entry).Assembly;
+        ModLog.Info(
+            $"内测版本 {InternalTestVersion}；程序集={assembly.GetName().Name} " +
+            $"{assembly.GetName().Version}；路径={assembly.Location}");
         ManagedSkinModLoader.Initialize();
         var harmony = new Harmony(ModId);
         try
