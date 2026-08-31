@@ -5352,6 +5352,14 @@ internal sealed partial class SkinCatalog : IDisposable
         // therefore replace its room/background skeletons and shop scenes instead of a creature
         // scene. Keep those resources in one selectable runtime bundle; playable-character
         // merchant scenes are matched separately below and remain owned by their character.
+        if (FakeMerchantAppearancePathRegex().IsMatch(NormalizeTakeoverPath(sourcePath)))
+        {
+            // The reverse merchant is both an event NPC and a no-HP creature. Keep all of its
+            // presentation resources in the same group so a skin can be selected from Other
+            // Compendium and from the event creature without splitting the provider's bundle.
+            return new GroupIdentity("fake_merchant_monster", DisplayName("fake_merchant_monster"));
+        }
+
         if (MerchantAppearancePathRegex().IsMatch(NormalizeTakeoverPath(sourcePath)))
         {
             return new GroupIdentity("merchant", DisplayName("merchant"));
@@ -5648,6 +5656,8 @@ internal sealed partial class SkinCatalog : IDisposable
         "misc" => "其他",
         "neow" => "涅奥",
         "merchant" => "商人",
+        "fake_merchant_monster" => "商人？？？",
+        "byrdpip" => "异鸟宝宝",
         _ => id.Replace('_', ' ').Trim().CapitalizeWords()
     };
 
@@ -5685,6 +5695,13 @@ internal sealed partial class SkinCatalog : IDisposable
         "res://scenes/merchant/(?!characters/)[^/]+\\.tscn$)",
         RegexOptions.IgnoreCase)]
     private static partial Regex MerchantAppearancePathRegex();
+
+    [GeneratedRegex(
+        "^(?:res://animations/backgrounds/fake_merchant_room/.*|" +
+        "res://scenes/backgrounds/fake_merchant_event_encounter/.*|" +
+        "res://scenes/events/custom/fake_merchant(?:_button|_inventory)?\\.tscn)$",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex FakeMerchantAppearancePathRegex();
 
     [GeneratedRegex("^res://scenes/creature_visuals/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CreatureVisualSceneRegex();

@@ -1668,11 +1668,24 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
         AddEventVisualProvider();
         AddFakeMerchantEventReplacement();
         using var catalog = SkinCatalog.Build(gamePckPath, descriptors);
-        if (catalog.Groups.Any(group => group.Options.Any(option =>
-                option.Id.Equals("Tests.FakeMerchantEvent", StringComparison.OrdinalIgnoreCase))))
+        if (catalog.Groups.Any(group => group.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
+                                        group.Options.Any(option => option.Id.Equals(
+                                            "Tests.FakeMerchantEvent",
+                                            StringComparison.OrdinalIgnoreCase))))
         {
             throw new InvalidOperationException(
                 "a fake-merchant event replacement was classified as a shop merchant skin");
+        }
+
+        if (!catalog.Groups.Any(group => group.Id.Equals(
+                    "fake_merchant_monster",
+                    StringComparison.OrdinalIgnoreCase) &&
+                group.Options.Any(option => option.Id.Equals(
+                    "Tests.FakeMerchantEvent",
+                    StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new InvalidOperationException(
+                "a fake-merchant event replacement was not classified as the fake merchant group");
         }
         var selections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 

@@ -7,6 +7,10 @@ internal enum ModText
 {
     AncientCompendium,
     NoAncientsAvailable,
+    OtherCompendium,
+    OtherCategoryAncients,
+    OtherCategoryMerchants,
+    OtherCategoryCreatures,
     GameDefault,
     GameOriginal,
     SkinnedCardsOnly,
@@ -502,6 +506,33 @@ internal static class ModLocalization
                 "Yeniden başlat",
                 "Sıra ayarı veya yeniden başlatma başarısız oldu. Skin Changer'ı tüm görünüm Modlarının önüne elle taşıyıp oyunu yeniden başlatın.",
                 "Varsayılan")
+        };
+
+    private sealed record OtherCompendiumLanguagePack(
+        string Title,
+        string Ancients,
+        string Merchants,
+        string Creatures);
+
+    private static readonly IReadOnlyDictionary<string, OtherCompendiumLanguagePack>
+        OtherCompendiumPacks =
+        new Dictionary<string, OtherCompendiumLanguagePack>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = new("Other Compendium", "Ancients", "Merchants", "Creatures"),
+            ["zhs"] = new("其它图鉴", "先古", "商人", "生物"),
+            ["zht"] = new("其他圖鑑", "先古", "商人", "生物"),
+            ["deu"] = new("Weitere Enzyklopädie", "Uralte", "Händler", "Kreaturen"),
+            ["esp"] = new("Compendio adicional", "Antiguos", "Mercaderes", "Criaturas"),
+            ["fra"] = new("Autre compendium", "Anciens", "Marchands", "Créatures"),
+            ["ita"] = new("Altro compendio", "Antichi", "Mercanti", "Creature"),
+            ["jpn"] = new("その他の図鑑", "エンシェント", "商人", "生物"),
+            ["kor"] = new("기타 도감", "고대인", "상인", "생물"),
+            ["pol"] = new("Inny bestiariusz", "Pradawni", "Kupcy", "Stworzenia"),
+            ["ptb"] = new("Outro compêndio", "Anciões", "Mercadores", "Criaturas"),
+            ["rus"] = new("Другой справочник", "Древние", "Торговцы", "Существа"),
+            ["spa"] = new("Otro compendio", "Antiguos", "Mercaderes", "Criaturas"),
+            ["tha"] = new("สารานุกรมอื่น", "Ancient", "พ่อค้า", "สิ่งมีชีวิต"),
+            ["tur"] = new("Diğer külliyat", "Kadimler", "Tüccarlar", "Yaratıklar")
         };
 
     private static readonly IReadOnlyDictionary<string, AppearanceLanguagePack> AppearancePacks =
@@ -1054,6 +1085,14 @@ internal static class ModLocalization
     public static string Get(ModText text) =>
         text == ModText.LoadOtherPlayersCustomSkins
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]
+            : text == ModText.OtherCompendium
+                ? OtherCompendiumPacks[CurrentLanguage].Title
+            : text == ModText.OtherCategoryAncients
+                ? OtherCompendiumPacks[CurrentLanguage].Ancients
+            : text == ModText.OtherCategoryMerchants
+                ? OtherCompendiumPacks[CurrentLanguage].Merchants
+            : text == ModText.OtherCategoryCreatures
+                ? OtherCompendiumPacks[CurrentLanguage].Creatures
             : text >= ModText.ModelTransform
             ? AdjustmentPacks[CurrentLanguage].Get(text)
             : text >= ModText.CharacterAppearance

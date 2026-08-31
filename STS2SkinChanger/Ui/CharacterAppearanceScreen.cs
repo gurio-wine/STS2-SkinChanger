@@ -1170,7 +1170,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _canEditTransform = MultiplayerSkinSync.CanEditTransformForCreature(creature.Entity);
         SetTargetControlsVisible(
             supportsModel: true,
-            isCreature: true,
+            isCreature: binding.SupportsCombatControls,
             canSelectSkin: binding.CanSelectSkin,
             supportsIntent: binding.SupportsIntent);
         PositionPanelAwayFrom(targetCenter);

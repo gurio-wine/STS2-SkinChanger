@@ -280,7 +280,7 @@ internal static class BestiaryEntranceSwitcher
         foreach (var label in state.Labels)
         {
             SetText(label.Node, state.UseAncient
-                ? ModLocalization.Get(ModText.AncientCompendium)
+                ? ModLocalization.Get(ModText.OtherCompendium)
                 : label.OriginalText);
         }
 

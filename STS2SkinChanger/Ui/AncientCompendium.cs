@@ -6,6 +6,7 @@ using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Events;
@@ -83,11 +84,11 @@ internal static class AncientCompendiumEntry
         button.FocusMode = Control.FocusModeEnum.All;
 
         var buttonLabel = button.GetNodeOrNull<MegaLabel>("Label");
-        buttonLabel?.SetTextAutoSize(ModLocalization.Get(ModText.AncientCompendium));
+        buttonLabel?.SetTextAutoSize(ModLocalization.Get(ModText.OtherCompendium));
         if (buttonLabel != null)
         {
             ModLocalization.Bind(button, () =>
-                buttonLabel.SetTextAutoSize(ModLocalization.Get(ModText.AncientCompendium)));
+                buttonLabel.SetTextAutoSize(ModLocalization.Get(ModText.OtherCompendium)));
         }
         var icon = button.GetNodeOrNull<TextureRect>("Icon");
         if (icon != null)
@@ -412,7 +413,7 @@ internal static class AncientCompendiumEntry
     {
         if (StackField.GetValue(compendium) is not NSubmenuStack stack)
         {
-            ModLog.Error("无法取得图鉴菜单栈，先古图鉴未打开。");
+            ModLog.Error("无法取得图鉴菜单栈，其它图鉴未打开。");
             return;
         }
 
@@ -423,7 +424,7 @@ internal static class AncientCompendiumEntry
     {
         if (!GodotObject.IsInstanceValid(stack))
         {
-            ModLog.Error("无法取得图鉴菜单栈，先古图鉴未打开。");
+            ModLog.Error("无法取得图鉴菜单栈，其它图鉴未打开。");
             return;
         }
 
@@ -524,7 +525,23 @@ internal static class AncientCompendiumEntry
 
 internal partial class AncientCompendiumScreen : NSubmenu
 {
+    private enum OtherCategory
+    {
+        Ancients,
+        Merchants,
+        Creatures
+    }
+
+    private sealed record OtherEntry(
+        string Id,
+        string Title,
+        string ScenePath,
+        string? GroupLookupId = null);
+
     private readonly Dictionary<AncientEventModel, Button> _entryButtons = [];
+    private readonly Dictionary<string, Button> _otherEntryButtons =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<OtherCategory, Button> _categoryButtons = [];
     private VBoxContainer _entryList = null!;
     private Label _nameLabel = null!;
     private Label _epithetLabel = null!;
@@ -534,9 +551,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
     private AncientEventModel? _selectedAncient;
+    private OtherEntry? _selectedOther;
+    private OtherCategory _selectedCategory = OtherCategory.Ancients;
     private bool _updatingDropdown;
 
-    protected override Control? InitialFocusedControl => _entryButtons.Values.FirstOrDefault();
+    protected override Control? InitialFocusedControl =>
+        _categoryButtons.Values.FirstOrDefault() ?? _entryButtons.Values.FirstOrDefault();
 
     public override void _Ready()
     {
@@ -660,13 +680,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
         sidebar.AddChild(sidebarContent);
 
         _headingLabel = BuildLabel(30, new Color("efc850"));
-        _headingLabel.Text = ModLocalization.Get(ModText.AncientCompendium);
+        _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
         _headingLabel.CustomMinimumSize = new Vector2(0, 54);
         sidebarContent.AddChild(_headingLabel);
 
         var divider = new HSeparator();
         divider.AddThemeConstantOverride("separation", 12);
         sidebarContent.AddChild(divider);
+
+        var categoryRow = new HBoxContainer();
+        categoryRow.AddThemeConstantOverride("separation", 8);
+        AddCategoryButton(categoryRow, OtherCategory.Ancients, ModText.OtherCategoryAncients);
+        AddCategoryButton(categoryRow, OtherCategory.Merchants, ModText.OtherCategoryMerchants);
+        AddCategoryButton(categoryRow, OtherCategory.Creatures, ModText.OtherCategoryCreatures);
+        sidebarContent.AddChild(categoryRow);
 
         var scroll = new ScrollContainer
         {
@@ -693,10 +720,25 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void RefreshLocalizedText()
     {
-        _headingLabel.Text = ModLocalization.Get(ModText.AncientCompendium);
-        if (_selectedAncient == null && _entryButtons.Count == 0)
+        _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
+        foreach (var pair in _categoryButtons)
+        {
+            pair.Value.Text = GetCategoryText(pair.Key);
+        }
+
+        if (_selectedAncient == null && _selectedOther == null &&
+            _entryButtons.Count == 0 && _otherEntryButtons.Count == 0)
         {
             _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
+        }
+
+        if (_selectedAncient != null)
+        {
+            _nameLabel.Text = AncientCompendiumEntry.GetTitle(_selectedAncient);
+        }
+        else if (_selectedOther != null)
+        {
+            _nameLabel.Text = _selectedOther.Title;
         }
 
         var groupId = _skinDropdown.GetMeta("sts2_skin_group", string.Empty).AsString();
@@ -716,40 +758,221 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         _entryButtons.Clear();
-        var ancients = AncientCompendiumEntry.GetAncients();
-        foreach (var ancient in ancients)
+        _otherEntryButtons.Clear();
+        if (_selectedCategory == OtherCategory.Ancients)
         {
-            var button = new Button
+            var ancients = AncientCompendiumEntry.GetAncients();
+            foreach (var ancient in ancients)
             {
-                Text = AncientCompendiumEntry.GetTitle(ancient),
-                CustomMinimumSize = new Vector2(312, 58),
-                FocusMode = FocusModeEnum.All,
-                Alignment = HorizontalAlignment.Center
-            };
-            ApplyEntryTheme(button, selected: false);
-            button.Pressed += () => SelectAncient(ancient);
-            _entryList.AddChild(button);
-            _entryButtons[ancient] = button;
-        }
+                var button = CreateEntryButton(AncientCompendiumEntry.GetTitle(ancient));
+                button.Pressed += () => SelectAncient(ancient);
+                _entryList.AddChild(button);
+                _entryButtons[ancient] = button;
+            }
 
-        if (ancients.Length == 0)
-        {
-            _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
-            _epithetLabel.Text = string.Empty;
-            _skinSelector.Visible = false;
-            ClearPreview();
+            if (ancients.Length == 0)
+            {
+                ShowEmptyCategory();
+                return;
+            }
+
+            var selection = _selectedAncient == null
+                ? ancients[0]
+                : ancients.FirstOrDefault(candidate => candidate.Id == _selectedAncient.Id) ??
+                  ancients[0];
+            SelectAncient(selection);
             return;
         }
 
-        var selection = _selectedAncient == null
-            ? ancients[0]
-            : ancients.FirstOrDefault(candidate => candidate.Id == _selectedAncient.Id) ?? ancients[0];
-        SelectAncient(selection);
+        var entries = GetOtherEntries(_selectedCategory);
+        foreach (var entry in entries)
+        {
+            var button = CreateEntryButton(entry.Title);
+            button.Pressed += () => SelectOther(entry);
+            _entryList.AddChild(button);
+            _otherEntryButtons[entry.Id] = button;
+        }
+
+        if (entries.Length == 0)
+        {
+            ShowEmptyCategory();
+            return;
+        }
+
+        var otherSelection = _selectedOther != null &&
+                             entries.Any(entry => entry.Id.Equals(
+                                 _selectedOther.Id,
+                                 StringComparison.OrdinalIgnoreCase))
+            ? entries.First(entry => entry.Id.Equals(
+                _selectedOther.Id,
+                StringComparison.OrdinalIgnoreCase))
+            : entries[0];
+        SelectOther(otherSelection);
+    }
+
+    private Button CreateEntryButton(string title)
+    {
+        var button = new Button
+        {
+            Text = title,
+            CustomMinimumSize = new Vector2(312, 58),
+            FocusMode = FocusModeEnum.All,
+            Alignment = HorizontalAlignment.Center
+        };
+        ApplyEntryTheme(button, selected: false);
+        return button;
+    }
+
+    private void AddCategoryButton(
+        HBoxContainer row,
+        OtherCategory category,
+        ModText text)
+    {
+        var button = new Button
+        {
+            Text = ModLocalization.Get(text),
+            CustomMinimumSize = new Vector2(96, 44),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            FocusMode = FocusModeEnum.All,
+            Alignment = HorizontalAlignment.Center
+        };
+        button.Pressed += () => SelectCategory(category);
+        _categoryButtons[category] = button;
+        row.AddChild(button);
+        ApplyCategoryTheme(button, category == _selectedCategory);
+    }
+
+    private string GetCategoryText(OtherCategory category) => category switch
+    {
+        OtherCategory.Ancients => ModLocalization.Get(ModText.OtherCategoryAncients),
+        OtherCategory.Merchants => ModLocalization.Get(ModText.OtherCategoryMerchants),
+        OtherCategory.Creatures => ModLocalization.Get(ModText.OtherCategoryCreatures),
+        _ => string.Empty
+    };
+
+    private void SelectCategory(OtherCategory category)
+    {
+        if (_selectedCategory == category && _entryList.GetChildCount() > 0)
+        {
+            return;
+        }
+
+        _selectedCategory = category;
+        _selectedAncient = null;
+        _selectedOther = null;
+        foreach (var pair in _categoryButtons)
+        {
+            ApplyCategoryTheme(pair.Value, pair.Key == category);
+        }
+        RefreshAncients();
+    }
+
+    private void ShowEmptyCategory()
+    {
+        _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
+        _epithetLabel.Text = string.Empty;
+        _skinSelector.Visible = false;
+        ClearPreview();
+    }
+
+    private static OtherEntry[] GetOtherEntries(OtherCategory category) => category switch
+    {
+        OtherCategory.Merchants =>
+        [
+            new OtherEntry(
+                "merchant",
+                GetLocalizedTitle("map", "LEGEND_MERCHANT.title", "商人"),
+                // v0.107 embeds NMerchantButton in merchant_room.tscn; v0.111 also ships a
+                // standalone merchant_button scene. The room scene exists in both versions
+                // and lets the preview use the same resource graph on either branch.
+                "res://scenes/rooms/merchant_room.tscn"),
+            new OtherEntry(
+                "fake_merchant_monster",
+                GetLocalizedTitle("events", "FAKE_MERCHANT.title", "商人？？？"),
+                // The standalone fake-merchant button is beta-only; the event scene is shared
+                // by formal and beta and still contains the MerchantButton node.
+                "res://scenes/events/custom/fake_merchant.tscn")
+        ],
+        OtherCategory.Creatures =>
+        [
+            new OtherEntry(
+                "byrdpip",
+                GetLocalizedTitle("monsters", "BYRDPIP.name", "异鸟宝宝"),
+                "res://scenes/creature_visuals/byrdpip.tscn")
+        ],
+        _ => []
+    };
+
+    private static string GetLocalizedTitle(string table, string key, string fallback)
+    {
+        try
+        {
+            return new LocString(table, key).GetFormattedText();
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private void SelectOther(OtherEntry entry)
+    {
+        _selectedAncient = null;
+        _selectedOther = entry;
+        _nameLabel.Text = entry.Title;
+        _epithetLabel.Text = string.Empty;
+        foreach (var pair in _otherEntryButtons)
+        {
+            ApplyEntryTheme(
+                pair.Value,
+                pair.Key.Equals(entry.Id, StringComparison.OrdinalIgnoreCase));
+        }
+
+        PopulateSkinDropdown(FindOtherGroup(entry));
+        RebuildOtherPreview(entry);
+    }
+
+    private static SkinGroup? FindOtherGroup(OtherEntry entry)
+    {
+        var catalog = SkinService.Catalog;
+        if (catalog == null)
+        {
+            return null;
+        }
+
+        var lookup = entry.GroupLookupId ?? entry.Id;
+        return catalog.Groups.FirstOrDefault(group =>
+            group.Id.Equals(lookup, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void ApplyCategoryTheme(Button button, bool selected)
+    {
+        var ivory = new Color("fff6e2");
+        var gold = new Color("efc850");
+        button.AddThemeColorOverride("font_color", selected ? gold : ivory);
+        button.AddThemeColorOverride("font_hover_color", Colors.White);
+        button.AddThemeFontSizeOverride("font_size", 19);
+        button.AddThemeStyleboxOverride(
+            "normal",
+            ContextualSkinControls.CreateStyleBox(
+                selected ? new Color("45104eb8") : new Color("00000000"),
+                selected ? gold : new Color("00000000"),
+                selected ? 2 : 0));
+        button.AddThemeStyleboxOverride(
+            "hover",
+            ContextualSkinControls.CreateStyleBox(new Color("3c627eaa"), new Color("afcdde"), 2));
+        var font = ContextualSkinControls.GameFont;
+        if (font != null)
+        {
+            button.AddThemeFontOverride("font", font);
+        }
     }
 
     private void SelectAncient(AncientEventModel ancient)
     {
+        _selectedCategory = OtherCategory.Ancients;
         _selectedAncient = ancient;
+        _selectedOther = null;
         _nameLabel.Text = AncientCompendiumEntry.GetTitle(ancient);
         try
         {
@@ -801,7 +1024,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void OnSkinSelected(int index)
     {
-        if (_updatingDropdown || _selectedAncient == null)
+        if (_updatingDropdown || (_selectedAncient == null && _selectedOther == null))
         {
             return;
         }
@@ -810,14 +1033,99 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var optionId = _skinDropdown.GetItemMetadata(index).AsString();
         if (!SkinService.ApplySelection(groupId, optionId))
         {
-            ModLog.Error($"先古皮肤切换失败：{SkinService.LastError}");
-            PopulateSkinDropdown(AncientCompendiumEntry.FindGroup(_selectedAncient.Id.Entry));
+            ModLog.Error($"其它图鉴皮肤切换失败：{SkinService.LastError}");
+            PopulateSkinDropdown(_selectedAncient != null
+                ? AncientCompendiumEntry.FindGroup(_selectedAncient.Id.Entry)
+                : FindOtherGroup(_selectedOther!));
             return;
         }
 
-        AncientCompendiumEntry.RefreshCompendiumEntryIcon(this);
-        var ancient = _selectedAncient;
-        Callable.From(() => RebuildPreview(ancient)).CallDeferred();
+        if (_selectedAncient != null)
+        {
+            AncientCompendiumEntry.RefreshCompendiumEntryIcon(this);
+            var ancient = _selectedAncient;
+            Callable.From(() => RebuildPreview(ancient)).CallDeferred();
+        }
+        else if (_selectedOther != null)
+        {
+            var entry = _selectedOther;
+            Callable.From(() => RebuildOtherPreview(entry)).CallDeferred();
+        }
+    }
+
+    private void RebuildOtherPreview(OtherEntry entry)
+    {
+        try
+        {
+            ClearPreview();
+            var group = FindOtherGroup(entry);
+            var scene = group != null
+                ? SkinService.LoadRuntimeScene(group.Id, entry.ScenePath)
+                : ResourceLoader.Load<PackedScene>(
+                    entry.ScenePath,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep);
+            if (scene == null)
+            {
+                throw new InvalidOperationException($"无法加载其它图鉴场景：{entry.ScenePath}");
+            }
+
+            var instance = scene.Instantiate(PackedScene.GenEditState.Disabled);
+            if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase))
+            {
+                // The room scene is a full shop layout. Display only the merchant's own Spine
+                // node so the compendium does not bring along invisible hitboxes, inventory UI,
+                // or a room-sized background. This also works on v0.107 where the button is
+                // embedded in merchant_room.tscn.
+                instance = ExtractPreviewNode(instance, "MerchantVisual", "MerchantButton");
+            }
+            else if (entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+            {
+                instance = ExtractPreviewNode(instance, "MerchantVisual", "MerchantButton");
+            }
+
+            instance.Name = "OtherCompendiumPreview";
+            instance.ProcessMode = ProcessModeEnum.Always;
+            _previewViewport.AddChild(instance);
+            if (instance is Control control)
+            {
+                control.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
+                control.Position = new Vector2(960f, 540f);
+                control.Scale = Vector2.One * 1.35f;
+                control.MouseFilter = MouseFilterEnum.Ignore;
+            }
+            else if (instance is Node2D node)
+            {
+                node.Position = new Vector2(960f, 600f);
+                node.Scale = Vector2.One * 1.35f;
+            }
+
+            // Creature scenes do not get NCreature's normal animation setup when previewed in
+            // isolation. Reuse the same generic Spine starter used by Ancient previews so a
+            // Byrdpip/merchant skin with an idle loop remains animated in the compendium.
+            ManagedAncientSceneAnimation.TryStart(group?.Id, instance);
+
+            ModLog.Info($"其它图鉴已展示 {entry.Id}。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Error($"其它图鉴预览 {entry.Id} 失败：{exception}");
+        }
+    }
+
+    private static Node ExtractPreviewNode(Node root, params string[] names)
+    {
+        var target = names
+            .Select(name => root.FindChild(name, recursive: true, owned: false))
+            .FirstOrDefault(node => node != null);
+        if (target == null || target.GetParent() == null)
+        {
+            return root;
+        }
+
+        target.GetParent().RemoveChild(target);
+        root.QueueFree();
+        return target;
     }
 
     private void RebuildPreview(AncientEventModel ancient)
@@ -860,11 +1168,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
             previewHost.AddChild(preview);
             ManagedAncientLayeredImage.TryApply(group?.Id, preview);
             ManagedAncientSceneAnimation.TryStart(group?.Id, preview);
-            ModLog.Info($"先古图鉴已展示 {ancient.Id.Entry}。");
+            ModLog.Info($"其它图鉴已展示先古 {ancient.Id.Entry}。");
         }
         catch (Exception exception)
         {
-            ModLog.Error($"先古图鉴预览 {ancient.Id.Entry} 失败：{exception}");
+            ModLog.Error($"其它图鉴预览先古 {ancient.Id.Entry} 失败：{exception}");
         }
     }
 
@@ -1090,8 +1398,18 @@ internal static class ManagedAncientSceneAnimation
             return;
         }
 
+        // Most ancient scenes call the node SpineSprite, while creature/merchant previews use
+        // names such as Visuals or MerchantVisual. Resolve by class as a fallback and include
+        // the root itself when a single SpineSprite was extracted from a larger scene.
         var spineNode = sceneRoot.GetNodeOrNull<Node>("SpineSprite") ??
-                        sceneRoot.FindChild("SpineSprite", recursive: true, owned: false);
+                        sceneRoot.FindChild("SpineSprite", recursive: true, owned: false) ??
+                        (sceneRoot.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)
+                            ? sceneRoot
+                            : sceneRoot.GetChildren()
+                                .OfType<Node>()
+                                .SelectMany(DescendantsAndSelf)
+                                .FirstOrDefault(node => node.GetClass().ToString()
+                                    .Equals("SpineSprite", StringComparison.Ordinal)));
         if (spineNode == null)
         {
             return;
@@ -1196,6 +1514,18 @@ internal static class ManagedAncientSceneAnimation
         string expectedName) =>
         animationNames.FirstOrDefault(name =>
             name.Equals(expectedName, StringComparison.OrdinalIgnoreCase));
+
+    private static IEnumerable<Node> DescendantsAndSelf(Node root)
+    {
+        yield return root;
+        foreach (Node child in root.GetChildren())
+        {
+            foreach (var descendant in DescendantsAndSelf(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
 }
 
 internal static class AncientRuntimeAppearance

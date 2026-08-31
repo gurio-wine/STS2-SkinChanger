@@ -33,7 +33,8 @@ internal sealed record CreatureAppearanceBinding(
     string TransformKey,
     bool UsesMonsterScale,
     bool CanSelectSkin,
-    bool SupportsIntent);
+    bool SupportsIntent,
+    bool SupportsCombatControls);
 
 /// <summary>
 /// Owns live, in-run character visual replacement. A selection is never changed while a game action is
@@ -492,7 +493,8 @@ internal static class CharacterAppearanceRuntime
         var modelId = creature.Entity.ModelId.Entry;
         var modelTypeName = creature.Entity.Player?.Character.GetType().Name ??
                             creature.Entity.Monster?.GetType().Name;
-        if (creature.Entity.PetOwner is { } owner)
+        var directGroup = ContextualSkinControls.FindGroup(modelId, modelTypeName);
+        if (creature.Entity.PetOwner is { } owner && directGroup == null)
         {
             var ownerCharacter = owner.Character;
             var ownerGroup = ContextualSkinControls.FindGroup(
@@ -505,21 +507,22 @@ internal static class CharacterAppearanceRuntime
                     $"{ownerGroup.Id}::companion::{modelId}",
                     UsesMonsterScale: false,
                     CanSelectSkin: false,
-                    SupportsIntent: false);
+                    SupportsIntent: false,
+                    SupportsCombatControls: true);
                 return true;
             }
         }
 
-        var directGroup = ContextualSkinControls.FindGroup(modelId, modelTypeName);
         if (directGroup != null)
         {
             var isCompanion = creature.Entity.PetOwner != null;
             binding = new CreatureAppearanceBinding(
                 directGroup,
                 directGroup.Id,
-                creature.Entity.IsMonster && !isCompanion,
-                CanSelectSkin: !isCompanion,
-                SupportsIntent: creature.Entity.IsMonster && !isCompanion);
+                UsesMonsterScale: creature.Entity.IsMonster && !isCompanion,
+                CanSelectSkin: true,
+                SupportsIntent: creature.Entity.IsMonster && !isCompanion,
+                SupportsCombatControls: !isCompanion);
             return true;
         }
 
