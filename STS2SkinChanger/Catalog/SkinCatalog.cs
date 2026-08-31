@@ -849,9 +849,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 "map_marker_",
                 "ui/run_history"
             }.Any(path => ContainsMetadata(path, StringComparison.OrdinalIgnoreCase));
-            var hasDirectCharacterPresentationPatch = HasDirectVisualHarmonyPatch(
-                assemblyPath,
-                hasSkinResourcePath);
+            var hasDirectCharacterPresentationPatch = HasDirectVisualHarmonyPatch(assemblyPath);
             if (!hasSkinResourcePath && !hasDirectCharacterPresentationPatch)
             {
                 return false;
@@ -882,9 +880,7 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
-    private static bool HasDirectVisualHarmonyPatch(
-        string assemblyPath,
-        bool hasSkinResourcePath)
+    private static bool HasDirectVisualHarmonyPatch(string assemblyPath)
     {
         using var stream = File.OpenRead(assemblyPath);
         using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
@@ -926,10 +922,10 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             // A creature lifecycle patch by itself is not skin evidence: additive combat VFX
-            // mods also attach effect nodes from NCreature._Ready. Private full-character packs
-            // pair that hook with character-select presentation, or reference a canonical skin
-            // resource path. Requiring the second signal keeps non-skin visual mods in the
-            // game's normal loading flow without relying on a provider name allow-list.
+            // mods also attach effect nodes from NCreature._Ready and may load canonical creature
+            // scenes to place those effects. Private full-character packs pair that hook with a
+            // character-select presentation patch. Requiring an actual second patch target keeps
+            // additive visual mods in the game's normal loading flow without a provider allow-list.
             hasCreatureLifecyclePatch |=
                 HasPatchTarget(value, "NCreature", "_Ready", "SetAnimationTrigger");
             hasCharacterSelectPatch |=
@@ -937,8 +933,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 HasPatchTarget(value, "NCharacterSelectButton", "Init");
         }
 
-        return hasCreatureLifecyclePatch &&
-               (hasCharacterSelectPatch || hasSkinResourcePath);
+        return hasCreatureLifecyclePatch && hasCharacterSelectPatch;
 
         static bool HasPatchTarget(string metadata, string typeName, params string[] members) =>
             metadata.Contains(typeName, StringComparison.Ordinal) &&
