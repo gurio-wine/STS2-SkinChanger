@@ -1,8 +1,8 @@
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
-using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
@@ -37,6 +37,8 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
+    private static readonly ConditionalWeakTable<NCharacterSelectScreen, CharacterBackgroundHostLayout>
+        CharacterBackgroundHostLayouts = new();
     private static readonly HashSet<string> LoggedMissingMultiplayerIcons =
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _refreshingMonsterDisplay;
@@ -77,6 +79,7 @@ internal static partial class ContextualSkinControls
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
+        CaptureCharacterBackgroundHostLayout(screen);
         var selector = EnsureCharacterSelector(screen);
         var group = FindGroup(character.Id.Entry);
         if (group != null && !IsMultiplayerCharacterSelect(screen))
@@ -651,6 +654,7 @@ internal static partial class ContextualSkinControls
         // background without changing a canonical scene. Always restore the game presentation
         // first so switching *away* from such a provider is just as complete as switching to it.
         ManagedSkinModLoader.RestoreCharacterPresentation(screen);
+        RestoreCharacterBackgroundHostLayout(screen);
         RestoreCharacterInfoText(screen, character);
 
         if (ShouldSkipExternalRuntimeRedirect(groupId))
@@ -921,7 +925,6 @@ internal static partial class ContextualSkinControls
         // Provider presentation callbacks are allowed to temporarily hide this host while their
         // own full-screen layer is selected. A normal Skin Changer rebuild always owns this host.
         container.Visible = true;
-        var baselineSpineAnchors = CaptureSpineAnchors(container);
 
         foreach (var child in container.GetChildren())
         {
@@ -941,7 +944,6 @@ internal static partial class ContextualSkinControls
         if (background.IsInsideTree())
         {
             RefreshCharacterBackgroundLayout(container, background);
-            ScheduleSpineAnchorCorrection(background, baselineSpineAnchors);
         }
 
         // NCharacterSelectScreenBg only subscribes to SizeChanged in _Ready; it does not run
@@ -955,111 +957,50 @@ internal static partial class ContextualSkinControls
                 GodotObject.IsInstanceValid(background))
             {
                 RefreshCharacterBackgroundLayout(container, background);
-                ScheduleSpineAnchorCorrection(background, baselineSpineAnchors);
             }
         }).CallDeferred();
     }
 
-    private static void ScheduleSpineAnchorCorrection(
-        Node selectedRoot,
-        IReadOnlyDictionary<string, SpineAnchor> baselineAnchors)
+    internal static void CaptureCharacterBackgroundHostLayout(NCharacterSelectScreen screen)
     {
-        CorrectSpineAnchors(selectedRoot, baselineAnchors);
-        foreach (var node in EnumerateNodes(selectedRoot).Where(node =>
-                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
-        {
-            try
-            {
-                selectedRoot.RunWhenSpineReady(
-                    new MegaSprite(node),
-                    _ =>
-                    {
-                        if (GodotObject.IsInstanceValid(selectedRoot))
-                        {
-                            CorrectSpineAnchors(selectedRoot, baselineAnchors);
-                        }
-                    });
-            }
-            catch
-            {
-                // A provider may use a non-Spine visual in one of its variants. The correction is
-                // best effort and must never prevent the character preview from appearing.
-            }
-        }
-    }
-
-    private static IReadOnlyDictionary<string, SpineAnchor> CaptureSpineAnchors(Node root)
-    {
-        var anchors = new Dictionary<string, SpineAnchor>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in EnumerateNodes(root).Where(node =>
-                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
-        {
-            if (node is not Node2D node2D || !TryGetSpineBounds(node, out var bounds))
-            {
-                continue;
-            }
-
-            var key = root.GetPathTo(node).ToString();
-            anchors[key] = new SpineAnchor(node2D.ToGlobal(bounds.GetCenter()), bounds.Size);
-        }
-
-        return anchors;
-    }
-
-    private static void CorrectSpineAnchors(
-        Node selectedRoot,
-        IReadOnlyDictionary<string, SpineAnchor> baselineAnchors)
-    {
-        if (baselineAnchors.Count == 0)
+        if (!GodotObject.IsInstanceValid(screen) ||
+            CharacterBackgroundHostLayouts.TryGetValue(screen, out _))
         {
             return;
         }
 
-        foreach (var node in EnumerateNodes(selectedRoot).Where(node =>
-                     node.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)))
+        var container = screen.GetNodeOrNull<Control>("AnimatedBg");
+        if (container != null)
         {
-            if (node is not Node2D node2D ||
-                !baselineAnchors.TryGetValue(selectedRoot.GetPathTo(node).ToString(), out var baseline) ||
-                !TryGetSpineBounds(node, out var bounds))
-            {
-                continue;
-            }
-
-            var delta = baseline.GlobalCenter - node2D.ToGlobal(bounds.GetCenter());
-            // A small difference is normal between animation frames. Avoid accumulating tiny
-            // corrections while keeping genuinely different skeleton origins aligned.
-            if (delta.Length() < 8f || delta.Length() > 1600f)
-            {
-                continue;
-            }
-
-            node2D.GlobalPosition += delta;
-            ModLog.Info(
-                $"已校正选角 Spine 视觉锚点 {node.Name}：" +
-                $"偏移=({delta.X:F0}, {delta.Y:F0})，" +
-                $"原尺寸=({baseline.Size.X:F0}, {baseline.Size.Y:F0})，" +
-                $"当前尺寸=({bounds.Size.X:F0}, {bounds.Size.Y:F0})。" );
+            CharacterBackgroundHostLayouts.Add(
+                screen,
+                CharacterBackgroundHostLayout.Capture(container));
         }
     }
 
-    private static bool TryGetSpineBounds(Node node, out Rect2 bounds)
+    private static void RestoreCharacterBackgroundHostLayout(NCharacterSelectScreen screen)
     {
-        bounds = default;
-        try
+        var container = screen.GetNodeOrNull<Control>("AnimatedBg");
+        if (container == null)
         {
-            var skeleton = new MegaSprite(node).GetSkeleton();
-            if (skeleton == null)
-            {
-                return false;
-            }
+            return;
+        }
 
-            bounds = skeleton.GetBounds();
-            return bounds.Size.X > 1f && bounds.Size.Y > 1f;
-        }
-        catch
+        if (!CharacterBackgroundHostLayouts.TryGetValue(screen, out var layout))
         {
-            return false;
+            CaptureCharacterBackgroundHostLayout(screen);
+            return;
         }
+
+        if (!layout.Matches(container))
+        {
+            ModLog.Info(
+                $"已清除选角背景容器遗留变换：" +
+                $"位置={container.Position}，缩放={container.Scale}，旋转={container.Rotation:F3}。" );
+        }
+
+        layout.Apply(container);
+        container.Visible = true;
     }
 
     private static void RebindCharacterSceneResources(
@@ -1099,29 +1040,25 @@ internal static partial class ContextualSkinControls
 
     private static void RefreshCharacterBackgroundLayout(Control container, Control background)
     {
-        if (CharacterBackgroundWindowChangeMethod == null)
+        if (CharacterBackgroundWindowChangeMethod == null ||
+            container is not NCharacterSelectScreenBg gameBackground ||
+            !GodotObject.IsInstanceValid(gameBackground))
         {
             return;
         }
 
-        foreach (var node in EnumerateNodes(container)
-                     .Concat(EnumerateNodes(background))
-                     .DistinctBy(node => node.GetInstanceId()))
+        try
         {
-            if (node is not NCharacterSelectScreenBg gameBackground ||
-                !GodotObject.IsInstanceValid(gameBackground))
-            {
-                continue;
-            }
-
-            try
-            {
-                CharacterBackgroundWindowChangeMethod.Invoke(gameBackground, null);
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn($"刷新选角背景的宽高比布局失败：{exception.GetBaseException().Message}");
-            }
+            // The game owns aspect-ratio fitting on the shared AnimatedBg host. A provider may
+            // also use NCharacterSelectScreenBg inside its scene, but the original game merely
+            // adds that child and never invokes its private window callback. Calling it here a
+            // second time scales some custom previews around their own pivot and moves them down
+            // and right.
+            CharacterBackgroundWindowChangeMethod.Invoke(gameBackground, null);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"刷新选角背景的宽高比布局失败：{exception.GetBaseException().Message}");
         }
 
         if (GodotObject.IsInstanceValid(background))
@@ -1850,12 +1787,77 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private sealed record SpineAnchor(Vector2 GlobalCenter, Vector2 Size);
+    private sealed record CharacterBackgroundHostLayout(
+        float AnchorLeft,
+        float AnchorTop,
+        float AnchorRight,
+        float AnchorBottom,
+        float OffsetLeft,
+        float OffsetTop,
+        float OffsetRight,
+        float OffsetBottom,
+        Control.GrowDirection GrowHorizontal,
+        Control.GrowDirection GrowVertical,
+        Vector2 PivotOffset,
+        Vector2 Scale,
+        float Rotation)
+    {
+        internal static CharacterBackgroundHostLayout Capture(Control control) => new(
+            control.AnchorLeft,
+            control.AnchorTop,
+            control.AnchorRight,
+            control.AnchorBottom,
+            control.OffsetLeft,
+            control.OffsetTop,
+            control.OffsetRight,
+            control.OffsetBottom,
+            control.GrowHorizontal,
+            control.GrowVertical,
+            control.PivotOffset,
+            control.Scale,
+            control.Rotation);
+
+        internal bool Matches(Control control) =>
+            Mathf.IsEqualApprox(control.AnchorLeft, AnchorLeft) &&
+            Mathf.IsEqualApprox(control.AnchorTop, AnchorTop) &&
+            Mathf.IsEqualApprox(control.AnchorRight, AnchorRight) &&
+            Mathf.IsEqualApprox(control.AnchorBottom, AnchorBottom) &&
+            Mathf.IsEqualApprox(control.OffsetLeft, OffsetLeft) &&
+            Mathf.IsEqualApprox(control.OffsetTop, OffsetTop) &&
+            Mathf.IsEqualApprox(control.OffsetRight, OffsetRight) &&
+            Mathf.IsEqualApprox(control.OffsetBottom, OffsetBottom) &&
+            control.GrowHorizontal == GrowHorizontal &&
+            control.GrowVertical == GrowVertical &&
+            control.PivotOffset.IsEqualApprox(PivotOffset) &&
+            control.Scale.IsEqualApprox(Scale) &&
+            Mathf.IsEqualApprox(control.Rotation, Rotation);
+
+        internal void Apply(Control control)
+        {
+            control.AnchorLeft = AnchorLeft;
+            control.AnchorTop = AnchorTop;
+            control.AnchorRight = AnchorRight;
+            control.AnchorBottom = AnchorBottom;
+            control.OffsetLeft = OffsetLeft;
+            control.OffsetTop = OffsetTop;
+            control.OffsetRight = OffsetRight;
+            control.OffsetBottom = OffsetBottom;
+            control.GrowHorizontal = GrowHorizontal;
+            control.GrowVertical = GrowVertical;
+            control.PivotOffset = PivotOffset;
+            control.Scale = Scale;
+            control.Rotation = Rotation;
+        }
+    }
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
 internal static class CharacterSelectionSkinPatch
 {
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCharacterSelectScreen __instance) =>
+        ContextualSkinControls.CaptureCharacterBackgroundHostLayout(__instance);
+
     [HarmonyPriority(Priority.First)]
     private static void Postfix(NCharacterSelectScreen __instance, CharacterModel characterModel) =>
         ContextualSkinControls.ShowCharacter(__instance, characterModel);

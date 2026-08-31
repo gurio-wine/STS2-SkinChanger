@@ -271,8 +271,8 @@ internal static class BestiaryEntranceSwitcher
         host.Scale = compactScale;
         var visibleSize = host.Size * compactScale;
         host.Position = new Vector2(
-            Math.Max(target.Size.X - visibleSize.X - 8f, 0f),
-            8f);
+            Math.Max(target.Size.X - visibleSize.X - 24f, 0f),
+            24f);
     }
 
     private static void ApplyMode(NClickableControl target, EntranceState state)
@@ -288,6 +288,9 @@ internal static class BestiaryEntranceSwitcher
         if (toggleLabel != null)
         {
             toggleLabel.AutoSizeEnabled = false;
+            toggleLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+            toggleLabel.HorizontalAlignment = HorizontalAlignment.Center;
+            toggleLabel.VerticalAlignment = VerticalAlignment.Center;
             toggleLabel.AddThemeFontSizeOverride("font_size", 54);
             toggleLabel.Text = "切换";
         }
