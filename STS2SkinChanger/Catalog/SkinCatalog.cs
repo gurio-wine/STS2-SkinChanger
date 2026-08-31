@@ -3965,10 +3965,25 @@ internal sealed partial class SkinCatalog : IDisposable
                 index.Mod.RootPath,
                 index.Assets.Values);
             var exportedPortraits = LoadExportedCardPortraits(index);
+            var normalPortraits = new Dictionary<string, string>(
+                exportedPortraits.Normal,
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in ManagedCardPortraitReplacementScanner.Scan(
+                         index.Mod.RootPath,
+                         index.Mod.Id))
+            {
+                // Only accept DLL declarations backed by this provider's own PCK. Besides
+                // preventing stale paths from becoming blank card art, TryBuildAsset registers
+                // private non-standard folders so isolated loading can resolve them later.
+                if (index.TryBuildAsset(pair.Value) != null)
+                {
+                    normalPortraits[pair.Key] = pair.Value;
+                }
+            }
             var presentations = LoadCardPresentations(
                 index,
                 providerBehavior.Presentations,
-                exportedPortraits.Normal.Keys
+                normalPortraits.Keys
                     .Concat(exportedPortraits.Ancient.Keys)
                     .Distinct(StringComparer.OrdinalIgnoreCase));
             var standardAssets = index.Assets.Values
@@ -3989,7 +4004,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 : allAssets.Where(asset => AssetDiffersFromBaseline(asset, baselineIndexes)).ToArray();
             if (changedAssets.Length == 0 &&
                 presentations.Count == 0 &&
-                exportedPortraits.Normal.Count == 0 &&
+                normalPortraits.Count == 0 &&
                 exportedPortraits.Ancient.Count == 0)
             {
                 continue;
@@ -4017,7 +4032,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 .ToArray();
             // An exported project is already one intentional package. Its manifest is
             // authoritative, so filename-derived variant splitting must not fragment it.
-            var splitVariants = exportedPortraits.Normal.Count == 0 &&
+            var splitVariants = normalPortraits.Count == 0 &&
                                 exportedPortraits.Ancient.Count == 0 &&
                                 variants.Length > 1 &&
                                 VariantsOverlap(variants);
@@ -4044,7 +4059,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     variantId,
                     variantName,
                     new Dictionary<string, string>(
-                        exportedPortraits.Normal,
+                        normalPortraits,
                         StringComparer.OrdinalIgnoreCase),
                     MergeAncientPortraits(
                         providerBehavior.AncientPortraits,
