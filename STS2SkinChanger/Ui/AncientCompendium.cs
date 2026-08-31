@@ -1517,25 +1517,56 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // during Instantiate. Keep the selected provider overlay mounted for the complete
             // load+instantiate operation so a previous skin cannot leak its skeleton into this
             // preview.
-            Node instance;
+            Node? instance = null;
             var selection = group == null
                 ? SkinCatalog.BaseOptionId
                 : SkinService.Config.GetSelection(group.Id);
-            if (group != null && !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            var scenePaths = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
+                ? new[]
+                {
+                    // 测试版提供了独立商人按钮场景；正式版把它嵌在 merchant_room 里。
+                    // 优先使用独立场景可以完整接住只替换 merchant_button.tscn 的皮肤，
+                    // 找不到时再回退到两个版本都存在的房间场景。
+                    "res://scenes/rooms/merchant_button.tscn",
+                    entry.ScenePath
+                }
+                : new[] { entry.ScenePath };
+            Exception? lastSceneException = null;
+            foreach (var scenePath in scenePaths.Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                instance = SkinService.InstantiateRuntimeScene<Node>(
-                    group.Id,
-                    entry.ScenePath);
+                try
+                {
+                    if (group != null &&
+                        !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        instance = SkinService.InstantiateRuntimeScene<Node>(group.Id, scenePath);
+                    }
+                    else
+                    {
+                        var scene = ResourceLoader.Load<PackedScene>(
+                            scenePath,
+                            null,
+                            ResourceLoader.CacheMode.IgnoreDeep);
+                        if (scene == null)
+                        {
+                            throw new InvalidOperationException($"场景不存在：{scenePath}");
+                        }
+
+                        instance = scene.Instantiate(PackedScene.GenEditState.Disabled);
+                    }
+
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    lastSceneException = exception;
+                }
             }
-            else
+            if (instance == null)
             {
-                var scene = ResourceLoader.Load<PackedScene>(
-                    entry.ScenePath,
-                    null,
-                    ResourceLoader.CacheMode.IgnoreDeep) ??
-                            throw new InvalidOperationException(
-                                $"无法加载其它图鉴场景：{entry.ScenePath}");
-                instance = scene.Instantiate(PackedScene.GenEditState.Disabled);
+                throw new InvalidOperationException(
+                    $"无法加载其它图鉴场景：{string.Join(", ", scenePaths)}",
+                    lastSceneException);
             }
             if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase))
             {
