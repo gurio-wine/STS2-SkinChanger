@@ -1059,18 +1059,27 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             ClearPreview();
             var group = FindOtherGroup(entry);
-            var scene = group != null
-                ? SkinService.LoadRuntimeScene(group.Id, entry.ScenePath)
-                : ResourceLoader.Load<PackedScene>(
+            // PackedScene external resources (notably Spine skeleton data) can resolve lazily
+            // during Instantiate. Keep the selected provider overlay mounted for the complete
+            // load+instantiate operation so a previous skin cannot leak its skeleton into this
+            // preview.
+            Node instance;
+            if (group != null)
+            {
+                instance = SkinService.InstantiateRuntimeScene<Node>(
+                    group.Id,
+                    entry.ScenePath);
+            }
+            else
+            {
+                var scene = ResourceLoader.Load<PackedScene>(
                     entry.ScenePath,
                     null,
-                    ResourceLoader.CacheMode.IgnoreDeep);
-            if (scene == null)
-            {
-                throw new InvalidOperationException($"无法加载其它图鉴场景：{entry.ScenePath}");
+                    ResourceLoader.CacheMode.IgnoreDeep) ??
+                            throw new InvalidOperationException(
+                                $"无法加载其它图鉴场景：{entry.ScenePath}");
+                instance = scene.Instantiate(PackedScene.GenEditState.Disabled);
             }
-
-            var instance = scene.Instantiate(PackedScene.GenEditState.Disabled);
             if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase))
             {
                 // The room scene is a full shop layout. Display only the merchant's own Spine
