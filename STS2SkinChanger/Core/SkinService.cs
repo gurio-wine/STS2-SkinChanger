@@ -84,7 +84,7 @@ internal static class SkinService
     private static bool _initialized;
     private static bool _configLoaded;
     private static bool _cardGroupsInitialized;
-    private static bool _loadOrderWarningDecisionLogged;
+    private static bool _loadOrderAutoReorderLogged;
     private static string? _mountedLocalizationSignature;
     private static ConditionalWeakTable<CardModel, CardLookup> _cardLookupCache = new();
 
@@ -273,7 +273,7 @@ internal static class SkinService
             EnsureConfigLoaded();
             Config.SuppressLoadOrderWarning = true;
             Config.Save(ConfigPath);
-            ModLog.Info("玩家选择了“不再提示”加载顺序提醒，设置已保存。后续满足提示条件时将跳过弹窗。");
+            ModLog.Info("已保存旧版“不再提示”设置；当前版本会自动调整加载顺序，不再用该设置跳过提示。");
         }
     }
 
@@ -327,19 +327,18 @@ internal static class SkinService
                 Config.Save(ConfigPath);
             }
 
-            var shouldShow = !isBeforeAllSkinMods && !Config.SuppressLoadOrderWarning;
-            if (!isBeforeAllSkinMods && !_loadOrderWarningDecisionLogged)
+            var shouldShow = !isBeforeAllSkinMods;
+            if (isBeforeAllSkinMods)
             {
-                if (Config.SuppressLoadOrderWarning)
-                {
-                    ModLog.Info("加载顺序提醒条件已满足，但玩家之前选择了“不再提示”，本次跳过弹窗。");
-                }
-                else
-                {
-                    ModLog.Info("加载顺序提醒条件已满足，玩家未选择“不再提示”，将显示弹窗。");
-                }
-
-                _loadOrderWarningDecisionLogged = true;
+                _loadOrderAutoReorderLogged = false;
+            }
+            else if (!_loadOrderAutoReorderLogged)
+            {
+                var legacySuppression = Config.SuppressLoadOrderWarning;
+                ModLog.Info(legacySuppression
+                    ? "检测到皮肤 Mod 排在本 Mod 之前；旧版“不再提示”设置不再生效，将自动调整本 Mod 到所有皮肤 Mod 之前。"
+                    : "检测到皮肤 Mod 排在本 Mod 之前，将自动调整本 Mod 到所有皮肤 Mod 之前。");
+                _loadOrderAutoReorderLogged = true;
             }
 
             return shouldShow;
