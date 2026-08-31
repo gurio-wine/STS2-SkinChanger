@@ -1793,7 +1793,7 @@ internal static class SkinService
 
         var configuredPath = optionLookup.Option.GetPortraitPath(
             lookup.CardType,
-            IsAncientStyleEnabled(optionLookup.Option, lookup.CardType));
+            IsAncientStyleEnabled(optionLookup.Option, lookup.CardType, card));
         if (!string.IsNullOrWhiteSpace(configuredPath))
         {
             return new CardPortraitRequest(
@@ -1855,7 +1855,15 @@ internal static class SkinService
                 throw new InvalidOperationException("资源包未返回可用卡牌贴图。");
             }
 
-            var portrait = request.WrapAtlas && loaded is not AtlasTexture
+            // ResourceLoader normally returns a CompressedTexture2D for imported card images;
+            // those need an AtlasTexture wrapper for the card model's atlas-based path.  The
+            // raw-image fallback above creates a real ImageTexture, which is already a complete
+            // canvas.  Wrapping it as an AtlasTexture changes the texture-size metadata used by
+            // NCard and makes exported portraits appear horizontally compressed, so preserve
+            // the original ImageTexture shape.
+            var portrait = request.WrapAtlas &&
+                           loaded is not AtlasTexture &&
+                           loaded is not ImageTexture
                 ? new AtlasTexture
                 {
                     Atlas = loaded,
@@ -2416,7 +2424,10 @@ internal static class SkinService
         return leftExtension.Equals(rightExtension, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsAncientStyleEnabled(CardSkinOption option, string cardType)
+    private static bool IsAncientStyleEnabled(
+        CardSkinOption option,
+        string cardType,
+        CardModel card)
     {
         if (!option.AncientPortraits.ContainsKey(cardType))
         {
@@ -2449,7 +2460,11 @@ internal static class SkinService
 
         if (method == null)
         {
-            return true;
+            // Exported card projects commonly declare both image and ancientImage for every
+            // card.  Without their optional ConfigHelper, ancientImage belongs to the game's
+            // Ancient layout only; using it for every normal card makes a 375x527 portrait get
+            // fitted into the normal 375x285 slot and visibly narrows the artwork.
+            return card.Rarity == CardRarity.Ancient;
         }
 
         try

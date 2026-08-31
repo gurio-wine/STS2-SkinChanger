@@ -22,6 +22,7 @@ internal static class AncientCompendiumEntry
 {
     private const string ButtonName = "STS2AncientCompendiumButton";
     private const string ScreenName = "STS2AncientCompendium";
+    private const string OverlayName = "STS2AncientCompendiumEntryOverlay";
     private static readonly System.Reflection.FieldInfo StackField = AccessTools.Field(typeof(NSubmenu), "_stack");
     private static readonly ConditionalWeakTable<NCompendiumSubmenu, AttachmentState> AttachmentStates = new();
     private static NCompendiumBottomButton? _entryButton;
@@ -140,6 +141,17 @@ internal static class AncientCompendiumEntry
             return true;
         }
 
+        var nativeHost = compendium.GetNodeOrNull<HBoxContainer>(
+            "MarginContainer/VBoxContainer/BottomRow");
+        if (visibleHost != nativeHost)
+        {
+            // A replacement compendium often fills its grid completely and clips any seventh
+            // child added to that grid.  Keep the foreign layout intact and put our entry in an
+            // un-clipped full-screen overlay instead.  This is also safer for custom hosts that
+            // use fixed slots rather than a resizable Container.
+            return TryAttachToOverlay(compendium, button, visibleAnchor);
+        }
+
         var parent = button.GetParent();
         if (parent != visibleHost)
         {
@@ -169,6 +181,115 @@ internal static class AncientCompendiumEntry
 
         ConfigureFocus(compendium, button, visibleHost);
         return true;
+    }
+
+    private static bool TryAttachToOverlay(
+        NCompendiumSubmenu compendium,
+        NCompendiumBottomButton button,
+        Node? visibleAnchor)
+    {
+        if (compendium is not Control compendiumControl || !compendiumControl.IsVisibleInTree())
+        {
+            return false;
+        }
+
+        var overlay = compendium.GetNodeOrNull<Control>(OverlayName);
+        if (overlay == null)
+        {
+            overlay = new Control
+            {
+                Name = OverlayName,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ZIndex = 20
+            };
+            compendium.AddChild(overlay);
+            overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        }
+
+        var parent = button.GetParent();
+        if (parent != overlay)
+        {
+            parent?.RemoveChild(button);
+            overlay.AddChild(button);
+        }
+
+        button.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+        button.Show();
+        button.Scale = new Vector2(0.68f, 0.68f);
+
+        var buttonSize = button.Size;
+        if (buttonSize.X <= 1f || buttonSize.Y <= 1f)
+        {
+            buttonSize = visibleAnchor is Control anchorControl && anchorControl.Size.X > 1f
+                ? anchorControl.Size
+                : new Vector2(260f, 110f);
+            button.Size = buttonSize;
+        }
+
+        var archiveRect = GetVisibleArchiveRect(compendium);
+        var viewportRect = compendium.GetViewport().GetVisibleRect();
+        var effectiveSize = buttonSize * button.Scale;
+        const float margin = 24f;
+        var globalPosition = new Vector2(
+            viewportRect.End.X - effectiveSize.X - margin,
+            viewportRect.End.Y - effectiveSize.Y - margin);
+        if (archiveRect != null)
+        {
+            var rightCandidate = new Vector2(
+                archiveRect.Value.End.X + margin,
+                archiveRect.Value.Position.Y);
+            var belowCandidate = new Vector2(
+                archiveRect.Value.Position.X,
+                archiveRect.Value.End.Y + margin);
+            if (rightCandidate.X + effectiveSize.X <= viewportRect.End.X - margin)
+            {
+                globalPosition = rightCandidate;
+            }
+            else if (belowCandidate.Y + effectiveSize.Y <= viewportRect.End.Y - margin)
+            {
+                globalPosition = belowCandidate;
+            }
+        }
+
+        var overlayTransform = overlay.GetGlobalTransformWithCanvas();
+        button.Position = overlayTransform.AffineInverse() * globalPosition;
+        ConfigureOverlayFocus(button, visibleAnchor);
+        return true;
+    }
+
+    private static Rect2? GetVisibleArchiveRect(Node root)
+    {
+        var controls = EnumerateDescendants(root)
+            .Where(node => node is NCompendiumBottomButton or NShortSubmenuButton)
+            .Where(node => !node.Name.ToString().Equals(ButtonName, StringComparison.Ordinal) &&
+                           node is Control control && control.IsVisibleInTree())
+            .OfType<Control>()
+            .ToArray();
+        if (controls.Length == 0)
+        {
+            return null;
+        }
+
+        var result = controls[0].GetGlobalRect();
+        foreach (var control in controls.Skip(1))
+        {
+            result = result.Merge(control.GetGlobalRect());
+        }
+
+        return result;
+    }
+
+    private static void ConfigureOverlayFocus(
+        NCompendiumBottomButton button,
+        Node? visibleAnchor)
+    {
+        if (visibleAnchor is not Control anchor)
+        {
+            return;
+        }
+
+        button.FocusNeighborLeft = anchor.GetPath();
+        anchor.FocusNeighborRight = button.GetPath();
     }
 
     private static void ConfigureFocus(
