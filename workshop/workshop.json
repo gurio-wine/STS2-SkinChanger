@@ -3,7 +3,7 @@
   "publishedFileId": 3787302680,
   "title": "Skin Changer",
   "statementHeading": "Statement",
-  "version": "0.9.113",
+  "version": "0.9.114",
   "featureUpdate": "[h2]In-run Appearance[/h2]\n[list]\n[*]During a run, open Appearance from the pause menu and click a visible character, monster, Ancient, companion, or the merchant in a shop. The panel opens on the opposite side of the selected target.\n[*]Characters and monsters can hot-swap skins and adjust or drag their model and health bar; the player keeps those controls in shops. Ancients and merchants only show a skin selector. Osty's skin follows the Necrobinder, while its model and health bar remain independently adjustable.\n[*]Monster intents and targeting reticles have independent scale and position controls, plus options to follow model scale and movement. The actual targeting hitbox stays aligned with the reticle.\n[/list]",
   "cardPriorityUpdate": "[h2]Card Skin Priorities[/h2]\n[list]\n[*]Each card category can enable multiple skin Mods and order their priority. For each card, the highest enabled source that provides it owns the complete presentation; lower entries only fill cards not provided above, and effects from multiple sources are never stacked onto the same card.\n[*]The Card Compendium shows colored source tabs beside each card, so available sources and the currently selected source can be compared at a glance.\n[/list]",
   "multiplayerUpdate": "[h2]Multiplayer Character Skins[/h2]\n[list]\n[*]Players who use Skin Changer share their selected character skin per player without overwriting local saved settings.\n[*]The multiplayer character-select screen includes a default-on option to show skins installed by both players. A selected skin is displayed only when that exact skin Mod is also installed locally; otherwise that player immediately uses the original skin. No Workshop download, temporary skin package, or ready delay is used. Disabling the option keeps other players on their original skins.\n[*]Each player's multiplayer avatar follows that player's selected skin. Model, health bar, intent, targeting reticle, and companion transforms are synchronized live for the owning player.\n[*]Players may switch their own skin during a multiplayer run; it hot-reloads and synchronizes immediately. If the owner's skin is missing locally, a local-only replacement may be selected for that remote player.\n[/list]",
@@ -23,6 +23,6 @@
     "screenshot/upload/8.jpg",
     "screenshot/upload/9.jpg"
   ],
-  "changeNote": "Fixed late-attached character models overriding another multiplayer player's skin: NCreature ready-time presentation is now isolated and replayed per player / 修复角色后置模型覆盖其他联机玩家皮肤：现按玩家隔离并重放 NCreature 就绪阶段的外观",
+  "changeNote": "Fixed interactive Ancient skins leaving input handlers active and broken dynamic resources: coherent runtime providers now reuse their complete package safely / 修复交互式先古皮肤残留输入与动态资源断链：完整运行包现可安全复用",
   "localizationsFile": "localizations.json"
 }
