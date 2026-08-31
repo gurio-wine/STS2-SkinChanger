@@ -990,6 +990,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         if (GodotObject.IsInstanceValid(_shopPreviewOverlay))
         {
+            _shopPreviewOverlay!.Visible = false;
             _shopPreviewOverlay!.QueueFree();
         }
 
