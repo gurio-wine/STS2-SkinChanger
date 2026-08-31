@@ -46,6 +46,10 @@ internal sealed class CardSkinPreset
 {
     public string Name { get; set; } = string.Empty;
 
+    // Empty for presets written by versions before presets were scoped to a card category.
+    // SkinService migrates those entries once the card catalogue is available.
+    public string? CategoryId { get; set; }
+
     public Dictionary<string, List<CardSkinPriorityEntry>> CardSkinPriorities { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -77,6 +81,12 @@ internal sealed class SkinConfig
     public int CardPriorityDefaultsVersion { get; set; }
 
     public List<CardSkinPreset> CardSkinPresets { get; set; } = [];
+
+    // Active preset is now tracked independently for each card catalogue category. Keep the
+    // single value below so old configuration files can be migrated without losing the active
+    // preset name.
+    public Dictionary<string, string> ActiveCardSkinPresets { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public string? ActiveCardSkinPreset { get; set; }
 
@@ -192,6 +202,9 @@ internal sealed class SkinConfig
             .Select(preset =>
             {
                 preset.Name = preset.Name.Trim();
+                preset.CategoryId = string.IsNullOrWhiteSpace(preset.CategoryId)
+                    ? null
+                    : preset.CategoryId.Trim().ToLowerInvariant();
                 preset.CardSkinPriorities ??=
                     new Dictionary<string, List<CardSkinPriorityEntry>>(StringComparer.OrdinalIgnoreCase);
                 preset.CardSkinPriorities = preset.CardSkinPriorities.ToDictionary(
@@ -211,8 +224,26 @@ internal sealed class SkinConfig
                         StringComparer.OrdinalIgnoreCase);
                 return preset;
             })
-            .DistinctBy(preset => preset.Name, StringComparer.OrdinalIgnoreCase)
+            .DistinctBy(
+                preset => (preset.CategoryId ?? string.Empty) + "\n" + preset.Name,
+                StringComparer.OrdinalIgnoreCase)
             .ToList();
+        config.ActiveCardSkinPresets ??=
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        config.ActiveCardSkinPresets = config.ActiveCardSkinPresets
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) &&
+                           !string.IsNullOrWhiteSpace(pair.Value) &&
+                           config.CardSkinPresets.Any(preset =>
+                               preset.CategoryId?.Equals(
+                                   pair.Key,
+                                   StringComparison.OrdinalIgnoreCase) == true &&
+                               preset.Name.Equals(
+                                   pair.Value,
+                                   StringComparison.OrdinalIgnoreCase)))
+            .ToDictionary(
+                pair => pair.Key.Trim().ToLowerInvariant(),
+                pair => pair.Value.Trim(),
+                StringComparer.OrdinalIgnoreCase);
         config.ActiveCardSkinPreset = config.CardSkinPresets.Any(preset =>
             preset.Name.Equals(config.ActiveCardSkinPreset, StringComparison.OrdinalIgnoreCase))
                 ? config.CardSkinPresets.First(preset =>

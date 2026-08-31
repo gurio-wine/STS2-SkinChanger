@@ -713,65 +713,65 @@ internal static class ModLocalization
         new Dictionary<string, CardPresetLanguagePack>(StringComparer.OrdinalIgnoreCase)
         {
             ["eng"] = new(
-                "Presets", "Save and switch complete card-art setups.", "Preset name",
+                "Presets", "Save and switch card-art settings for this category.", "Preset name",
                 "Save current", "Apply", "Overwrite", "Rename", "Delete", "Confirm", "Active",
-                "No card-art presets saved"),
+                "No presets saved for this category"),
             ["zhs"] = new(
-                "预设", "保存并整体切换完整的卡图设置。", "预设名称",
+                "预设", "保存并切换当前分类的卡图设置。", "预设名称",
                 "保存当前", "应用", "覆盖", "重命名", "删除", "确认删除", "当前",
-                "尚未保存卡图预设"),
+                "当前分类尚未保存预设"),
             ["zht"] = new(
-                "預設", "儲存並整體切換完整的卡圖設定。", "預設名稱",
+                "預設", "儲存並切換目前分類的卡圖設定。", "預設名稱",
                 "儲存目前", "套用", "覆蓋", "重新命名", "刪除", "確認刪除", "目前",
-                "尚未儲存卡圖預設"),
+                "目前分類尚未儲存預設"),
             ["deu"] = new(
-                "Profile", "Komplette Kartenbild-Einstellungen speichern und wechseln.", "Profilname",
+                "Profile", "Kartenbild-Einstellungen dieser Kategorie speichern und wechseln.", "Profilname",
                 "Aktuelles speichern", "Anwenden", "Überschreiben", "Umbenennen", "Löschen", "Bestätigen", "Aktiv",
-                "Keine Kartenbild-Profile gespeichert"),
+                "Für diese Kategorie sind keine Profile gespeichert"),
             ["esp"] = new(
-                "Perfiles", "Guarda y cambia configuraciones completas de arte.", "Nombre del perfil",
+                "Perfiles", "Guarda y cambia el arte de esta categoría.", "Nombre del perfil",
                 "Guardar actual", "Aplicar", "Sobrescribir", "Renombrar", "Borrar", "Confirmar", "Activo",
-                "No hay perfiles guardados"),
+                "No hay perfiles guardados para esta categoría"),
             ["fra"] = new(
-                "Profils", "Enregistrez et changez toute la configuration des cartes.", "Nom du profil",
+                "Profils", "Enregistrez et changez les cartes de cette catégorie.", "Nom du profil",
                 "Enregistrer", "Appliquer", "Écraser", "Renommer", "Supprimer", "Confirmer", "Actif",
-                "Aucun profil de cartes enregistré"),
+                "Aucun profil enregistré pour cette catégorie"),
             ["ita"] = new(
-                "Profili", "Salva e cambia configurazioni complete delle carte.", "Nome profilo",
+                "Profili", "Salva e cambia le carte di questa categoria.", "Nome profilo",
                 "Salva attuale", "Applica", "Sovrascrivi", "Rinomina", "Elimina", "Conferma", "Attivo",
-                "Nessun profilo carte salvato"),
+                "Nessun profilo salvato per questa categoria"),
             ["jpn"] = new(
-                "プリセット", "カード画像設定一式を保存して切り替えます。", "プリセット名",
+                "プリセット", "この分類のカード画像設定を保存して切り替えます。", "プリセット名",
                 "現在を保存", "適用", "上書き", "名前変更", "削除", "削除確認", "使用中",
-                "カード画像プリセットはありません"),
+                "この分類のカード画像プリセットはありません"),
             ["kor"] = new(
-                "프리셋", "전체 카드 그림 설정을 저장하고 전환합니다.", "프리셋 이름",
+                "프리셋", "이 분류의 카드 그림 설정을 저장하고 전환합니다.", "프리셋 이름",
                 "현재 저장", "적용", "덮어쓰기", "이름 변경", "삭제", "삭제 확인", "사용 중",
-                "저장된 카드 그림 프리셋이 없습니다"),
+                "이 분류에 저장된 카드 그림 프리셋이 없습니다"),
             ["pol"] = new(
-                "Profile", "Zapisuj i przełączaj pełne ustawienia grafik kart.", "Nazwa profilu",
+                "Profile", "Zapisuj i przełączaj grafiki kart tej kategorii.", "Nazwa profilu",
                 "Zapisz bieżące", "Zastosuj", "Nadpisz", "Zmień nazwę", "Usuń", "Potwierdź", "Aktywny",
-                "Brak zapisanych profili kart"),
+                "Brak profili kart zapisanych dla tej kategorii"),
             ["ptb"] = new(
-                "Perfis", "Salve e alterne configurações completas das artes.", "Nome do perfil",
+                "Perfis", "Salve e alterne as artes desta categoria.", "Nome do perfil",
                 "Salvar atual", "Aplicar", "Substituir", "Renomear", "Excluir", "Confirmar", "Ativo",
-                "Nenhum perfil de artes salvo"),
+                "Nenhum perfil salvo para esta categoria"),
             ["rus"] = new(
-                "Профили", "Сохраняйте и переключайте все настройки изображений карт.", "Имя профиля",
+                "Профили", "Сохраняйте и переключайте изображения карт этой категории.", "Имя профиля",
                 "Сохранить", "Применить", "Перезаписать", "Переименовать", "Удалить", "Подтвердить", "Активен",
-                "Нет сохранённых профилей карт"),
+                "Нет сохранённых профилей карт для этой категории"),
             ["spa"] = new(
-                "Perfiles", "Guarda y cambia configuraciones completas de ilustraciones.", "Nombre del perfil",
+                "Perfiles", "Guarda y cambia las ilustraciones de esta categoría.", "Nombre del perfil",
                 "Guardar actual", "Aplicar", "Sobrescribir", "Renombrar", "Eliminar", "Confirmar", "Activo",
-                "No hay perfiles de cartas guardados"),
+                "No hay perfiles de cartas guardados para esta categoría"),
             ["tha"] = new(
-                "พรีเซ็ต", "บันทึกและสลับการตั้งค่าภาพการ์ดทั้งหมด", "ชื่อพรีเซ็ต",
+                "พรีเซ็ต", "บันทึกและสลับการตั้งค่าภาพการ์ดของหมวดนี้", "ชื่อพรีเซ็ต",
                 "บันทึกปัจจุบัน", "ใช้", "เขียนทับ", "เปลี่ยนชื่อ", "ลบ", "ยืนยัน", "ใช้อยู่",
-                "ยังไม่มีพรีเซ็ตภาพการ์ด"),
+                "ยังไม่มีพรีเซ็ตภาพการ์ดสำหรับหมวดนี้"),
             ["tur"] = new(
-                "Profiller", "Tüm kart görseli ayarlarını kaydet ve değiştir.", "Profil adı",
+                "Profiller", "Bu kategorinin kart görsellerini kaydet ve değiştir.", "Profil adı",
                 "Geçerliyi kaydet", "Uygula", "Üzerine yaz", "Yeniden adlandır", "Sil", "Onayla", "Etkin",
-                "Kayıtlı kart profili yok")
+                "Bu kategori için kayıtlı kart profili yok")
         };
 
     private static readonly IReadOnlyDictionary<string, AdjustmentLanguagePack> AdjustmentPacks =

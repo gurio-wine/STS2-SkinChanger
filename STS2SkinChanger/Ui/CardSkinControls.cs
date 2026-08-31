@@ -1029,6 +1029,7 @@ internal static class CardSkinControls
         HBoxContainer selector,
         Control overlay)
     {
+        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var content = overlay.GetNode<VBoxContainer>(
             $"{PresetPanelName}/{PresetPanelMarginName}/{PresetContentName}");
         foreach (var child in content.GetChildren())
@@ -1076,7 +1077,7 @@ internal static class CardSkinControls
             overlay,
             () =>
             {
-                var created = SkinService.CreateCardSkinPreset(newName.Text);
+                var created = SkinService.CreateCardSkinPreset(groupId, newName.Text);
                 if (created)
                 {
                     newName.Text = string.Empty;
@@ -1100,7 +1101,7 @@ internal static class CardSkinControls
         rows.AddThemeConstantOverride("separation", 7);
         scroll.AddChild(rows);
 
-        var presets = SkinService.GetCardSkinPresets();
+        var presets = SkinService.GetCardSkinPresets(groupId);
         if (presets.Count == 0)
         {
             var empty = new Label
@@ -1159,7 +1160,7 @@ internal static class CardSkinControls
                 screen,
                 selector,
                 overlay,
-                () => SkinService.ApplyCardSkinPreset(preset.Name),
+                () => SkinService.ApplyCardSkinPreset(groupId, preset.Name),
                 refreshCards: true);
             row.AddChild(apply);
 
@@ -1170,7 +1171,7 @@ internal static class CardSkinControls
                 screen,
                 selector,
                 overlay,
-                () => SkinService.OverwriteCardSkinPreset(preset.Name),
+                () => SkinService.OverwriteCardSkinPreset(groupId, preset.Name),
                 refreshCards: false);
             row.AddChild(overwrite);
 
@@ -1181,7 +1182,7 @@ internal static class CardSkinControls
                 screen,
                 selector,
                 overlay,
-                () => SkinService.RenameCardSkinPreset(preset.Name, name.Text),
+                () => SkinService.RenameCardSkinPreset(groupId, preset.Name, name.Text),
                 refreshCards: false);
             row.AddChild(rename);
 
@@ -1202,7 +1203,7 @@ internal static class CardSkinControls
                     screen,
                     selector,
                     overlay,
-                    () => SkinService.DeleteCardSkinPreset(preset.Name),
+                    () => SkinService.DeleteCardSkinPreset(groupId, preset.Name),
                     refreshCards: false);
             };
             row.AddChild(delete);

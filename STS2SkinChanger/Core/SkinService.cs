@@ -464,6 +464,7 @@ internal static class SkinService
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
                 CardCoverageCache.Clear();
                 SanitizeCardSelections();
+                MigrateLegacyCardSkinPresets();
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -806,42 +807,51 @@ internal static class SkinService
     public static int GetCardSkinSourceCount(CardModel card) =>
         GetCardSkinSources(card).Count;
 
-    public static IReadOnlyList<CardSkinPresetState> GetCardSkinPresets()
+    public static IReadOnlyList<CardSkinPresetState> GetCardSkinPresets(string groupId)
     {
         lock (Sync)
         {
             return Config.CardSkinPresets
+                .Where(preset => preset.CategoryId?.Equals(
+                    groupId,
+                    StringComparison.OrdinalIgnoreCase) == true)
                 .Select(preset => new CardSkinPresetState(
                     preset.Name,
                     preset.Name.Equals(
-                        Config.ActiveCardSkinPreset,
+                        GetActiveCardSkinPreset(groupId),
                         StringComparison.OrdinalIgnoreCase)))
                 .ToArray();
         }
     }
 
-    public static bool CreateCardSkinPreset(string name)
+    public static bool CreateCardSkinPreset(string groupId, string name)
     {
         lock (Sync)
         {
+            if (!IsKnownCardGroup(groupId))
+            {
+                LastError = $"未知的卡牌皮肤分类：{groupId}";
+                return false;
+            }
+
             var normalizedName = NormalizeCardSkinPresetName(name);
             if (normalizedName == null)
             {
                 return false;
             }
 
-            if (FindCardSkinPresetIndex(normalizedName) >= 0)
+            if (FindCardSkinPresetIndex(groupId, normalizedName) >= 0)
             {
                 LastError = $"卡图预设已存在：{normalizedName}";
                 return false;
             }
 
-            var previousActivePreset = Config.ActiveCardSkinPreset;
-            var preset = CaptureCurrentCardSkinPreset(normalizedName);
+            var previousActivePreset = GetActiveCardSkinPreset(groupId);
+            var preset = CaptureCurrentCardSkinPreset(groupId, normalizedName);
             try
             {
                 Config.CardSkinPresets.Add(preset);
-                Config.ActiveCardSkinPreset = preset.Name;
+                SetActiveCardSkinPreset(groupId, preset.Name);
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
@@ -849,7 +859,7 @@ internal static class SkinService
             catch (Exception exception)
             {
                 Config.CardSkinPresets.Remove(preset);
-                Config.ActiveCardSkinPreset = previousActivePreset;
+                SetActiveCardSkinPreset(groupId, previousActivePreset);
                 LastError = exception.Message;
                 ModLog.Error($"保存卡图预设 {normalizedName} 失败：{exception}");
                 return false;
@@ -857,11 +867,11 @@ internal static class SkinService
         }
     }
 
-    public static bool OverwriteCardSkinPreset(string name)
+    public static bool OverwriteCardSkinPreset(string groupId, string name)
     {
         lock (Sync)
         {
-            var index = FindCardSkinPresetIndex(name);
+            var index = FindCardSkinPresetIndex(groupId, name);
             if (index < 0)
             {
                 LastError = $"找不到卡图预设：{name}";
@@ -869,12 +879,12 @@ internal static class SkinService
             }
 
             var previous = CloneCardSkinPreset(Config.CardSkinPresets[index]);
-            var previousActivePreset = Config.ActiveCardSkinPreset;
-            var replacement = CaptureCurrentCardSkinPreset(previous.Name);
+            var previousActivePreset = GetActiveCardSkinPreset(groupId);
+            var replacement = CaptureCurrentCardSkinPreset(groupId, previous.Name);
             try
             {
                 Config.CardSkinPresets[index] = replacement;
-                Config.ActiveCardSkinPreset = replacement.Name;
+                SetActiveCardSkinPreset(groupId, replacement.Name);
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
@@ -882,7 +892,7 @@ internal static class SkinService
             catch (Exception exception)
             {
                 Config.CardSkinPresets[index] = previous;
-                Config.ActiveCardSkinPreset = previousActivePreset;
+                SetActiveCardSkinPreset(groupId, previousActivePreset);
                 LastError = exception.Message;
                 ModLog.Error($"覆盖卡图预设 {previous.Name} 失败：{exception}");
                 return false;
@@ -890,11 +900,11 @@ internal static class SkinService
         }
     }
 
-    public static bool RenameCardSkinPreset(string currentName, string newName)
+    public static bool RenameCardSkinPreset(string groupId, string currentName, string newName)
     {
         lock (Sync)
         {
-            var index = FindCardSkinPresetIndex(currentName);
+            var index = FindCardSkinPresetIndex(groupId, currentName);
             var normalizedName = NormalizeCardSkinPresetName(newName);
             if (index < 0 || normalizedName == null)
             {
@@ -906,7 +916,7 @@ internal static class SkinService
                 return false;
             }
 
-            var duplicateIndex = FindCardSkinPresetIndex(normalizedName);
+            var duplicateIndex = FindCardSkinPresetIndex(groupId, normalizedName);
             if (duplicateIndex >= 0 && duplicateIndex != index)
             {
                 LastError = $"卡图预设已存在：{normalizedName}";
@@ -914,13 +924,13 @@ internal static class SkinService
             }
 
             var previousName = Config.CardSkinPresets[index].Name;
-            var previousActivePreset = Config.ActiveCardSkinPreset;
+            var previousActivePreset = GetActiveCardSkinPreset(groupId);
             try
             {
                 Config.CardSkinPresets[index].Name = normalizedName;
                 if (previousName.Equals(previousActivePreset, StringComparison.OrdinalIgnoreCase))
                 {
-                    Config.ActiveCardSkinPreset = normalizedName;
+                    SetActiveCardSkinPreset(groupId, normalizedName);
                 }
 
                 Config.Save(ConfigPath);
@@ -930,7 +940,7 @@ internal static class SkinService
             catch (Exception exception)
             {
                 Config.CardSkinPresets[index].Name = previousName;
-                Config.ActiveCardSkinPreset = previousActivePreset;
+                SetActiveCardSkinPreset(groupId, previousActivePreset);
                 LastError = exception.Message;
                 ModLog.Error($"重命名卡图预设 {previousName} 失败：{exception}");
                 return false;
@@ -938,11 +948,11 @@ internal static class SkinService
         }
     }
 
-    public static bool DeleteCardSkinPreset(string name)
+    public static bool DeleteCardSkinPreset(string groupId, string name)
     {
         lock (Sync)
         {
-            var index = FindCardSkinPresetIndex(name);
+            var index = FindCardSkinPresetIndex(groupId, name);
             if (index < 0)
             {
                 LastError = $"找不到卡图预设：{name}";
@@ -950,15 +960,15 @@ internal static class SkinService
             }
 
             var preset = Config.CardSkinPresets[index];
-            var previousActivePreset = Config.ActiveCardSkinPreset;
+            var previousActivePreset = GetActiveCardSkinPreset(groupId);
             try
             {
                 Config.CardSkinPresets.RemoveAt(index);
                 if (preset.Name.Equals(
-                        Config.ActiveCardSkinPreset,
+                        previousActivePreset,
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    Config.ActiveCardSkinPreset = null;
+                    SetActiveCardSkinPreset(groupId, null);
                 }
 
                 Config.Save(ConfigPath);
@@ -968,7 +978,7 @@ internal static class SkinService
             catch (Exception exception)
             {
                 Config.CardSkinPresets.Insert(index, preset);
-                Config.ActiveCardSkinPreset = previousActivePreset;
+                SetActiveCardSkinPreset(groupId, previousActivePreset);
                 LastError = exception.Message;
                 ModLog.Error($"删除卡图预设 {preset.Name} 失败：{exception}");
                 return false;
@@ -976,59 +986,71 @@ internal static class SkinService
         }
     }
 
-    public static bool ApplyCardSkinPreset(string name)
+    public static bool ApplyCardSkinPreset(string groupId, string name)
     {
         lock (Sync)
         {
-            var index = FindCardSkinPresetIndex(name);
+            var index = FindCardSkinPresetIndex(groupId, name);
             var catalog = Catalog;
-            if (index < 0 || catalog == null)
+            var group = catalog?.CardGroups.FirstOrDefault(candidate => candidate.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase));
+            if (index < 0 || catalog == null || group == null)
             {
-                LastError = index < 0 ? $"找不到卡图预设：{name}" : "皮肤目录尚未初始化。";
+                LastError = index < 0
+                    ? $"找不到卡图预设：{name}"
+                    : catalog == null ? "皮肤目录尚未初始化。" : $"未知的卡牌皮肤分类：{groupId}";
                 return false;
             }
 
             var preset = Config.CardSkinPresets[index];
-            var previousPriorities = CloneCardSkinPriorities(Config.CardSkinPriorities);
-            var previousSelections = CaptureCardSelections();
-            var previousActivePreset = Config.ActiveCardSkinPreset;
+            var hadPreviousPriority = Config.CardSkinPriorities.TryGetValue(groupId, out var previousPriority);
+            var previousSelections = CaptureCardSelectionsForGroup(groupId);
+            var previousActivePreset = GetActiveCardSkinPreset(groupId);
             var previousDefaultsVersion = Config.CardPriorityDefaultsVersion;
-            var groups = catalog.CardGroups
-                .Select(group => group.Id)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
-                Config.CardSkinPriorities = CloneCardSkinPriorities(preset.CardSkinPriorities);
-                ReplaceCardSelections(preset.Selections);
-                Config.CardPriorityDefaultsVersion = 1;
-                Config.ActiveCardSkinPreset = preset.Name;
-                SanitizeCardSelections();
-                CardPreviewSelections.Clear();
-                foreach (var groupId in groups)
+                if (preset.CardSkinPriorities.TryGetValue(groupId, out var requestedPriority))
                 {
-                    ClearCardPortraitCache(groupId);
+                    Config.CardSkinPriorities[groupId] = requestedPriority.ToList();
+                }
+                else
+                {
+                    Config.CardSkinPriorities.Remove(groupId);
                 }
 
-                MountCardOverlay(groups);
+                ReplaceCardSelectionsForGroup(groupId, preset.Selections);
+                Config.CardPriorityDefaultsVersion = 1;
+                SetActiveCardSkinPreset(groupId, preset.Name);
+                GetCardPriorityEntriesInternal(group);
+                CardPreviewSelections.Clear();
+                ClearCardPortraitCache(groupId);
+
+                MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
                 Config.Save(ConfigPath);
                 LastError = null;
                 return true;
             }
             catch (Exception exception)
             {
-                Config.CardSkinPriorities = previousPriorities;
-                ReplaceCardSelections(previousSelections);
-                Config.ActiveCardSkinPreset = previousActivePreset;
+                if (hadPreviousPriority)
+                {
+                    Config.CardSkinPriorities[groupId] = previousPriority!;
+                }
+                else
+                {
+                    Config.CardSkinPriorities.Remove(groupId);
+                }
+
+                ReplaceCardSelectionsForGroup(groupId, previousSelections);
+                SetActiveCardSkinPreset(groupId, previousActivePreset);
                 Config.CardPriorityDefaultsVersion = previousDefaultsVersion;
                 CardPreviewSelections.Clear();
-                foreach (var groupId in groups)
-                {
-                    ClearCardPortraitCache(groupId);
-                }
+                ClearCardPortraitCache(groupId);
 
                 try
                 {
-                    MountCardOverlay(groups);
+                    MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId });
                 }
                 catch (Exception restoreException)
                 {
@@ -1124,13 +1146,13 @@ internal static class SkinService
             knownIds);
         var selectionKey = CardSelectionKey(group.Id);
         var hadPreviousSelection = Config.Selections.TryGetValue(selectionKey, out var previousSelection);
-        var previousActivePreset = Config.ActiveCardSkinPreset;
+        var previousActivePreset = GetActiveCardSkinPreset(group.Id);
         try
         {
             Config.CardSkinPriorities[group.Id] = storedEntries;
             Config.Selections[selectionKey] = knownEntries.FirstOrDefault(entry => entry.Enabled)?.OptionId ??
                                              SkinCatalog.BaseOptionId;
-            Config.ActiveCardSkinPreset = null;
+            SetActiveCardSkinPreset(group.Id, null);
             ClearCardPortraitCache(group.Id);
             MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id });
             Config.Save(ConfigPath);
@@ -1149,7 +1171,7 @@ internal static class SkinService
             }
 
             RestoreSelection(selectionKey, previousSelection, hadPreviousSelection);
-            Config.ActiveCardSkinPreset = previousActivePreset;
+            SetActiveCardSkinPreset(group.Id, previousActivePreset);
             ClearCardPortraitCache(group.Id);
             TryRestoreOverlay(group.Id, cardOverlay: true);
             LastError = exception.Message;
@@ -1646,7 +1668,7 @@ internal static class SkinService
 
             var key = IndividualCardSelectionKey(card);
             var hadPrevious = Config.Selections.TryGetValue(key, out var previous);
-            var previousActivePreset = Config.ActiveCardSkinPreset;
+            var previousActivePreset = GetActiveCardSkinPreset(group.Id);
             try
             {
                 if (optionId.Equals(InheritCardSelectionId, StringComparison.OrdinalIgnoreCase))
@@ -1658,7 +1680,7 @@ internal static class SkinService
                     Config.Selections[key] = optionId;
                 }
 
-                Config.ActiveCardSkinPreset = null;
+                SetActiveCardSkinPreset(group.Id, null);
 
                 ClearCardPortraitCache(group.Id);
                 MountCardOverlay(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id });
@@ -1669,7 +1691,7 @@ internal static class SkinService
             catch (Exception exception)
             {
                 RestoreSelection(key, previous, hadPrevious);
-                Config.ActiveCardSkinPreset = previousActivePreset;
+                SetActiveCardSkinPreset(group.Id, previousActivePreset);
                 ClearCardPortraitCache(group.Id);
                 TryRestoreOverlay(group.Id, cardOverlay: true);
                 LastError = exception.Message;
@@ -4044,28 +4066,62 @@ internal static class SkinService
         return normalized;
     }
 
-    private static int FindCardSkinPresetIndex(string name) =>
+    private static int FindCardSkinPresetIndex(string groupId, string name) =>
         Config.CardSkinPresets.FindIndex(preset =>
+            preset.CategoryId?.Equals(groupId, StringComparison.OrdinalIgnoreCase) == true &&
             preset.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
 
-    private static CardSkinPreset CaptureCurrentCardSkinPreset(string name)
+    private static bool IsKnownCardGroup(string groupId) =>
+        !string.IsNullOrWhiteSpace(groupId) &&
+        Catalog?.CardGroups.Any(group => group.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase)) == true;
+
+    private static string? GetActiveCardSkinPreset(string groupId) =>
+        Config.ActiveCardSkinPresets.GetValueOrDefault(groupId);
+
+    private static void SetActiveCardSkinPreset(string groupId, string? name)
     {
-        foreach (var group in Catalog?.CardGroups ?? [])
+        if (string.IsNullOrWhiteSpace(name))
         {
-            GetCardPriorityEntriesInternal(group);
+            Config.ActiveCardSkinPresets.Remove(groupId);
+            return;
         }
+
+        Config.ActiveCardSkinPresets[groupId] = name;
+    }
+
+    private static CardSkinPreset CaptureCurrentCardSkinPreset(string groupId, string name)
+    {
+        var group = Catalog?.CardGroups.FirstOrDefault(candidate => candidate.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase));
+        if (group == null)
+        {
+            throw new InvalidOperationException($"未知的卡牌皮肤分类：{groupId}");
+        }
+
+        GetCardPriorityEntriesInternal(group);
 
         return new CardSkinPreset
         {
             Name = name,
-            CardSkinPriorities = CloneCardSkinPriorities(Config.CardSkinPriorities),
-            Selections = CaptureCardSelections()
+            CategoryId = group.Id,
+            CardSkinPriorities = new Dictionary<string, List<CardSkinPriorityEntry>>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                [group.Id] = Config.CardSkinPriorities.TryGetValue(group.Id, out var entries)
+                    ? entries.ToList()
+                    : []
+            },
+            Selections = CaptureCardSelectionsForGroup(group.Id)
         };
     }
 
     private static CardSkinPreset CloneCardSkinPreset(CardSkinPreset preset) => new()
     {
         Name = preset.Name,
+        CategoryId = preset.CategoryId,
         CardSkinPriorities = CloneCardSkinPriorities(preset.CardSkinPriorities),
         Selections = new Dictionary<string, string>(
             preset.Selections,
@@ -4087,6 +4143,14 @@ internal static class SkinService
                 pair => pair.Value,
                 StringComparer.OrdinalIgnoreCase);
 
+    private static Dictionary<string, string> CaptureCardSelectionsForGroup(string groupId) =>
+        CaptureCardSelections()
+            .Where(pair => CardSelectionBelongsToGroup(pair.Key, groupId))
+            .ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.OrdinalIgnoreCase);
+
     private static void ReplaceCardSelections(IReadOnlyDictionary<string, string> selections)
     {
         foreach (var key in Config.Selections.Keys
@@ -4101,6 +4165,129 @@ internal static class SkinService
         {
             Config.Selections[pair.Key] = pair.Value;
         }
+    }
+
+    private static void ReplaceCardSelectionsForGroup(
+        string groupId,
+        IReadOnlyDictionary<string, string> selections)
+    {
+        foreach (var key in Config.Selections.Keys
+                     .Where(key => CardSelectionBelongsToGroup(key, groupId))
+                     .ToArray())
+        {
+            Config.Selections.Remove(key);
+        }
+
+        foreach (var pair in selections.Where(pair =>
+                     pair.Key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase) &&
+                     CardSelectionBelongsToGroup(pair.Key, groupId)))
+        {
+            Config.Selections[pair.Key] = pair.Value;
+        }
+    }
+
+    private static bool CardSelectionBelongsToGroup(string key, string groupId)
+    {
+        if (key.Equals(CardSelectionKey(groupId), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        const string prefix = "cards:item:";
+        if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return ModelDb.AllCards.Any(card =>
+            IndividualCardSelectionKey(card).Equals(key, StringComparison.OrdinalIgnoreCase) &&
+            GetCardLookup(card).GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void MigrateLegacyCardSkinPresets()
+    {
+        if (Catalog == null || Catalog.CardGroups.Count == 0)
+        {
+            if (Catalog?.CardGroups.Count == 0 && Config.CardSkinPresets.Any(preset =>
+                    string.IsNullOrWhiteSpace(preset.CategoryId)))
+            {
+                ModLog.Warn("当前没有可用的卡牌皮肤分类，暂不拆分旧版卡图预设，以免丢失设置。");
+            }
+
+            return;
+        }
+
+        var legacyPresets = Config.CardSkinPresets
+            .Where(preset => string.IsNullOrWhiteSpace(preset.CategoryId))
+            .ToArray();
+        if (legacyPresets.Length == 0)
+        {
+            return;
+        }
+
+        var migrated = Config.CardSkinPresets
+            .Where(preset => !string.IsNullOrWhiteSpace(preset.CategoryId))
+            .ToList();
+        var migratedCount = 0;
+        foreach (var legacy in legacyPresets)
+        {
+            foreach (var group in Catalog.CardGroups)
+            {
+                var name = BuildMigratedPresetName(group.DisplayName, legacy.Name);
+                var disambiguator = 2;
+                while (migrated.Any(preset =>
+                           preset.CategoryId?.Equals(group.Id, StringComparison.OrdinalIgnoreCase) == true &&
+                           preset.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    name = BuildMigratedPresetName(
+                        group.DisplayName,
+                        $"{legacy.Name}-{disambiguator++}");
+                }
+
+                var priority = legacy.CardSkinPriorities.TryGetValue(group.Id, out var entries)
+                    ? entries.ToList()
+                    : GetCardPriorityEntriesInternal(group).ToList();
+                migrated.Add(new CardSkinPreset
+                {
+                    Name = name,
+                    CategoryId = group.Id,
+                    CardSkinPriorities = new Dictionary<string, List<CardSkinPriorityEntry>>(
+                        StringComparer.OrdinalIgnoreCase)
+                    {
+                        [group.Id] = priority
+                    },
+                    Selections = legacy.Selections
+                        .Where(pair => CardSelectionBelongsToGroup(pair.Key, group.Id))
+                        .ToDictionary(
+                            pair => pair.Key,
+                            pair => pair.Value,
+                            StringComparer.OrdinalIgnoreCase)
+                });
+                migratedCount++;
+
+                if (legacy.Name.Equals(
+                        Config.ActiveCardSkinPreset,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    SetActiveCardSkinPreset(group.Id, name);
+                }
+            }
+        }
+
+        Config.CardSkinPresets = migrated;
+        // The old value represented a whole-deck preset. Once split, only the per-category map
+        // is authoritative and the legacy value must not make another category appear active.
+        Config.ActiveCardSkinPreset = null;
+        ModLog.Info($"已将 {legacyPresets.Length} 个整套卡组预设拆分为 {migratedCount} 个分类预设。");
+    }
+
+    private static string BuildMigratedPresetName(string categoryName, string presetName)
+    {
+        var prefix = string.IsNullOrWhiteSpace(categoryName) ? "卡牌" : categoryName.Trim();
+        // Migration names intentionally keep the complete original name. The 40-character input
+        // limit applies to newly created presets; trimming here would make two old presets
+        // indistinguishable and could silently discard one during collision handling.
+        return $"{prefix}-{presetName}";
     }
 
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
