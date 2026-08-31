@@ -1393,7 +1393,8 @@ internal static class ManagedAncientSceneAnimation
     public static void TryStart(string? groupId, Node sceneRoot)
     {
         if (string.IsNullOrWhiteSpace(groupId) ||
-            !SkinService.IsManagedResourceOptionSelected(groupId))
+            (!SkinService.IsManagedResourceOptionSelected(groupId) &&
+             SkinService.GetSelectedFullRuntimeProvider(groupId) == null))
         {
             return;
         }
