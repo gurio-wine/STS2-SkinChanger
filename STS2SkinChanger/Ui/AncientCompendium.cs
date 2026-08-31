@@ -416,6 +416,17 @@ internal static class AncientCompendiumEntry
             return;
         }
 
+        OpenFromStack(stack);
+    }
+
+    internal static void OpenFromStack(NSubmenuStack stack)
+    {
+        if (!GodotObject.IsInstanceValid(stack))
+        {
+            ModLog.Error("无法取得图鉴菜单栈，先古图鉴未打开。");
+            return;
+        }
+
         var gallery = stack.GetNodeOrNull<AncientCompendiumScreen>(ScreenName);
         if (gallery == null)
         {
@@ -1397,19 +1408,6 @@ internal static class ManagedAncientStaticBackgroundWindowPatch
 {
     private static void Postfix(NAncientBgContainer __instance) =>
         ManagedAncientStaticBackground.FitChildren(__instance);
-}
-
-[HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu._Ready))]
-internal static class AncientCompendiumEntryPatch
-{
-    private static void Postfix(NCompendiumSubmenu __instance) => AncientCompendiumEntry.Attach(__instance);
-}
-
-[HarmonyPatch(typeof(NCompendiumSubmenu), nameof(NCompendiumSubmenu.OnSubmenuOpened))]
-internal static class AncientCompendiumEntryOpenedPatch
-{
-    [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCompendiumSubmenu __instance) => AncientCompendiumEntry.Attach(__instance);
 }
 
 [HarmonyPatch(typeof(EventModel), nameof(EventModel.CreateBackgroundScene))]
