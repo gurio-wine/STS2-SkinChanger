@@ -587,8 +587,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
     private Button _merchantClickArea = null!;
-    private Button _merchantPreviewButton = null!;
-    private HBoxContainer _otherActionSelector = null!;
+    private VBoxContainer _otherActionSelector = null!;
     private Control? _shopPreviewOverlay;
     private Node? _otherPreviewInstance;
     private string? _otherPreviewGroupId;
@@ -624,7 +623,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         ClearPreview();
         CloseSimulatedShopPreview();
         _merchantClickArea.Visible = false;
-        _merchantPreviewButton.Visible = false;
         _otherActionSelector.Visible = false;
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
         base.OnSubmenuClosed();
@@ -730,30 +728,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _skinDropdown.ItemSelected += index => OnSkinSelected(checked((int)index));
         _skinSelector.AddChild(_skinDropdown);
 
-        _merchantPreviewButton = new Button
-        {
-            Name = "MerchantPreviewButton",
-            Text = OtherPreviewText.OpenShop,
-            Visible = false,
-            FocusMode = FocusModeEnum.All,
-            CustomMinimumSize = new Vector2(210f, 44f),
-            ZIndex = 11
-        };
-        ContextualSkinControls.ApplyGameTheme(_merchantPreviewButton);
-        _merchantPreviewButton.Pressed += OpenSimulatedShopPreview;
-        _merchantPreviewButton.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
-        _merchantPreviewButton.Position = new Vector2(855f, 882f);
-        AddChild(_merchantPreviewButton);
-
-        _otherActionSelector = new HBoxContainer
+        _otherActionSelector = new VBoxContainer
         {
             Name = "OtherPreviewActionSelector",
             Visible = false,
             ZIndex = 11
         };
-        _otherActionSelector.AddThemeConstantOverride("separation", 8);
+        _otherActionSelector.AddThemeConstantOverride("separation", 10);
         _otherActionSelector.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
-        _otherActionSelector.Position = new Vector2(818f, 882f);
+        // 与怪物图鉴一致：动作在模型左侧从上到下排列，第一项是站姿。
+        _otherActionSelector.Position = new Vector2(650f, 430f);
         AddChild(_otherActionSelector);
         AddOtherActionButton(OtherPreviewText.Standing, ["idle_loop", "idle", "stand", "standing"], loop: true);
         AddOtherActionButton(OtherPreviewText.Attack, ["attack", "attack1", "attack_1", "atk", "bite"], loop: false);
@@ -823,7 +807,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
         var previewText = OtherPreviewText;
-        _merchantPreviewButton.Text = previewText.OpenShop;
         _merchantClickArea.TooltipText = previewText.OpenShop;
         if (_otherActionButtons.Count >= 2)
         {
@@ -896,13 +879,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         _merchantClickArea.Visible = false;
-        _merchantPreviewButton.Visible = false;
         _skinSelector.Visible = false;
         _otherActionSelector.Visible = false;
 
         var overlay = new Control
         {
-            Name = "SimulatedShopPreview",
+            Name = "VanillaShopPreview",
             MouseFilter = MouseFilterEnum.Stop,
             ZIndex = 80
         };
@@ -918,71 +900,160 @@ internal partial class AncientCompendiumScreen : NSubmenu
         mask.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         overlay.AddChild(mask);
 
-        var panel = new PanelContainer
+        // Use the game's own merchant inventory scene. It provides the exact rug and slot
+        // layout; unlike a second hand-written mockup it remains in sync with the game UI.
+        // The scene is not initialized/opened because the catalogue has no live shop model.
+        var inventoryPath = _selectedOther.Id.Equals(
+            "fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
+            ? "res://scenes/events/custom/fake_merchant_inventory.tscn"
+            : "res://scenes/merchant/merchant_inventory.tscn";
+        var group = FindOtherGroup(_selectedOther);
+        var selection = group == null
+            ? SkinCatalog.BaseOptionId
+            : SkinService.Config.GetSelection(group.Id);
+        Control inventory;
+        if (group != null && !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
-            AnchorLeft = 0.08f,
-            AnchorTop = 0.10f,
-            AnchorRight = 0.74f,
-            AnchorBottom = 0.90f,
-            MouseFilter = MouseFilterEnum.Stop
-        };
-        panel.AddThemeStyleboxOverride(
-            "panel",
-            ContextualSkinControls.CreateStyleBox(new Color("182533f2"), new Color("7394ad"), 3));
-        overlay.AddChild(panel);
-
-        var margin = new MarginContainer();
-        margin.AddThemeConstantOverride("margin_left", 28);
-        margin.AddThemeConstantOverride("margin_top", 24);
-        margin.AddThemeConstantOverride("margin_right", 28);
-        margin.AddThemeConstantOverride("margin_bottom", 24);
-        panel.AddChild(margin);
-        var content = new VBoxContainer();
-        content.AddThemeConstantOverride("separation", 16);
-        margin.AddChild(content);
-
-        var titleRow = new HBoxContainer();
-        titleRow.AddThemeConstantOverride("separation", 12);
-        content.AddChild(titleRow);
-        var title = BuildLabel(34, new Color("efc850"));
-        title.Text = $"{_selectedOther.Title} · {OtherPreviewText.ShopPreview}";
-        title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        title.HorizontalAlignment = HorizontalAlignment.Left;
-        titleRow.AddChild(title);
-        var close = new Button { Text = ModLocalization.Get(ModText.Close), CustomMinimumSize = new Vector2(118, 44) };
-        ContextualSkinControls.ApplyGameTheme(close);
-        close.Pressed += CloseSimulatedShopPreview;
-        titleRow.AddChild(close);
-
-        var hint = BuildLabel(20, new Color("b8c9d6"));
-        hint.Text = OtherPreviewText.Hint;
-        hint.HorizontalAlignment = HorizontalAlignment.Left;
-        content.AddChild(hint);
-
-        var tabs = new HBoxContainer();
-        tabs.AddThemeConstantOverride("separation", 8);
-        content.AddChild(tabs);
-        foreach (var tabName in new[] { OtherPreviewText.Cards, OtherPreviewText.Relics, OtherPreviewText.Potions })
+            // Instantiate while the provider overlay is mounted; PackedScene dependencies such
+            // as Spine data are lazy and would otherwise bind to the previously selected skin.
+            inventory = SkinService.InstantiateRuntimeScene<Control>(group.Id, inventoryPath);
+        }
+        else
         {
-            var tab = new Button { Text = tabName, CustomMinimumSize = new Vector2(132, 46) };
-            ContextualSkinControls.ApplyGameTheme(tab);
-            tabs.AddChild(tab);
+            var inventoryScene = ResourceLoader.Load<PackedScene>(
+                inventoryPath,
+                null,
+                ResourceLoader.CacheMode.IgnoreDeep) ??
+                throw new InvalidOperationException($"无法加载原版商店界面：{inventoryPath}");
+            inventory = inventoryScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+        }
+        inventory.Name = "VanillaMerchantInventory";
+        inventory.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        inventory.MouseFilter = MouseFilterEnum.Ignore;
+        // The real inventory's _Ready subscribes to the active run and expects a live
+        // MerchantInventory model. Strip behaviour scripts before entering the tree so the
+        // catalogue gets the original visual scene without opening a real shop or touching save
+        // state. The authored controls, textures and slot layout remain intact.
+        StripPreviewScripts(inventory);
+        overlay.AddChild(inventory);
+
+        // NMerchantInventory normally moves SlotsContainer from -1000 to 80 in Open(). Do the
+        // final visual placement directly and avoid game-state, audio and purchase code.
+        var slots = inventory.GetNodeOrNull<Control>("SlotsContainer");
+        if (slots != null)
+        {
+            // The shop scene is authored for an in-run canvas whose root transform is supplied by
+            // NMerchantRoom. In a catalogue viewport that transform is absent, so normalize the
+            // container to a top-left canvas while retaining the game's own size and child offsets.
+            slots.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+            slots.Position = new Vector2(86f, 20f);
+            slots.Size = new Vector2(1747f, 978f);
         }
 
-        var grid = new GridContainer { Columns = 3, SizeFlagsVertical = SizeFlags.ExpandFill };
-        grid.AddThemeConstantOverride("h_separation", 14);
-        grid.AddThemeConstantOverride("v_separation", 14);
-        content.AddChild(grid);
-        foreach (var itemName in Enumerable.Range(1, 6).Select(index => string.Format(OtherPreviewText.Item, index)))
+        var backstop = inventory.GetNodeOrNull<CanvasItem>("Backstop");
+        if (backstop != null)
         {
-            var item = new PanelContainer { CustomMinimumSize = new Vector2(170, 170) };
-            item.AddThemeStyleboxOverride(
-                "panel",
-                ContextualSkinControls.CreateStyleBox(new Color("2e4252"), new Color("7394ad88"), 2));
-            var itemLabel = BuildLabel(22, new Color("fff6e2"));
-            itemLabel.Text = itemName;
-            item.AddChild(itemLabel);
-            grid.AddChild(item);
+            backstop.Modulate = new Color(1f, 1f, 1f, 0.8f);
+        }
+
+        MakePreviewShopInert(inventory);
+        FillPreviewShopSlots(
+            inventory,
+            _selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase));
+
+        // Only our close control is interactive. Original slots/back button are inert because
+        // this is a catalogue preview, not an actual shop transaction.
+        var close = new Button
+        {
+            Name = "CloseVanillaShopPreview",
+            Text = ModLocalization.Get(ModText.Close),
+            CustomMinimumSize = new Vector2(138f, 50f),
+            FocusMode = FocusModeEnum.All,
+            ZIndex = 3
+        };
+        ContextualSkinControls.ApplyGameTheme(close);
+        close.SetAnchorsAndOffsetsPreset(LayoutPreset.TopRight);
+        close.Position = new Vector2(-190f, 38f);
+        close.Pressed += CloseSimulatedShopPreview;
+        overlay.AddChild(close);
+    }
+
+    private static void MakePreviewShopInert(Node root)
+    {
+        foreach (var node in EnumerateNodeTree(root))
+        {
+            node.ProcessMode = ProcessModeEnum.Disabled;
+            if (node is Control control)
+            {
+                control.MouseFilter = Control.MouseFilterEnum.Ignore;
+                control.FocusMode = Control.FocusModeEnum.None;
+            }
+        }
+    }
+
+    private static void StripPreviewScripts(Node root)
+    {
+        root.SetScript(default(Variant));
+        foreach (var child in root.GetChildren().OfType<Node>())
+        {
+            StripPreviewScripts(child);
+        }
+    }
+
+    private static void FillPreviewShopSlots(Control inventory, bool fakeMerchant)
+    {
+        var categories = fakeMerchant
+            ? new[] { ("Relics", "遗物") }
+            : new[]
+            {
+                ("CharacterCards", "卡牌"),
+                ("ColorlessCards", "卡牌"),
+                ("Relics", "遗物"),
+                ("Potions", "药水")
+            };
+        foreach (var (containerName, labelText) in categories)
+        {
+            var container = inventory.GetNodeOrNull<Control>($"SlotsContainer/{containerName}");
+            if (container == null)
+            {
+                continue;
+            }
+
+            foreach (var slot in container.GetChildren().OfType<Control>())
+            {
+                var holder = slot.GetNodeOrNull<Control>("CardHolder") ??
+                             slot.GetNodeOrNull<Control>("RelicHolder") ??
+                             slot.GetNodeOrNull<Control>("PotionHolder");
+                if (holder == null || holder.GetNodeOrNull<Label>("SkinChangerPreviewItem") != null)
+                {
+                    continue;
+                }
+
+                var item = new Label
+                {
+                    Name = "SkinChangerPreviewItem",
+                    Text = labelText,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                    Modulate = new Color(1f, 1f, 1f, 0.9f)
+                };
+                item.AddThemeFontSizeOverride("font_size", 28);
+                item.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+                holder.AddChild(item);
+            }
+        }
+    }
+
+    private static IEnumerable<Node> EnumerateNodeTree(Node root)
+    {
+        foreach (var child in root.GetChildren())
+        {
+            yield return child;
+            foreach (var descendant in EnumerateNodeTree(child))
+            {
+                yield return descendant;
+            }
         }
     }
 
@@ -1004,7 +1075,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
                        (_selectedOther.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
                         _selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase));
         _merchantClickArea.Visible = merchant && _shopPreviewOverlay == null;
-        _merchantPreviewButton.Visible = merchant && _shopPreviewOverlay == null;
         _otherActionSelector.Visible = _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true &&
                                        _shopPreviewOverlay == null;
     }
@@ -1133,7 +1203,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _epithetLabel.Text = string.Empty;
         _skinSelector.Visible = false;
         _merchantClickArea.Visible = false;
-        _merchantPreviewButton.Visible = false;
         _otherActionSelector.Visible = false;
         ClearPreview();
     }
@@ -1333,7 +1402,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // load+instantiate operation so a previous skin cannot leak its skeleton into this
             // preview.
             Node instance;
-            if (group != null)
+            var selection = group == null
+                ? SkinCatalog.BaseOptionId
+                : SkinService.Config.GetSelection(group.Id);
+            if (group != null && !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
             {
                 instance = SkinService.InstantiateRuntimeScene<Node>(
                     group.Id,
@@ -1397,6 +1469,17 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 instance,
                 group?.Id,
                 _otherActionButtons);
+            if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+            {
+                // The creature catalogue opens in its neutral standing pose, matching the
+                // monster bestiary. Attack remains an optional action when the selected Spine
+                // asset actually exposes one.
+                ManagedAncientSceneAnimation.TryPlay(
+                    instance,
+                    group?.Id,
+                    ["idle_loop", "idle", "stand", "standing"],
+                    loop: true);
+            }
             RefreshAuxiliaryPreviewControls();
 
             ModLog.Info($"其它图鉴已展示 {entry.Id}。");
@@ -1418,8 +1501,29 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         target.GetParent().RemoveChild(target);
-        root.QueueFree();
+        // The merchant scene stores its actual visual under a transparent button. Detaching it
+        // is correct, but clear the old scene owner and inherited visual state as well; keeping
+        // the owner/alpha from that transparent button made the default merchant disappear in
+        // the catalogue on some game versions.
+        ClearSceneOwner(target);
+        if (target is CanvasItem canvasItem)
+        {
+            canvasItem.Visible = true;
+            canvasItem.Modulate = Colors.White;
+            canvasItem.SelfModulate = Colors.White;
+        }
+
+        root.Free();
         return target;
+    }
+
+    private static void ClearSceneOwner(Node node)
+    {
+        node.Owner = null;
+        foreach (var child in node.GetChildren().OfType<Node>())
+        {
+            ClearSceneOwner(child);
+        }
     }
 
     private void RebuildPreview(AncientEventModel ancient)
@@ -1505,10 +1609,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         if (_merchantClickArea != null)
         {
             _merchantClickArea.Visible = false;
-        }
-        if (_merchantPreviewButton != null)
-        {
-            _merchantPreviewButton.Visible = false;
         }
         if (_otherActionSelector != null)
         {
