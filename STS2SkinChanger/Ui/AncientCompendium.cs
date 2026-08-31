@@ -595,6 +595,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private AncientEventModel? _selectedAncient;
     private OtherEntry? _selectedOther;
     private OtherCategory _selectedCategory = OtherCategory.Ancients;
+    private int _otherPreviewRequest;
     private bool _updatingDropdown;
 
     protected override Control? InitialFocusedControl =>
@@ -1243,6 +1244,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _selectedCategory = category;
         _selectedAncient = null;
         _selectedOther = null;
+        _otherPreviewRequest++;
         foreach (var pair in _categoryButtons)
         {
             ApplyCategoryTheme(pair.Value, pair.Key == category);
@@ -1303,6 +1305,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void SelectOther(OtherEntry entry)
     {
         CloseSimulatedShopPreview();
+        _otherPreviewRequest++;
         _selectedAncient = null;
         _selectedOther = entry;
         _nameLabel.Text = entry.Title;
@@ -1444,7 +1447,25 @@ internal partial class AncientCompendiumScreen : NSubmenu
         else if (_selectedOther != null)
         {
             var entry = _selectedOther;
-            Callable.From(() => RebuildOtherPreview(entry)).CallDeferred();
+            var request = ++_otherPreviewRequest;
+            var expectedOption = optionId;
+            Callable.From(() =>
+            {
+                // Multiple dropdown clicks can queue several deferred rebuilds. An old rebuild
+                // must never put an earlier merchant/creature resource back over the latest
+                // selection.
+                if (request != _otherPreviewRequest ||
+                    _selectedOther == null ||
+                    !_selectedOther.Id.Equals(entry.Id, StringComparison.OrdinalIgnoreCase) ||
+                    !SkinService.Config.GetSelection(groupId).Equals(
+                        expectedOption,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                RebuildOtherPreview(entry);
+            }).CallDeferred();
         }
     }
 
@@ -1554,28 +1575,28 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private static Node InstantiateOtherPreviewScene(OtherEntry entry, SkinGroup? group)
     {
         var scenePaths = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
-            ? new[] { "res://scenes/rooms/merchant_button.tscn", entry.ScenePath }
+            ? new[] { entry.ScenePath, "res://scenes/rooms/merchant_button.tscn" }
             : entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "res://scenes/events/custom/fake_merchant_button.tscn", entry.ScenePath }
+                ? new[] { entry.ScenePath, "res://scenes/events/custom/fake_merchant_button.tscn" }
                 : new[] { entry.ScenePath };
-        var selection = group == null
-            ? SkinCatalog.BaseOptionId
-            : SkinService.Config.GetSelection(group.Id);
         Exception? lastException = null;
         foreach (var scenePath in scenePaths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
-                if (group != null &&
-                    !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                if (group != null)
                 {
+                    // Use the runtime alias path even for the game's default option. Directly
+                    // loading the canonical scene after a provider switch lets Godot reuse the
+                    // previous skin's cached Spine dependency, which is why default merchant and
+                    // Byrdpip previews could alternate between two skins.
                     return SkinService.InstantiateRuntimeScene<Node>(group.Id, scenePath);
                 }
 
                 var scene = ResourceLoader.Load<PackedScene>(
                     scenePath,
                     null,
-                    ResourceLoader.CacheMode.IgnoreDeep);
+                    ResourceLoader.CacheMode.ReplaceDeep);
                 if (scene != null)
                 {
                     return scene.Instantiate(PackedScene.GenEditState.Disabled);
