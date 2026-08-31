@@ -20,6 +20,7 @@ namespace STS2SkinChanger.Ui;
 internal static class BestiaryEntranceSwitcher
 {
     private const string ToggleName = "STS2AncientCompendiumToggle";
+    private const string ToggleHostName = "STS2AncientCompendiumToggleHost";
     private static readonly ConditionalWeakTable<NClickableControl, EntranceState> States = new();
     private static NClickableControl? _lastReleased;
     private static int _scanAttempts;
@@ -36,8 +37,7 @@ internal static class BestiaryEntranceSwitcher
         {
             foreach (var control in EnumerateDescendants(compendium).OfType<NClickableControl>())
             {
-                if (control is not NButton ||
-                    control.Name.ToString().Equals(ToggleName, StringComparison.Ordinal))
+                if (control.Name.ToString().Equals(ToggleName, StringComparison.Ordinal))
                 {
                     continue;
                 }
@@ -189,17 +189,33 @@ internal static class BestiaryEntranceSwitcher
             state.Labels = CaptureLabels(control);
         }
 
-        var toggle = control.GetNodeOrNull<NCompendiumBottomButton>(ToggleName);
+        var toggle = GodotObject.IsInstanceValid(state.Toggle)
+            ? state.Toggle
+            : EnumerateDescendants(control)
+                .OfType<NCompendiumBottomButton>()
+                .FirstOrDefault(candidate =>
+                    candidate.Name.ToString().Equals(ToggleName, StringComparison.Ordinal));
         if (!GodotObject.IsInstanceValid(toggle))
         {
             toggle = CreateToggle(control, state);
-            control.AddChild(toggle);
+            var host = CreateToggleHost();
+            control.AddChild(host);
+            host.AddChild(toggle);
+            state.ToggleHost = host;
         }
 
         state.Toggle = toggle;
-        PositionToggle(toggle);
+        state.ToggleHost ??= toggle.GetParent() as Control;
+        PositionToggle(control, toggle, state.ToggleHost);
         ApplyMode(control, state);
     }
+
+    private static Control CreateToggleHost() => new()
+    {
+        Name = ToggleHostName,
+        MouseFilter = Control.MouseFilterEnum.Ignore,
+        ZIndex = 40
+    };
 
     private static NCompendiumBottomButton CreateToggle(
         NClickableControl target,
@@ -211,8 +227,7 @@ internal static class BestiaryEntranceSwitcher
         toggle.Name = ToggleName;
         toggle.FocusMode = Control.FocusModeEnum.All;
         toggle.MouseFilter = Control.MouseFilterEnum.Stop;
-        toggle.ZIndex = 40;
-        toggle.Scale = new Vector2(0.42f, 0.42f);
+        toggle.ZIndex = 1;
 
         var icon = toggle.GetNodeOrNull<TextureRect>("Icon");
         if (icon != null)
@@ -230,14 +245,34 @@ internal static class BestiaryEntranceSwitcher
         return toggle;
     }
 
-    private static void PositionToggle(NCompendiumBottomButton toggle)
+    private static void PositionToggle(
+        NClickableControl target,
+        NCompendiumBottomButton toggle,
+        Control? host)
     {
+        if (host == null)
+        {
+            return;
+        }
+
         toggle.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
-        toggle.Position = new Vector2(-10f, -10f);
+        toggle.Position = Vector2.Zero;
         if (toggle.Size.X <= 1f || toggle.Size.Y <= 1f)
         {
             toggle.Size = new Vector2(250f, 100f);
         }
+
+        // NCompendiumBottomButton intentionally animates its own Scale to 1.05 on hover.
+        // Scale the wrapper instead so that animation remains a small 5% pulse instead of
+        // replacing our 42% compact size and suddenly restoring the full-sized button.
+        var compactScale = new Vector2(0.42f, 0.42f);
+        host.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+        host.Size = toggle.Size;
+        host.Scale = compactScale;
+        var visibleSize = host.Size * compactScale;
+        host.Position = new Vector2(
+            Math.Max(target.Size.X - visibleSize.X - 8f, 0f),
+            8f);
     }
 
     private static void ApplyMode(NClickableControl target, EntranceState state)
@@ -321,6 +356,7 @@ internal static class BestiaryEntranceSwitcher
     {
         public bool UseAncient { get; set; }
         public List<LabelSnapshot> Labels { get; set; } = [];
+        public Control? ToggleHost { get; set; }
         public NCompendiumBottomButton? Toggle { get; set; }
     }
 
