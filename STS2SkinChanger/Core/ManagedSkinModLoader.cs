@@ -691,7 +691,8 @@ internal static class ManagedSkinModLoader
     private static bool IsNodeReadyPresentationTarget(MethodBase target) =>
         target.Name.Equals("_Ready", StringComparison.Ordinal) &&
         target.DeclaringType != null &&
-        (typeof(NMerchantRoom).IsAssignableFrom(target.DeclaringType) ||
+        (typeof(NCreature).IsAssignableFrom(target.DeclaringType) ||
+         typeof(NMerchantRoom).IsAssignableFrom(target.DeclaringType) ||
          typeof(NRestSiteRoom).IsAssignableFrom(target.DeclaringType));
 
     /// <summary>
@@ -1001,11 +1002,10 @@ internal static class ManagedSkinModLoader
     }
 
     /// <summary>
-    /// Replays parameter-free visual setup attached to an already existing Godot node after a
-    /// provider is hot-selected. Newly instantiated nodes do not need this because their normal
-    /// _Ready call already passes through the selected provider's active Harmony patches. The
-    /// node is snapshotted before the replay, so added children and common CanvasItem/Node2D/
-    /// Control mutations can be restored when the provider is deselected or replayed again.
+    /// Replays parameter-free visual setup attached to a Godot node after a provider is hot-selected
+    /// or when a managed per-owner node reaches _Ready. The node is snapshotted before the replay,
+    /// so added children and common CanvasItem/Node2D/Control mutations can be restored when the
+    /// provider is deselected, replaced for this owner, or replayed again.
     /// </summary>
     public static IReadOnlyList<Node> ReplaySelectedNodeReadyBehavior(
         string providerId,
@@ -1146,6 +1146,31 @@ internal static class ManagedSkinModLoader
         if (mutation != null)
         {
             runtime.NodeReadyMutations[node.GetInstanceId()] = mutation;
+        }
+    }
+
+    /// <summary>
+    /// Removes node-ready presentation left on one live scene instance by providers that are not
+    /// selected for that instance. Providers can remain active because another multiplayer owner
+    /// still uses them, so global provider deactivation is not sufficient for per-player cleanup.
+    /// </summary>
+    public static void RestoreUnselectedNodeReadyBehaviors(
+        Node node,
+        IEnumerable<string> selectedProviderIds)
+    {
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        var selected = selectedProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var nodeId = node.GetInstanceId();
+        foreach (var pair in ActiveProviderRuntimes.ToArray())
+        {
+            if (!selected.Contains(pair.Key))
+            {
+                RestoreNodeReadyMutation(pair.Value, nodeId);
+            }
         }
     }
 

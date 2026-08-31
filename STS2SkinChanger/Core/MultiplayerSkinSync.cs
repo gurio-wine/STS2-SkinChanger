@@ -1994,6 +1994,18 @@ internal static class MultiplayerCreatureReadyScopePatch
             ? null
             : MultiplayerSkinSync.BeginCreatureRuntimeScope(__instance.Entity);
 
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCreature __instance)
+    {
+        if (__instance.Entity != null)
+        {
+            // Provider _Ready presentation callbacks are isolated from their global Harmony
+            // owner and replayed here while this creature's multiplayer selection scope is still
+            // active. This prevents one player's late-attached actor from covering another's.
+            CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(__instance);
+        }
+    }
+
     private static Exception? Finalizer(Exception? __exception, IDisposable? __state)
     {
         __state?.Dispose();

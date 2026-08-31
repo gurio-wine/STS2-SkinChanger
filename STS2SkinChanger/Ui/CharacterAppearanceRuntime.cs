@@ -1304,6 +1304,36 @@ internal static class CharacterAppearanceRuntime
 
     private static void ReplaySelectedCreatureReady(NCreature creature)
     {
+        var providerIds = GetSelectedCreatureProviderIds(creature);
+        foreach (var providerId in providerIds)
+        {
+            ManagedSkinModLoader.ReplaySelectedCreatureReady(providerId, creature);
+        }
+
+        ReplaySelectedCreatureNodeReady(creature, providerIds);
+    }
+
+    /// <summary>
+    /// Replays provider-owned NCreature._Ready presentation only for this creature's selected
+    /// owner. This is required both for fresh multiplayer creatures and hot replacement: a full
+    /// runtime provider may attach its actual actor after CreateVisuals rather than returning it.
+    /// </summary>
+    internal static void ReplaySelectedCreatureNodeReady(NCreature creature) =>
+        ReplaySelectedCreatureNodeReady(creature, GetSelectedCreatureProviderIds(creature));
+
+    private static void ReplaySelectedCreatureNodeReady(
+        NCreature creature,
+        IReadOnlyList<string> providerIds)
+    {
+        ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(creature, providerIds);
+        foreach (var providerId in providerIds)
+        {
+            ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, creature);
+        }
+    }
+
+    private static IReadOnlyList<string> GetSelectedCreatureProviderIds(NCreature creature)
+    {
         var providerIds = new List<string>();
         var modelId = creature.Entity.ModelId.Entry;
         var typeName = creature.Entity.Player?.Character.GetType().Name ??
@@ -1329,10 +1359,7 @@ internal static class CharacterAppearanceRuntime
             }
         }
 
-        foreach (var providerId in providerIds)
-        {
-            ManagedSkinModLoader.ReplaySelectedCreatureReady(providerId, creature);
-        }
+        return providerIds;
     }
 
     private static void AddSelectedFullRuntimeProvider(ICollection<string> providerIds, string groupId)
