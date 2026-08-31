@@ -1,54 +1,76 @@
-# Steam 工坊反馈待办快照（2026-08-30）
+# Steam 工坊反馈待办（更新于 2026-08-31）
 
-采集时间：2026-08-30 19:38（北京时间）  
-工坊物品：[Skin Changer（3787302680）](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680)  
-采集范围：当前公开可见的 73 条[工坊留言](https://steamcommunity.com/sharedfiles/filedetails/comments/3787302680)及“建议 / 问题 / 疑惑”三个[讨论帖](https://steamcommunity.com/sharedfiles/filedetails/discussions/3787302680)。纯夸奖、作者进度说明和已经明确关闭的兼容冲突未列入。
+采集时间：2026-08-31 09:49（北京时间）
+
+工坊物品：[皮肤切换器 - Skin Changer（3787302680）](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680)
+
+采集范围：当前公开可见的 75 条[工坊留言](https://steamcommunity.com/sharedfiles/filedetails/comments/3787302680)及“建议 / 问题 / 疑惑”三个[讨论帖](https://steamcommunity.com/sharedfiles/filedetails/discussions/3787302680)；“问题”帖当前有 9 条回复，另两个讨论帖没有公开回复。
+
+本表只保留仍需处理、仍待玩家复测或仍缺复现材料的内容。纯夸奖、作者进度说明、已撤回留言和已经明确完成的功能不再列入。
 
 状态说明：
 
-- **未解决**：目前仍有明确复现描述，尚无对应修复结果。
-- **已处理待复测**：代码已有对应修改，但留言者还没有用最新版确认。
-- **部分解决**：需求的一部分已经实现，剩余部分仍需处理。
-- **信息不足**：无法仅凭现有留言定位，需要版本、Mod 列表或日志。
-- **建议评估**：新功能建议，尚未决定实现方式。
+- **未解决**：现有代码或复测结果仍不能关闭问题。
+- **已处理待复测**：已有对应修复，但原留言者尚未确认。
+- **本地优化待发布**：改动只在当前仓库，还没有进入工坊版本。
+- **信息不足**：缺少具体 Mod、版本、场景或日志，暂时无法定位。
+- **已暂缓**：问题成立，但当前明确不继续处理该版本或方向。
+- **建议评估**：功能建议，尚未排入实现。
 
 ## 从旧到新的问题与建议
 
 | 时间（北京时间） | 类型 | 问题或需求 | 当前判断 | 来源 |
 |---|---|---|---|---|
-| 08-25 12:45 | 建议 | 多人模式中，同一角色的不同玩家使用不同皮肤。 | **已处理待复测**：0.9.102 已具备按玩家同步、临时下载和应用角色皮肤的流程，仍需双客户端验证完整生命周期。 | [建议讨论 #1](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318558/#c591813437999539667) |
-| 08-25 14:16 | 角色 | 亡灵契约师和猎手的图片错位，但没有给出具体皮肤 Mod。 | **信息不足**：需要具体 Mod 名、游戏版本、出现位置和日志。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_580554442217370878) |
-| 08-26 12:11 | 性能 | 选角界面切换角色时有短暂卡顿。 | **已处理待复测**：已做预加载、资源缓存和延迟加载优化，但仍需玩家确认当前版本体感。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511575565) |
-| 08-26 21:35 | 卡牌 | Chaos Zero 系列卡图无法切换，例子为工坊物品 `3747644438`。 | **已处理待复测**：后续已补充 Chaos/CZN 图集与共享资源识别，原留言者未确认。 | [Bug 讨论 #1](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045825393) |
-| 08-27 11:16 | 头像 | 独立角色头像 Mod（例：`SIlent Icons addon`）无法和角色皮肤同时使用。 | **未解决**：目前头像仍随选中的角色皮肤来源应用，没有独立的头像来源选择机制。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511665457) |
-| 08-27 11:42 | 默认皮肤 | 有些皮肤 Mod 会顶掉游戏原皮，没有给出具体 Mod。 | **信息不足**：需要具体 Mod 名；现有默认皮肤隔离逻辑已多次修正，但无法据此确认是否仍存在。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511666787) |
-| 08-27 11:48 | macOS | 请求支持 macOS；随后确认 Apple Silicon 已不再报架构错误，但功能曾无法使用。 | **已处理待复测**：现已使用 AnyCPU 并补充 macOS 游戏资源路径；无法在本机验证实际功能。 | [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511667015) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511674242) |
-| 08-27 13:25 | 界面建议 | 隐藏局内“外观”入口；选角皮肤按钮位置可选右上角；角色皮肤名称悬浮预览。 | **未解决**：三项均没有完整实现；卡牌悬浮预览不能视为角色悬浮预览。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511671928) |
-| 08-28 01:41 | 多来源外观 | 多个卡面/头像 Mod 同时生效；部分 Mod 只修改小图。 | **部分解决**：卡牌已有分类优先级、单卡来源和预设；独立头像来源组合仍未实现。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511724665) |
-| 08-28 12:42 | 性能 | 打开卡牌奖励时卡顿。 | **未解决**：现有优化主要覆盖卡牌图鉴和皮肤选择，奖励界面没有得到针对性复测。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511770586) |
-| 08-28 13:54 | 稳定性 | Save & Quit 或 Give Up 返回选角界面后白屏卡死，日志为已释放的 `Godot.FontVariation`。 | **信息不足**：作者未能复现；仍缺游戏版本和完整 Mod 列表。 | [Bug 讨论 #3](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045961806) |
-| 08-28 17:00 | 非皮肤 Mod 兼容 | `NSFW原版事件替换` / “自制拓展涩涩事件-Beta”等事件 Mod 的文本或 CG 被恢复为原版；最新留言称修改或新增事件的 Mod 普遍可能受影响。 | **已处理待复测**：文本接管已收窄到角色皮肤的 `characters.json`；进一步用 `NSFW原版事件替换 V0.6` 确认其“假商人事件”背景曾被误判为商店商人皮肤，导致整个事件 PCK 被隔离。假商人事件现不再属于商人外观，事件文本与 CG 均由原事件 Mod 正常挂载。 | [Bug 讨论 #4](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045970377) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621055575) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621104432) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621153158) |
-| 08-29 03:49 | 卡牌外形 | 某些异画卡被错误套上先古蜡烛、黑色说明框和先古背景。 | **未解决**：需要检查卡牌类型/外形来源是否被错误继承。 | [Bug 讨论 #5](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046010390) |
-| 08-29 05:58 | 加载顺序提醒 | 多次开关 Mod 后，加载顺序提醒不再弹出，重新订阅也无效。 | **已处理待复测**：提醒逻辑已改为只检查排在 Skin Changer 前面的皮肤提供者，并重做状态变化判断。 | [Bug 讨论 #6](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046019968) |
-| 08-29 07:33 | 商店 | `Merchant2CuteII` 与本 Mod 同时使用时，商人或玩家模型错位、缩到右下角或飞到左上角；劣人 TV 还可能变成忍者阿塔。08-30 仍有多条重复反馈。 | **已处理待复测**：热切换不再继承上一皮肤的位置、缩放和视觉节点；另确认游戏会从本次启动初期的 `PreloadManager` 缓存重建商店，导致保存/重载后用旧场景承接当前皮肤代码。现每次创建商店房间均使用当前选择的隔离运行时场景，并保留游戏房间、玩家和对白状态。 | [Bug 讨论 #7/#10](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046025432) · [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621096892) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621097680) · [留言 3](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621147290) · [留言 4](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621148445) |
-| 08-29 13:09 | 卡牌 | 安装 `Card Art Editor` 后，多卡面环境中部分切换不变化，且无法悬浮预览。 | **未解决**：需要明确两者的资源覆盖顺序和编辑器生成资源的生命周期。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621060618) |
-| 08-29 14:42 | 角色预览 | `Nekobinder/necrobinder skin mod`（工坊物品 `3748419805`）切换后，选角界面变成散乱的衣服碎片。 | **未解决**：属于骨骼、附件或图集绑定没有完整恢复/重放。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061850) |
-| 08-29 14:44 | 残留素材 | 切换离开 `Moe-Necrobinder`（工坊物品 `3773814239`）后，小手素材仍被该 Mod 占用。 | **未解决**：需要把皮肤专属附件纳入退出时的完整回滚。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061952) |
-| 08-29 16:03 | BaseLib / 战斗 | 开启本 Mod 后，`into the spireverse`、`the sorceress` 等角色进入关卡时人物和怪物消失；另有“加入图书馆”导致敌人动画卡死的疑似报告。 | **已处理待复测**：已补充 BaseLib 自定义角色模型发现与隔离，但只确认测试版“封兽鵺”不再黑屏，其他例子未复测。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621065669) |
-| 08-29 22:17 | 崩溃 | `Aeonglass Feminization` 与本 Mod 同时使用会直接闪退，玩家怀疑与沙漏动画有关。 | **未解决（高优先级）**：当前反馈是直接崩溃，不只是静态/动态皮肤显示错误。 | [留言 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621088977) · [留言 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621089108) |
+| 08-25 14:16 | 角色显示 | 亡灵契约师和猎手图片错位。 | **信息不足**：没有具体皮肤 Mod、出现界面、游戏版本和日志。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_580554442217370878) |
+| 08-26 12:11 | 性能 | 选角界面首次或再次切换角色时有明显卡顿。 | **本地优化待发布**：`a2b2bea` 已复用大型运行时资源包并减少重复扫描，但还没有上传工坊，也没有玩家复测。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511575565) |
+| 08-26 21:35 | CZN / Chaos Zero | Chaos Zero 卡图无法切换；后续又反馈 Pelleas 的储君、猎手角色皮肤不显示、怪物模型消失，以及 CZN 卡图仍为原版或全部丢失。 | **未解决**：这些续报出现在已有 CZN 图集和怪物资源识别改动之后，不能再按“旧版本已修”关闭。 | [Bug 讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045825393) · [角色/怪物续报](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621182261) · [卡图续报 1](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621193360) · [卡图续报 2](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621227322) |
+| 08-27 11:16 | 独立头像 | 角色皮肤与独立头像 Mod（例：`SIlent Icons addon`）不能同时使用。 | **未解决**：头像仍随角色皮肤来源应用，没有独立头像来源选择。08-28 的“多个外观 Mod 同时生效”需求中，卡牌部分已由优先级和预设覆盖，头像部分仍在这里。 | [头像留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511665457) · [多来源留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511724665) |
+| 08-27 13:25 | 界面建议 | 可隐藏局内“外观”入口；选角皮肤按钮可放右上角；悬浮角色皮肤名称时预览。 | **建议评估**：三项均未完整实现。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511671928) |
+| 08-28 12:42 | 性能 | 打开卡牌奖励时卡顿。 | **未解决**：已有图鉴和皮肤选择优化没有专门覆盖卡牌奖励生成路径。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511770586) |
+| 08-28 13:54 | 稳定性 | Save & Quit 或 Give Up 返回选角界面后白屏卡死，日志显示已释放的 `Godot.FontVariation`。 | **信息不足**：作者无法复现，仍缺完整 Mod 列表、游戏版本和最新日志。 | [Bug 讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045961806) |
+| 08-29 03:49 | 卡牌外形 | 某些异画卡会被错误加上先古蜡烛、黑色说明框和先古背景。 | **未解决**：需要确认卡牌类型和外形来源为什么越过“单一来源胜出”规则。 | [Bug 讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046010390) |
+| 08-29 05:58 | 加载顺序提醒 | 多次开关 Mod 后，加载顺序提醒不再弹出，重新订阅也无效。 | **已处理待复测**：提醒已改为检查排在 Skin Changer 前面的皮肤提供者并重做顺序状态判断，原留言者未确认。 | [Bug 讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664046019968) |
+| 08-29 13:09 | Card Art Editor | 多卡面环境中部分切换没有变化，而且无法悬浮预览。 | **未解决**：需要单独检查编辑器生成资源的生命周期和覆盖顺序。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621060618) |
+| 08-29 14:42 | Nekobinder | `Nekobinder/necrobinder skin mod`（`3748419805`）切换后，选角预览变成散乱的衣服碎片。 | **未解决**：骨骼、图集或附件绑定仍没有得到原留言者复测确认。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061850) |
+| 08-29 14:44 | Moe-Necrobinder | 切换离开 `Moe-Necrobinder`（`3773814239`）后，小手素材仍被它占用。 | **未解决**：皮肤专属附件的退出回滚仍需检查。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061952) |
 | 08-30 12:06 | 崩溃 | 进入下一个房间时闪退。 | **信息不足**：缺角色、皮肤 Mod、前后房间类型、游戏版本和日志。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621141150) |
-| 08-30 18:01 | 新建议 | 多个差分 Mod 使用相同 Mod ID，希望能同时加载并切换，而不是开关 Mod 后重启。 | **建议评估**：当前加载器通常把相同 ID 视为同一个 Mod；若实现，需要额外区分来源目录/包指纹并避免程序集与注册项冲突。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621161094) |
+| 08-30 18:01 | 同 ID 差分 | 多个差分 Mod 使用同一个 Mod ID，希望能全部加载并热切换。 | **建议评估**：需要按来源目录或包指纹区分，同时规避程序集和注册项冲突。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621161094) |
+| 08-30 19:47 | 正式版多人 | 创建多人房间后进入地图时所有人黑屏；续报确认发生在正式版。 | **已暂缓（高影响）**：测试版后来可以正常进入；正式版还出现过第二次抽牌卡死。由于正式版与测试版是两套运行时快照，目前明确先不继续处理，但工坊仍声明支持正式版，不能把此项视为已解决。 | [首报](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621168940) · [仍存在](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621184669) · [正式版确认](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621190360) |
+| 08-30 20:07 | 先古 / 稳定性 | 安装多种先古美化后会卡死或闪退，取消 Skin Changer 后正常。 | **未解决**：没有具体 Mod 列表和日志；最新大型资源复用优化可能降低加载压力，但不足以关闭“卡死/闪退”。 | [Bug 讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939955001603913) |
+| 08-30 22:52 | 猎手皮肤 | 同时安装猫娘阿塔与劣人 TV 时，无法切出劣人 TV。 | **已处理待复测**：当前本机和多人测试中劣人 TV 可以加载，但原留言者没有确认其具体组合已恢复。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621182905) |
+| 08-31 00:43 | 卡牌 / 战斗阻断 | 测试版局内把劣人 TV 卡牌切回原版后，锻造和查看卡组会让卡牌全部消失，战斗中还会抽不出牌。 | **未解决（最高优先级）**：有版本、操作和皮肤来源，已经足够作为明确复现入口。 | [卡牌消失](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621192292) · [无法抽牌](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621192741) · [复现补充](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621193396) |
+| 08-31 01:04 | 商店 | 最新 public-beta 中，`Merchant2CuteII`（`3748331824`）仍会让商人显示到左上角，而交互区域留在原位；玩家已于 08:31 08:31 将日志、截图和 Mod 列表发到邮箱。 | **已处理待复测**：商店重建和热切换已经多轮修改，但该反馈晚于 0.9.105，且提供了新材料，应按新回归继续核对，不能直接关闭。 | [Bug 讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939955001624289) · [材料已发送](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939955001651181) |
+| 08-31 05:07 | 外观调整 UX | 把 500% 角色拖到屏幕外后再缩小并关闭菜单，角色无法找回；询问是否有打开菜单或恢复位置的快捷键。 | **建议评估**：需要提供不依赖目标点击的“恢复当前角色位置”入口或快捷键。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621212090) |
+| 08-31 08:02 | 选角界面 | 选中角色后尝试返回选角界面，画面不切换，只继续播放音乐。 | **信息不足（高影响）**：缺单人/多人、返回操作、游戏版本、角色和日志。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621222655) |
+| 08-31 09:37 | 商人入口 / 头像 | 商人只能遇到后在局内切换，不够方便；假商人会使入口认知更混乱；另有头像 Mod 被角色皮肤覆盖。 | **建议评估 + 未解决**：商人需要局外管理入口；头像覆盖归入前面的“独立头像来源”问题。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621227779) |
 
-## 建议处理顺序
+## 按紧急程度的处理顺序
 
-1. **Aeonglass 直接闪退**：先从日志确认是动画资源、运行时代码还是版本分支。
-2. **BaseLib 角色通用回归测试**：用留言列出的角色补测，确认“封兽鵺”修复是否真为通解。
-3. **卡牌外形与 Card Art Editor**：集中检查卡图、外壳、类型、先古特效是否坚持“单一来源胜出”。
-4. **Nekobinder / Moe-Necrobinder**：补齐预览骨骼和附件的进入/退出生命周期。
-5. 其余性能、界面与同 ID 多差分功能按风险和复现材料逐项推进。
+| 顺序 | 级别 | 待办 | 排序理由 / 下一步 |
+|---:|---|---|---|
+| 1 | P0 | 局内切换卡牌皮肤后卡牌消失、无法抽牌 | 已有测试版、操作路径和具体来源，直接阻断对局；先按“劣人 TV → 原版”复现并检查运行时卡牌资源回滚。 |
+| 2 | P0 | 多种先古美化与本 Mod 同开时卡死或闪退 | 影响启动/运行稳定性；先向留言者取得具体 Mod 列表和日志，再验证大型资源复用是否只改善耗时而没有掩盖生命周期错误。 |
+| 3 | P1 | 正式版多人进入地图黑屏、抽第二张牌卡死 | 严重程度高，但当前已明确暂缓正式版；恢复正式版工作时应优先处理，同时在此之前重新评估工坊“支持正式版”的表述。 |
+| 4 | P1 | `Merchant2CuteII` 商人显示在左上角、交互区仍在原位 | 最新 public-beta 有完整邮件材料，优先读取日志和截图，核对报告是否发生在最新商店重建逻辑之后。 |
+| 5 | P1 | CZN / Chaos Zero 卡图、角色皮肤和怪物模型缺失 | 同一系列跨卡牌、角色和怪物三个域，且续报晚于已有兼容改动；应从共享资源包和代码注册入口做一次完整清点。 |
+| 6 | P1 | 返回选角界面无响应，只播放音乐 | 可能是界面生命周期阻断；先补问单人/多人、版本和日志。 |
+| 7 | P1 | Save & Quit / Give Up 后 `FontVariation` 白屏卡死 | 有旧堆栈但无法复现；需要新版日志和完整 Mod 列表。 |
+| 8 | P1 | 进入下一个房间闪退 | 高影响但信息最少；先收集版本、房间、角色、皮肤和日志。 |
+| 9 | P2 | 异画卡被错误套用先古外形 | 系统性卡牌来源串用；检查单一优先级赢家是否同时控制卡图、外壳和类型。 |
+| 10 | P2 | `Card Art Editor` 多卡面切换和悬浮预览失效 | 兼容性明确但不阻断对局；检查动态生成资源的注册与缓存失效。 |
+| 11 | P2 | Nekobinder 预览碎片、Moe-Necrobinder 小手残留 | 放在同一轮检查角色骨骼、附件和退出回滚。 |
+| 12 | P2 | 卡牌奖励界面卡顿 | 需要针对奖励界面做性能采样，不能用图鉴优化结果代替。 |
+| 13 | P2 | 选角切换卡顿 | 本地已有优化，先发布并复测，再决定是否继续细化。 |
+| 14 | P2 | 角色被拖出屏幕后无法恢复 | 低成本但能避免永久错误配置；增加独立恢复入口或快捷键。 |
+| 15 | P2 | 独立头像 Mod 无法与角色皮肤组合 | 需要把头像做成独立来源，而不是继续添加个别 Mod 特判。 |
+| 16 | P2 | 亡灵契约师/猎手错位、劣人 TV 组合问题 | 前者缺复现信息；后者当前本机可用，优先等待原留言者复测。 |
+| 17 | P3 | 加载顺序提醒复测 | 已有修复，只需验证顺序状态切换和“不再提示”重置。 |
+| 18 | P3 | 商人局外入口、角色悬浮预览、按钮位置和入口开关 | 都是可用性增强，不应抢占崩溃和资源串用修复。 |
+| 19 | P3 | 同 ID 差分 Mod 同时加载 | 涉及加载器身份和程序集冲突，成本高、风险大，最后评估。 |
 
-## 当前未纳入的内容
+## 本次从旧待办移除的内容
 
-- 纯夸奖、催更和作者自己的进度说明。
-- 已明确说明为“皮肤修复 Mod 与 Skin Changer 接管机制互相冲突、建议不要同时使用”的个案。
-- 目前页面上已经不可见的旧留言；若需要保留历史删除项，应另建“历史反馈归档”，不要混入当前公开待办。
+- 卡图预设、卡牌分类优先级：已经实现。
+- 多人同角色按玩家隔离皮肤：当前测试版已实现为“双方都安装同一皮肤 Mod 时同步，否则回退原皮”；后续多人问题以具体回归单独记录。
+- `NSFW原版事件替换`、BaseLib 自定义角色发现、macOS 架构加载：已有对应改动，且当前公开留言/讨论中没有新的可执行复现；若再次反馈则按新日志重新建项。
+- 已从页面删除或当前不可见的旧留言不继续作为公开待办；历史仍可从 Git 记录恢复。
