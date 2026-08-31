@@ -921,10 +921,28 @@ internal static partial class ContextualSkinControls
         {
             var parent = root.GetParent();
             var parentVisible = parent is CanvasItem parentCanvas ? parentCanvas.Visible : true;
+            var ancestry = new List<string>();
+            for (Node? node = root; node != null && node != screen; node = node.GetParent())
+            {
+                if (node is Control ancestor)
+                {
+                    ancestry.Add(
+                        $"{ancestor.Name}:v={ancestor.Visible},clip={ancestor.ClipContents}," +
+                        $"global={ancestor.GlobalPosition},size={ancestor.Size},a={ancestor.Modulate.A:0.###}");
+                }
+            }
+
+            var childStates = root.GetChildren()
+                .OfType<CanvasItem>()
+                .Select(child => $"{child.Name}:v={child.Visible},a={child.Modulate.A:0.###}")
+                .ToArray();
             ModLog.Info(
                 $"选角交互面板诊断 provider={providerId} 节点={root.GetPath()} " +
                 $"visible={root.Visible} parentVisible={parentVisible} " +
-                $"position={root.Position} size={root.Size} z={root.ZIndex}");
+                $"position={root.Position} global={root.GlobalPosition} size={root.Size} z={root.ZIndex} " +
+                $"alpha={root.Modulate.A:0.###} " +
+                $"ancestors=[{string.Join(" | ", ancestry)}] " +
+                $"children=[{string.Join(" | ", childStates)}]");
         }
 
         // Container layouts and third-party UI patches can run after the provider callback. Apply
