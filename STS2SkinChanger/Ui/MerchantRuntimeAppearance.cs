@@ -2,6 +2,7 @@ using System.Reflection;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using STS2SkinChanger.Core;
@@ -26,6 +27,10 @@ internal static class MerchantRuntimeAppearance
 
     private static readonly FieldInfo? MerchantButtonField =
         AccessTools.Field(typeof(NMerchantRoom), "<MerchantButton>k__BackingField");
+    private static readonly FieldInfo? FakeMerchantButtonField =
+        AccessTools.Field(typeof(NFakeMerchant), "<MerchantButton>k__BackingField");
+    private static readonly MethodInfo? FakeMerchantOpenedMethod =
+        AccessTools.Method(typeof(NFakeMerchant), "OnMerchantOpened");
     private static readonly FieldInfo? MerchantHandField =
         AccessTools.Field(typeof(NMerchantInventory), "<MerchantHand>k__BackingField");
     private static readonly FieldInfo? MerchantRoomModelField =
@@ -384,6 +389,82 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
+    internal static bool TryRefreshFakeMerchant(
+        NFakeMerchant fakeMerchant,
+        out string? error)
+    {
+        error = null;
+        if (!GodotObject.IsInstanceValid(fakeMerchant) ||
+            fakeMerchant.MerchantButton == null ||
+            FakeMerchantButtonField == null ||
+            FakeMerchantOpenedMethod == null)
+        {
+            error = "fake merchant visual fields unavailable";
+            return false;
+        }
+
+        NMerchantButton? replacement = null;
+        NMerchantButton? previous = null;
+        var swapped = false;
+        var previousName = string.Empty;
+        try
+        {
+            previous = fakeMerchant.MerchantButton;
+            previousName = previous.Name;
+            replacement = InstantiateMerchantButton("fake_merchant_monster");
+            ReplaceMerchantButtonCore(
+                previous,
+                replacement,
+                fakeMerchant,
+                FakeMerchantButtonField,
+                button => FakeMerchantOpenedMethod.Invoke(fakeMerchant, [button]));
+            swapped = true;
+
+            // The fake merchant event keeps its inventory and dialogue objects; only the
+            // merchant button/visual is replaced. This avoids re-running event initialization
+            // and preserves the event's own opened/closed callbacks.
+            previous.GetParent()?.RemoveChild(previous);
+            previous.QueueFree();
+
+            var providerId = SkinService.GetSelectedFullRuntimeProvider("fake_merchant_monster");
+            ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(
+                fakeMerchant,
+                providerId == null ? [] : [providerId]);
+            if (providerId != null)
+            {
+                ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(fakeMerchant, providerId);
+            }
+
+            replacement = null;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            if (replacement != null && GodotObject.IsInstanceValid(replacement))
+            {
+                replacement.GetParent()?.RemoveChild(replacement);
+            }
+
+            if (swapped && previous != null && GodotObject.IsInstanceValid(previous))
+            {
+                FakeMerchantButtonField.SetValue(fakeMerchant, previous);
+                previous.Name = previousName;
+            }
+
+            error = exception.GetBaseException().Message;
+            ModLog.Error("刷新假商人外观失败：" + exception);
+            return false;
+        }
+        finally
+        {
+            if (replacement != null && GodotObject.IsInstanceValid(replacement))
+            {
+                replacement.GetParent()?.RemoveChild(replacement);
+                replacement.Free();
+            }
+        }
+    }
+
     internal static bool TryRefreshLocalPlayer(
         Player player,
         string groupId,
@@ -590,6 +671,21 @@ internal static class MerchantRuntimeAppearance
     {
         previous = room.MerchantButton ??
                    throw new InvalidOperationException("merchant button is unavailable");
+        ReplaceMerchantButtonCore(
+            previous,
+            replacement,
+            room,
+            MerchantButtonField!,
+            button => room.OpenInventory());
+    }
+
+    private static void ReplaceMerchantButtonCore(
+        NMerchantButton previous,
+        NMerchantButton replacement,
+        object targetOwner,
+        FieldInfo targetField,
+        Action<NMerchantButton> openedCallback)
+    {
         var parent = previous.GetParent() ??
                      throw new InvalidOperationException("merchant button has no parent");
         var index = previous.GetIndex();
@@ -620,20 +716,21 @@ internal static class MerchantRuntimeAppearance
         replacement.SetEnabled(previous.IsEnabled);
         replacement.Connect(
             NMerchantButton.SignalName.MerchantOpened,
-            Callable.From<NMerchantButton>(_ => room.OpenInventory()));
-        MerchantButtonField!.SetValue(room, replacement);
+            Callable.From<NMerchantButton>(openedCallback));
+        targetField.SetValue(targetOwner, replacement);
         if (wasFocused)
         {
             replacement.GrabFocus();
         }
     }
 
-    private static NMerchantButton InstantiateMerchantButton()
+    private static NMerchantButton InstantiateMerchantButton(
+        string groupId = GroupId)
     {
         // v0.111.0 introduced a standalone merchant_button.tscn. Older formal builds keep the
         // same node embedded in merchant_room.tscn, so use the standalone scene when available
         // and extract the embedded node as a version-neutral fallback.
-        var standalone = TryLoadRuntimeOrBaseScene(MerchantButtonScenePath);
+        var standalone = TryLoadRuntimeOrBaseScene(MerchantButtonScenePath, groupId);
         if (standalone != null)
         {
             var button = standalone.Instantiate<NMerchantButton>(PackedScene.GenEditState.Disabled);
@@ -641,7 +738,7 @@ internal static class MerchantRuntimeAppearance
             return button;
         }
 
-        var roomScene = LoadRuntimeOrBaseScene(MerchantRoomScenePath);
+        var roomScene = LoadRuntimeOrBaseScene(MerchantRoomScenePath, groupId);
         var roomTemplate = roomScene.Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
         try
         {
@@ -663,15 +760,19 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
-    private static PackedScene LoadRuntimeOrBaseScene(string scenePath) =>
-        TryLoadRuntimeOrBaseScene(scenePath) ??
+    private static PackedScene LoadRuntimeOrBaseScene(
+        string scenePath,
+        string groupId = GroupId) =>
+        TryLoadRuntimeOrBaseScene(scenePath, groupId) ??
         throw new InvalidOperationException($"无法加载商店场景：{scenePath}");
 
-    private static PackedScene? TryLoadRuntimeOrBaseScene(string scenePath)
+    private static PackedScene? TryLoadRuntimeOrBaseScene(
+        string scenePath,
+        string groupId = GroupId)
     {
         try
         {
-            var runtime = SkinService.GetOrLoadRuntimeScene(GroupId, scenePath);
+            var runtime = SkinService.GetOrLoadRuntimeScene(groupId, scenePath);
             if (runtime != null)
             {
                 return runtime;
@@ -881,6 +982,25 @@ internal static class MerchantRoomPlayerAppearancePatch
             MerchantRuntimeAppearance.ApplyLocalPlayerTransform(
                 __instance.PlayerVisuals[0],
                 group.Id);
+        }
+    }
+}
+
+[HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._Ready))]
+internal static class FakeMerchantAppearancePatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NFakeMerchant __instance)
+    {
+        try
+        {
+            var providerId = SkinService.GetSelectedFullRuntimeProvider("fake_merchant_monster");
+            ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(__instance, providerId);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("重放假商人外观初始化失败：" + exception.GetBaseException().Message);
         }
     }
 }

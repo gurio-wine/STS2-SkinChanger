@@ -538,6 +538,42 @@ internal partial class AncientCompendiumScreen : NSubmenu
         string ScenePath,
         string? GroupLookupId = null);
 
+    private sealed record OtherPreviewLanguagePack(
+        string OpenShop,
+        string ShopPreview,
+        string Hint,
+        string Cards,
+        string Relics,
+        string Potions,
+        string Item,
+        string Standing,
+        string Attack);
+
+    private static readonly IReadOnlyDictionary<string, OtherPreviewLanguagePack>
+        OtherPreviewPacks = new Dictionary<string, OtherPreviewLanguagePack>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = new("Open shop preview", "Shop preview", "A visual mockup only; nothing can be bought here.", "Cards", "Relics", "Potions", "Item {0}", "Standing", "Attack"),
+            ["zhs"] = new("打开商店预览", "商店预览", "这里只是查看商店布局的模拟界面，不会购买或改变游戏内容。", "卡牌", "遗物", "药水", "商品 {0}", "站姿", "攻击"),
+            ["zht"] = new("開啟商店預覽", "商店預覽", "這只是查看商店配置的模擬介面，不會購買或改變遊戲內容。", "卡牌", "遺物", "藥水", "商品 {0}", "站姿", "攻擊"),
+            ["deu"] = new("Shop-Vorschau öffnen", "Shop-Vorschau", "Nur eine visuelle Vorschau; hier kann nichts gekauft werden.", "Karten", "Relikte", "Tränke", "Artikel {0}", "Stehen", "Angriff"),
+            ["esp"] = new("Abrir vista de tienda", "Vista de tienda", "Solo es una maqueta visual; aquí no se puede comprar nada.", "Cartas", "Reliquias", "Pociones", "Objeto {0}", "De pie", "Ataque"),
+            ["fra"] = new("Ouvrir l’aperçu de la boutique", "Aperçu de la boutique", "Ceci est une maquette visuelle ; aucun achat n’est possible ici.", "Cartes", "Reliques", "Potions", "Objet {0}", "Debout", "Attaque"),
+            ["ita"] = new("Apri anteprima negozio", "Anteprima negozio", "Solo un modello visivo: qui non è possibile acquistare nulla.", "Carte", "Reliquie", "Pozioni", "Oggetto {0}", "In piedi", "Attacco"),
+            ["jpn"] = new("ショッププレビューを開く", "ショッププレビュー", "これは見た目だけのプレビューです。ここでは購入できません。", "カード", "レリック", "ポーション", "商品 {0}", "立ち姿", "攻撃"),
+            ["kor"] = new("상점 미리보기 열기", "상점 미리보기", "시각적 모형일 뿐이며 여기서는 아무것도 구매할 수 없습니다.", "카드", "유물", "물약", "상품 {0}", "서 있기", "공격"),
+            ["pol"] = new("Otwórz podgląd sklepu", "Podgląd sklepu", "To tylko wizualna makieta; tutaj niczego nie można kupić.", "Karty", "Relikty", "Mikstury", "Przedmiot {0}", "Postawa", "Atak"),
+            ["ptb"] = new("Abrir prévia da loja", "Prévia da loja", "Apenas uma simulação visual; nada pode ser comprado aqui.", "Cartas", "Relíquias", "Poções", "Item {0}", "Parado", "Ataque"),
+            ["rus"] = new("Открыть предпросмотр магазина", "Предпросмотр магазина", "Это только визуальная имитация; покупать здесь нельзя.", "Карты", "Реликвии", "Зелья", "Товар {0}", "Стойка", "Атака"),
+            ["spa"] = new("Abrir vista de tienda", "Vista de tienda", "Solo es una maqueta visual; aquí no se puede comprar nada.", "Cartas", "Reliquias", "Pociones", "Objeto {0}", "De pie", "Ataque"),
+            ["tha"] = new("เปิดตัวอย่างร้านค้า", "ตัวอย่างร้านค้า", "เป็นเพียงหน้าจอจำลองเพื่อดูรูปแบบร้านค้า ไม่สามารถซื้อของได้", "การ์ด", "ของที่ระลึก", "โพชัน", "สินค้า {0}", "ท่ายืน", "โจมตี"),
+            ["tur"] = new("Mağaza önizlemesini aç", "Mağaza önizlemesi", "Bu yalnızca görsel bir makettir; burada alışveriş yapılamaz.", "Kartlar", "Kalıntılar", "İksirler", "Eşya {0}", "Ayakta", "Saldırı")
+        };
+
+    private static OtherPreviewLanguagePack OtherPreviewText =>
+        OtherPreviewPacks.TryGetValue(ModLocalization.CurrentLanguage, out var pack)
+            ? pack
+            : OtherPreviewPacks["eng"];
+
     private readonly Dictionary<AncientEventModel, Button> _entryButtons = [];
     private readonly Dictionary<string, Button> _otherEntryButtons =
         new(StringComparer.OrdinalIgnoreCase);
@@ -550,6 +586,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private OptionButton _skinDropdown = null!;
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
+    private Button _merchantClickArea = null!;
+    private Button _merchantPreviewButton = null!;
+    private HBoxContainer _otherActionSelector = null!;
+    private Control? _shopPreviewOverlay;
+    private Node? _otherPreviewInstance;
+    private string? _otherPreviewGroupId;
+    private readonly List<(Button Button, string[] Aliases)> _otherActionButtons = [];
     private AncientEventModel? _selectedAncient;
     private OtherEntry? _selectedOther;
     private OtherCategory _selectedCategory = OtherCategory.Ancients;
@@ -579,6 +622,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
         // the player returns to the compendium or enters a run. Release the preview scene at the
         // same lifecycle boundary as the submenu itself; reopening rebuilds the selected preview.
         ClearPreview();
+        CloseSimulatedShopPreview();
+        _merchantClickArea.Visible = false;
+        _merchantPreviewButton.Visible = false;
+        _otherActionSelector.Visible = false;
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
         base.OnSubmenuClosed();
     }
@@ -609,6 +656,32 @@ internal partial class AncientCompendiumScreen : NSubmenu
             RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled
         };
         _previewContainer.AddChild(_previewViewport);
+
+        // Merchant previews are visual-only nodes inside a SubViewport. A transparent
+        // screen-level hit target makes the interaction reliable on both game versions and
+        // lets the compendium show a shop-shaped mockup without forwarding clicks to the game.
+        _merchantClickArea = new Button
+        {
+            Name = "MerchantPreviewClickArea",
+            Visible = false,
+            Flat = true,
+            FocusMode = FocusModeEnum.None,
+            MouseFilter = MouseFilterEnum.Stop,
+            ZIndex = 4,
+            TooltipText = OtherPreviewText.OpenShop
+        };
+        _merchantClickArea.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        _merchantClickArea.Position = new Vector2(570f, 170f);
+        _merchantClickArea.Size = new Vector2(780f, 720f);
+        _merchantClickArea.AddThemeStyleboxOverride(
+            "normal",
+            ContextualSkinControls.CreateStyleBox(Colors.Transparent, Colors.Transparent, 0));
+        _merchantClickArea.AddThemeStyleboxOverride(
+            "hover",
+            ContextualSkinControls.CreateStyleBox(new Color(1f, 1f, 1f, 0.035f),
+                new Color("efc85066"), 2));
+        _merchantClickArea.Pressed += OpenSimulatedShopPreview;
+        AddChild(_merchantClickArea);
 
         _nameLabel = BuildLabel(48, new Color("efc850"));
         _nameLabel.HorizontalAlignment = HorizontalAlignment.Left;
@@ -656,6 +729,34 @@ internal partial class AncientCompendiumScreen : NSubmenu
         ContextualSkinControls.ApplyGameTheme(_skinDropdown);
         _skinDropdown.ItemSelected += index => OnSkinSelected(checked((int)index));
         _skinSelector.AddChild(_skinDropdown);
+
+        _merchantPreviewButton = new Button
+        {
+            Name = "MerchantPreviewButton",
+            Text = OtherPreviewText.OpenShop,
+            Visible = false,
+            FocusMode = FocusModeEnum.All,
+            CustomMinimumSize = new Vector2(210f, 44f),
+            ZIndex = 11
+        };
+        ContextualSkinControls.ApplyGameTheme(_merchantPreviewButton);
+        _merchantPreviewButton.Pressed += OpenSimulatedShopPreview;
+        _merchantPreviewButton.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        _merchantPreviewButton.Position = new Vector2(855f, 882f);
+        AddChild(_merchantPreviewButton);
+
+        _otherActionSelector = new HBoxContainer
+        {
+            Name = "OtherPreviewActionSelector",
+            Visible = false,
+            ZIndex = 11
+        };
+        _otherActionSelector.AddThemeConstantOverride("separation", 8);
+        _otherActionSelector.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        _otherActionSelector.Position = new Vector2(818f, 882f);
+        AddChild(_otherActionSelector);
+        AddOtherActionButton(OtherPreviewText.Standing, ["idle_loop", "idle", "stand", "standing"], loop: true);
+        AddOtherActionButton(OtherPreviewText.Attack, ["attack", "attack1", "attack_1", "atk", "bite"], loop: false);
 
         var sidebar = new MarginContainer
         {
@@ -721,6 +822,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void RefreshLocalizedText()
     {
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
+        var previewText = OtherPreviewText;
+        _merchantPreviewButton.Text = previewText.OpenShop;
+        _merchantClickArea.TooltipText = previewText.OpenShop;
+        if (_otherActionButtons.Count >= 2)
+        {
+            _otherActionButtons[0].Button.Text = previewText.Standing;
+            _otherActionButtons[1].Button.Text = previewText.Attack;
+        }
         foreach (var pair in _categoryButtons)
         {
             pair.Value.Text = GetCategoryText(pair.Key);
@@ -747,6 +856,156 @@ internal partial class AncientCompendiumScreen : NSubmenu
             PopulateSkinDropdown(SkinService.Catalog?.Groups.FirstOrDefault(group =>
                 group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase)));
         }
+    }
+
+    private void AddOtherActionButton(string text, string[] animationAliases, bool loop)
+    {
+        var button = new Button
+        {
+            Text = text,
+            CustomMinimumSize = new Vector2(104f, 44f),
+            FocusMode = FocusModeEnum.All,
+            Alignment = HorizontalAlignment.Center
+        };
+        ContextualSkinControls.ApplyGameTheme(button);
+        button.Pressed += () =>
+        {
+            if (_otherPreviewInstance == null)
+            {
+                return;
+            }
+
+            ManagedAncientSceneAnimation.TryPlay(
+                _otherPreviewInstance,
+                _otherPreviewGroupId,
+                animationAliases,
+                loop);
+        };
+        _otherActionSelector.AddChild(button);
+        _otherActionButtons.Add((button, animationAliases));
+    }
+
+    private void OpenSimulatedShopPreview()
+    {
+        if (_selectedOther == null ||
+            (!_selectedOther.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
+             !_selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)) ||
+            GodotObject.IsInstanceValid(_shopPreviewOverlay))
+        {
+            return;
+        }
+
+        _merchantClickArea.Visible = false;
+        _merchantPreviewButton.Visible = false;
+        _skinSelector.Visible = false;
+        _otherActionSelector.Visible = false;
+
+        var overlay = new Control
+        {
+            Name = "SimulatedShopPreview",
+            MouseFilter = MouseFilterEnum.Stop,
+            ZIndex = 80
+        };
+        overlay.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        AddChild(overlay);
+        _shopPreviewOverlay = overlay;
+
+        var mask = new ColorRect
+        {
+            Color = new Color(0f, 0f, 0f, 0.48f),
+            MouseFilter = MouseFilterEnum.Stop
+        };
+        mask.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        overlay.AddChild(mask);
+
+        var panel = new PanelContainer
+        {
+            AnchorLeft = 0.08f,
+            AnchorTop = 0.10f,
+            AnchorRight = 0.74f,
+            AnchorBottom = 0.90f,
+            MouseFilter = MouseFilterEnum.Stop
+        };
+        panel.AddThemeStyleboxOverride(
+            "panel",
+            ContextualSkinControls.CreateStyleBox(new Color("182533f2"), new Color("7394ad"), 3));
+        overlay.AddChild(panel);
+
+        var margin = new MarginContainer();
+        margin.AddThemeConstantOverride("margin_left", 28);
+        margin.AddThemeConstantOverride("margin_top", 24);
+        margin.AddThemeConstantOverride("margin_right", 28);
+        margin.AddThemeConstantOverride("margin_bottom", 24);
+        panel.AddChild(margin);
+        var content = new VBoxContainer();
+        content.AddThemeConstantOverride("separation", 16);
+        margin.AddChild(content);
+
+        var titleRow = new HBoxContainer();
+        titleRow.AddThemeConstantOverride("separation", 12);
+        content.AddChild(titleRow);
+        var title = BuildLabel(34, new Color("efc850"));
+        title.Text = $"{_selectedOther.Title} · {OtherPreviewText.ShopPreview}";
+        title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        title.HorizontalAlignment = HorizontalAlignment.Left;
+        titleRow.AddChild(title);
+        var close = new Button { Text = ModLocalization.Get(ModText.Close), CustomMinimumSize = new Vector2(118, 44) };
+        ContextualSkinControls.ApplyGameTheme(close);
+        close.Pressed += CloseSimulatedShopPreview;
+        titleRow.AddChild(close);
+
+        var hint = BuildLabel(20, new Color("b8c9d6"));
+        hint.Text = OtherPreviewText.Hint;
+        hint.HorizontalAlignment = HorizontalAlignment.Left;
+        content.AddChild(hint);
+
+        var tabs = new HBoxContainer();
+        tabs.AddThemeConstantOverride("separation", 8);
+        content.AddChild(tabs);
+        foreach (var tabName in new[] { OtherPreviewText.Cards, OtherPreviewText.Relics, OtherPreviewText.Potions })
+        {
+            var tab = new Button { Text = tabName, CustomMinimumSize = new Vector2(132, 46) };
+            ContextualSkinControls.ApplyGameTheme(tab);
+            tabs.AddChild(tab);
+        }
+
+        var grid = new GridContainer { Columns = 3, SizeFlagsVertical = SizeFlags.ExpandFill };
+        grid.AddThemeConstantOverride("h_separation", 14);
+        grid.AddThemeConstantOverride("v_separation", 14);
+        content.AddChild(grid);
+        foreach (var itemName in Enumerable.Range(1, 6).Select(index => string.Format(OtherPreviewText.Item, index)))
+        {
+            var item = new PanelContainer { CustomMinimumSize = new Vector2(170, 170) };
+            item.AddThemeStyleboxOverride(
+                "panel",
+                ContextualSkinControls.CreateStyleBox(new Color("2e4252"), new Color("7394ad88"), 2));
+            var itemLabel = BuildLabel(22, new Color("fff6e2"));
+            itemLabel.Text = itemName;
+            item.AddChild(itemLabel);
+            grid.AddChild(item);
+        }
+    }
+
+    private void CloseSimulatedShopPreview()
+    {
+        if (GodotObject.IsInstanceValid(_shopPreviewOverlay))
+        {
+            _shopPreviewOverlay!.QueueFree();
+        }
+
+        _shopPreviewOverlay = null;
+        RefreshAuxiliaryPreviewControls();
+    }
+
+    private void RefreshAuxiliaryPreviewControls()
+    {
+        var merchant = _selectedOther != null &&
+                       (_selectedOther.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
+                        _selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase));
+        _merchantClickArea.Visible = merchant && _shopPreviewOverlay == null;
+        _merchantPreviewButton.Visible = merchant && _shopPreviewOverlay == null;
+        _otherActionSelector.Visible = _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true &&
+                                       _shopPreviewOverlay == null;
     }
 
     private void RefreshAncients()
@@ -872,6 +1131,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
         _epithetLabel.Text = string.Empty;
         _skinSelector.Visible = false;
+        _merchantClickArea.Visible = false;
+        _merchantPreviewButton.Visible = false;
+        _otherActionSelector.Visible = false;
         ClearPreview();
     }
 
@@ -917,6 +1179,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void SelectOther(OtherEntry entry)
     {
+        CloseSimulatedShopPreview();
         _selectedAncient = null;
         _selectedOther = entry;
         _nameLabel.Text = entry.Title;
@@ -930,6 +1193,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         PopulateSkinDropdown(FindOtherGroup(entry));
         RebuildOtherPreview(entry);
+        RefreshAuxiliaryPreviewControls();
     }
 
     private static SkinGroup? FindOtherGroup(OtherEntry entry)
@@ -970,6 +1234,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void SelectAncient(AncientEventModel ancient)
     {
+        CloseSimulatedShopPreview();
         _selectedCategory = OtherCategory.Ancients;
         _selectedAncient = ancient;
         _selectedOther = null;
@@ -990,6 +1255,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         PopulateSkinDropdown(AncientCompendiumEntry.FindGroup(ancient.Id.Entry));
         RebuildPreview(ancient);
+        RefreshAuxiliaryPreviewControls();
     }
 
     private void PopulateSkinDropdown(SkinGroup? group)
@@ -1058,6 +1324,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
         try
         {
             ClearPreview();
+            _otherPreviewInstance = null;
+            _otherPreviewGroupId = null;
             var group = FindOtherGroup(entry);
             // PackedScene external resources (notably Spine skeleton data) can resolve lazily
             // during Instantiate. Keep the selected provider overlay mounted for the complete
@@ -1096,23 +1364,39 @@ internal partial class AncientCompendiumScreen : NSubmenu
             instance.Name = "OtherCompendiumPreview";
             instance.ProcessMode = ProcessModeEnum.Always;
             _previewViewport.AddChild(instance);
+            _otherPreviewInstance = instance;
+            _otherPreviewGroupId = group?.Id;
             if (instance is Control control)
             {
                 control.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
                 control.Position = new Vector2(960f, 540f);
-                control.Scale = Vector2.One * 1.35f;
+                control.Scale *= entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
+                                 entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
+                    ? 1.10f
+                    : 1.35f;
                 control.MouseFilter = MouseFilterEnum.Ignore;
             }
             else if (instance is Node2D node)
             {
                 node.Position = new Vector2(960f, 600f);
-                node.Scale = Vector2.One * 1.35f;
+                var previewMultiplier = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
+                                        entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
+                    ? 1.10f
+                    : 1.35f;
+                // Keep the scale authored by the scene/provider. Replacing it with a unit
+                // scale was what made the merchant fill the whole compendium on some skins.
+                node.Scale *= previewMultiplier;
             }
 
             // Creature scenes do not get NCreature's normal animation setup when previewed in
             // isolation. Reuse the same generic Spine starter used by Ancient previews so a
             // Byrdpip/merchant skin with an idle loop remains animated in the compendium.
             ManagedAncientSceneAnimation.TryStart(group?.Id, instance);
+            ManagedAncientSceneAnimation.ConfigureActions(
+                instance,
+                group?.Id,
+                _otherActionButtons);
+            RefreshAuxiliaryPreviewControls();
 
             ModLog.Info($"其它图鉴已展示 {entry.Id}。");
         }
@@ -1215,6 +1499,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void ClearPreview()
     {
+        _otherPreviewInstance = null;
+        _otherPreviewGroupId = null;
+        if (_merchantClickArea != null)
+        {
+            _merchantClickArea.Visible = false;
+        }
+        if (_merchantPreviewButton != null)
+        {
+            _merchantPreviewButton.Visible = false;
+        }
+        if (_otherActionSelector != null)
+        {
+            _otherActionSelector.Visible = false;
+        }
         _previewContainer.MouseFilter = MouseFilterEnum.Ignore;
         _previewViewport.GuiDisableInput = true;
         foreach (var child in _previewViewport.GetChildren())
@@ -1411,15 +1709,7 @@ internal static class ManagedAncientSceneAnimation
         // Most ancient scenes call the node SpineSprite, while creature/merchant previews use
         // names such as Visuals or MerchantVisual. Resolve by class as a fallback and include
         // the root itself when a single SpineSprite was extracted from a larger scene.
-        var spineNode = sceneRoot.GetNodeOrNull<Node>("SpineSprite") ??
-                        sceneRoot.FindChild("SpineSprite", recursive: true, owned: false) ??
-                        (sceneRoot.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)
-                            ? sceneRoot
-                            : sceneRoot.GetChildren()
-                                .OfType<Node>()
-                                .SelectMany(DescendantsAndSelf)
-                                .FirstOrDefault(node => node.GetClass().ToString()
-                                    .Equals("SpineSprite", StringComparison.Ordinal)));
+        var spineNode = FindSpineNode(sceneRoot);
         if (spineNode == null)
         {
             return;
@@ -1436,6 +1726,116 @@ internal static class ManagedAncientSceneAnimation
             ModLog.Warn($"准备 {groupId} 的先古 Spine 动画失败：{exception.Message}");
         }
     }
+
+    public static void TryPlay(
+        Node sceneRoot,
+        string? groupId,
+        IReadOnlyList<string> aliases,
+        bool loop)
+    {
+        var spineNode = FindSpineNode(sceneRoot);
+        if (spineNode == null)
+        {
+            ModLog.Warn($"{groupId ?? "其它图鉴"} 没有可播放的 Spine 节点。");
+            return;
+        }
+
+        try
+        {
+            var sprite = new MegaSprite(spineNode);
+            sceneRoot.RunWhenSpineReady(sprite, animationState =>
+            {
+                try
+                {
+                    var animationNames = sprite.GetSkeleton()?.GetData()?.GetAnimationNames();
+                    var animation = animationNames == null
+                        ? null
+                        : aliases.Select(alias => FindAnimation(animationNames, alias))
+                            .FirstOrDefault(candidate => candidate != null);
+                    if (animation == null)
+                    {
+                        ModLog.Warn($"{groupId ?? "其它图鉴"} 没有匹配动作：{string.Join(", ", aliases)}");
+                        return;
+                    }
+
+                    SetAnimationCompat(animationState, animation, loop);
+                    if (!loop)
+                    {
+                        var idle = animationNames == null
+                            ? null
+                            : FindAnimation(animationNames, "idle_loop") ??
+                              FindAnimation(animationNames, "idle") ??
+                              FindAnimation(animationNames, "stand");
+                        if (idle != null)
+                        {
+                            AddAnimationCompat(animationState, idle, delay: 0f, loop: true);
+                        }
+                    }
+
+                    ModLog.Info($"已播放 {groupId ?? "其它图鉴"} 动作：{animation}");
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn($"播放 {groupId ?? "其它图鉴"} 动作失败：{exception.Message}");
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"准备 {groupId ?? "其它图鉴"} 动作失败：{exception.Message}");
+        }
+    }
+
+    public static void ConfigureActions(
+        Node sceneRoot,
+        string? groupId,
+        IReadOnlyList<(Button Button, string[] Aliases)> actions)
+    {
+        foreach (var action in actions)
+        {
+            action.Button.Visible = false;
+        }
+
+        var spineNode = FindSpineNode(sceneRoot);
+        if (spineNode == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var sprite = new MegaSprite(spineNode);
+            sceneRoot.RunWhenSpineReady(sprite, _ =>
+            {
+                var names = sprite.GetSkeleton()?.GetData()?.GetAnimationNames();
+                if (names == null)
+                {
+                    return;
+                }
+
+                foreach (var action in actions)
+                {
+                    action.Button.Visible = action.Aliases.Any(alias =>
+                        FindAnimation(names, alias) != null);
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"检查 {groupId ?? "其它图鉴"} 动作失败：{exception.Message}");
+        }
+    }
+
+    private static Node? FindSpineNode(Node sceneRoot) =>
+        sceneRoot.GetNodeOrNull<Node>("SpineSprite") ??
+        sceneRoot.FindChild("SpineSprite", recursive: true, owned: false) ??
+        (sceneRoot.GetClass().ToString().Equals("SpineSprite", StringComparison.Ordinal)
+            ? sceneRoot
+            : sceneRoot.GetChildren()
+                .OfType<Node>()
+                .SelectMany(DescendantsAndSelf)
+                .FirstOrDefault(node => node.GetClass().ToString()
+                    .Equals("SpineSprite", StringComparison.Ordinal)));
 
     private static void StartDefaultAnimation(
         string groupId,

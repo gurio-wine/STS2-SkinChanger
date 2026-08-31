@@ -9,6 +9,7 @@ using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Events;
+using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
@@ -102,6 +103,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private AncientEventModel? _targetAncient;
     private NMerchantCharacter? _targetShopPlayerVisual;
     private NMerchantButton? _targetMerchantButton;
+    private NFakeMerchant? _targetFakeMerchant;
     private Player? _player;
     private SkinGroup? _group;
     private string? _transformKey;
@@ -761,6 +763,12 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         SetStatus(string.Empty, warning: false);
         if (_targetMerchantButton != null)
         {
+            if (_targetFakeMerchant != null)
+            {
+                RequestFakeMerchantSkinSelection(optionId);
+                return;
+            }
+
             var previousOptionId = SkinService.Config.GetSelection(_group.Id);
             MerchantRuntimeAppearance.PrepareMerchantSelectionChange();
             if (!SkinService.ApplySelection(_group.Id, optionId))
@@ -1052,6 +1060,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetAncient = null;
         _targetShopPlayerVisual = null;
         _targetMerchantButton = null;
+        _targetFakeMerchant = null;
         _group = null;
         _transformKey = null;
         _canEditSkin = true;
@@ -1109,6 +1118,24 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             return SelectMerchantTarget(merchantButton, merchantRect.GetCenter());
         }
 
+        var fakeMerchant = NEventRoom.Instance?.CustomEventNode as NFakeMerchant;
+        var fakeMerchantButton = fakeMerchant?.MerchantButton;
+        if (fakeMerchantButton != null &&
+            GodotObject.IsInstanceValid(fakeMerchantButton) &&
+            fakeMerchantButton.IsVisibleInTree() &&
+            SkinService.Catalog?.Groups.Any(group => group.Id.Equals(
+                "fake_merchant_monster",
+                StringComparison.OrdinalIgnoreCase)) == true &&
+            _dragSurface.TryGetCanvasRect(fakeMerchantButton, 8f, out var fakeMerchantRect) &&
+            fakeMerchantRect.HasPoint(localPosition))
+        {
+            return SelectMerchantTarget(
+                fakeMerchantButton,
+                fakeMerchantRect.GetCenter(),
+                "fake_merchant_monster",
+                fakeMerchant);
+        }
+
         if (!AncientRuntimeAppearance.TryGetCurrent(
                 out var ancient,
                 out var layout,
@@ -1130,6 +1157,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetAncient = ancient;
         _targetShopPlayerVisual = null;
         _targetMerchantButton = null;
+        _targetFakeMerchant = null;
         _group = ancientGroup;
         _transformKey = null;
         _canEditSkin = true;
@@ -1211,6 +1239,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetAncient = null;
         _targetShopPlayerVisual = visual;
         _targetMerchantButton = null;
+        _targetFakeMerchant = null;
         _group = group;
         _transformKey = null;
         _canEditSkin = MultiplayerSkinSync.CanEditLocalPlayerSkinInRun();
@@ -1234,11 +1263,13 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private bool SelectMerchantTarget(
         NMerchantButton merchantButton,
-        Vector2 targetCenter)
+        Vector2 targetCenter,
+        string groupId = MerchantRuntimeAppearance.GroupId,
+        NFakeMerchant? fakeMerchant = null)
     {
         var group = SkinService.Catalog?.Groups.FirstOrDefault(candidate =>
             candidate.Id.Equals(
-                MerchantRuntimeAppearance.GroupId,
+                groupId,
                 StringComparison.OrdinalIgnoreCase));
         if (group == null)
         {
@@ -1251,6 +1282,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetAncient = null;
         _targetShopPlayerVisual = null;
         _targetMerchantButton = merchantButton;
+        _targetFakeMerchant = fakeMerchant;
         _group = group;
         _transformKey = null;
         _canEditSkin = true;
@@ -1269,6 +1301,53 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         SetStatus(string.Empty, warning: false);
         GetTargetInitialFocus().TryGrabFocus();
         return true;
+    }
+
+    private void RequestFakeMerchantSkinSelection(string optionId)
+    {
+        if (_group == null || _targetFakeMerchant == null)
+        {
+            return;
+        }
+
+        var previousOptionId = SkinService.Config.GetSelection(_group.Id);
+        if (!SkinService.ApplySelection(_group.Id, optionId))
+        {
+            PopulateSkinDropdown();
+            SetStatus(
+                ModLocalization.Get(ModText.AppearanceFailed) + ": " + SkinService.LastError,
+                warning: true);
+            return;
+        }
+
+        PopulateSkinDropdown();
+        if (!MerchantRuntimeAppearance.TryRefreshFakeMerchant(
+                _targetFakeMerchant,
+                out var fakeMerchantError))
+        {
+            var selectionError = fakeMerchantError;
+            var rollbackApplied = SkinService.ApplySelection(_group.Id, previousOptionId);
+            string? rollbackError = null;
+            var rollbackRefreshed = rollbackApplied &&
+                                    MerchantRuntimeAppearance.TryRefreshFakeMerchant(
+                                        _targetFakeMerchant,
+                                        out rollbackError);
+            PopulateSkinDropdown();
+            _targetMerchantButton = _targetFakeMerchant.MerchantButton;
+            if (!rollbackRefreshed)
+            {
+                ModLog.Error("回滚假商人皮肤选择失败：" +
+                             (rollbackApplied ? rollbackError : SkinService.LastError));
+            }
+
+            SetStatus(
+                ModLocalization.Get(ModText.AppearanceFailed) + ": " + selectionError,
+                warning: true);
+            return;
+        }
+
+        _targetMerchantButton = _targetFakeMerchant.MerchantButton;
+        SetAppliedStatus(null);
     }
 
     private string? RefreshShopPlayerVisualAfterSelection()
