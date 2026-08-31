@@ -15,7 +15,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "0.9.120";
+    public const string InternalTestVersion = "0.9.121";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -89,10 +89,15 @@ internal static class DuplicateModelTypeCompatibilityPatch
     // Some older gameplay mods ship a model with the same ID as a model introduced by the
     // current game. ModelDb constructs both and aborts startup before any mod UI can appear.
     // Keep the game's canonical type whenever that ID already exists; unrelated mod-only models
-    // and all non-model types remain untouched.
+    // and all unrelated non-model types remain untouched. SkinChangerNetMessage is also kept
+    // out of automatic discovery: v0.107.1 alphabetically mixes cosmetic Mod messages into the
+    // official network ID table, so leaving our manually-reserved envelope here shifts official
+    // IDs whenever only one peer has Skin Changer and black-screens the multiplayer run.
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(ref Type[] __result)
-        => __result = ModelTypeCompatibility.Filter(__result);
+        => __result = ModelTypeCompatibility.Filter(__result)
+            .Where(type => type != typeof(SkinChangerNetMessage))
+            .ToArray();
 }
 
 internal static class ModelTypeCompatibility
