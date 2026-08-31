@@ -2041,6 +2041,16 @@ internal static class ManagedAncientSceneAnimation
                         ? null
                         : aliases.Select(alias => FindAnimation(animationNames, alias))
                             .FirstOrDefault(candidate => candidate != null);
+                    if (animation == null &&
+                        aliases.Any(alias => alias.Contains("idle", StringComparison.OrdinalIgnoreCase) ||
+                                             alias.Contains("stand", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        // 皮肤作者有时会把待机动作命名为 custom/default 等。商人和异鸟宝宝
+                        // 的图鉴预览仍应保持可见，不要因为名字不同而停在一个旧姿势。
+                        animation = animationNames?.FirstOrDefault(name =>
+                            !name.Equals("Dummy", StringComparison.OrdinalIgnoreCase) &&
+                            !name.StartsWith("Touch_", StringComparison.OrdinalIgnoreCase));
+                    }
                     if (animation == null)
                     {
                         ModLog.Warn($"{groupId ?? "其它图鉴"} 没有匹配动作：{string.Join(", ", aliases)}");
