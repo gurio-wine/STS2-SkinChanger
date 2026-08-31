@@ -84,6 +84,7 @@ internal static class SkinService
     private static bool _initialized;
     private static bool _configLoaded;
     private static bool _cardGroupsInitialized;
+    private static bool _loadOrderWarningDecisionLogged;
     private static string? _mountedLocalizationSignature;
     private static ConditionalWeakTable<CardModel, CardLookup> _cardLookupCache = new();
 
@@ -272,6 +273,7 @@ internal static class SkinService
             EnsureConfigLoaded();
             Config.SuppressLoadOrderWarning = true;
             Config.Save(ConfigPath);
+            ModLog.Info("玩家选择了“不再提示”加载顺序提醒，设置已保存。后续满足提示条件时将跳过弹窗。");
         }
     }
 
@@ -325,7 +327,22 @@ internal static class SkinService
                 Config.Save(ConfigPath);
             }
 
-            return !isBeforeAllSkinMods && !Config.SuppressLoadOrderWarning;
+            var shouldShow = !isBeforeAllSkinMods && !Config.SuppressLoadOrderWarning;
+            if (!isBeforeAllSkinMods && !_loadOrderWarningDecisionLogged)
+            {
+                if (Config.SuppressLoadOrderWarning)
+                {
+                    ModLog.Info("加载顺序提醒条件已满足，但玩家之前选择了“不再提示”，本次跳过弹窗。");
+                }
+                else
+                {
+                    ModLog.Info("加载顺序提醒条件已满足，玩家未选择“不再提示”，将显示弹窗。");
+                }
+
+                _loadOrderWarningDecisionLogged = true;
+            }
+
+            return shouldShow;
         }
     }
 
