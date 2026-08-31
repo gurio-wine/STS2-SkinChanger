@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using HarmonyLib;
 using Godot;
 using MegaCrit.Sts2.Core.Helpers;
@@ -145,7 +144,10 @@ internal static class LoadOrderWarningController
         try
         {
             MoveSelfBeforeSkinProviders();
-            StartRestartHelper();
+            // Let Godot relaunch the same exported project after the game's normal shutdown
+            // path completes. This is supported by both game versions and avoids depending on
+            // PowerShell (which also made the button unusable on macOS).
+            OS.SetRestartOnExit(true);
             ModLog.Info("已将皮肤切换器-Skin Changer 移到所有皮肤 Mod 之前，正在重启游戏。");
             popup.GetParent()?.QueueFree();
             Callable.From(() =>
@@ -225,34 +227,6 @@ internal static class LoadOrderWarningController
         SaveManager.Instance.SaveSettings();
     }
 
-    private static void StartRestartHelper()
-    {
-        var executablePath = OS.GetExecutablePath();
-        var workingDirectory = System.IO.Path.GetDirectoryName(executablePath) ?? string.Empty;
-        var script =
-            $"Wait-Process -Id {System.Environment.ProcessId}; " +
-            $"Start-Process -FilePath '{EscapePowerShellLiteral(executablePath)}' " +
-            $"-WorkingDirectory '{EscapePowerShellLiteral(workingDirectory)}'";
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-WindowStyle");
-        startInfo.ArgumentList.Add("Hidden");
-        startInfo.ArgumentList.Add("-Command");
-        startInfo.ArgumentList.Add(script);
-        if (Process.Start(startInfo) == null)
-        {
-            throw new InvalidOperationException("无法启动游戏重启辅助进程。");
-        }
-    }
-
-    private static string EscapePowerShellLiteral(string value) => value.Replace("'", "''");
 }
 
 [HarmonyPatch(typeof(NModalContainer), nameof(NModalContainer._Ready))]
