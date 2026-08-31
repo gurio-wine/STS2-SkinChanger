@@ -2572,7 +2572,11 @@ internal sealed partial class SkinCatalog : IDisposable
             resources,
             reuseMountedPrivateDependencies);
 
-        var overlay = BuildAliasedResourceOverlay(resources, resourcePaths, aliasToken);
+        var overlay = BuildAliasedResourceOverlay(
+            resources,
+            resourcePaths,
+            aliasToken,
+            redirectDirectScenesAtCanonicalPath: true);
         if (selected == null ||
             !includeProviderDependencies ||
             reuseMountedPrivateDependencies ||
@@ -3216,7 +3220,8 @@ internal sealed partial class SkinCatalog : IDisposable
     private static RuntimeResourceOverlay BuildAliasedResourceOverlay(
         IReadOnlyCollection<RuntimeResource> resources,
         IReadOnlyCollection<string> resourcePaths,
-        string aliasToken)
+        string aliasToken,
+        bool redirectDirectScenesAtCanonicalPath = false)
     {
         var sourceAliases = resources.ToDictionary(
             resource => resource.SourcePath,
@@ -3242,6 +3247,20 @@ internal sealed partial class SkinCatalog : IDisposable
                     bytes,
                     sourceAliases,
                     payloadAliases);
+
+                // A raw provider scene can coexist with a later-loaded Mod that supplies a
+                // .tscn.remap for the same canonical path. Godot prefers the lingering remap,
+                // so provider callbacks that load the canonical path after our initial rebuild
+                // can silently receive another Mod's scene. Point the canonical scene at this
+                // selection's isolated direct-file alias for the lifetime of the overlay too.
+                if (redirectDirectScenesAtCanonicalPath &&
+                    resource.SourcePath.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase))
+                {
+                    var directCanonicalRemapPath = resource.SourcePath + ".remap";
+                    files[directCanonicalRemapPath] = Encoding.UTF8.GetBytes(
+                        $"[remap]\n\npath=\"{sourceAliases[resource.SourcePath]}\"\n");
+                    canonicalRedirectPaths.Add(directCanonicalRemapPath);
+                }
             }
 
             foreach (var payloadFile in resource.PayloadFiles)

@@ -635,6 +635,72 @@ internal static class SkinService
         }
     }
 
+    public static IReadOnlyList<string> GetSelectionResourcePackPaths(
+        string groupId,
+        string optionId)
+    {
+        lock (Sync)
+        {
+            var group = Catalog?.Groups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            var option = group?.Options.FirstOrDefault(candidate =>
+                candidate.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+            if (option == null || !option.IsRuntimeProvider)
+            {
+                return [];
+            }
+
+            return Catalog!.GetProviderResourcePackPaths(option.EffectiveProviderId)
+                .Select(System.IO.Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(File.Exists)
+                .ToArray();
+        }
+    }
+
+    public static async Task WarmResourcePackFilesAsync(
+        IReadOnlyCollection<string> resourcePackPaths,
+        Action<double>? reportProgress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var paths = resourcePackPaths
+            .Where(File.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var totalBytes = paths.Sum(path => new FileInfo(path).Length);
+        if (totalBytes <= 0)
+        {
+            reportProgress?.Invoke(1d);
+            return;
+        }
+
+        var completedBytes = 0L;
+        var buffer = GC.AllocateUninitializedArray<byte>(1024 * 1024);
+        foreach (var path in paths)
+        {
+            await using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                System.IO.FileAccess.Read,
+                FileShare.Read | FileShare.Delete,
+                buffer.Length,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                completedBytes += read;
+                reportProgress?.Invoke(Math.Clamp((double)completedBytes / totalBytes, 0d, 1d));
+            }
+        }
+
+        reportProgress?.Invoke(1d);
+    }
+
     public static bool ApplySelection(string groupId, string optionId)
     {
         lock (Sync)
@@ -3644,23 +3710,30 @@ internal static class SkinService
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
         EnsureScopedRuntimeProviderResourcesMounted(catalog, activeRuntimeProviders);
-        var largeProviderMountPlan = MountSelectedLargeRuntimeProviderPacks(catalog);
+        var largeProviderMountPlan = MountSelectedLargeRuntimeProviderPacks(catalog, groups);
+        var promotedPackResourcePaths = largeProviderMountPlan.PromotedPackPaths
+            .Where(MountedLargeRuntimeProviderPacks.ContainsKey)
+            .SelectMany(path => MountedLargeRuntimeProviderPacks[path].ResourcePaths)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var promotedPackRestoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
+            string.Empty,
+            promotedPackResourcePaths);
         var overlayGroups = groups
-            .Union(largeProviderMountPlan.GroupIds)
+            .Union(promotedPackRestoreGroups)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var buildStarted = Stopwatch.GetTimestamp();
         var staleCanonicalPaths = groups
             .Where(RuntimeCanonicalDependencyPaths.ContainsKey)
             .SelectMany(group => RuntimeCanonicalDependencyPaths[group])
-            .Concat(MountedLargeRuntimeProviderPacks.Values
-                .SelectMany(pack => pack.ResourcePaths))
+            .Concat(promotedPackResourcePaths)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var files = catalog.BuildBaselineDependencyOverlay(staleCanonicalPaths);
         foreach (var selectedFile in catalog.BuildOverlay(Config.Selections, overlayGroups))
         {
-            if (largeProviderMountPlan.PackPaths.Contains(selectedFile.Value.Archive.Path) &&
+            if (largeProviderMountPlan.PromotedPackPaths.Contains(selectedFile.Value.Archive.Path) &&
                 selectedFile.Key.Equals(
                     selectedFile.Value.Path,
                     StringComparison.OrdinalIgnoreCase) &&
@@ -3825,7 +3898,8 @@ internal static class SkinService
     }
 
     private static LargeProviderMountPlan MountSelectedLargeRuntimeProviderPacks(
-        SkinCatalog catalog)
+        SkinCatalog catalog,
+        IReadOnlySet<string> affectedGroups)
     {
         var selectedOptions = catalog.Groups
             .Select(group =>
@@ -3856,23 +3930,34 @@ internal static class SkinService
             .Select(pack => pack.Path)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var selectedPackPathSet = selectedPackPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var selectedGroupIds = directProviderPacks
-            .Select(pack => pack.GroupId)
+        var promotedPackPaths = directProviderPacks
+            .Where(pack => affectedGroups.Contains(pack.GroupId))
+            .Select(pack => pack.Path)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var packPath in selectedPackPaths)
         {
+            var firstMount = !MountedLargeRuntimeProviderPacks.ContainsKey(packPath);
             if (!MountedLargeRuntimeProviderPacks.ContainsKey(packPath))
             {
                 using var archive = PckArchive.Open(packPath);
                 MountedLargeRuntimeProviderPacks[packPath] = new MountedProviderPackState(
                     archive.Paths.ToArray());
+                promotedPackPaths.Add(packPath);
             }
 
-            // Re-loading an existing pack is cheap and moves it to the top of Godot's pack stack.
-            // A small generated correction overlay is mounted immediately afterwards to restore
-            // every card/game path that this visual selection does not own.
+            // The correction overlay already restores every selected canonical path. Re-loading
+            // every unrelated 50-200 MiB character pack on each dropdown change was therefore
+            // pure I/O and could freeze the menu for tens of seconds. Promote only a newly seen
+            // pack or the provider belonging to the group that actually changed.
+            if (!firstMount && !promotedPackPaths.Contains(packPath))
+            {
+                continue;
+            }
+
+            // Move the affected pack to the top of Godot's pack stack. A generated correction
+            // overlay is mounted immediately afterwards to restore every card/game path that this
+            // visual selection does not own.
             if (!ProjectSettings.LoadResourcePack(packPath, replaceFiles: true))
             {
                 throw new InvalidOperationException(
@@ -3884,7 +3969,7 @@ internal static class SkinService
                 "后续仅生成资源校正包。");
         }
 
-        return new LargeProviderMountPlan(selectedPackPathSet, selectedGroupIds);
+        return new LargeProviderMountPlan(promotedPackPaths);
     }
 
     private static bool IsDirectProviderPayloadPath(string path) =>
@@ -5114,8 +5199,7 @@ internal sealed record MountedProviderPackState(
     IReadOnlyList<string> ResourcePaths);
 
 internal sealed record LargeProviderMountPlan(
-    IReadOnlySet<string> PackPaths,
-    IReadOnlySet<string> GroupIds);
+    IReadOnlySet<string> PromotedPackPaths);
 
 internal sealed record AncientLayeredImageTextures(
     Texture2D Character,

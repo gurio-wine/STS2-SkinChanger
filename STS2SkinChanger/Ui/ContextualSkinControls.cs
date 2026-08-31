@@ -30,6 +30,8 @@ internal static partial class ContextualSkinControls
     private const string MonsterScaleLabelName = "MonsterScaleLabel";
     private const string MonsterScaleResetName = "MonsterScaleReset";
     private const string CharacterRefreshGenerationMeta = "sts2_skin_character_refresh_generation";
+    private const string CharacterLoadingGenerationMeta = "sts2_skin_character_loading_generation";
+    private const string CharacterLoadingOverlayName = "STS2CharacterSkinLoadingOverlay";
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private const string MonsterScaleGroupMeta = "sts2_skin_monster_scale_group";
@@ -80,6 +82,12 @@ internal static partial class ContextualSkinControls
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
         CaptureCharacterBackgroundHostLayout(screen);
+        CancelCharacterDropdownSelection(screen);
+        // Restore while the old provider is still active. FocusRuntimeProviderBehaviorsOnCharacters
+        // deactivates it immediately afterwards, so waiting for the deferred rebuild can leave a
+        // provider-owned toolbar visible over the newly selected character for one or more frames.
+        ManagedSkinModLoader.RestoreCharacterPresentation(screen);
+        RemoveStaleProviderCharacterSelectControls(screen);
         var selector = EnsureCharacterSelector(screen);
         var group = FindGroup(character.Id.Entry);
         if (group != null && !IsMultiplayerCharacterSelect(screen))
@@ -591,6 +599,29 @@ internal static partial class ContextualSkinControls
 
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
+        var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        if (characterScreen != null && !HasMonsterPriorityContext(selector))
+        {
+            BeginCharacterDropdownSelection(
+                characterScreen,
+                selector,
+                dropdown,
+                index,
+                groupId,
+                optionId);
+            return;
+        }
+
+        ApplyDropdownSelectionNow(selector, dropdown, index, groupId, optionId);
+    }
+
+    private static void ApplyDropdownSelectionNow(
+        HBoxContainer selector,
+        OptionButton dropdown,
+        int index,
+        string groupId,
+        string optionId)
+    {
         var applied = optionId.Equals(
             SkinService.InheritMonsterSelectionId,
             StringComparison.OrdinalIgnoreCase)
@@ -621,6 +652,225 @@ internal static partial class ContextualSkinControls
         {
             Callable.From(() => RunRefresh(refresh)).CallDeferred();
         }
+    }
+
+    private static void BeginCharacterDropdownSelection(
+        NCharacterSelectScreen screen,
+        HBoxContainer selector,
+        OptionButton dropdown,
+        int index,
+        string groupId,
+        string optionId)
+    {
+        var generation = screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() + 1L;
+        screen.SetMeta(CharacterLoadingGenerationMeta, generation);
+        selector.SetMeta(UpdatingMeta, true);
+        dropdown.Disabled = true;
+
+        var optionName = dropdown.GetItemText(index);
+        var overlay = EnsureCharacterLoadingOverlay(screen, optionName);
+        var progressValue = 0;
+        var packPaths = SkinService.GetSelectionResourcePackPaths(groupId, optionId);
+        var warmTask = SkinService.WarmResourcePackFilesAsync(
+            packPaths,
+            progress => Interlocked.Exchange(
+                ref progressValue,
+                (int)Math.Round(progress * 78d)));
+
+        Action poll = null!;
+        poll = () =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) ||
+                screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() != generation)
+            {
+                return;
+            }
+
+            UpdateCharacterLoadingOverlay(overlay, optionName, Volatile.Read(ref progressValue));
+            if (!warmTask.IsCompleted)
+            {
+                ScheduleNextFrame(screen, poll);
+                return;
+            }
+
+            if (warmTask.IsFaulted)
+            {
+                ModLog.Warn(
+                    $"后台预读 {optionName} 资源包失败，将直接继续挂载：" +
+                    warmTask.Exception?.GetBaseException().Message);
+            }
+
+            UpdateCharacterLoadingOverlay(overlay, optionName, 82);
+            ScheduleNextFrame(screen, () =>
+            {
+                if (!GodotObject.IsInstanceValid(screen) ||
+                    screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() != generation)
+                {
+                    return;
+                }
+
+                selector.SetMeta(UpdatingMeta, false);
+                ApplyDropdownSelectionNow(selector, dropdown, index, groupId, optionId);
+                UpdateCharacterLoadingOverlay(overlay, optionName, 94);
+                ScheduleNextFrame(screen, () =>
+                {
+                    if (!GodotObject.IsInstanceValid(screen) ||
+                        screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() != generation)
+                    {
+                        return;
+                    }
+
+                    UpdateCharacterLoadingOverlay(overlay, optionName, 100);
+                    dropdown.Disabled = false;
+                    selector.SetMeta(UpdatingMeta, false);
+                    ScheduleNextFrame(screen, () => HideCharacterLoadingOverlay(screen, overlay));
+                });
+            });
+        };
+
+        ScheduleNextFrame(screen, poll);
+    }
+
+    private static void CancelCharacterDropdownSelection(NCharacterSelectScreen screen)
+    {
+        var overlay = screen.GetNodeOrNull<PanelContainer>(CharacterLoadingOverlayName);
+        if (overlay?.Visible != true)
+        {
+            return;
+        }
+
+        screen.SetMeta(
+            CharacterLoadingGenerationMeta,
+            screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() + 1L);
+        overlay.Visible = false;
+        var selector = screen.GetNodeOrNull<HBoxContainer>($"InfoPanel/{SelectorName}");
+        if (selector != null)
+        {
+            selector.SetMeta(UpdatingMeta, false);
+            var dropdown = selector.GetNodeOrNull<OptionButton>(DropdownName);
+            if (dropdown != null)
+            {
+                dropdown.Disabled = false;
+            }
+        }
+    }
+
+    private static PanelContainer EnsureCharacterLoadingOverlay(
+        NCharacterSelectScreen screen,
+        string optionName)
+    {
+        var existing = screen.GetNodeOrNull<PanelContainer>(CharacterLoadingOverlayName);
+        if (existing != null)
+        {
+            UpdateCharacterLoadingOverlay(existing, optionName, 0);
+            existing.Visible = true;
+            return existing;
+        }
+
+        var overlay = new PanelContainer
+        {
+            Name = CharacterLoadingOverlayName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZAsRelative = false,
+            ZIndex = 500,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0,
+            OffsetLeft = -210,
+            OffsetTop = 34,
+            OffsetRight = 210,
+            OffsetBottom = 112
+        };
+        overlay.AddThemeStyleboxOverride(
+            "panel",
+            CreateStyleBox(new Color("2a4058e8"), new Color("efc850"), 2));
+        var content = new VBoxContainer
+        {
+            Name = "Content",
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        overlay.AddChild(content);
+        var label = new Label
+        {
+            Name = "Label",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        label.AddThemeColorOverride("font_color", new Color("fff6e2"));
+        label.AddThemeFontSizeOverride("font_size", 20);
+        if (GameFont != null)
+        {
+            label.AddThemeFontOverride("font", GameFont);
+        }
+        content.AddChild(label);
+        var progress = new ProgressBar
+        {
+            Name = "Progress",
+            MinValue = 0,
+            MaxValue = 100,
+            ShowPercentage = false,
+            CustomMinimumSize = new Vector2(380, 16),
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        progress.AddThemeStyleboxOverride(
+            "background",
+            CreateStyleBox(new Color("172433"), new Color("50606b")));
+        progress.AddThemeStyleboxOverride(
+            "fill",
+            CreateStyleBox(new Color("efc850"), new Color("fff1a8")));
+        content.AddChild(progress);
+        screen.AddChild(overlay);
+        UpdateCharacterLoadingOverlay(overlay, optionName, 0);
+        return overlay;
+    }
+
+    private static void UpdateCharacterLoadingOverlay(
+        PanelContainer overlay,
+        string optionName,
+        int progress)
+    {
+        if (!GodotObject.IsInstanceValid(overlay))
+        {
+            return;
+        }
+
+        var value = Math.Clamp(progress, 0, 100);
+        overlay.GetNode<Label>("Content/Label").Text = $"{optionName}  {value}%";
+        overlay.GetNode<ProgressBar>("Content/Progress").Value = value;
+    }
+
+    private static void HideCharacterLoadingOverlay(
+        NCharacterSelectScreen screen,
+        PanelContainer overlay)
+    {
+        if (GodotObject.IsInstanceValid(screen) && GodotObject.IsInstanceValid(overlay))
+        {
+            overlay.Visible = false;
+        }
+    }
+
+    private static T? FindAncestor<T>(Node node) where T : Node
+    {
+        for (var parent = node.GetParent(); parent != null; parent = parent.GetParent())
+        {
+            if (parent is T match)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static void ScheduleNextFrame(Node owner, Action action)
+    {
+        if (!GodotObject.IsInstanceValid(owner) || !owner.IsInsideTree())
+        {
+            return;
+        }
+
+        owner.GetTree().CreateTimer(0.01d).Timeout += action;
     }
 
     private static void RunRefresh(Action refresh)
@@ -884,6 +1134,31 @@ internal static partial class ContextualSkinControls
         if (sceneRoot != null)
         {
             ManagedCharacterAnimationBridge.TryStartCharacterSelectLoops(sceneRoot, providerId);
+        }
+    }
+
+    private static void RemoveStaleProviderCharacterSelectControls(NCharacterSelectScreen screen)
+    {
+        var staleRoots = EnumerateNodes(screen)
+            .OfType<Control>()
+            .Where(control => control.Name.ToString().EndsWith(
+                "CharacterSelectOptionsPanel",
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (var staleRoot in staleRoots)
+        {
+            var parent = staleRoot.GetParent();
+            if (parent != null && GodotObject.IsInstanceValid(parent))
+            {
+                parent.RemoveChildSafely(staleRoot);
+            }
+
+            staleRoot.QueueFreeSafely();
+        }
+
+        if (staleRoots.Length > 0)
+        {
+            ModLog.Info($"已清理 {staleRoots.Length} 个上一角色遗留的选角交互面板。");
         }
     }
 
