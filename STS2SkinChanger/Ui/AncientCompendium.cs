@@ -1029,6 +1029,27 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     continue;
                 }
 
+                // In a live shop NCard/NRelic/NPotion creates the visual child and sizes its
+                // holder during FillSlot. The preview intentionally does not call FillSlot, so
+                // give the original holders their authored visual bounds before adding inert
+                // labels; this keeps the same centered slot positions without constructing any
+                // game models.
+                if (holder.Name.ToString().Equals("CardHolder", StringComparison.OrdinalIgnoreCase))
+                {
+                    holder.Position = new Vector2(-150f, -211f);
+                    holder.Size = new Vector2(300f, 422f);
+                }
+                else if (holder.Name.ToString().Equals("RelicHolder", StringComparison.OrdinalIgnoreCase))
+                {
+                    holder.Position = new Vector2(-64f, -80f);
+                    holder.Size = new Vector2(128f, 128f);
+                }
+                else
+                {
+                    holder.Position = new Vector2(-40f, -40f);
+                    holder.Size = new Vector2(80f, 80f);
+                }
+
                 var item = new Label
                 {
                     Name = "SkinChangerPreviewItem",
