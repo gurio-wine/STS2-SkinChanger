@@ -1783,14 +1783,14 @@ internal static class ManagedSkinModLoader
 
             LoadedProviderAssemblies[provider.AssemblyPath] = assembly;
             ModLog.Info(
-                $"已为 {provider.Name} 桥接 {rewrittenCalls} 处跨游戏版本动画接口调用。" +
+                $"已为 {provider.Name} 桥接 {rewrittenCalls} 处跨游戏版本运行时接口调用。" +
                 "该处理按接口签名识别，不依赖皮肤 Mod 名称。");
             return assembly;
         }
 
         if (!string.IsNullOrWhiteSpace(compatibilityFailure))
         {
-            ModLog.Warn($"检查 {provider.Name} 的跨版本动画接口失败：{compatibilityFailure}");
+            ModLog.Warn($"检查 {provider.Name} 的跨版本运行时接口失败：{compatibilityFailure}");
         }
 
         assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??

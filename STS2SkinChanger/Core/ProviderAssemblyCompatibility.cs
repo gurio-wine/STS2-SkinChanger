@@ -41,7 +41,7 @@ internal static class ProviderAssemblyCompatibility
                 return false;
             }
 
-            return TryRewriteReturnTypeDrift(
+            return TryRewriteRuntimeDrift(
                 assemblyPath,
                 runtimeMethods,
                 out rewrittenAssembly,
@@ -67,7 +67,7 @@ internal static class ProviderAssemblyCompatibility
             .ToArray() ?? [];
     }
 
-    private static bool TryRewriteReturnTypeDrift(
+    private static bool TryRewriteRuntimeDrift(
         string assemblyPath,
         IReadOnlyList<MethodInfo> runtimeMethods,
         out MemoryStream? rewrittenAssembly,
@@ -158,13 +158,27 @@ internal static class ProviderAssemblyCompatibility
                         throw new InvalidOperationException("无法取得皮肤 DLL 的 IL 编辑器");
                     }
 
-                    foreach (var instruction in instructions)
+                    for (var instructionIndex = 0; instructionIndex < instructions.Length; instructionIndex++)
                     {
+                        var instruction = instructions[instructionIndex];
                         var operandProperty = instruction.GetType().GetProperty("Operand", BindingFlags.Instance | BindingFlags.Public);
                         var operand = operandProperty?.GetValue(instruction);
                         if (operand == null ||
                             !methodReferenceType.IsInstanceOfType(operand))
                         {
+                            continue;
+                        }
+
+                        if (TryRewriteUnsupportedDispose(
+                                method,
+                                body,
+                                instructions,
+                                instructionIndex,
+                                operand,
+                                popOpCode,
+                                nopOpCode))
+                        {
+                            rewrittenCalls++;
                             continue;
                         }
 
@@ -231,6 +245,151 @@ internal static class ProviderAssemblyCompatibility
         {
             (definition as IDisposable)?.Dispose();
         }
+    }
+
+    private static bool TryRewriteUnsupportedDispose(
+        object method,
+        object body,
+        IReadOnlyList<object> instructions,
+        int instructionIndex,
+        object methodReference,
+        object popOpCode,
+        object nopOpCode)
+    {
+        if (!string.Equals(GetRequiredProperty(methodReference, "Name") as string, "Dispose", StringComparison.Ordinal) ||
+            !string.Equals(
+                GetTypeFullName(GetRequiredProperty(methodReference, "DeclaringType")),
+                typeof(IDisposable).FullName,
+                StringComparison.Ordinal) ||
+            Enumerate(GetRequiredProperty(methodReference, "Parameters")).Any())
+        {
+            return false;
+        }
+
+        var sourceIndex = instructionIndex - 1;
+        if (sourceIndex >= 0 &&
+            string.Equals(GetInstructionOpCodeName(instructions[sourceIndex]), "constrained.", StringComparison.Ordinal))
+        {
+            sourceIndex--;
+        }
+
+        if (sourceIndex < 0)
+        {
+            return false;
+        }
+
+        var receiverTypeName = TryGetLoadedValueTypeName(method, body, instructions[sourceIndex]);
+        if (string.IsNullOrWhiteSpace(receiverTypeName))
+        {
+            return false;
+        }
+
+        var runtimeType = AccessTools.TypeByName(receiverTypeName.Replace('/', '+'));
+        if (runtimeType == null || typeof(IDisposable).IsAssignableFrom(runtimeType))
+        {
+            return false;
+        }
+
+        // A provider compiled for a newer game may contain the finally block emitted by a
+        // `using` declaration even though the same runtime wrapper did not implement
+        // IDisposable in an older game. Keep the null check/finally shape intact, consume the
+        // receiver that was loaded for callvirt, and suppress only the unsupported call.
+        SetInstruction(instructions[instructionIndex], popOpCode, null);
+        if (instructionIndex - 1 != sourceIndex)
+        {
+            SetInstruction(instructions[instructionIndex - 1], nopOpCode, null);
+        }
+
+        return true;
+    }
+
+    private static string? TryGetLoadedValueTypeName(object method, object body, object instruction)
+    {
+        var opCodeName = GetInstructionOpCodeName(instruction);
+        var operand = instruction.GetType()
+            .GetProperty("Operand", BindingFlags.Instance | BindingFlags.Public)
+            ?.GetValue(instruction);
+
+        if (opCodeName.StartsWith("ldloc", StringComparison.Ordinal))
+        {
+            var variable = operand ?? TryGetIndexedItem(
+                GetRequiredProperty(body, "Variables"),
+                TryParseShortFormIndex(opCodeName, "ldloc."));
+            return variable == null
+                ? null
+                : GetTypeFullName(GetRequiredProperty(variable, "VariableType"));
+        }
+
+        if (opCodeName.StartsWith("ldarg", StringComparison.Ordinal))
+        {
+            var parameter = operand;
+            if (parameter == null)
+            {
+                var argumentIndex = TryParseShortFormIndex(opCodeName, "ldarg.");
+                var hasThis = (bool)GetRequiredProperty(method, "HasThis");
+                if (argumentIndex == 0 && hasThis)
+                {
+                    return GetTypeFullName(GetRequiredProperty(method, "DeclaringType"));
+                }
+
+                if (argumentIndex >= 0)
+                {
+                    parameter = TryGetIndexedItem(
+                        GetRequiredProperty(method, "Parameters"),
+                        argumentIndex - (hasThis ? 1 : 0));
+                }
+            }
+
+            return parameter == null
+                ? null
+                : GetTypeFullName(GetRequiredProperty(parameter, "ParameterType"));
+        }
+
+        if ((opCodeName.StartsWith("call", StringComparison.Ordinal) ||
+             opCodeName == "newobj") && operand != null)
+        {
+            return opCodeName == "newobj"
+                ? GetTypeFullName(GetRequiredProperty(operand, "DeclaringType"))
+                : GetTypeFullName(GetRequiredProperty(operand, "ReturnType"));
+        }
+
+        if (opCodeName.StartsWith("ldfld", StringComparison.Ordinal) && operand != null)
+        {
+            return GetTypeFullName(GetRequiredProperty(operand, "FieldType"));
+        }
+
+        return null;
+    }
+
+    private static int TryParseShortFormIndex(string opCodeName, string prefix)
+    {
+        return opCodeName.StartsWith(prefix, StringComparison.Ordinal) &&
+               int.TryParse(opCodeName[prefix.Length..], out var index)
+            ? index
+            : -1;
+    }
+
+    private static object? TryGetIndexedItem(object collection, int index)
+    {
+        return index < 0
+            ? null
+            : Enumerate(collection).ElementAtOrDefault(index);
+    }
+
+    private static string GetInstructionOpCodeName(object instruction)
+    {
+        var opCode = GetRequiredProperty(instruction, "OpCode");
+        return GetRequiredProperty(opCode, "Name") as string ?? string.Empty;
+    }
+
+    private static void SetInstruction(object instruction, object opCode, object? operand)
+    {
+        instruction.GetType()
+            .GetProperty("OpCode", BindingFlags.Instance | BindingFlags.Public)!
+            .SetValue(instruction, opCode);
+        instruction.GetType()
+            .GetProperty("Operand", BindingFlags.Instance | BindingFlags.Public)
+            ?.SetValue(instruction, operand);
     }
 
     private static MethodInfo? FindMatchingRuntimeMethod(
