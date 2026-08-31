@@ -3338,7 +3338,16 @@ internal sealed partial class SkinCatalog : IDisposable
         IEnumerable<PckResourceIndex>? baselineIndexes = null)
     {
         var indexes = cosmeticIndexes.ToArray();
-        var managedMonsterAssetGroups = BuildManagedMonsterAssetGroups(baselineIndexes ?? []);
+        var baselines = (baselineIndexes ?? []).ToArray();
+        var managedMonsterAssetGroups = BuildManagedMonsterAssetGroups(baselines);
+        var knownGroupIds = baselines
+            .SelectMany(index => index.Assets.Keys)
+            .Select(TryGetDefinedBaselineGroup)
+            .Where(group => group != null)
+            .Cast<GroupIdentity>()
+            .Select(group => group.Id)
+            .Concat(managedMonsterAssetGroups.Values.Select(group => group.Id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var groups = new Dictionary<string, SkinGroup>(StringComparer.OrdinalIgnoreCase);
         foreach (var index in indexes)
         {
@@ -3346,7 +3355,13 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Select(path => TryGetPrimaryGroup(path) ??
                                 managedMonsterAssetGroups.GetValueOrDefault(
                                     NormalizeTakeoverPath(path)))
-                .Where(group => group != null)
+                // A cosmetic provider may remap its private animation folders into ordinary
+                // looking character/monster paths. Those folders are dependencies of a real
+                // skin, not new game entities. Only IDs present in the game or a loaded gameplay
+                // Mod baseline may create selectable groups; otherwise one complex provider can
+                // leave phantom selections behind and keep its entire PCK active after switching
+                // away, contaminating unrelated character and monster skins.
+                .Where(group => group != null && knownGroupIds.Contains(group.Id))
                 .Cast<GroupIdentity>()
                 .DistinctBy(group => group.Id)
                 .ToArray();
@@ -3372,7 +3387,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 var identity = TryGetPrimaryGroup(asset.SourcePath) ??
                                managedMonsterAssetGroups.GetValueOrDefault(
                                    NormalizeTakeoverPath(asset.SourcePath));
-                if (identity != null && assigned.TryGetValue(identity.Id, out var primaryAssets))
+                if (identity != null &&
+                    knownGroupIds.Contains(identity.Id) &&
+                    assigned.TryGetValue(identity.Id, out var primaryAssets))
                 {
                     primaryAssets[asset.SourcePath] = asset;
                     continue;
@@ -3406,8 +3423,8 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         MergeCharacterSelectIconPacks(indexes, groups);
-        AddPckRuntimeProviderOptions(indexes, groups);
-        AddManagedMonsterSceneOptions(indexes, groups);
+        AddPckRuntimeProviderOptions(indexes, groups, knownGroupIds);
+        AddManagedMonsterSceneOptions(indexes, groups, knownGroupIds);
         AddRuntimeMonsterVisualModeOptions(indexes, groups);
 
         foreach (var group in groups.Values)
@@ -3463,7 +3480,8 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static void AddManagedMonsterSceneOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
-        IDictionary<string, SkinGroup> groups)
+        IDictionary<string, SkinGroup> groups,
+        IReadOnlySet<string> knownGroupIds)
     {
         foreach (var index in indexes.Where(index => index.Mod.HasDll))
         {
@@ -3487,6 +3505,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 if (group == null)
                 {
                     var groupId = replacement.ModelTypeName.ToLowerInvariant();
+                    if (!knownGroupIds.Contains(groupId))
+                    {
+                        continue;
+                    }
+
                     group = new SkinGroup(groupId, DisplayName(groupId));
                     groups.Add(groupId, group);
                 }
@@ -3512,13 +3535,14 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
             }
 
-            AddManagedMonsterRuntimeProfileOptions(index, groups);
+            AddManagedMonsterRuntimeProfileOptions(index, groups, knownGroupIds);
         }
     }
 
     private static void AddManagedMonsterRuntimeProfileOptions(
         PckResourceIndex index,
-        IDictionary<string, SkinGroup> groups)
+        IDictionary<string, SkinGroup> groups,
+        IReadOnlySet<string> knownGroupIds)
     {
         var profiles = ManagedMonsterSceneScanner.ScanRuntimeProfiles(
             index.Mod.RootPath,
@@ -3542,7 +3566,9 @@ internal sealed partial class SkinCatalog : IDisposable
             })
             // The private visual resource is the second independent signal that this is a real
             // data-driven skin profile rather than an unrelated reference to a game scene.
-            .Where(entry => entry.Identity != null && entry.Assets.Length > 0)
+            .Where(entry => entry.Identity != null &&
+                            knownGroupIds.Contains(entry.Identity.Id) &&
+                            entry.Assets.Length > 0)
             .ToArray();
         if (routedProfiles.Length == 0)
         {
@@ -4563,7 +4589,8 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static void AddPckRuntimeProviderOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
-        IDictionary<string, SkinGroup> groups)
+        IDictionary<string, SkinGroup> groups,
+        IReadOnlySet<string> knownGroupIds)
     {
         foreach (var index in indexes)
         {
@@ -4652,9 +4679,10 @@ internal sealed partial class SkinCatalog : IDisposable
             var identities = runtimeAssets
                 .Select(pair => pair.Mapping.Identity)
                 .Where(identity =>
-                    enabledGroupIds == null ||
-                    enabledGroupIds.Contains(identity.Id) ||
-                    managedTargetIds.Contains(identity.Id))
+                    knownGroupIds.Contains(identity.Id) &&
+                    (enabledGroupIds == null ||
+                     enabledGroupIds.Contains(identity.Id) ||
+                     managedTargetIds.Contains(identity.Id)))
                 .DistinctBy(identity => identity.Id)
                 .ToArray();
             foreach (var identity in identities)
@@ -5142,6 +5170,23 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
             }
         }
+    }
+
+    private static GroupIdentity? TryGetDefinedBaselineGroup(string sourcePath)
+    {
+        var characterDependency = CharacterPathRegex().Match(sourcePath);
+        if (characterDependency.Success &&
+            !sourcePath.StartsWith(
+                "res://animations/characters/",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            // character_select, merchant and rest_site contain many helper animation folders
+            // (for example liveevent or a provider's numeric Spine name). They may be assigned to
+            // a character already proved elsewhere, but cannot define a character by themselves.
+            return null;
+        }
+
+        return TryGetPrimaryGroup(sourcePath);
     }
 
     private static GroupIdentity? TryGetPrimaryGroup(string sourcePath)
