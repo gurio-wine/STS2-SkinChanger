@@ -285,7 +285,12 @@ internal static class BestiaryEntranceSwitcher
         }
 
         var toggleLabel = state.Toggle?.GetNodeOrNull<MegaLabel>("Label");
-        toggleLabel?.SetTextAutoSize("↔");
+        if (toggleLabel != null)
+        {
+            toggleLabel.AutoSizeEnabled = false;
+            toggleLabel.AddThemeFontSizeOverride("font_size", 54);
+            toggleLabel.Text = "切换";
+        }
     }
 
     private static List<LabelSnapshot> CaptureLabels(NClickableControl target)
