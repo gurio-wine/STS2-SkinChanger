@@ -806,7 +806,8 @@ internal static class ManagedSkinModLoader
         string providerId,
         NCharacterSelectScreen screen,
         NCharacterSelectButton button,
-        CharacterModel character)
+        CharacterModel character,
+        Action? afterReplay = null)
     {
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime))
         {
@@ -849,6 +850,9 @@ internal static class ManagedSkinModLoader
             }
         }
 
+        // Let the caller normalize provider-created controls before recording the final mutation
+        // state. This keeps any temporary parent layout change reversible when the skin is left.
+        afterReplay?.Invoke();
         TrackCharacterPresentationMutation(runtime, screen, baseline);
 
         if (replayed > 0)
@@ -874,7 +878,8 @@ internal static class ManagedSkinModLoader
             result[node.GetInstanceId()] = new CharacterPresentationNodeState(
                 node,
                 node is CanvasItem canvasItem ? canvasItem.Visible : null,
-                GetCharacterPresentationText(node));
+                GetCharacterPresentationText(node),
+                node is Control control ? control.ClipContents : null);
         }
 
         return result;
@@ -903,6 +908,7 @@ internal static class ManagedSkinModLoader
 
         var visibilityChanges = new List<CharacterPresentationVisibilityChange>();
         var textChanges = new List<CharacterPresentationTextChange>();
+        var clipChanges = new List<CharacterPresentationClipChange>();
         foreach (var state in baseline.Values)
         {
             if (!GodotObject.IsInstanceValid(state.Node))
@@ -929,9 +935,22 @@ internal static class ManagedSkinModLoader
                     originalText,
                     appliedText));
             }
+
+            if (state.ClipContents is { } originalClipContents &&
+                state.Node is Control control &&
+                control.ClipContents != originalClipContents)
+            {
+                clipChanges.Add(new CharacterPresentationClipChange(
+                    new WeakReference<Control>(control),
+                    originalClipContents,
+                    control.ClipContents));
+            }
         }
 
-        if (addedRoots.Count == 0 && visibilityChanges.Count == 0 && textChanges.Count == 0)
+        if (addedRoots.Count == 0 &&
+            visibilityChanges.Count == 0 &&
+            textChanges.Count == 0 &&
+            clipChanges.Count == 0)
         {
             return;
         }
@@ -941,7 +960,8 @@ internal static class ManagedSkinModLoader
                 new WeakReference<NCharacterSelectScreen>(screen),
                 addedRoots,
                 visibilityChanges,
-                textChanges);
+                textChanges,
+                clipChanges);
     }
 
     private static IEnumerable<Node> EnumerateNodeTree(Node root)
@@ -1028,6 +1048,16 @@ internal static class ManagedSkinModLoader
             }
 
             SetCharacterPresentationText(node, textChange.OriginalText);
+        }
+
+        foreach (var clipChange in mutation.ClipChanges)
+        {
+            if (clipChange.Node.TryGetTarget(out var control) &&
+                GodotObject.IsInstanceValid(control) &&
+                control.ClipContents == clipChange.AppliedClipContents)
+            {
+                control.ClipContents = clipChange.OriginalClipContents;
+            }
         }
     }
 
@@ -2321,13 +2351,15 @@ internal static class ManagedSkinModLoader
     private sealed record CharacterPresentationNodeState(
         Node Node,
         bool? Visible,
-        string? Text);
+        string? Text,
+        bool? ClipContents);
 
     private sealed record CharacterPresentationMutation(
         WeakReference<NCharacterSelectScreen> Screen,
         IReadOnlyList<WeakReference<Node>> AddedRoots,
         IReadOnlyList<CharacterPresentationVisibilityChange> VisibilityChanges,
-        IReadOnlyList<CharacterPresentationTextChange> TextChanges);
+        IReadOnlyList<CharacterPresentationTextChange> TextChanges,
+        IReadOnlyList<CharacterPresentationClipChange> ClipChanges);
 
     private sealed record CharacterPresentationVisibilityChange(
         WeakReference<CanvasItem> Node,
@@ -2338,6 +2370,11 @@ internal static class ManagedSkinModLoader
         WeakReference<Node> Node,
         string OriginalText,
         string AppliedText);
+
+    private sealed record CharacterPresentationClipChange(
+        WeakReference<Control> Node,
+        bool OriginalClipContents,
+        bool AppliedClipContents);
 
     private sealed record NodeReadyBaseline(
         WeakReference<Node> Node,

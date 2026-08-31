@@ -873,9 +873,9 @@ internal static partial class ContextualSkinControls
                 providerId,
                 screen,
                 button,
-                character);
+                character,
+                () => StabilizeProviderCharacterSelectControls(screen, existingNodes, providerId));
         }
-        StabilizeProviderCharacterSelectControls(screen, existingNodes, providerId);
 
         var animatedBackground = screen.GetNodeOrNull<Node>("AnimatedBg");
         var sceneRoot = animatedBackground?.GetChildCount() > 0
@@ -981,6 +981,33 @@ internal static partial class ContextualSkinControls
         // historical "button moved" regressions. Only remove clipping on the newly-created
         // toolbar itself; its ancestors remain owned by the game/provider.
         control.ClipContents = false;
+
+        // CZN-style toolbars are intentionally placed beside the game's bottom button strip.
+        // That strip may be a clipped Control, so a panel can be fully outside its parent while
+        // still reporting Visible=true. Disable only that clipping boundary and let the mutation
+        // tracker restore the authored value when the provider is deselected.
+        if (control.GetParent() is Control parent &&
+            parent.ClipContents &&
+            IsOutsideParentRect(control, parent))
+        {
+            parent.ClipContents = false;
+            ModLog.Info(
+                $"已解除选角交互面板父容器裁剪：节点={control.GetPath()} " +
+                $"父容器={parent.GetPath()} global={control.GlobalPosition} " +
+                $"parentGlobal={parent.GlobalPosition} parentSize={parent.Size}");
+        }
+    }
+
+    private static bool IsOutsideParentRect(Control control, Control parent)
+    {
+        var controlPosition = control.GlobalPosition;
+        var controlSize = control.Size;
+        var parentPosition = parent.GlobalPosition;
+        var parentSize = parent.Size;
+        return controlPosition.X < parentPosition.X ||
+               controlPosition.Y < parentPosition.Y ||
+               controlPosition.X + controlSize.X > parentPosition.X + parentSize.X ||
+               controlPosition.Y + controlSize.Y > parentPosition.Y + parentSize.Y;
     }
 
     private static void RebuildRuntimeProviderCharacterDisplay(
