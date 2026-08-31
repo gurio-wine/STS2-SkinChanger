@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Runtime.CompilerServices;
+using System.Reflection;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
@@ -734,12 +735,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Visible = false,
             ZIndex = 11
         };
-        _otherActionSelector.AddThemeConstantOverride("separation", 10);
+        _otherActionSelector.AddThemeConstantOverride("separation", 0);
         _otherActionSelector.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
-        // 与怪物图鉴一致：动作在模型左侧从上到下排列，第一项是站姿。
+        // 与怪物图鉴一致：动作在模型左侧从上到下排列。
         _otherActionSelector.Position = new Vector2(650f, 430f);
         AddChild(_otherActionSelector);
-        AddOtherActionButton(OtherPreviewText.Standing, ["idle_loop", "idle", "stand", "standing"], loop: true);
+        // 异鸟宝宝默认就是站姿，攻击结束后也会自动回到站姿；只保留和怪物图鉴一致的
+        // 可选攻击动作，避免在这里重复放一个没有必要的“站姿”按钮。
         AddOtherActionButton(OtherPreviewText.Attack, ["attack", "attack1", "attack_1", "atk", "bite"], loop: false);
 
         var sidebar = new MarginContainer
@@ -789,10 +791,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         _entryList = new VBoxContainer
         {
-            CustomMinimumSize = new Vector2(312, 0),
+            // NBestiary 的原生条目宽度是 280，列表不额外塞入自定义卡片式面板。
+            CustomMinimumSize = new Vector2(280, 0),
             SizeFlagsHorizontal = SizeFlags.ExpandFill
         };
-        _entryList.AddThemeConstantOverride("separation", 10);
+        _entryList.AddThemeConstantOverride("separation", 0);
         scroll.AddChild(_entryList);
 
         var backButton = PreloadManager.Cache
@@ -808,10 +811,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
         var previewText = OtherPreviewText;
         _merchantClickArea.TooltipText = previewText.OpenShop;
-        if (_otherActionButtons.Count >= 2)
+        if (_otherActionButtons.Count > 0)
         {
-            _otherActionButtons[0].Button.Text = previewText.Standing;
-            _otherActionButtons[1].Button.Text = previewText.Attack;
+            SetOtherActionButtonText(_otherActionButtons[0].Button, previewText.Attack);
         }
         foreach (var pair in _categoryButtons)
         {
@@ -845,12 +847,32 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         var button = new Button
         {
-            Text = text,
-            CustomMinimumSize = new Vector2(104f, 44f),
+            Text = string.Empty,
+            CustomMinimumSize = new Vector2(210f, 48f),
+            Flat = true,
             FocusMode = FocusModeEnum.All,
             Alignment = HorizontalAlignment.Center
         };
-        ContextualSkinControls.ApplyGameTheme(button);
+        ApplyNativeBestiaryButtonTheme(button);
+
+        // 复用游戏怪物图鉴的动作按钮场景，保留原版 Kreon 字体、阴影和间距。
+        var moveScene = ResourceLoader.Load<PackedScene>(
+            "res://scenes/screens/bestiary/bestiary_move_button.tscn",
+            null,
+            ResourceLoader.CacheMode.IgnoreDeep);
+        if (moveScene != null)
+        {
+            var visual = moveScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            visual.Name = "BestiaryMoveVisual";
+            visual.SetScript(default(Variant));
+            visual.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+            visual.Size = new Vector2(210f, 48f);
+            visual.MouseFilter = MouseFilterEnum.Ignore;
+            visual.FocusMode = FocusModeEnum.None;
+            button.AddChild(visual);
+        }
+
+        SetOtherActionButtonText(button, text);
         button.Pressed += () =>
         {
             if (_otherPreviewInstance == null)
@@ -869,6 +891,21 @@ internal partial class AncientCompendiumScreen : NSubmenu
     }
 
     private void OpenSimulatedShopPreview()
+    {
+        try
+        {
+            OpenSimulatedShopPreviewCore();
+        }
+        catch (Exception exception)
+        {
+            // 预览商店不能影响百科页面本身。此前只创建了黑色蒙版，后续加载场景抛异常
+            // 时没有回收蒙版，玩家看到的就是“屏幕变暗但没有商店”的死状态。
+            ModLog.Error($"打开原版商店预览失败：{exception}");
+            CloseSimulatedShopPreview();
+        }
+    }
+
+    private void OpenSimulatedShopPreviewCore()
     {
         if (_selectedOther == null ||
             (!_selectedOther.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
@@ -912,22 +949,31 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ? SkinCatalog.BaseOptionId
             : SkinService.Config.GetSelection(group.Id);
         Control inventory;
-        if (group != null && !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        try
         {
-            // Instantiate while the provider overlay is mounted; PackedScene dependencies such
-            // as Spine data are lazy and would otherwise bind to the previously selected skin.
-            inventory = SkinService.InstantiateRuntimeScene<Control>(group.Id, inventoryPath);
+            if (group != null && !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                // Instantiate while the provider overlay is mounted; PackedScene dependencies
+                // such as Spine data are lazy and would otherwise bind to the previous skin.
+                inventory = SkinService.InstantiateRuntimeScene<Control>(group.Id, inventoryPath);
+            }
+            else
+            {
+                inventory = LoadBasePreviewInventory(inventoryPath);
+            }
         }
-        else
+        catch (Exception exception) when (group != null &&
+                                          !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
-            var inventoryScene = ResourceLoader.Load<PackedScene>(
-                inventoryPath,
-                null,
-                ResourceLoader.CacheMode.IgnoreDeep) ??
-                throw new InvalidOperationException($"无法加载原版商店界面：{inventoryPath}");
-            inventory = inventoryScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            // 有些商人皮肤只替换人物场景，并没有自己的 merchant_inventory 场景。商店预览
+            // 应继续使用游戏原版布局，而不是让皮肤选择失败后只剩一个黑色蒙版。
+            ModLog.Warn($"{group!.Id} 没有可用的商店预览资源，回退原版布局：{exception.Message}");
+            inventory = LoadBasePreviewInventory(inventoryPath);
         }
         inventory.Name = "VanillaMerchantInventory";
+        inventory.Visible = true;
+        inventory.Modulate = Colors.White;
+        inventory.SelfModulate = Colors.White;
         inventory.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         inventory.MouseFilter = MouseFilterEnum.Ignore;
         // The real inventory's _Ready subscribes to the active run and expects a live
@@ -976,6 +1022,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
         close.Position = new Vector2(-190f, 38f);
         close.Pressed += CloseSimulatedShopPreview;
         overlay.AddChild(close);
+    }
+
+    private static Control LoadBasePreviewInventory(string inventoryPath)
+    {
+        var inventoryScene = ResourceLoader.Load<PackedScene>(
+            inventoryPath,
+            null,
+            ResourceLoader.CacheMode.IgnoreDeep) ??
+            throw new InvalidOperationException($"无法加载原版商店界面：{inventoryPath}");
+        return inventoryScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
     }
 
     private static void MakePreviewShopInert(Node root)
@@ -1165,11 +1221,46 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         var button = new Button
         {
-            Text = title,
-            CustomMinimumSize = new Vector2(312, 58),
+            Text = string.Empty,
+            CustomMinimumSize = new Vector2(280, 36),
+            Flat = true,
             FocusMode = FocusModeEnum.All,
             Alignment = HorizontalAlignment.Center
         };
+
+        // 直接使用游戏怪物图鉴的条目场景，避免本 Mod 自己绘制一套与游戏主题不一致的
+        // 紫色面板。只移除条目根脚本（它需要 NBestiary 的初始化），文字和高亮仍来自
+        // 原版场景。
+        var entryScene = ResourceLoader.Load<PackedScene>(
+            "res://scenes/screens/bestiary/bestiary_entry.tscn",
+            null,
+            ResourceLoader.CacheMode.IgnoreDeep);
+        if (entryScene != null)
+        {
+            var visual = entryScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            visual.Name = "BestiaryEntryVisual";
+            visual.SetScript(default(Variant));
+            visual.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+            visual.Size = new Vector2(280f, 36f);
+            visual.MouseFilter = MouseFilterEnum.Ignore;
+            visual.FocusMode = FocusModeEnum.None;
+            var label = visual.GetNodeOrNull<RichTextLabel>("Label");
+            if (label != null)
+            {
+                label.Text = title;
+                label.MouseFilter = MouseFilterEnum.Ignore;
+            }
+
+            button.AddChild(visual);
+        }
+        else
+        {
+            // 极少数资源精简包可能没有图鉴条目场景，保留一个透明的原生字体按钮作为
+            // 安全回退，不影响其它分类加载。
+            button.Text = title;
+        }
+
+        ApplyNativeBestiaryButtonTheme(button);
         ApplyEntryTheme(button, selected: false);
         return button;
     }
@@ -1306,16 +1397,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var gold = new Color("efc850");
         button.AddThemeColorOverride("font_color", selected ? gold : ivory);
         button.AddThemeColorOverride("font_hover_color", Colors.White);
-        button.AddThemeFontSizeOverride("font_size", 19);
+        button.AddThemeColorOverride("font_pressed_color", gold);
+        button.AddThemeFontSizeOverride("font_size", 24);
         button.AddThemeStyleboxOverride(
             "normal",
-            ContextualSkinControls.CreateStyleBox(
-                selected ? new Color("45104eb8") : new Color("00000000"),
-                selected ? gold : new Color("00000000"),
-                selected ? 2 : 0));
+            CreateNativeBestiaryUnderline(selected));
         button.AddThemeStyleboxOverride(
             "hover",
-            ContextualSkinControls.CreateStyleBox(new Color("3c627eaa"), new Color("afcdde"), 2));
+            CreateNativeBestiaryUnderline(false));
+        button.AddThemeStyleboxOverride(
+            "pressed",
+            CreateNativeBestiaryUnderline(true));
+        button.AddThemeStyleboxOverride(
+            "focus",
+            CreateNativeBestiaryUnderline(true));
         var font = ContextualSkinControls.GameFont;
         if (font != null)
         {
@@ -1455,6 +1550,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 instance = ExtractPreviewNode(instance, "MerchantVisual", "MerchantButton");
             }
 
+            if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+            {
+                // Byrdpip.tscn 的根节点是 NCreatureVisuals。它在真正战斗里需要绑定
+                // NCreature，但在图鉴里没有这个模型；让它进入树会重置 Spine 贴图甚至
+                // 抛出空引用。保留 Visuals 子节点和皮肤资源，只移除这个战斗根脚本。
+                instance.SetScript(default(Variant));
+            }
+
             instance.Name = "OtherCompendiumPreview";
             instance.ProcessMode = ProcessModeEnum.Always;
             _previewViewport.AddChild(instance);
@@ -1490,7 +1593,18 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 instance,
                 group?.Id,
                 _otherActionButtons);
-            if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+            if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
+                entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+            {
+                // 从透明 MerchantButton 中抽出 SpineSprite 后，NMerchantButton._Ready 不会再
+                // 替它启动 idle_loop；显式启动原版动作，同时重置上一个皮肤遗留的插槽。
+                ManagedAncientSceneAnimation.TryPlay(
+                    instance,
+                    group?.Id,
+                    ["idle_loop", "idle", "stand", "standing", "default", "animation"],
+                    loop: true);
+            }
+            else if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
             {
                 // The creature catalogue opens in its neutral standing pose, matching the
                 // monster bestiary. Attack remains an optional action when the selected Spine
@@ -1678,6 +1792,23 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         var ivory = new Color("fff6e2");
         var gold = new Color("efc850");
+        var visualLabel = button.GetNodeOrNull<RichTextLabel>("BestiaryEntryVisual/Label");
+        var visualHighlight = button.GetNodeOrNull<ColorRect>(
+            "BestiaryEntryVisual/Label/Highlight");
+        if (visualLabel != null)
+        {
+            visualLabel.SelfModulate = selected ? gold : ivory;
+            if (visualHighlight != null)
+            {
+                visualHighlight.Visible = selected;
+            }
+            button.AddThemeStyleboxOverride("normal", CreateNativeBestiaryTransparent());
+            button.AddThemeStyleboxOverride("hover", CreateNativeBestiaryTransparent());
+            button.AddThemeStyleboxOverride("pressed", CreateNativeBestiaryTransparent());
+            button.AddThemeStyleboxOverride("focus", CreateNativeBestiaryTransparent());
+            return;
+        }
+
         button.AddThemeColorOverride("font_color", selected ? gold : ivory);
         button.AddThemeColorOverride("font_hover_color", Colors.White);
         button.AddThemeColorOverride("font_pressed_color", gold);
@@ -1703,6 +1834,42 @@ internal partial class AncientCompendiumScreen : NSubmenu
         button.AddThemeStyleboxOverride(
             "focus",
             ContextualSkinControls.CreateStyleBox(new Color("2a465faa"), gold, 3));
+    }
+
+    private static void SetOtherActionButtonText(Button button, string text)
+    {
+        var label = button.GetNodeOrNull<Label>("BestiaryMoveVisual/ButtonAnimator/Label");
+        if (label != null)
+        {
+            label.Text = text;
+        }
+        else
+        {
+            button.Text = text;
+        }
+    }
+
+    private static void ApplyNativeBestiaryButtonTheme(Button button)
+    {
+        button.AddThemeStyleboxOverride("normal", CreateNativeBestiaryTransparent());
+        button.AddThemeStyleboxOverride("hover", CreateNativeBestiaryTransparent());
+        button.AddThemeStyleboxOverride("pressed", CreateNativeBestiaryTransparent());
+        button.AddThemeStyleboxOverride("focus", CreateNativeBestiaryTransparent());
+    }
+
+    private static StyleBoxFlat CreateNativeBestiaryTransparent() =>
+        ContextualSkinControls.CreateStyleBox(Colors.Transparent, Colors.Transparent, 0);
+
+    private static StyleBoxFlat CreateNativeBestiaryUnderline(bool selected)
+    {
+        var style = CreateNativeBestiaryTransparent();
+        if (selected)
+        {
+            style.BorderWidthBottom = 2;
+            style.BorderColor = new Color("efc850");
+        }
+
+        return style;
     }
 
 }
@@ -1880,6 +2047,7 @@ internal static class ManagedAncientSceneAnimation
                         return;
                     }
 
+                    ResetSlotsToSetupPose(sprite);
                     SetAnimationCompat(animationState, animation, loop);
                     if (!loop)
                     {
@@ -1972,6 +2140,8 @@ internal static class ManagedAncientSceneAnimation
                 return;
             }
 
+            ResetSlotsToSetupPose(sprite);
+
             // 两个支持版本都提供这个值类型入口，并由各自版本负责
             // MegaTrackEntry 的正确释放方式。
             var currentName = animationState.GetCurrentAnimationName(0);
@@ -2016,6 +2186,33 @@ internal static class ManagedAncientSceneAnimation
         catch (Exception exception)
         {
             ModLog.Warn($"启动 {groupId} 的先古 Spine 动画失败：{exception.Message}");
+        }
+    }
+
+    private static void ResetSlotsToSetupPose(MegaSprite sprite)
+    {
+        try
+        {
+            var skeleton = sprite.GetSkeleton();
+            if (skeleton == null)
+            {
+                return;
+            }
+
+            // Spine 的插槽状态会在复用节点时保留上一个皮肤的附件。不同游戏快照的
+            // MegaSkeleton 暴露面略有差异，所以通过同名公开/内部方法反射调用，避免把
+            // DLL 绑定到某一版的返回类型；找不到时不影响普通预览。
+            var setupPose = skeleton.GetType().GetMethod(
+                "SetSlotsToSetupPose",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+            setupPose?.Invoke(skeleton, null);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"重置图鉴 Spine 插槽失败：{exception.Message}");
         }
     }
 
