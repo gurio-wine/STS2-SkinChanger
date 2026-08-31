@@ -955,6 +955,7 @@ internal static partial class ContextualSkinControls
             {
                 var scene = resources[characterSelectPath] as PackedScene ??
                             throw new InvalidOperationException($"角色选角资源不是场景：{characterSelectPath}");
+                TakeOverCharacterSelectSceneCache(characterSelectPath, scene);
                 // The scene must be instantiated before WithRuntimeResources restores canonical
                 // dependency paths; otherwise a skeleton/animation resource can come from the
                 // previous character skin even though the PackedScene itself loaded correctly.
@@ -1018,6 +1019,12 @@ internal static partial class ContextualSkinControls
             {
                 var scene = resources[scenePath] as PackedScene ??
                             throw new InvalidOperationException($"完整运行时皮肤的选角资源不是场景：{scenePath}");
+                // CZN's lobby variant switch loads this canonical path again with
+                // ResourceLoader.CacheMode.Reuse.  Merely mounting a corrected .remap cannot
+                // replace a scene that another skin already placed in Godot's global cache.
+                // Make the coherently isolated scene own the canonical path so both this rebuild
+                // and later provider-owned variant switches resolve to the selected skin.
+                TakeOverCharacterSelectSceneCache(scenePath, scene);
                 // Instantiate while the alias pack is mounted. PackedScene external resources
                 // are often resolved at Instantiate(), not at Load(), so loading only the scene
                 // object is insufficient to prevent a previous skin's skeleton/atlas binding.
@@ -1298,6 +1305,7 @@ internal static partial class ContextualSkinControls
             ResourceLoader.CacheMode.IgnoreDeep);
         if (scene != null)
         {
+            TakeOverCharacterSelectSceneCache(scenePath, scene);
             PreloadManager.Cache.SetAsset(scenePath, scene);
         }
         else
@@ -1316,6 +1324,17 @@ internal static partial class ContextualSkinControls
         }
 
         ModLog.Info($"已由 DLL 皮肤提供器重建 {character.Id.Entry} 的选角展示。");
+    }
+
+    private static void TakeOverCharacterSelectSceneCache(string scenePath, PackedScene scene)
+    {
+        // Resource.take_over_path replaces the ResourceLoader cache entry itself.  The game's
+        // PreloadManager cache is separate and is updated as well because base-game and skin
+        // providers use both loading routes.  The next skin rebuild repeats this operation with
+        // its own isolated scene, so the ownership follows the active selection instead of a
+        // provider that happened to load first at startup.
+        scene.TakeOverPath(scenePath);
+        PreloadManager.Cache.SetAsset(scenePath, scene);
     }
 
     private static void ReplaceCharacterBackground(
