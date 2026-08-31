@@ -4275,8 +4275,19 @@ internal sealed partial class SkinCatalog : IDisposable
         return match.Success ? match.Groups[1].Value.ToLowerInvariant() : null;
     }
 
-    private static bool IsCardArtSourcePath(string path) =>
-        CardArtPathRegex().IsMatch(path) && IsCardArtResourceExtension(path);
+    private static bool IsCardArtSourcePath(string path)
+    {
+        if (!CardArtPathRegex().IsMatch(path) || !IsCardArtResourceExtension(path))
+        {
+            return false;
+        }
+
+        // A card-art root must be followed by at least one directory (normally the
+        // card color/pool).  UI overhauls commonly put their generic card widgets in
+        // a flat `images/cards/` folder; those files are not card portraits and must
+        // not make the whole UI mod look like a skin provider.
+        return TryGetCardArtPathLayout(path, knownCardGroups: null) != null;
+    }
 
     private static bool IsCardArtResourceExtension(string path)
     {

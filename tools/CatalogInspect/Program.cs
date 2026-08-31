@@ -1847,6 +1847,7 @@ static void RunCardExportSelfTest(string gamePckPath)
             ["res://generated/fallback.png"] = [7, 8, 9],
             ["res://generated/frame.tres"] = Encoding.UTF8.GetBytes(
                 "[gd_resource type=\"StyleBoxFlat\" format=3]\n"),
+            ["res://Tests.ExportedCardSkin/images/cards/card_sel.png"] = [9, 9, 9],
             ["res://Tests.ExportedCardSkin/images/atlases/lance_cards.sprites/silent/shiv.tres.remap"] =
                 Encoding.UTF8.GetBytes(
                     "[remap]\npath=\"res://.godot/exported/test-shiv.res\"\n"),
@@ -1873,6 +1874,13 @@ static void RunCardExportSelfTest(string gamePckPath)
                 false)]);
         var sourceOption = catalog.PckCardOptions.Single(option =>
             option.Id.Equals("Tests.ExportedCardSkin", StringComparison.OrdinalIgnoreCase));
+        const string uiCardWidget =
+            "res://Tests.ExportedCardSkin/images/cards/card_sel.png";
+        if (sourceOption.Assets.ContainsKey(uiCardWidget))
+        {
+            throw new InvalidOperationException(
+                "flat card UI resources were mistaken for card portraits");
+        }
         var expectedPortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["ExportCard"] = "res://generated/export.png",
