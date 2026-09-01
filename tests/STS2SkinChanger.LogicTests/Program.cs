@@ -25,6 +25,37 @@ Require(
     "[SC] Existing Prefix",
     "Mod 列表反复刷新时不能重复叠加 [SC] 前缀。");
 
+var runtimeProviderCandidates = new RuntimeProviderCandidate[]
+{
+    new("MeirinWatcherSkin", ["watcher"], IsRunWideMonsterProvider: false),
+    new("Merchant2CuteII", ["merchant"], IsRunWideMonsterProvider: false),
+    new("AncientWaifus_Beta", ["neow", "pael"], IsRunWideMonsterProvider: false),
+    new("CznEnemySkin", ["twig_slime_s", "twig_slime_m"], IsRunWideMonsterProvider: true)
+};
+Require(
+    RuntimeProviderScopePolicy.SelectActiveProviders(
+        runtimeProviderCandidates,
+        new RuntimeProviderScope([], IncludeRunWideMonsterProviders: false)).Count == 0,
+    "启动阶段没有可见外观分组时，不得提前执行任何第三方皮肤初始化器。");
+Require(
+    RuntimeProviderScopePolicy.SelectActiveProviders(
+            runtimeProviderCandidates,
+            new RuntimeProviderScope(["WATCHER"], IncludeRunWideMonsterProviders: false))
+        .SetEquals(["MeirinWatcherSkin"]),
+    "选角界面只能激活当前预览角色，不能同时保留商人、先古或怪物皮肤代码。");
+Require(
+    RuntimeProviderScopePolicy.SelectActiveProviders(
+            runtimeProviderCandidates,
+            new RuntimeProviderScope(["pael"], IncludeRunWideMonsterProviders: false))
+        .SetEquals(["AncientWaifus_Beta"]),
+    "其它图鉴只应激活当前预览实体所属的交互提供者。");
+Require(
+    RuntimeProviderScopePolicy.SelectActiveProviders(
+            runtimeProviderCandidates,
+            new RuntimeProviderScope(["watcher"], IncludeRunWideMonsterProviders: true))
+        .SetEquals(["MeirinWatcherSkin", "CznEnemySkin"]),
+    "进入对局后应保留当前角色，并允许负责地图、背景和音乐的整局怪物提供者运行。");
+
 Require(
     CardPresentationLayoutPolicy.Resolve(
         isNativeAncient: false,
