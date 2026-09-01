@@ -5,12 +5,17 @@ using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
+using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Potions;
+using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
@@ -894,7 +899,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         _merchantClickArea.Visible = false;
-        _skinSelector.Visible = false;
+        // Keep the merchant skin selector above the vanilla shop preview. It is still a
+        // catalogue control, so changing the merchant skin should rebuild the merchant without
+        // forcing the player to close the simulated shop first.
+        _skinSelector.Visible = _skinDropdown.ItemCount > 0;
+        _skinSelector.ZIndex = 90;
         _otherActionSelector.Visible = false;
 
         var overlay = new Control
@@ -972,13 +981,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
             backstop.Modulate = new Color(1f, 1f, 1f, 0.8f);
         }
 
-        MakePreviewShopInert(inventory);
+        PreparePreviewShopInteraction(inventory);
         FillPreviewShopSlots(
             inventory,
             _selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase));
 
-        // Only our close control is interactive. Original slots/back button are inert because
-        // this is a catalogue preview, not an actual shop transaction.
+        // Keep the original layout and our read-only item controls interactive. The transaction
+        // scripts were stripped above, so no button can mutate gold, inventory, or run state.
         var close = new Button
         {
             Name = "CloseVanillaShopPreview",
@@ -994,13 +1003,26 @@ internal partial class AncientCompendiumScreen : NSubmenu
         overlay.AddChild(close);
     }
 
-    private static void MakePreviewShopInert(Node root)
+    private static void PreparePreviewShopInteraction(Node root)
     {
         foreach (var node in EnumerateNodeTree(root))
         {
-            node.ProcessMode = ProcessModeEnum.Disabled;
+            // All game scripts were removed by StripPreviewScripts, so re-enable the native UI
+            // process path. This keeps hover/focus/animation behaviour alive without allowing a
+            // MerchantEntry to touch the run state or attempt a purchase.
+            node.ProcessMode = ProcessModeEnum.Inherit;
             if (node is Control control)
             {
+                if (control.Name.ToString().Equals("InputBlocker", StringComparison.OrdinalIgnoreCase))
+                {
+                    control.Visible = false;
+                    control.MouseFilter = Control.MouseFilterEnum.Ignore;
+                    continue;
+                }
+
+                // The inventory itself is visual-only; item interaction is supplied by the
+                // transparent buttons added in FillPreviewShopSlots. Do not let a stripped
+                // child consume input before those buttons see it.
                 control.MouseFilter = Control.MouseFilterEnum.Ignore;
                 control.FocusMode = Control.FocusModeEnum.None;
             }
@@ -1042,6 +1064,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 ("Relics", "遗物"),
                 ("Potions", "药水")
             };
+        var allCards = ModelDb.AllCards
+            .OrderBy(card => card.Id.Entry, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var firstCharacterCard = allCards.FirstOrDefault(card => !IsColorlessCard(card))
+            ?? allCards.FirstOrDefault();
+        var firstColorlessCard = allCards.FirstOrDefault(IsColorlessCard)
+            ?? firstCharacterCard;
+        var firstRelic = ModelDb.AllRelics
+            .OrderBy(relic => relic.Id.Entry, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        var firstPotion = ModelDb.AllPotions
+            .OrderBy(potion => potion.Id.Entry, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+
         foreach (var (containerName, labelText) in categories)
         {
             var container = inventory.GetNodeOrNull<Control>($"SlotsContainer/{containerName}");
@@ -1061,10 +1097,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 }
 
                 // In a live shop NCard/NRelic/NPotion creates the visual child and sizes its
-                // holder during FillSlot. The preview intentionally does not call FillSlot, so
-                // give the original holders their authored visual bounds before adding inert
-                // labels; this keeps the same centered slot positions without constructing any
-                // game models.
+                // holder during FillSlot. Use the first model of the corresponding type for each
+                // slot, but do not create a MerchantEntry: the resulting preview can be hovered
+                // and inspected while a purchase is impossible by construction.
                 if (holder.Name.ToString().Equals("CardHolder", StringComparison.OrdinalIgnoreCase))
                 {
                     holder.Position = new Vector2(-150f, -211f);
@@ -1081,20 +1116,185 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     holder.Size = new Vector2(80f, 80f);
                 }
 
-                var item = new Label
+                switch (containerName)
                 {
-                    Name = "SkinChangerPreviewItem",
-                    Text = labelText,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    MouseFilter = Control.MouseFilterEnum.Ignore,
-                    Modulate = new Color(1f, 1f, 1f, 0.9f)
-                };
-                item.AddThemeFontSizeOverride("font_size", 28);
-                item.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-                holder.AddChild(item);
+                    case "CharacterCards" when firstCharacterCard != null:
+                        AddPreviewCard(holder, firstCharacterCard);
+                        break;
+                    case "ColorlessCards" when firstColorlessCard != null:
+                        AddPreviewCard(holder, firstColorlessCard);
+                        break;
+                    case "Relics" when firstRelic != null:
+                        AddPreviewRelic(holder, firstRelic);
+                        break;
+                    case "Potions" when firstPotion != null:
+                        AddPreviewPotion(holder, firstPotion);
+                        break;
+                    default:
+                        AddPreviewItemLabel(holder, labelText);
+                        break;
+                }
             }
         }
+    }
+
+    private static bool IsColorlessCard(CardModel card)
+    {
+        try
+        {
+            return card.Pool.Title.Equals("Colorless", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // A malformed third-party card should not prevent the merchant catalogue from
+            // opening. Treat it as a character card and let the next valid model be selected.
+            return false;
+        }
+    }
+
+    private static void AddPreviewCard(Control holder, CardModel canonicalCard)
+    {
+        try
+        {
+            var card = NCard.Create(canonicalCard.ToMutable());
+            if (card == null)
+            {
+                AddPreviewItemLabel(holder, "卡牌");
+                return;
+            }
+
+            card.MouseFilter = Control.MouseFilterEnum.Ignore;
+            holder.AddChild(card);
+            card.Position = Vector2.Zero;
+            card.Scale = Vector2.One;
+            card.UpdateVisuals(PileType.None, CardPreviewMode.Normal);
+            AddPreviewInspectButton(holder, () =>
+            {
+                try
+                {
+                    if (NGame.Instance != null && card.Model != null)
+                    {
+                        NGame.Instance.GetInspectCardScreen().Open([card.Model], 0);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn($"打开商店预览卡牌失败：{exception.Message}");
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"创建商店预览卡牌失败：{exception.Message}");
+            AddPreviewItemLabel(holder, "卡牌");
+        }
+    }
+
+    private static void AddPreviewRelic(Control holder, RelicModel canonicalRelic)
+    {
+        try
+        {
+            var relic = NRelic.Create(canonicalRelic.ToMutable(), NRelic.IconSize.Large);
+            if (relic == null)
+            {
+                AddPreviewItemLabel(holder, "遗物");
+                return;
+            }
+
+            relic.MouseFilter = Control.MouseFilterEnum.Ignore;
+            holder.AddChild(relic);
+            relic.Position = Vector2.Zero;
+            relic.Size = new Vector2(128f, 128f);
+            AddPreviewInspectButton(holder, () =>
+            {
+                try
+                {
+                    if (NGame.Instance != null)
+                    {
+                        NGame.Instance.GetInspectRelicScreen().Open([relic.Model], relic.Model);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn($"打开商店预览遗物失败：{exception.Message}");
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"创建商店预览遗物失败：{exception.Message}");
+            AddPreviewItemLabel(holder, "遗物");
+        }
+    }
+
+    private static void AddPreviewPotion(Control holder, PotionModel canonicalPotion)
+    {
+        try
+        {
+            var potion = NPotion.Create(canonicalPotion.ToMutable());
+            if (potion == null)
+            {
+                AddPreviewItemLabel(holder, "药水");
+                return;
+            }
+
+            potion.MouseFilter = Control.MouseFilterEnum.Ignore;
+            holder.AddChild(potion);
+            potion.Position = Vector2.Zero;
+            AddPreviewInspectButton(holder, () =>
+            {
+                // The game has no standalone potion-inspect screen. Keep the normal shop
+                // hover surface active; the potion itself remains a real NPotion visual.
+            });
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"创建商店预览药水失败：{exception.Message}");
+            AddPreviewItemLabel(holder, "药水");
+        }
+    }
+
+    private static void AddPreviewItemLabel(Control holder, string text)
+    {
+        if (holder.GetNodeOrNull<Label>("SkinChangerPreviewItem") != null)
+        {
+            return;
+        }
+
+        var item = new Label
+        {
+            Name = "SkinChangerPreviewItem",
+            Text = text,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            Modulate = new Color(1f, 1f, 1f, 0.9f)
+        };
+        item.AddThemeFontSizeOverride("font_size", 28);
+        item.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        holder.AddChild(item);
+    }
+
+    private static void AddPreviewInspectButton(Control holder, Action pressed)
+    {
+        var button = new Button
+        {
+            Name = "SkinChangerPreviewInspect",
+            Flat = true,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            FocusMode = Control.FocusModeEnum.All,
+            ZIndex = 2
+        };
+        button.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        button.AddThemeStyleboxOverride(
+            "normal",
+            ContextualSkinControls.CreateStyleBox(Colors.Transparent, Colors.Transparent, 0));
+        button.AddThemeStyleboxOverride(
+            "hover",
+            ContextualSkinControls.CreateStyleBox(new Color(1f, 1f, 1f, 0.04f),
+                new Color("efc85066"), 1));
+        button.Pressed += pressed;
+        holder.AddChild(button);
     }
 
     private static IEnumerable<Node> EnumerateNodeTree(Node root)
@@ -1118,11 +1318,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         _shopPreviewOverlay = null;
+        _skinSelector.ZIndex = 10;
         RefreshAuxiliaryPreviewControls();
     }
 
     private void RefreshAuxiliaryPreviewControls()
     {
+        _skinSelector.ZIndex = _shopPreviewOverlay == null ? 10 : 90;
         var merchant = _selectedOther != null &&
                        (_selectedOther.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
                         _selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase));
@@ -1449,6 +1651,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             var entry = _selectedOther;
             var request = ++_otherPreviewRequest;
             var expectedOption = optionId;
+            var reopenShop = GodotObject.IsInstanceValid(_shopPreviewOverlay);
             Callable.From(() =>
             {
                 // Multiple dropdown clicks can queue several deferred rebuilds. An old rebuild
@@ -1465,6 +1668,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 }
 
                 RebuildOtherPreview(entry);
+                if (reopenShop)
+                {
+                    // The simulated shop is a separate vanilla scene overlay. Recreate it
+                    // after a skin change so its hand, merchant-specific textures, and item
+                    // previews follow the same selection as the catalogue model underneath.
+                    CloseSimulatedShopPreview();
+                    OpenSimulatedShopPreview();
+                }
             }).CallDeferred();
         }
     }
@@ -1483,18 +1694,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // preview. v0.111 has standalone merchant button scenes; v0.107 embeds the same
             // button in the room/event scene, so try the standalone resource first and fall back
             // to the shared scene without assuming either version.
-            Node instance = InstantiateOtherPreviewScene(entry, group);
+            var previewScene = InstantiateOtherPreviewScene(entry, group);
+            Node instance = previewScene.Instance;
             if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase))
             {
-                // The room scene is a full shop layout. Display only the merchant's own Spine
-                // node so the compendium does not bring along invisible hitboxes, inventory UI,
-                // or a room-sized background. This also works on v0.107 where the button is
-                // embedded in merchant_room.tscn.
-                instance = ExtractPreviewNode(instance, "MerchantVisual", "MerchantButton");
+                // Keep NMerchantButton itself instead of extracting only MerchantVisual. ATA
+                // and other DLL-backed merchant skins replace the skeleton from that node's
+                // _Ready; extracting the child bypassed their generic initialization and left
+                // the default/ATA preview empty. The detached button is still isolated from the
+                // shop room, but its normal game and provider setup remains intact.
+                instance = ExtractPreviewNode(instance, "MerchantButton");
             }
             else if (entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
             {
-                instance = ExtractPreviewNode(instance, "MerchantVisual", "MerchantButton");
+                instance = ExtractPreviewNode(instance, "MerchantButton", "FakeMerchantButton");
             }
             else if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
             {
@@ -1504,27 +1717,57 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 instance = ExtractPreviewNode(instance, "Visuals", "SpineSprite");
             }
 
-            instance.Name = "OtherCompendiumPreview";
+            // Keep the authored MerchantButton/FakeMerchantButton name. Several provider DLLs
+            // use the node path/name to distinguish the real shop from the fake merchant; giving
+            // both roots a generic compendium name makes a fake/normal skin choose the wrong
+            // branch even though the Spine resource itself loaded correctly.
+            if (!entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
+                !entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+            {
+                instance.Name = "OtherCompendiumPreview";
+            }
             instance.ProcessMode = ProcessModeEnum.Always;
-            _previewViewport.AddChild(instance);
+            // Adding NMerchantButton to the tree runs its normal _Ready callback. Keep the
+            // selected overlay mounted through that callback, then replay the selected
+            // provider's isolated NMerchantButton presentation hook (ATA changes its skeleton
+            // there instead of replacing merchant_button.tscn).
+            using (group == null
+                       ? null
+                       : SkinService.BeginRuntimeResourceScope(group.Id, previewScene.ScenePath))
+            {
+                _previewViewport.AddChild(instance);
+                if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
+                    entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+                {
+                    var providerId = group == null
+                        ? null
+                        : SkinService.GetSelectedFullRuntimeProvider(group.Id);
+                    if (providerId != null)
+                    {
+                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, instance);
+                    }
+                }
+            }
             _otherPreviewInstance = instance;
             _otherPreviewGroupId = group?.Id;
             if (instance is Control control)
             {
                 control.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
                 control.Position = new Vector2(960f, 540f);
-                control.Scale *= entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
-                                 entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
-                    ? 1.10f
+                control.Scale *= entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
+                    ? 0.72f
+                    : entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
+                        ? 1.00f
                     : 1.35f;
                 control.MouseFilter = MouseFilterEnum.Ignore;
             }
             else if (instance is Node2D node)
             {
                 node.Position = new Vector2(960f, 600f);
-                var previewMultiplier = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
-                                        entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
-                    ? 1.10f
+                var previewMultiplier = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
+                    ? 0.72f
+                    : entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
+                        ? 1.00f
                     : 1.35f;
                 // Keep the scale authored by the scene/provider. Replacing it with a unit
                 // scale was what made the merchant fill the whole compendium on some skins.
@@ -1542,9 +1785,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
                 entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
             {
-                // NMerchantButton normally starts this animation from _Ready. The preview
-                // intentionally removes that script, so explicitly select the neutral pose for
-                // both the default merchant and custom merchant providers.
+                // NMerchantButton normally starts this animation from _Ready. Explicitly select
+                // the neutral pose as well, because provider hooks may replace the skeleton or
+                // leave its initial track empty after the preview is detached from a room.
                 ManagedAncientSceneAnimation.TryPlay(
                     instance,
                     group?.Id,
@@ -1572,12 +1815,17 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
     }
 
-    private static Node InstantiateOtherPreviewScene(OtherEntry entry, SkinGroup? group)
+    private static (Node Instance, string ScenePath) InstantiateOtherPreviewScene(
+        OtherEntry entry,
+        SkinGroup? group)
     {
         var scenePaths = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
-            ? new[] { entry.ScenePath, "res://scenes/rooms/merchant_button.tscn" }
+            // The standalone button is the smallest common scene and gives provider DLLs the
+            // same _Ready hook as the live shop. v0.107 does not ship it, so the room scene is a
+            // fallback for that branch.
+            ? new[] { "res://scenes/rooms/merchant_button.tscn", entry.ScenePath }
             : entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
-                ? new[] { entry.ScenePath, "res://scenes/events/custom/fake_merchant_button.tscn" }
+                ? new[] { "res://scenes/events/custom/fake_merchant_button.tscn", entry.ScenePath }
                 : new[] { entry.ScenePath };
         Exception? lastException = null;
         foreach (var scenePath in scenePaths.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -1590,7 +1838,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     // loading the canonical scene after a provider switch lets Godot reuse the
                     // previous skin's cached Spine dependency, which is why default merchant and
                     // Byrdpip previews could alternate between two skins.
-                    return SkinService.InstantiateRuntimeScene<Node>(group.Id, scenePath);
+                    return (SkinService.InstantiateRuntimeScene<Node>(group.Id, scenePath), scenePath);
                 }
 
                 var scene = ResourceLoader.Load<PackedScene>(
@@ -1599,7 +1847,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     ResourceLoader.CacheMode.ReplaceDeep);
                 if (scene != null)
                 {
-                    return scene.Instantiate(PackedScene.GenEditState.Disabled);
+                    return (scene.Instantiate(PackedScene.GenEditState.Disabled), scenePath);
                 }
 
                 lastException = new InvalidOperationException($"无法加载其它图鉴场景：{scenePath}");
@@ -1617,37 +1865,84 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private static Node ExtractPreviewNode(Node root, params string[] names)
     {
-        var target = names
-            .Select(name => root.FindChild(name, recursive: true, owned: false))
-            .FirstOrDefault(node => node != null);
+        // The beta/formal builds differ here: the standalone merchant scene's root is already
+        // named MerchantButton (or FakeMerchantButton), while the formal fallback embeds that
+        // same node below MerchantRoom/FakeMerchant. FindChild does not include the root itself,
+        // so treating only descendants as targets left standalone normal/ATA previews fully
+        // transparent (their authored root uses self_modulate = 0).
+        var target = names.Any(name => root.Name.ToString().Equals(
+                                           name,
+                                           StringComparison.OrdinalIgnoreCase))
+            ? root
+            : names
+                .Select(name => root.FindChild(name, recursive: true, owned: false))
+                .FirstOrDefault(node => node != null);
         if (target == null || target.GetParent() == null)
         {
+            if (ReferenceEquals(target, root))
+            {
+                ReownDetachedScene(target);
+                MakePreviewCanvasVisible(target);
+            }
             return root;
         }
 
         target.GetParent().RemoveChild(target);
-        // The merchant scene stores its actual visual under a transparent button. Detaching it
-        // is correct, but clear the old scene owner and inherited visual state as well; keeping
-        // the owner/alpha from that transparent button made the default merchant disappear in
-        // the catalogue on some game versions.
-        ClearSceneOwner(target);
-        if (target is CanvasItem canvasItem)
-        {
-            canvasItem.Visible = true;
-            canvasItem.Modulate = Colors.White;
-            canvasItem.SelfModulate = Colors.White;
-        }
+        // The merchant button is authored transparent because the real room supplies a separate
+        // focus overlay. We are displaying it directly, so clear that state and re-own its
+        // unique-name children after detaching from the room. Re-owning is important for the
+        // game's NMerchantButton and provider patches, which resolve %MerchantVisual.
+        ReownDetachedScene(target);
+        MakePreviewCanvasVisible(target);
 
         root.Free();
         return target;
     }
 
-    private static void ClearSceneOwner(Node node)
+    private static void MakePreviewCanvasVisible(Node root)
+    {
+        static void Reveal(Node node)
+        {
+            if (node is not CanvasItem canvasItem)
+            {
+                return;
+            }
+
+            canvasItem.Visible = true;
+            canvasItem.Modulate = Colors.White;
+            canvasItem.SelfModulate = Colors.White;
+        }
+
+        Reveal(root);
+        // Do not reveal every child: MerchantSelectionReticle, HotkeyIcon, and provider helper
+        // nodes are intentionally hidden until their own interaction state enables them. Only
+        // the actual rendered model needs its inherited transparent state cleared.
+        foreach (var name in new[] { "MerchantVisual", "Visuals", "SpineSprite" })
+        {
+            var visual = root.FindChild(name, recursive: true, owned: false);
+            if (visual != null)
+            {
+                Reveal(visual);
+            }
+        }
+    }
+
+    private static void ReownDetachedScene(Node node)
     {
         node.Owner = null;
         foreach (var child in node.GetChildren().OfType<Node>())
         {
-            ClearSceneOwner(child);
+            child.Owner = node;
+            ReownDescendantOwnership(child, node);
+        }
+    }
+
+    private static void ReownDescendantOwnership(Node node, Node owner)
+    {
+        foreach (var child in node.GetChildren().OfType<Node>())
+        {
+            child.Owner = owner;
+            ReownDescendantOwnership(child, owner);
         }
     }
 
