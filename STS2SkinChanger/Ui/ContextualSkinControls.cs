@@ -90,9 +90,12 @@ internal static partial class ContextualSkinControls
         RemoveStaleProviderCharacterSelectControls(screen);
         var selector = EnsureCharacterSelector(screen);
         var group = FindGroup(character.Id.Entry);
-        if (group != null && !IsMultiplayerCharacterSelect(screen))
+        if (group != null)
         {
-            SkinService.FocusRuntimeProviderBehaviorsOnCharacters([group.Id]);
+            SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                [group.Id],
+                includeRunWideMonsterProviders: false,
+                reason: "选角预览");
         }
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
@@ -152,6 +155,10 @@ internal static partial class ContextualSkinControls
         var group = monster == null
             ? null
             : FindGroup(monster.Id.Entry, monster.GetType().Name);
+        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            group == null ? [] : [group.Id],
+            includeRunWideMonsterProviders: false,
+            reason: "怪物图鉴");
         RegisterRefresh(
             selector,
             group == null || monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster, group.Id));
@@ -2318,6 +2325,17 @@ internal static class BestiarySelectionSkinPatch
     }
 }
 
+[HarmonyPatch(typeof(NBestiary), nameof(NBestiary.OnSubmenuClosed))]
+internal static class BestiaryRuntimeProviderScopePatch
+{
+    [HarmonyPostfix]
+    private static void Postfix() =>
+        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            [],
+            includeRunWideMonsterProviders: false,
+            reason: "关闭怪物图鉴");
+}
+
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]
 internal static class CharacterVisualResultPatch
 {
@@ -2350,6 +2368,18 @@ internal static class CharacterVisualResultPatch
 [HarmonyPatch(typeof(MonsterModel), nameof(MonsterModel.CreateVisuals))]
 internal static class MonsterVisualResultPatch
 {
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(MonsterModel __instance)
+    {
+        var group = ContextualSkinControls.FindGroup(
+            __instance.Id.Entry,
+            __instance.GetType().Name);
+        if (group != null)
+        {
+            CharacterAppearanceRuntime.AddVisibleCombatRuntimeGroup(group.Id);
+        }
+    }
+
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(MonsterModel __instance, ref NCreatureVisuals __result)
     {

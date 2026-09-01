@@ -67,7 +67,7 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, HashSet<string>> RuntimeCanonicalDependencyPaths =
         new(StringComparer.OrdinalIgnoreCase);
-    private static HashSet<string>? _runtimeCharacterBehaviorScope;
+    private static RuntimeProviderScope _runtimeProviderBehaviorScope = new([], false);
     private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LocalizationCacheState> LocalizationStateCache =
@@ -432,6 +432,7 @@ internal static class SkinService
                 MountedScopedRuntimeProviderPacks.Clear();
                 MountedLargeRuntimeProviderPacks.Clear();
                 RuntimeCanonicalDependencyPaths.Clear();
+                _runtimeProviderBehaviorScope = new RuntimeProviderScope([], false);
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
                 _mountedLocalizationSignature = null;
@@ -647,19 +648,32 @@ internal static class SkinService
     }
 
     public static void FocusRuntimeProviderBehaviorsOnCharacters(IEnumerable<string> groupIds)
+        => FocusRuntimeProviderBehaviorsOnGroups(
+            groupIds,
+            includeRunWideMonsterProviders: false,
+            reason: "角色预览");
+
+    public static void FocusRuntimeProviderBehaviorsOnGroups(
+        IEnumerable<string> groupIds,
+        bool includeRunWideMonsterProviders,
+        string reason)
     {
         lock (Sync)
         {
             var nextScope = groupIds
                 .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (_runtimeCharacterBehaviorScope != null &&
-                _runtimeCharacterBehaviorScope.SetEquals(nextScope))
+            if (_runtimeProviderBehaviorScope.IncludeRunWideMonsterProviders ==
+                    includeRunWideMonsterProviders &&
+                _runtimeProviderBehaviorScope.VisibleGroupIds.ToHashSet(
+                    StringComparer.OrdinalIgnoreCase).SetEquals(nextScope))
             {
                 return;
             }
 
-            _runtimeCharacterBehaviorScope = nextScope;
+            _runtimeProviderBehaviorScope = new RuntimeProviderScope(
+                nextScope,
+                includeRunWideMonsterProviders);
             var catalog = Catalog;
             if (catalog == null)
             {
@@ -668,9 +682,20 @@ internal static class SkinService
 
             var activeProviders = GetActiveRuntimeProviders(catalog);
             ManagedSkinModLoader.DeactivateProvidersExcept(activeProviders);
+            EnsureScopedRuntimeProviderResourcesMounted(catalog, activeProviders);
+            foreach (var providerId in activeProviders.Where(
+                         catalog.ProviderUsesManagedGodotScripts))
+            {
+                ManagedSkinModLoader.EnsureProviderGodotScripts(providerId);
+            }
+            foreach (var providerId in activeProviders.Where(
+                         catalog.ProviderUsesScopedMonsterRuntime))
+            {
+                ManagedSkinModLoader.EnsureScopedMonsterSelectionRouter(providerId);
+            }
             ManagedSkinModLoader.ActivateSelectedProviders(activeProviders);
             ModLog.Info(
-                $"已将角色皮肤代码行为收窄到 {nextScope.Count} 个当前角色；" +
+                $"已按{reason}将皮肤代码行为收窄到 {nextScope.Count} 个可见外观组；" +
                 $"保留 {activeProviders.Count} 个当前场景需要的 DLL 皮肤提供者。");
         }
     }
@@ -4058,37 +4083,13 @@ internal static class SkinService
             selectedProviders.UnionWith(catalog.GetSelectedInteractiveRuntimeProviders(selections));
             selectedProviders.UnionWith(catalog.GetSelectedScopedMonsterRuntimeProviders(selections));
         }
-        if (_runtimeCharacterBehaviorScope == null)
-        {
-            return selectedProviders;
-        }
-
-        return selectedProviders.Where(providerId =>
-        {
-            // A complete character provider can own companion groups as well as the playable
-            // character (for example Necrobinder + Osty). Classify the provider by its primary
-            // character group instead of treating every companion as an unrelated global group;
-            // otherwise one companion selection would keep the entire DLL active in every run.
-            var characterGroups = catalog.GetFullRuntimeProviderGroups(providerId)
-                .Where(catalog.IsCharacterAppearanceGroup)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (characterGroups.Count == 0)
-            {
-                // Interactive providers are not necessarily part of the full-runtime map. Fall
-                // back to the character groups on which this provider is directly selected.
-                characterGroups = catalog.Groups
-                    .Where(group => catalog.IsCharacterAppearanceGroup(group.Id))
-                    .Where(group => selectionSets.Any(selections =>
-                        selections.GetValueOrDefault(group.Id, SkinCatalog.BaseOptionId).Equals(
-                            providerId,
-                            StringComparison.OrdinalIgnoreCase)))
-                    .Select(group => group.Id)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            }
-
-            return characterGroups.Count == 0 ||
-                   characterGroups.Overlaps(_runtimeCharacterBehaviorScope);
-        }).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = selectedProviders.Select(providerId => new RuntimeProviderCandidate(
+            providerId,
+            catalog.GetRuntimeProviderGroups(providerId),
+            catalog.ProviderUsesScopedMonsterRuntime(providerId)));
+        return RuntimeProviderScopePolicy.SelectActiveProviders(
+            candidates,
+            _runtimeProviderBehaviorScope).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private static void RefreshLocalizationIfNeeded(

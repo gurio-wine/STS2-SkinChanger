@@ -1192,6 +1192,17 @@ internal sealed partial class SkinCatalog : IDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+    public IReadOnlyList<string> GetRuntimeProviderGroups(string optionId)
+    {
+        var providerId = ResolveVisualProviderId(optionId);
+        return _groups
+            .Where(group => group.Options.Any(option =>
+                option.EffectiveProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+            .Select(group => group.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public IReadOnlyList<string> GetScopedMonsterRuntimeProviderGroups(string optionId) =>
         _scopedMonsterRuntimeProviderGroups.GetValueOrDefault(optionId) ?? [];
 

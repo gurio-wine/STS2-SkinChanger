@@ -1435,6 +1435,13 @@ internal static class MerchantRuntimeAppearance
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom.Create))]
 internal static class MerchantRoomCreateAppearancePatch
 {
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix() =>
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+            [MerchantRuntimeAppearance.GroupId],
+            "商店");
+
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(ref NMerchantRoom? __result)
@@ -1530,6 +1537,16 @@ internal static class MerchantRoomPreviewExitTreePatch
     [HarmonyPriority(Priority.First)]
     private static bool Prefix(NMerchantRoom __instance) =>
         !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NMerchantRoom __instance)
+    {
+        if (!MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
+        {
+            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
+        }
+    }
 }
 
 [HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._Ready))]
@@ -1537,8 +1554,18 @@ internal static class FakeMerchantAppearancePatch
 {
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
-    private static bool Prefix(NFakeMerchant __instance) =>
-        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+    private static bool Prefix(NFakeMerchant __instance)
+    {
+        if (MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
+        {
+            return false;
+        }
+
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+            [MerchantRuntimeAppearance.FakeMerchantGroupId],
+            "假商人场景");
+        return true;
+    }
 
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
@@ -1577,6 +1604,16 @@ internal static class FakeMerchantPreviewExitTreePatch
     [HarmonyPriority(Priority.First)]
     private static bool Prefix(NFakeMerchant __instance) =>
         !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NFakeMerchant __instance)
+    {
+        if (!MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
+        {
+            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
+        }
+    }
 }
 
 [HarmonyPatch(typeof(NRestSiteRoom), nameof(NRestSiteRoom._Ready))]

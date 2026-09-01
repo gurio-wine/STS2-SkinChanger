@@ -42,6 +42,10 @@ internal static class ManagedSkinModLoader
     private static readonly Dictionary<string, ProviderRuntimeBlueprint> ProviderRuntimeBlueprints =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<Assembly, string> ScopedMonsterProviderAssemblies = new();
+    private static readonly Dictionary<Assembly, HashSet<string>> ProviderIdsByAssembly = new();
+    private static readonly Dictionary<Assembly, Dictionary<ulong, ProviderNodeProcessState>>
+        SuspendedProviderNodes = new();
+    private static readonly HashSet<Assembly> ActivatingProviderAssemblies = [];
     private static readonly HashSet<MethodBase> ScopedMonsterIsEnabledMethods = [];
     private static readonly HashSet<MethodBase> ScopedMonsterSetEnabledMethods = [];
     private static readonly Harmony ScopedMonsterSelectionHarmony =
@@ -60,6 +64,7 @@ internal static class ManagedSkinModLoader
         OptionalFrameworkEvidence = new(StringComparer.OrdinalIgnoreCase);
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
+    private static SceneTree? _providerNodeMonitorTree;
 
     public static bool IsBeforeAllSkinProviders { get; private set; } = true;
     public static IReadOnlyList<Mod> SkinProvidersBeforeSelf { get; private set; } = [];
@@ -549,6 +554,11 @@ internal static class ManagedSkinModLoader
                 return;
             }
 
+            RegisterProviderAssembly(providerId, assembly);
+            ActivatingProviderAssemblies.Add(assembly);
+            EnsureProviderNodeMonitor();
+            RestoreProviderNodes(assembly);
+
             var initializerTypes = provider.HasDeclarativeCharacterAssetReplacement
                 ? []
                 : GetLoadableTypes(assembly)
@@ -694,6 +704,17 @@ internal static class ManagedSkinModLoader
                 $"启用 {provider.Name} 的完整视觉会话失败，已回滚其行为补丁并继续使用资源皮肤：" +
                 exception.GetBaseException().Message);
         }
+        finally
+        {
+            if (assembly != null)
+            {
+                ActivatingProviderAssemblies.Remove(assembly);
+                if (!IsProviderAssemblyActive(assembly))
+                {
+                    SuspendProviderNodes(assembly);
+                }
+            }
+        }
     }
 
     private static string BuildInitializerKey(
@@ -716,7 +737,107 @@ internal static class ManagedSkinModLoader
         RestoreNodeReadyBehaviors(runtime);
         RestoreCharacterPresentations(runtime);
         UnpatchProviderCallbacks(runtime.Patches);
+        if (!IsProviderAssemblyActive(runtime.Assembly))
+        {
+            SuspendProviderNodes(runtime.Assembly);
+        }
         ModLog.Info($"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁。");
+    }
+
+    private static void RegisterProviderAssembly(string providerId, Assembly assembly)
+    {
+        if (!ProviderIdsByAssembly.TryGetValue(assembly, out var providerIds))
+        {
+            providerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ProviderIdsByAssembly[assembly] = providerIds;
+        }
+
+        providerIds.Add(providerId);
+    }
+
+    private static void EnsureProviderNodeMonitor()
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree ||
+            ReferenceEquals(tree, _providerNodeMonitorTree))
+        {
+            return;
+        }
+
+        if (_providerNodeMonitorTree != null)
+        {
+            _providerNodeMonitorTree.NodeAdded -= OnProviderNodeAdded;
+        }
+
+        _providerNodeMonitorTree = tree;
+        tree.NodeAdded += OnProviderNodeAdded;
+    }
+
+    private static void OnProviderNodeAdded(Node node)
+    {
+        var assembly = node.GetType().Assembly;
+        if (!ProviderIdsByAssembly.ContainsKey(assembly) ||
+            ActivatingProviderAssemblies.Contains(assembly) ||
+            IsProviderAssemblyActive(assembly))
+        {
+            return;
+        }
+
+        SuspendProviderNode(assembly, node);
+    }
+
+    private static void SuspendProviderNodes(Assembly assembly)
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree ||
+            !GodotObject.IsInstanceValid(tree.Root))
+        {
+            return;
+        }
+
+        foreach (var node in EnumerateNodeTree(tree.Root).Where(node =>
+                     ReferenceEquals(node.GetType().Assembly, assembly)))
+        {
+            SuspendProviderNode(assembly, node);
+        }
+    }
+
+    private static void SuspendProviderNode(Assembly assembly, Node node)
+    {
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        if (!SuspendedProviderNodes.TryGetValue(assembly, out var states))
+        {
+            states = [];
+            SuspendedProviderNodes[assembly] = states;
+        }
+
+        var instanceId = node.GetInstanceId();
+        if (!states.ContainsKey(instanceId))
+        {
+            states[instanceId] = new ProviderNodeProcessState(
+                new WeakReference<Node>(node),
+                node.ProcessMode);
+        }
+
+        node.ProcessMode = Node.ProcessModeEnum.Disabled;
+    }
+
+    private static void RestoreProviderNodes(Assembly assembly)
+    {
+        if (!SuspendedProviderNodes.Remove(assembly, out var states))
+        {
+            return;
+        }
+
+        foreach (var state in states.Values)
+        {
+            if (state.Node.TryGetTarget(out var node) && GodotObject.IsInstanceValid(node))
+            {
+                node.ProcessMode = state.ProcessMode;
+            }
+        }
     }
 
     private static IReadOnlyList<ProviderPatch> CaptureProviderPatches(Assembly assembly) =>
@@ -2689,6 +2810,10 @@ internal static class ManagedSkinModLoader
         IReadOnlyList<ProviderPatch> BehaviorPatches,
         IReadOnlyList<ProviderPatch> CharacterPresentationPatches,
         IReadOnlyList<ProviderPatch> NodeReadyPresentationPatches);
+
+    private sealed record ProviderNodeProcessState(
+        WeakReference<Node> Node,
+        Node.ProcessModeEnum ProcessMode);
 
     private sealed record CharacterPresentationNodeState(
         Node Node,

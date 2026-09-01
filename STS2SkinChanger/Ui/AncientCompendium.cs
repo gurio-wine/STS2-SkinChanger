@@ -656,6 +656,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
         ClearPreview();
         _otherActionSelector.Visible = false;
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            [],
+            includeRunWideMonsterProviders: false,
+            reason: "关闭其它图鉴");
         base.OnSubmenuClosed();
     }
 
@@ -1739,7 +1743,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         RebuildOtherActionButtons(OtherCreatureCatalog.Find(entry.Id));
-        PopulateSkinDropdown(FindOtherGroup(entry));
+        var group = FindOtherGroup(entry);
+        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            group == null ? [] : [group.Id],
+            includeRunWideMonsterProviders: false,
+            reason: "其它图鉴预览");
+        PopulateSkinDropdown(group);
         RebuildOtherPreview(entry);
         RefreshAuxiliaryPreviewControls();
     }
@@ -1807,7 +1816,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ApplyEntryTheme(pair.Value, pair.Key.Id == ancient.Id);
         }
 
-        PopulateSkinDropdown(AncientCompendiumEntry.FindGroup(ancient.Id.Entry));
+        var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
+        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            group == null ? [] : [group.Id],
+            includeRunWideMonsterProviders: false,
+            reason: "先古图鉴预览");
+        PopulateSkinDropdown(group);
         RebuildPreview(ancient);
         RefreshAuxiliaryPreviewControls();
     }
@@ -2974,6 +2988,23 @@ internal static class ManagedAncientStaticBackgroundWindowPatch
 [HarmonyPatch(typeof(EventModel), nameof(EventModel.CreateBackgroundScene))]
 internal static class AncientSceneResultPatch
 {
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(EventModel __instance)
+    {
+        if (__instance is not AncientEventModel ancient)
+        {
+            return;
+        }
+
+        var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
+        if (group != null)
+        {
+            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+                [group.Id],
+                "先古场景");
+        }
+    }
+
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(EventModel __instance, ref PackedScene __result)
     {
@@ -3005,6 +3036,15 @@ internal static class AncientSceneResultPatch
             ModLog.Error($"最终应用 {ancient.Id.Entry} 的先古皮肤失败：{exception}");
         }
     }
+}
+
+[HarmonyPatch(typeof(NAncientEventLayout), nameof(NAncientEventLayout._ExitTree))]
+internal static class AncientRuntimeProviderScopeExitPatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix() =>
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
 }
 
 [HarmonyPatch(typeof(AncientEventModel), nameof(AncientEventModel.MapIcon), MethodType.Getter)]

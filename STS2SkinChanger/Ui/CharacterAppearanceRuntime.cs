@@ -11,6 +11,7 @@ using MegaCrit.Sts2.Core.Nodes.Orbs;
 using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger.Catalog;
@@ -101,6 +102,8 @@ internal static class CharacterAppearanceRuntime
 
     private static PendingSelection? _pendingSelection;
     private static WeakReference<NCombatRoom>? _playerLayoutRoom;
+    private static readonly HashSet<string> CombatRuntimeGroupIds =
+        new(StringComparer.OrdinalIgnoreCase);
     private static float _playerLayoutScaling = 1f;
     private static bool _fullyCenterPlayers;
 
@@ -194,30 +197,70 @@ internal static class CharacterAppearanceRuntime
     }
 
     internal static void FocusRuntimeProviderBehaviorsOnRunCharacters()
+        => FocusRuntimeProviderBehaviorsOnRunContext(reason: "对局角色");
+
+    internal static void FocusRuntimeProviderBehaviorsOnRunContext(
+        IEnumerable<string>? additionalGroupIds = null,
+        string reason = "对局")
     {
         try
         {
-            if (RunStateField?.GetValue(NRun.Instance) is not IRunState runState)
+            var groupIds = additionalGroupIds?
+                .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ??
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (RunStateField?.GetValue(NRun.Instance) is IRunState runState)
             {
-                return;
+                groupIds.UnionWith(runState.Players
+                    .Select(player => ContextualSkinControls.FindGroup(
+                        player.Character.Id.Entry,
+                        player.Character.GetType().Name)?.Id)
+                    .Where(groupId => groupId != null)
+                    .Cast<string>());
             }
 
-            var groupIds = runState.Players
-                .Select(player => ContextualSkinControls.FindGroup(
-                    player.Character.Id.Entry,
-                    player.Character.GetType().Name)?.Id)
-                .Where(groupId => groupId != null)
-                .Cast<string>()
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (groupIds.Count > 0)
-            {
-                SkinService.FocusRuntimeProviderBehaviorsOnCharacters(groupIds);
-            }
+            SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                groupIds,
+                includeRunWideMonsterProviders: NRun.Instance != null,
+                reason);
         }
         catch (Exception exception)
         {
-            ModLog.Warn("收窄当前对局角色皮肤行为失败：" + exception.GetBaseException().Message);
+            ModLog.Warn("收窄当前场景皮肤行为失败：" + exception.GetBaseException().Message);
         }
+    }
+
+    internal static void FocusRuntimeProviderBehaviorsOnCombatRoom(ICombatRoomVisuals visuals)
+    {
+        CombatRuntimeGroupIds.Clear();
+        foreach (var creature in visuals.Allies.Concat(visuals.Enemies))
+        {
+            var modelType = creature.Monster?.GetType().Name ??
+                            creature.Player?.Character.GetType().Name;
+            var group = ContextualSkinControls.FindGroup(creature.ModelId.Entry, modelType);
+            if (group != null)
+            {
+                CombatRuntimeGroupIds.Add(group.Id);
+            }
+        }
+
+        FocusRuntimeProviderBehaviorsOnRunContext(CombatRuntimeGroupIds, "战斗场景");
+    }
+
+    internal static void AddVisibleCombatRuntimeGroup(string groupId)
+    {
+        if (NRun.Instance == null || !CombatRuntimeGroupIds.Add(groupId))
+        {
+            return;
+        }
+
+        FocusRuntimeProviderBehaviorsOnRunContext(CombatRuntimeGroupIds, "战斗召唤");
+    }
+
+    internal static void ClearCombatRuntimeGroups()
+    {
+        CombatRuntimeGroupIds.Clear();
+        FocusRuntimeProviderBehaviorsOnRunCharacters();
     }
 
     internal static NCreature? GetCurrentCreature(Player? player)
@@ -1657,6 +1700,23 @@ internal static class CharacterAppearancePlayerLayoutPatch
     [HarmonyPriority(Priority.First)]
     private static void Prefix(float scaling, bool fullyCenterPlayers) =>
         CharacterAppearanceRuntime.CapturePlayerAndPetLayout(scaling, fullyCenterPlayers);
+}
+
+[HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom.Create))]
+internal static class CombatRoomRuntimeProviderScopePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(ICombatRoomVisuals visuals) =>
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnCombatRoom(visuals);
+}
+
+[HarmonyPatch(typeof(NCombatRoom), nameof(NCombatRoom._ExitTree))]
+internal static class CombatRoomRuntimeProviderScopeExitPatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix() => CharacterAppearanceRuntime.ClearCombatRuntimeGroups();
 }
 
 [HarmonyPatch]
