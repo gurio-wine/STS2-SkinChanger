@@ -17,5 +17,7 @@
              Link="MerchantPreviewLayerPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantPreviewFocusPolicy.cs"
              Link="MerchantPreviewFocusPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/ManagedModListNamePolicy.cs"
+             Link="ManagedModListNamePolicy.cs" />
   </ItemGroup>
 </Project>

@@ -63,6 +63,23 @@ internal static class ManagedSkinModLoader
     public static IReadOnlyList<Mod> SkinProvidersInLoadOrder { get; private set; } = [];
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
 
+    public static bool IsManagedProviderForDisplay(Mod? mod)
+    {
+        if (mod == null || Entry.IsSelfModId(mod.manifest?.id))
+        {
+            return false;
+        }
+
+        try
+        {
+            return ProvidersByRoot.ContainsKey(NormalizePath(mod.path));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static bool IsProviderAssemblyActive(Assembly assembly) =>
         ActiveProviderRuntimes.Values.Any(runtime => ReferenceEquals(runtime.Assembly, assembly));
 

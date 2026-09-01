@@ -9,6 +9,19 @@ static void Require(bool condition, string message)
     }
 }
 
+Require(
+    ManagedModListNamePolicy.Format("Treessa Silent Skin", isManagedProvider: true) ==
+    "[SC] Treessa Silent Skin",
+    "被 Skin Changer 识别为皮肤提供者的 Mod 必须只在 Mod 列表显示 [SC] 前缀。");
+Require(
+    ManagedModListNamePolicy.Format("More Action & Effects", isManagedProvider: false) ==
+    "More Action & Effects",
+    "未被接管的 Mod 名称必须保持原样。");
+Require(
+    ManagedModListNamePolicy.Format("[SC] Existing Prefix", isManagedProvider: true) ==
+    "[SC] Existing Prefix",
+    "Mod 列表反复刷新时不能重复叠加 [SC] 前缀。");
+
 var open = MerchantPreviewLayerPolicy.Resolve(
     inventoryOpen: true,
     hasSkinOptions: true,
