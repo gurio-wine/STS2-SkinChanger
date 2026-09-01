@@ -1843,6 +1843,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 ModLog.Info(
                     $"商人预览节点 {entry.Id}: rootVisible={instance is CanvasItem rootCanvas && rootCanvas.Visible}, " +
                     $"visualVisible={visual?.Visible}, visualModulate={visual?.Modulate}");
+                CenterMerchantVisualWhenReady(instance, entry.Id);
             }
             _otherPreviewInstance = instance;
             _otherPreviewGroupId = group?.Id;
@@ -2028,6 +2029,65 @@ internal partial class AncientCompendiumScreen : NSubmenu
             {
                 Reveal(visual);
             }
+        }
+    }
+
+    private void CenterMerchantVisualWhenReady(Node root, string entryId)
+    {
+        var visual = root.FindChild("MerchantVisual", recursive: true, owned: false) as Node2D;
+        if (visual == null)
+        {
+            ModLog.Warn($"{entryId} 预览缺少 MerchantVisual，无法计算模型边界。");
+            return;
+        }
+
+        try
+        {
+            var sprite = new MegaSprite(visual);
+            root.RunWhenSpineReady(sprite, _ =>
+            {
+                try
+                {
+                    if (!GodotObject.IsInstanceValid(visual) || !visual.IsInsideTree())
+                    {
+                        return;
+                    }
+
+                    var skeleton = sprite.GetSkeleton();
+                    if (skeleton == null)
+                    {
+                        ModLog.Warn($"{entryId} 预览 Spine 已回调但没有骨骼。");
+                        return;
+                    }
+
+                    var bounds = skeleton.GetBounds();
+                    if (bounds.Size.X <= 0f || bounds.Size.Y <= 0f)
+                    {
+                        ModLog.Warn($"{entryId} 预览 Spine 边界为空：{bounds}");
+                        return;
+                    }
+
+                    // MerchantVisual's authored position differs between game versions and
+                    // skin mods. Center the actual rendered skeleton bounds, not its node origin;
+                    // this avoids a hard-coded offset and keeps unusually sized merchant skins
+                    // visible while preserving each skin's own scale and animation.
+                    var localCenter = bounds.Position + bounds.Size * 0.5f;
+                    var renderedCenter = visual.GlobalTransform * localCenter;
+                    var targetCenter = new Vector2(960f, 540f);
+                    visual.GlobalPosition += targetCenter - renderedCenter;
+                    ModLog.Info(
+                        $"商人预览已按骨骼边界居中 {entryId}: bounds={bounds}, " +
+                        $"center={renderedCenter}->{targetCenter}, global={visual.GlobalPosition}");
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn($"居中 {entryId} 商人预览失败：{exception.GetBaseException().Message}");
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"准备 {entryId} 商人预览边界失败：{exception.GetBaseException().Message}");
         }
     }
 
