@@ -2565,14 +2565,20 @@ internal static class ManagedSkinModLoader
     public static bool CanInstallFrameworkCompatibilityAssembly(string assemblyName)
     {
         var candidates = new List<OptionalSkinFrameworkEvidence>();
+        var originalFrameworkHostAvailable = false;
         foreach (var mod in ModManager.Mods)
         {
             var manifest = mod.manifest;
             var modId = manifest?.id;
-            if (string.IsNullOrWhiteSpace(modId) ||
-                Entry.IsSelfModId(modId) ||
-                modId.Equals(assemblyName, StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(modId) || Entry.IsSelfModId(modId))
             {
+                continue;
+            }
+
+            if (modId.Equals(assemblyName, StringComparison.OrdinalIgnoreCase))
+            {
+                originalFrameworkHostAvailable |=
+                    mod.state is ModLoadState.None or ModLoadState.Loaded;
                 continue;
             }
 
@@ -2590,7 +2596,8 @@ internal static class ManagedSkinModLoader
 
         return OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
             assemblyName,
-            candidates);
+            candidates,
+            originalFrameworkHostAvailable);
     }
 
     private static bool IsOptionalFrameworkDependencySatisfied(
@@ -2636,7 +2643,8 @@ internal static class ManagedSkinModLoader
                     .All(path =>
                         paths.Contains(path) ||
                         paths.Contains(path + ".remap") ||
-                        paths.Contains(path + ".import"));
+                        paths.Contains(path + ".import") ||
+                        ResourceLoader.Exists(path));
             }
             catch (Exception exception)
             {

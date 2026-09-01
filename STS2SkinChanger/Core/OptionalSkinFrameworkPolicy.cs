@@ -38,14 +38,21 @@ internal static class OptionalSkinFrameworkPolicy
 
     public static bool CanInstallCompatibilityAssembly(
         string frameworkId,
-        IEnumerable<OptionalSkinFrameworkEvidence> dependents)
+        IEnumerable<OptionalSkinFrameworkEvidence> dependents,
+        bool originalFrameworkHostAvailable = false)
     {
         var evidence = dependents
             .Where(candidate => candidate.DependencyId.Equals(
                 frameworkId,
                 StringComparison.OrdinalIgnoreCase))
             .ToArray();
-        return evidence.Length > 0 &&
+        if (!evidence.Any(candidate =>
+                CanSatisfyMissingDependency(candidate, [frameworkId])))
+        {
+            return false;
+        }
+
+        return !originalFrameworkHostAvailable ||
                !IsFrameworkHostRequired(frameworkId, evidence, [frameworkId]);
     }
 }

@@ -703,6 +703,7 @@ internal sealed partial class SkinCatalog : IDisposable
                                 mod.Id)
                             .Where(contract => FrameworkContractResourceClosureComplete(
                                 index,
+                                baselineIndexes,
                                 contract))
                             .ToArray();
                         visualGroups = Math.Max(
@@ -3715,7 +3716,7 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         MergeCharacterSelectIconPacks(indexes, groups);
-        AddPckRuntimeProviderOptions(indexes, groups, knownGroupIds);
+        AddPckRuntimeProviderOptions(indexes, baselines, groups, knownGroupIds);
         AddManagedMonsterSceneOptions(indexes, groups, knownGroupIds);
         AddRuntimeMonsterVisualModeOptions(indexes, groups);
 
@@ -4903,6 +4904,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static void AddPckRuntimeProviderOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
+        IReadOnlyCollection<PckResourceIndex> baselineIndexes,
         IDictionary<string, SkinGroup> groups,
         IReadOnlySet<string> knownGroupIds)
     {
@@ -4912,7 +4914,10 @@ internal sealed partial class SkinCatalog : IDisposable
             var frameworkContracts = FrameworkSkinContractScanner.Scan(
                     index.Mod.RootPath,
                     index.Mod.Id)
-                .Where(contract => FrameworkContractResourceClosureComplete(index, contract))
+                .Where(contract => FrameworkContractResourceClosureComplete(
+                    index,
+                    baselineIndexes,
+                    contract))
                 .ToArray();
             var frameworkTargetIds = frameworkContracts
                 .Select(contract => contract.TargetGroupId)
@@ -5115,12 +5120,17 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static bool FrameworkContractResourceClosureComplete(
         PckResourceIndex index,
+        IReadOnlyCollection<PckResourceIndex> baselineIndexes,
         FrameworkCharacterSkinContract contract) =>
         contract.ResourcePaths.Count > 0 &&
         contract.ResourcePaths.All(path =>
-            index.Archive.Paths.Contains(path, StringComparer.OrdinalIgnoreCase) ||
-            index.Archive.Paths.Contains(path + ".remap", StringComparer.OrdinalIgnoreCase) ||
-            index.Archive.Paths.Contains(path + ".import", StringComparer.OrdinalIgnoreCase));
+            ResourceExists(index, path) ||
+            baselineIndexes.Any(baseline => ResourceExists(baseline, path)));
+
+    private static bool ResourceExists(PckResourceIndex index, string path) =>
+        index.Archive.Paths.Contains(path, StringComparer.OrdinalIgnoreCase) ||
+        index.Archive.Paths.Contains(path + ".remap", StringComparer.OrdinalIgnoreCase) ||
+        index.Archive.Paths.Contains(path + ".import", StringComparer.OrdinalIgnoreCase);
 
     private static string? GetFrameworkCharacterCanonicalPath(
         string propertyName,

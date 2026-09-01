@@ -124,14 +124,25 @@ Require(
         []),
     "没有任何皮肤需要兼容框架时不应抢先加载同名程序集。");
 Require(
-    !OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+    OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
         "example.skin.framework",
         [compatibleFramework, compatibleFramework with
         {
             DependentModId = "unsafe.skin",
             ResourceClosureComplete = false
         }]),
-    "任一依赖者无法安全接管时，不得让内置兼容程序集抢占原框架身份。");
+    "一个无法安全接管的依赖者不能阻止同框架下已验证完整的皮肤加载兼容程序集；" +
+    "后续依赖绕过仍必须逐 Mod 判断。");
+Require(
+    !OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+        "example.skin.framework",
+        [compatibleFramework, compatibleFramework with
+        {
+            DependentModId = "unsafe.skin",
+            ResourceClosureComplete = false
+        }],
+        originalFrameworkHostAvailable: true),
+    "原框架已启用且仍有无法安全接管的依赖者时，不能抢占原框架程序集身份。");
 
 Require(
     FrameworkEntryAnimationPolicy.Resolve(

@@ -29,6 +29,14 @@ if (args.Length == 2 && args[1].Equals("--self-test-localization", StringCompari
     return;
 }
 
+if (args.Length == 3 && args[1].Equals(
+        "--self-test-framework-provider",
+        StringComparison.OrdinalIgnoreCase))
+{
+    RunFrameworkProviderSelfTest(args[0], args[2]);
+    return;
+}
+
 if (args.Length < 2)
 {
     Console.Error.WriteLine(
@@ -2048,6 +2056,43 @@ static void RunLocalizationOwnershipSelfTest(string gamePckPath)
     {
         Directory.Delete(testRoot, recursive: true);
     }
+}
+
+static void RunFrameworkProviderSelfTest(string gamePckPath, string providerRoot)
+{
+    const string providerId = "ChenIronclad";
+    var contracts = FrameworkSkinContractScanner.Scan(providerRoot, providerId);
+    if (contracts.Count != 1 ||
+        contracts[0].CharacterResources.GetValueOrDefault("CharacterSelectTransition") !=
+        "res://materials/transitions/silent_transition_mat.tres")
+    {
+        throw new InvalidOperationException(
+            "陈的框架契约没有保留其复用的游戏原版转场材质。");
+    }
+
+    using var catalog = SkinCatalog.Build(
+        gamePckPath,
+        [new SkinModDescriptor(
+            providerId,
+            "Chen Ironclad",
+            Path.Combine(providerRoot, providerId + ".pck"),
+            AffectsGameplay: false,
+            RootPath: providerRoot,
+            HasDll: true)]);
+    var hasOption = catalog.Groups
+        .FirstOrDefault(group => group.Id.Equals(
+            "ironclad",
+            StringComparison.OrdinalIgnoreCase))?
+        .Options.Any(option => option.Id.Equals(
+            providerId + "::chen",
+            StringComparison.OrdinalIgnoreCase)) == true;
+    if (!hasOption)
+    {
+        throw new InvalidOperationException(
+            "框架皮肤引用游戏原版资源时，被误判为自身 PCK 资源不完整而从列表消失。");
+    }
+
+    Console.WriteLine("framework provider self-test passed");
 }
 
 static void RunCardExportSelfTest(string gamePckPath)
