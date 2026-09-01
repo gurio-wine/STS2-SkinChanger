@@ -121,16 +121,12 @@ internal static class FrameworkSkinRuntime
 
     public static FrameworkRelicVisualPlan? ResolveRelicVisual(
         RelicModel model,
-        bool largeIcon)
-    {
-        var contracts = SkinService.GetSelectedFrameworkContracts();
-        var plan = FrameworkRelicVisualPolicy.Resolve(
-            contracts.SelectMany(contract => contract.Relics),
+        bool largeIcon) =>
+        FrameworkRelicVisualPolicy.Resolve(
+            SkinService.GetSelectedFrameworkContracts()
+                .SelectMany(contract => contract.Relics),
             model.GetType().Name,
             largeIcon);
-        FrameworkRelicDiagnostics.ReportResolution(model, largeIcon, contracts, plan);
-        return plan;
-    }
 
     public static bool HasSelectedCharacterContract(CharacterModel model) =>
         TryGetCharacterContract(model, out _);
@@ -397,9 +393,10 @@ internal static class FrameworkRelicPackedIconPatch
         Apply(__instance, ref __result, "PackedIconPath");
 
     internal static IEnumerable<MethodBase> RelicGetters(string propertyName) =>
-        AccessTools.AllTypes()
-            .Where(type => !type.IsAbstract && typeof(RelicModel).IsAssignableFrom(type))
-            .Select(type => AccessTools.PropertyGetter(type, propertyName))
+        new[] { AccessTools.PropertyGetter(typeof(RelicModel), propertyName) }
+            .Concat(AccessTools.AllTypes()
+                .Where(type => !type.IsAbstract && typeof(RelicModel).IsAssignableFrom(type))
+                .Select(type => AccessTools.DeclaredPropertyGetter(type, propertyName)))
             .Where(method => method != null)
             .Cast<MethodBase>()
             .Distinct();
@@ -502,67 +499,6 @@ internal static class FrameworkRelicTextureLoader
 
         result = texture;
         return false;
-    }
-}
-
-internal static class FrameworkRelicDiagnostics
-{
-    private static readonly HashSet<string> ReportedResolutions = new(StringComparer.Ordinal);
-    private static readonly object Sync = new();
-
-    public static void ReportPatchInstallation()
-    {
-        ReportPatch("PackedIconPath", AccessTools.PropertyGetter(typeof(RelicModel), "PackedIconPath"));
-        ReportPatch("Icon", AccessTools.PropertyGetter(typeof(RelicModel), nameof(RelicModel.Icon)));
-        ReportPatch("IconOutline", AccessTools.PropertyGetter(typeof(RelicModel), nameof(RelicModel.IconOutline)));
-        ReportPatch("BigIcon", AccessTools.PropertyGetter(typeof(RelicModel), nameof(RelicModel.BigIcon)));
-    }
-
-    public static void ReportResolution(
-        RelicModel model,
-        bool largeIcon,
-        IReadOnlyList<FrameworkCharacterSkinContract> contracts,
-        FrameworkRelicVisualPlan? plan)
-    {
-        var key = model.GetType().FullName + "|" + largeIcon;
-        lock (Sync)
-        {
-            if (!ReportedResolutions.Add(key))
-            {
-                return;
-            }
-        }
-
-        var relicTargets = contracts
-            .SelectMany(contract => contract.Relics)
-            .Select(relic => relic.TargetModelName)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToArray();
-        var path = plan?.IconPath ?? "<none>";
-        var exists = plan != null && ResourceLoader.Exists(plan.IconPath);
-        ModLog.Info(
-            $"框架遗物诊断：运行类型={model.GetType().FullName}，大图={largeIcon}，" +
-            $"选中契约={contracts.Count}，遗物目标=[{string.Join(",", relicTargets)}]，" +
-            $"解析路径={path}，资源存在={exists}。");
-    }
-
-    private static void ReportPatch(string label, MethodBase? target)
-    {
-        if (target == null)
-        {
-            ModLog.Warn($"框架遗物诊断：未找到 {label} getter。");
-            return;
-        }
-
-        var patches = Harmony.GetPatchInfo(target);
-        var ownedPrefixes = patches?.Prefixes.Count(patch =>
-            patch.owner.Equals(Entry.ModId, StringComparison.Ordinal)) ?? 0;
-        var ownedPostfixes = patches?.Postfixes.Count(patch =>
-            patch.owner.Equals(Entry.ModId, StringComparison.Ordinal)) ?? 0;
-        ModLog.Info(
-            $"框架遗物诊断：{target.DeclaringType?.FullName}.{target.Name}，" +
-            $"本 Mod 前置={ownedPrefixes}，后置={ownedPostfixes}。");
     }
 }
 

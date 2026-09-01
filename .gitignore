@@ -12,6 +12,8 @@
 /tools/WorkshopPublisher/obj/
 /tests/STS2SkinChanger.LogicTests/bin/
 /tests/STS2SkinChanger.LogicTests/obj/
+/tests/STS2SkinChanger.RuntimeTests/bin/
+/tests/STS2SkinChanger.RuntimeTests/obj/
 /compat/ThunninoiSkinManagerCompat/bin/
 /compat/ThunninoiSkinManagerCompat/obj/
 /workshop/content/
