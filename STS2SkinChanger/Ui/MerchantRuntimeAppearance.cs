@@ -724,7 +724,7 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
-    private static NMerchantButton InstantiateMerchantButton(
+    internal static NMerchantButton InstantiateMerchantButton(
         string groupId = GroupId)
     {
         // v0.111.0 introduced a standalone merchant_button.tscn. Older formal builds keep the

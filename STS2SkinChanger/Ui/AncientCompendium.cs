@@ -1745,22 +1745,30 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // preview. v0.111 has standalone merchant button scenes; v0.107 embeds the same
             // button in the room/event scene, so try the standalone resource first and fall back
             // to the shared scene without assuming either version.
-            var previewScene = InstantiateOtherPreviewScene(entry, group);
-            Node instance = previewScene.Instance;
-            if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase))
+            var isMerchant = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase);
+            var isFakeMerchant = entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase);
+            (Node Instance, string ScenePath) previewScene;
+            Node instance;
+            if (isMerchant || isFakeMerchant)
             {
-                // Keep NMerchantButton itself instead of extracting only MerchantVisual. ATA
-                // and other DLL-backed merchant skins replace the skeleton from that node's
-                // _Ready; extracting the child bypassed their generic initialization and left
-                // the default/ATA preview empty. The detached button is still isolated from the
-                // shop room, but its normal game and provider setup remains intact.
-                instance = ExtractPreviewNode(instance, "MerchantButton");
+                // Reuse the exact factory used by the live merchant room. Merchant skin mods
+                // often replace the standalone MerchantButton scene or resolve its unique
+                // MerchantVisual through a provider-specific path; the catalogue must not use a
+                // second, subtly different scene-discovery implementation.
+                var merchantButton = MerchantRuntimeAppearance.InstantiateMerchantButton(
+                    isFakeMerchant ? "fake_merchant_monster" : MerchantRuntimeAppearance.GroupId);
+                MakePreviewCanvasVisible(merchantButton);
+                instance = merchantButton;
+                previewScene = (instance, isFakeMerchant
+                    ? "res://scenes/events/custom/fake_merchant_button.tscn"
+                    : "res://scenes/rooms/merchant_button.tscn");
             }
-            else if (entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+            else
             {
-                instance = ExtractPreviewNode(instance, "MerchantButton", "FakeMerchantButton");
+                previewScene = InstantiateOtherPreviewScene(entry, group);
+                instance = previewScene.Instance;
             }
-            else if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+            if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
             {
                 // Byrdpip's root is NCreatureVisuals. That root expects a combat creature and
                 // can overwrite a provider's skeleton during _Ready. The authored Visuals node
@@ -1799,12 +1807,22 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     }
                 }
             }
+            if (isMerchant || isFakeMerchant)
+            {
+                // A few merchant providers deliberately ship their button root as transparent
+                // because the live room adds its own focus layer. The catalogue has no separate
+                // room layer, so clear that presentation flag after _Ready/provider replay as
+                // well as before attaching the node.
+                MakePreviewCanvasVisible(instance);
+                var visual = instance.FindChild("MerchantVisual", recursive: true, owned: false) as CanvasItem;
+                ModLog.Info(
+                    $"商人预览节点 {entry.Id}: rootVisible={instance is CanvasItem rootCanvas && rootCanvas.Visible}, " +
+                    $"visualVisible={visual?.Visible}, visualModulate={visual?.Modulate}");
+            }
             _otherPreviewInstance = instance;
             _otherPreviewGroupId = group?.Id;
             if (instance is Control control)
             {
-                var isMerchant = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase);
-                var isFakeMerchant = entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase);
                 if (isMerchant || isFakeMerchant)
                 {
                     // MerchantButton/FakeMerchantButton already use the game's center anchors
