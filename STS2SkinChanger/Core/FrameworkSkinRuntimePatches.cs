@@ -1,5 +1,7 @@
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Animation;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
@@ -116,6 +118,9 @@ internal static class FrameworkSkinRuntime
                 StringComparison.Ordinal));
         return descriptor != null && descriptor.Resources.TryGetValue(propertyName, out path!);
     }
+
+    public static bool HasSelectedCharacterContract(CharacterModel model) =>
+        TryGetCharacterContract(model, out _);
 
     public static string NormalizeToken(string value) =>
         new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
@@ -425,4 +430,88 @@ internal static class FrameworkRelicBigIconPatch
     [HarmonyPrefix]
     private static bool Prefix(RelicModel __instance, ref string __result) =>
         FrameworkRelicPackedIconPatch.Apply(__instance, ref __result, "BigIconPath");
+}
+
+[HarmonyPatch]
+internal static class FrameworkEntryAnimationPatch
+{
+    private static readonly FieldInfo? CurrentStateField =
+        AccessTools.Field(typeof(CreatureAnimator), "_currentState");
+    private static readonly MethodInfo? SetAnimationMethod =
+        ResolveAnimationMethod("SetAnimation", 3);
+    private static readonly MethodInfo? AddAnimationMethod =
+        ResolveAnimationMethod("AddAnimation", 4);
+
+    private static IEnumerable<MethodBase> TargetMethods() =>
+        AccessTools.AllTypes()
+            .Where(type => !type.IsAbstract && typeof(CharacterModel).IsAssignableFrom(type))
+            .Select(type => AccessTools.Method(type, "GenerateAnimator"))
+            .Where(method => method != null)
+            .Cast<MethodBase>()
+            .Distinct();
+
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.High)]
+    private static void Postfix(
+        CharacterModel __instance,
+        MegaSprite __0,
+        CreatureAnimator __result)
+    {
+        try
+        {
+            if (CurrentStateField?.GetValue(__result) is not AnimState currentState)
+            {
+                return;
+            }
+
+            var plan = FrameworkEntryAnimationPolicy.Resolve(
+                FrameworkSkinRuntime.HasSelectedCharacterContract(__instance),
+                __0.HasAnimation("entry"),
+                currentState.Id,
+                currentState.IsLooping);
+            if (plan == null || SetAnimationMethod == null || AddAnimationMethod == null)
+            {
+                return;
+            }
+
+            var animationState = __0.GetAnimationState();
+            SetAnimationMethod.Invoke(
+                animationState,
+                [plan.EntryAnimationId, false, 0]);
+            AddAnimationMethod.Invoke(
+                animationState,
+                [plan.QueuedAnimationId, 0f, plan.QueuedAnimationLoops, 0]);
+
+            var entryState = new AnimState(plan.EntryAnimationId)
+            {
+                NextState = currentState
+            };
+            __result.AddAnyState("Entry", entryState);
+            CurrentStateField.SetValue(__result, entryState);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "应用框架皮肤登场动画失败：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private static MethodInfo? ResolveAnimationMethod(string name, int parameterCount) =>
+        typeof(MegaAnimationState)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(method =>
+            {
+                if (!method.Name.Equals(name, StringComparison.Ordinal) ||
+                    method.GetParameters() is not { } parameters ||
+                    parameters.Length != parameterCount)
+                {
+                    return false;
+                }
+
+                var expected = name.Equals("SetAnimation", StringComparison.Ordinal)
+                    ? new[] { typeof(string), typeof(bool), typeof(int) }
+                    : new[] { typeof(string), typeof(float), typeof(bool), typeof(int) };
+                return parameters.Select(parameter => parameter.ParameterType).SequenceEqual(expected);
+            });
 }

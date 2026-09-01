@@ -133,6 +133,26 @@ Require(
         }]),
     "任一依赖者无法安全接管时，不得让内置兼容程序集抢占原框架身份。");
 
+Require(
+    FrameworkEntryAnimationPolicy.Resolve(
+        hasSelectedFrameworkSkin: true,
+        hasEntryAnimation: true,
+        currentAnimationId: "idle_loop",
+        currentAnimationLoops: true) is
+    {
+        EntryAnimationId: "entry",
+        QueuedAnimationId: "idle_loop",
+        QueuedAnimationLoops: true
+    },
+    "选中的框架皮肤若提供登场动画，战斗模型必须先播放 entry 再回到原待机动画。");
+Require(
+    FrameworkEntryAnimationPolicy.Resolve(
+        hasSelectedFrameworkSkin: false,
+        hasEntryAnimation: true,
+        currentAnimationId: "idle_loop",
+        currentAnimationLoops: true) == null,
+    "没有选中框架皮肤时不得把第三方 entry 动画注入原版角色。");
+
 var civilightRoot =
     "/mnt/d/Programs/Steam/steamapps/workshop/content/2868840/3749568885";
 if (Directory.Exists(civilightRoot))
@@ -161,11 +181,46 @@ if (Directory.Exists(civilightRoot))
             .GetValueOrDefault("EnergyLayers")?.Count == 5),
         "框架契约必须保留能量球的全部分层资源，而不是只取最后一张图。");
     Require(
-        contracts.All(contract => contract.Orbs.Any(orb => orb.TargetModelName == "PlasmaOrb")),
-        "框架契约必须保留与角色皮肤一起注册的充能球外观。");
+        contracts.All(contract => contract.CharacterResources.Keys.ToHashSet().SetEquals(
+        [
+            "CombatVisual",
+            "MerchantVisual",
+            "RestVisual",
+            "CharacterSelectBg",
+            "CharacterSelectPortrait",
+            "CharacterIcon",
+            "CharacterIconOutline",
+            "CharacterIconScene",
+            "CharacterMapMarker",
+            "CardFrameMaterial",
+            "CardTrail",
+            "EnergyIcon",
+            "HandPoint",
+            "HandRock",
+            "HandPaper",
+            "HandScissors"
+        ])),
+        "Civilight Eterna 的战斗、商店、休息、选角、头像、地图、卡框、能量与多人手势入口必须全部保留。");
     Require(
-        contracts.All(contract => contract.Relics.Any(relic => relic.TargetModelName == "CrackedCore")),
-        "框架契约必须保留与角色皮肤一起注册的遗物外观。");
+        contracts.All(contract => contract.Orbs
+            .Select(orb => orb.TargetModelName)
+            .ToHashSet()
+            .SetEquals(["PlasmaOrb", "LightningOrb", "FrostOrb", "GlassOrb", "DarkOrb"]) &&
+            contract.Orbs.All(orb =>
+                orb.Resources.ContainsKey("CustomIconPath") &&
+                orb.Resources.ContainsKey("CustomSpritePath") &&
+                orb.Values.ContainsKey("CustomDarkenedColor"))),
+        "框架契约必须保留五种充能球的图标、动态模型和暗色状态。");
+    Require(
+        contracts.All(contract => contract.Relics
+            .Select(relic => relic.TargetModelName)
+            .ToHashSet()
+            .SetEquals(["CrackedCore", "InfusedCore"]) &&
+            contract.Relics.All(relic =>
+                relic.Resources.ContainsKey("PackedIconPath") &&
+                relic.Resources.ContainsKey("PackedIconOutlinePath") &&
+                relic.Resources.ContainsKey("BigIconPath"))),
+        "框架契约必须保留破损核心与注能核心的小图、轮廓和大图。");
 }
 
 var frameworkManagerRoot =
