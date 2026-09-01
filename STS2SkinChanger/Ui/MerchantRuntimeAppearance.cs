@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Entities.Merchant;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Characters;
+using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
@@ -46,6 +47,12 @@ internal static class MerchantRuntimeAppearance
         AccessTools.Field(typeof(NMerchantRoom), "<Inventory>k__BackingField");
     private static readonly FieldInfo? MerchantRoomProceedButtonField =
         AccessTools.Field(typeof(NMerchantRoom), "_proceedButton");
+    private static readonly FieldInfo? FakeMerchantInventoryField =
+        AccessTools.Field(typeof(NFakeMerchant), "<Inventory>k__BackingField");
+    private static readonly FieldInfo? FakeMerchantProceedButtonField =
+        AccessTools.Field(typeof(NFakeMerchant), "_proceedButton");
+    private static readonly MethodInfo? FakeMerchantOpenInventoryMethod =
+        AccessTools.Method(typeof(NFakeMerchant), "OpenInventory");
     private static readonly FieldInfo? MerchantRoomModelField =
         AccessTools.Field(typeof(NMerchantRoom), "<Room>k__BackingField");
     private static readonly FieldInfo? MerchantRoomPlayersField =
@@ -309,6 +316,66 @@ internal static class MerchantRuntimeAppearance
         catch (Exception exception)
         {
             ModLog.Warn("连接商人预览原生交互失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    internal static void PrepareFakeMerchantPreviewInteraction(NFakeMerchant preview)
+    {
+        try
+        {
+            if (FakeMerchantInventoryField == null ||
+                FakeMerchantProceedButtonField == null ||
+                FakeMerchantOpenInventoryMethod == null)
+            {
+                ModLog.Warn("假商人预览缺少原生交互字段，保留按钮视觉但不连接打开逻辑。");
+                return;
+            }
+
+            var button = preview.GetNodeOrNull<NMerchantButton>("%MerchantButton") ??
+                         preview.FindChild("MerchantButton", recursive: true, owned: false) as NMerchantButton;
+            var inventory = preview.GetNodeOrNull<NMerchantInventory>("%Inventory") ??
+                            preview.FindChild("Inventory", recursive: true, owned: false) as NMerchantInventory;
+            var proceed = preview.GetNodeOrNull<NProceedButton>("%ProceedButton") ??
+                          preview.FindChild("ProceedButton", recursive: true, owned: false) as NProceedButton;
+            if (button == null || inventory == null || proceed == null)
+            {
+                ModLog.Warn("假商人预览场景缺少 MerchantButton/Inventory/ProceedButton，跳过原生交互连接。");
+                return;
+            }
+
+            var previewPlayer = Player.CreateForNewRun(
+                ModelDb.Character<Ironclad>(),
+                UnlockState.all,
+                0x534b494e50525631UL);
+            _ = RunState.CreateForTest(
+                [previewPlayer],
+                seed: "SkinChangerFakeMerchantPreview");
+            previewPlayer.Gold = 9999;
+            var model = new MerchantInventory(previewPlayer);
+            foreach (var relic in ModelDb.AllRelics
+                         .OrderBy(relic => relic.Id.Entry, StringComparer.OrdinalIgnoreCase)
+                         .Take(6))
+            {
+                model.AddRelicEntry(new MerchantRelicEntry(relic.ToMutable(), previewPlayer));
+            }
+
+            FakeMerchantInventoryField.SetValue(preview, inventory);
+            FakeMerchantProceedButtonField.SetValue(preview, proceed);
+            AccessTools.Field(typeof(NFakeMerchant), "<MerchantButton>k__BackingField")?.SetValue(
+                preview,
+                button);
+            inventory.MouseFilter = Control.MouseFilterEnum.Ignore;
+            inventory.Initialize(model, FakeMerchant.Dialogue);
+            button.Connect(
+                NMerchantButton.SignalName.MerchantOpened,
+                Callable.From<NMerchantButton>(_ =>
+                    FakeMerchantOpenInventoryMethod.Invoke(preview, null)));
+            proceed.Enable();
+            ModLog.Info("假商人预览已连接游戏原生 MerchantOpened → OpenInventory 交互路径。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("连接假商人预览原生交互失败：" + exception.GetBaseException().Message);
         }
     }
 

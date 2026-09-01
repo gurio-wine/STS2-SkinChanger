@@ -17,6 +17,7 @@ using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Events;
+using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Potions;
@@ -1806,6 +1807,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     {
                         MerchantRuntimeAppearance.PrepareMerchantPreviewInteraction(
                             previewMerchantRoom);
+                    }
+                    else if (isFakeMerchant && instance is NFakeMerchant previewFakeMerchant)
+                    {
+                        MerchantRuntimeAppearance.PrepareFakeMerchantPreviewInteraction(
+                            previewFakeMerchant);
                     }
                 }
             }
