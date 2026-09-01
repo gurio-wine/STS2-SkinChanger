@@ -192,6 +192,13 @@ if (Directory.Exists(civilightRoot))
             .GetValueOrDefault("EnergyLayers")?.Count == 5),
         "框架契约必须保留能量球的全部分层资源，而不是只取最后一张图。");
     Require(
+        contracts.All(contract => contract.CharacterValues.Keys.ToHashSet().SetEquals(
+        [
+            "EnergyLabelColor",
+            "EnergyLabelOutlineColor"
+        ])),
+        "Civilight Eterna 的角色能量数字和卡牌能量描边颜色必须同时进入接管契约。");
+    Require(
         contracts.All(contract => contract.CharacterResources.Keys.ToHashSet().SetEquals(
         [
             "CombatVisual",
@@ -283,6 +290,62 @@ Require(
     readyFrameworkSyncCount == 2 &&
     synchronizedFrameworkSkins.SequenceEqual(["DEFECT:ceterna", "WATCHER:default"]),
     "模型数据库就绪后，框架同步必须覆盖所有已注册角色，并让没有框架皮肤的角色回到默认选择。");
+
+var deferredFrameworkRegistrations = new DeferredRegistrationQueue<string>();
+var frameworkRegistrationCalls = 0;
+Require(
+    deferredFrameworkRegistrations.TryRegister(
+        "CEdefect",
+        "Civilight Eterna",
+        isReady: false,
+        _ => frameworkRegistrationCalls++) == DeferredRegistrationResult.Deferred &&
+    frameworkRegistrationCalls == 0 &&
+    deferredFrameworkRegistrations.PendingCount == 1,
+    "游戏模型库未就绪时，框架皮肤注册必须排队，不能提前访问角色模型。");
+
+try
+{
+    deferredFrameworkRegistrations.TryRegister(
+        "CEdefect",
+        "Civilight Eterna",
+        isReady: true,
+        _ =>
+        {
+            frameworkRegistrationCalls++;
+            throw new KeyNotFoundException("CHARACTER.DEFECT");
+        });
+    throw new InvalidOperationException("框架注册失败必须向调用方报告异常。");
+}
+catch (KeyNotFoundException)
+{
+}
+Require(
+    frameworkRegistrationCalls == 1 &&
+    deferredFrameworkRegistrations.PendingCount == 1 &&
+    !deferredFrameworkRegistrations.IsCompleted("CEdefect"),
+    "框架注册抛错后不能被误记为成功，必须保留后续重试资格。");
+
+var completedFrameworkRegistrations = deferredFrameworkRegistrations.RetryPending(
+    isReady: true,
+    _ => frameworkRegistrationCalls++,
+    (_, exception) => throw new InvalidOperationException(
+        "模型库就绪后的框架注册重试不应失败。",
+        exception));
+Require(
+    completedFrameworkRegistrations == 1 &&
+    frameworkRegistrationCalls == 2 &&
+    deferredFrameworkRegistrations.PendingCount == 0 &&
+    deferredFrameworkRegistrations.IsCompleted("CEdefect"),
+    "模型库就绪后必须自动补做先前失败的框架注册，并且只在成功后标记完成。");
+
+Require(
+    deferredFrameworkRegistrations.TryRegister(
+        "CEdefect",
+        "Civilight Eterna",
+        isReady: true,
+        _ => throw new InvalidOperationException("已完成的框架注册不应重复执行。")) ==
+    DeferredRegistrationResult.AlreadyCompleted,
+    "已完成的框架注册必须保持幂等，不能重复运行提供者注册回调。");
 
 var isolatedHostContext = new AssemblyLoadContext(
     "skin-changer-framework-host-test",

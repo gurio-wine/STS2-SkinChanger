@@ -19,8 +19,7 @@ internal static class FrameworkCompatibilityLayer
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> KnownFrameworkAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> DeclaredProviderAssemblies =
-        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly DeferredRegistrationQueue<Assembly> ProviderRegistrations = new();
     private static Assembly? _adapterAssembly;
     private static MethodInfo? _setActiveSkin;
     private static MethodInfo? _skinDbSetup;
@@ -140,7 +139,22 @@ internal static class FrameworkCompatibilityLayer
         // Essential initialization is still building the database. Contains(Type) is available in
         // both supported game versions and only checks the backing dictionary, so use it as the
         // readiness gate before touching those singleton getters.
-        var registeredCharacters = ModelDb.Contains(typeof(Ironclad))
+        var modelDatabaseReady = ModelDb.Contains(typeof(Ironclad));
+        if (modelDatabaseReady && _skinDbSetup != null)
+        {
+            var completed = ProviderRegistrations.RetryPending(
+                isReady: true,
+                _ => _skinDbSetup.Invoke(null, null),
+                (providerKey, exception) => ModLog.Warn(
+                    $"补做框架皮肤注册 {providerKey} 失败，已保留后续重试资格：" +
+                    exception.GetBaseException().Message));
+            if (completed > 0)
+            {
+                ModLog.Info($"模型库就绪后已补做 {completed} 个框架皮肤提供者注册。");
+            }
+        }
+
+        var registeredCharacters = modelDatabaseReady
             ? ModelDb.AllCharacters
             : Enumerable.Empty<CharacterModel>();
         FrameworkSelectionSynchronizer.Synchronize(
@@ -164,15 +178,29 @@ internal static class FrameworkCompatibilityLayer
         }
 
         var key = providerAssembly.FullName ?? providerAssembly.GetName().Name ?? string.Empty;
-        if (!DeclaredProviderAssemblies.Add(key))
+        try
         {
-            return;
+            var result = ProviderRegistrations.TryRegister(
+                key,
+                providerAssembly,
+                ModelDb.Contains(typeof(Ironclad)),
+                _ => _skinDbSetup.Invoke(null, null));
+            if (result == DeferredRegistrationResult.Deferred)
+            {
+                ModLog.Info(
+                    $"已延迟 {providerAssembly.GetName().Name} 的框架皮肤注册；" +
+                    "游戏模型库就绪后将自动补做。");
+            }
         }
-
-        // Provider registration is a Harmony postfix on this empty declaration hook. Calling it
-        // after the selected provider's PatchAll preserves its own descriptor objects without
-        // ever starting the original manager.
-        _skinDbSetup.Invoke(null, null);
+        catch (Exception exception)
+        {
+            // Do not make a transient ModelDb timing failure tear down the provider's safe
+            // animation/scene behavior. The queue deliberately retains this assembly and retries
+            // before the next framework selection synchronization.
+            ModLog.Warn(
+                $"框架皮肤提供者 {providerAssembly.GetName().Name} 注册尚未完成，" +
+                "已保留后续重试资格：" + exception.GetBaseException().Message);
+        }
     }
 
     private static string SafeAssemblyLocation(Assembly assembly)
