@@ -57,6 +57,19 @@ Require(
     "进入对局后应保留当前角色，并允许负责地图、背景和音乐的整局怪物提供者运行。");
 
 Require(
+    RuntimePackWarmPolicy.ShouldWarm(32L * 1024L * 1024L, alreadyWarmed: false),
+    "当前皮肤的 32 MiB 资源包应允许后台预读。");
+Require(
+    RuntimePackWarmPolicy.ShouldWarm(64L * 1024L * 1024L, alreadyWarmed: false),
+    "64 MiB 边界资源包应允许后台预读。");
+Require(
+    !RuntimePackWarmPolicy.ShouldWarm(64L * 1024L * 1024L + 1L, alreadyWarmed: false),
+    "大型 CZN 等资源包不能整包预读并挤占内存与磁盘带宽。");
+Require(
+    !RuntimePackWarmPolicy.ShouldWarm(32L * 1024L * 1024L, alreadyWarmed: true),
+    "同一资源包在一次游戏会话内只能预读一次。");
+
+Require(
     CardPresentationLayoutPolicy.Resolve(
         isNativeAncient: false,
         requestsAncientLayout: false,

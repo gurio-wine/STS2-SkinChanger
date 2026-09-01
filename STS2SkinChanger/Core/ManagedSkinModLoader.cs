@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
 
@@ -546,9 +547,13 @@ internal static class ManagedSkinModLoader
     private static void ActivateProvider(string providerId, ProviderAssembly provider)
     {
         Assembly? assembly = null;
+        var activationStarted = Stopwatch.GetTimestamp();
+        var assemblyLoadedAt = activationStarted;
+        var initializedAt = activationStarted;
         try
         {
             assembly = GetOrLoadProviderAssembly(provider);
+            assemblyLoadedAt = Stopwatch.GetTimestamp();
             if (assembly == null)
             {
                 return;
@@ -633,6 +638,7 @@ internal static class ManagedSkinModLoader
                     }
                 }
             }
+            initializedAt = Stopwatch.GetTimestamp();
 
             var installedPatches = CaptureProviderPatches(assembly);
             // Keep the complete set of node-ready presentation callbacks.  Existing nodes still
@@ -713,6 +719,26 @@ internal static class ManagedSkinModLoader
                 {
                     SuspendProviderNodes(assembly);
                 }
+            }
+
+            var totalElapsed = Stopwatch.GetElapsedTime(activationStarted);
+            if (totalElapsed >= TimeSpan.FromMilliseconds(50))
+            {
+                var assemblyElapsed = Stopwatch.GetElapsedTime(
+                    activationStarted,
+                    assemblyLoadedAt);
+                var initializerElapsed = Stopwatch.GetElapsedTime(
+                    assemblyLoadedAt,
+                    initializedAt);
+                var isolationElapsed = Stopwatch.GetElapsedTime(
+                    initializedAt,
+                    Stopwatch.GetTimestamp());
+                ModLog.Info(
+                    $"{provider.Name} 皮肤代码激活耗时：" +
+                    $"程序集={assemblyElapsed.TotalMilliseconds:F1} ms，" +
+                    $"初始化={initializerElapsed.TotalMilliseconds:F1} ms，" +
+                    $"隔离={isolationElapsed.TotalMilliseconds:F1} ms，" +
+                    $"总计={totalElapsed.TotalMilliseconds:F1} ms。");
             }
         }
     }

@@ -67,6 +67,10 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, HashSet<string>> RuntimeCanonicalDependencyPaths =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> WarmedRuntimeProviderPacks =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> WarmingRuntimeProviderPacks =
+        new(StringComparer.OrdinalIgnoreCase);
     private static RuntimeProviderScope _runtimeProviderBehaviorScope = new([], false);
     private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
@@ -432,6 +436,8 @@ internal static class SkinService
                 MountedScopedRuntimeProviderPacks.Clear();
                 MountedLargeRuntimeProviderPacks.Clear();
                 RuntimeCanonicalDependencyPaths.Clear();
+                WarmedRuntimeProviderPacks.Clear();
+                WarmingRuntimeProviderPacks.Clear();
                 _runtimeProviderBehaviorScope = new RuntimeProviderScope([], false);
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
@@ -694,6 +700,7 @@ internal static class SkinService
                 ManagedSkinModLoader.EnsureScopedMonsterSelectionRouter(providerId);
             }
             ManagedSkinModLoader.ActivateSelectedProviders(activeProviders);
+            ScheduleRuntimeProviderPackWarm(catalog, activeProviders, reason);
             ModLog.Info(
                 $"已按{reason}将皮肤代码行为收窄到 {nextScope.Count} 个可见外观组；" +
                 $"保留 {activeProviders.Count} 个当前场景需要的 DLL 皮肤提供者。");
@@ -764,6 +771,87 @@ internal static class SkinService
         }
 
         reportProgress?.Invoke(1d);
+    }
+
+    private static void ScheduleRuntimeProviderPackWarm(
+        SkinCatalog catalog,
+        IEnumerable<string> activeProviders,
+        string reason)
+    {
+        var paths = new List<string>();
+        foreach (var path in activeProviders
+                     .SelectMany(catalog.GetProviderResourcePackPaths)
+                     .Select(System.IO.Path.GetFullPath)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var alreadyWarmed = WarmedRuntimeProviderPacks.Contains(path) ||
+                                    WarmingRuntimeProviderPacks.Contains(path);
+                if (!File.Exists(path) ||
+                    !RuntimePackWarmPolicy.ShouldWarm(
+                        new FileInfo(path).Length,
+                        alreadyWarmed))
+                {
+                    continue;
+                }
+
+                WarmingRuntimeProviderPacks.Add(path);
+                paths.Add(path);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Info(
+                    $"跳过无法检查的当前皮肤资源包 {System.IO.Path.GetFileName(path)}：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        if (paths.Count > 0)
+        {
+            _ = WarmRuntimeProviderPacksAsync(paths, reason);
+        }
+    }
+
+    private static async Task WarmRuntimeProviderPacksAsync(
+        IReadOnlyCollection<string> paths,
+        string reason)
+    {
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            await WarmResourcePackFilesAsync(paths).ConfigureAwait(false);
+            lock (Sync)
+            {
+                foreach (var path in paths)
+                {
+                    WarmingRuntimeProviderPacks.Remove(path);
+                    WarmedRuntimeProviderPacks.Add(path);
+                }
+            }
+
+            var elapsed = Stopwatch.GetElapsedTime(started);
+            if (elapsed >= TimeSpan.FromMilliseconds(50))
+            {
+                ModLog.Info(
+                    $"已后台预读{reason}所需的 {paths.Count} 个当前皮肤资源包；" +
+                    $"耗时={elapsed.TotalMilliseconds:F1} ms。");
+            }
+        }
+        catch (Exception exception)
+        {
+            lock (Sync)
+            {
+                foreach (var path in paths)
+                {
+                    WarmingRuntimeProviderPacks.Remove(path);
+                }
+            }
+
+            ModLog.Info(
+                $"后台预读{reason}皮肤资源未完成，将在实际加载时继续：" +
+                exception.GetBaseException().Message);
+        }
     }
 
     public static bool ApplySelection(string groupId, string optionId)
@@ -3890,6 +3978,7 @@ internal static class SkinService
         // this afterwards can leave a disabled profile cached as active (or vice versa) until the
         // next game launch.
         ManagedSkinModLoader.ActivateSelectedProviders(activeRuntimeProviders);
+        ScheduleRuntimeProviderPackWarm(catalog, activeRuntimeProviders, "当前场景");
         ModLog.Info(
             $"已挂载 {groups.Count} 个外观分组/{files.Count} 个文件；" +
             $"目录={buildElapsed.TotalMilliseconds:F1} ms，" +
