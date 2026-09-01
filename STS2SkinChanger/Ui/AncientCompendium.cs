@@ -6,6 +6,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
+using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Merchant;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -564,26 +565,29 @@ internal partial class AncientCompendiumScreen : NSubmenu
         string Potions,
         string Item,
         string Standing,
-        string Attack);
+        string Attack,
+        string Block,
+        string Sleep,
+        string Wake);
 
     private static readonly IReadOnlyDictionary<string, OtherPreviewLanguagePack>
         OtherPreviewPacks = new Dictionary<string, OtherPreviewLanguagePack>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = new("Open shop preview", "Shop preview", "A visual mockup only; nothing can be bought here.", "Cards", "Relics", "Potions", "Item {0}", "Standing", "Attack"),
-            ["zhs"] = new("打开商店预览", "商店预览", "这里只是查看商店布局的模拟界面，不会购买或改变游戏内容。", "卡牌", "遗物", "药水", "商品 {0}", "站姿", "攻击"),
-            ["zht"] = new("開啟商店預覽", "商店預覽", "這只是查看商店配置的模擬介面，不會購買或改變遊戲內容。", "卡牌", "遺物", "藥水", "商品 {0}", "站姿", "攻擊"),
-            ["deu"] = new("Shop-Vorschau öffnen", "Shop-Vorschau", "Nur eine visuelle Vorschau; hier kann nichts gekauft werden.", "Karten", "Relikte", "Tränke", "Artikel {0}", "Stehen", "Angriff"),
-            ["esp"] = new("Abrir vista de tienda", "Vista de tienda", "Solo es una maqueta visual; aquí no se puede comprar nada.", "Cartas", "Reliquias", "Pociones", "Objeto {0}", "De pie", "Ataque"),
-            ["fra"] = new("Ouvrir l’aperçu de la boutique", "Aperçu de la boutique", "Ceci est une maquette visuelle ; aucun achat n’est possible ici.", "Cartes", "Reliques", "Potions", "Objet {0}", "Debout", "Attaque"),
-            ["ita"] = new("Apri anteprima negozio", "Anteprima negozio", "Solo un modello visivo: qui non è possibile acquistare nulla.", "Carte", "Reliquie", "Pozioni", "Oggetto {0}", "In piedi", "Attacco"),
-            ["jpn"] = new("ショッププレビューを開く", "ショッププレビュー", "これは見た目だけのプレビューです。ここでは購入できません。", "カード", "レリック", "ポーション", "商品 {0}", "立ち姿", "攻撃"),
-            ["kor"] = new("상점 미리보기 열기", "상점 미리보기", "시각적 모형일 뿐이며 여기서는 아무것도 구매할 수 없습니다.", "카드", "유물", "물약", "상품 {0}", "서 있기", "공격"),
-            ["pol"] = new("Otwórz podgląd sklepu", "Podgląd sklepu", "To tylko wizualna makieta; tutaj niczego nie można kupić.", "Karty", "Relikty", "Mikstury", "Przedmiot {0}", "Postawa", "Atak"),
-            ["ptb"] = new("Abrir prévia da loja", "Prévia da loja", "Apenas uma simulação visual; nada pode ser comprado aqui.", "Cartas", "Relíquias", "Poções", "Item {0}", "Parado", "Ataque"),
-            ["rus"] = new("Открыть предпросмотр магазина", "Предпросмотр магазина", "Это только визуальная имитация; покупать здесь нельзя.", "Карты", "Реликвии", "Зелья", "Товар {0}", "Стойка", "Атака"),
-            ["spa"] = new("Abrir vista de tienda", "Vista de tienda", "Solo es una maqueta visual; aquí no se puede comprar nada.", "Cartas", "Reliquias", "Pociones", "Objeto {0}", "De pie", "Ataque"),
-            ["tha"] = new("เปิดตัวอย่างร้านค้า", "ตัวอย่างร้านค้า", "เป็นเพียงหน้าจอจำลองเพื่อดูรูปแบบร้านค้า ไม่สามารถซื้อของได้", "การ์ด", "ของที่ระลึก", "โพชัน", "สินค้า {0}", "ท่ายืน", "โจมตี"),
-            ["tur"] = new("Mağaza önizlemesini aç", "Mağaza önizlemesi", "Bu yalnızca görsel bir makettir; burada alışveriş yapılamaz.", "Kartlar", "Kalıntılar", "İksirler", "Eşya {0}", "Ayakta", "Saldırı")
+            ["eng"] = new("Open shop preview", "Shop preview", "A visual mockup only; nothing can be bought here.", "Cards", "Relics", "Potions", "Item {0}", "Standing", "Attack", "Block", "Sleep", "Wake"),
+            ["zhs"] = new("打开商店预览", "商店预览", "这里只是查看商店布局的模拟界面，不会购买或改变游戏内容。", "卡牌", "遗物", "药水", "商品 {0}", "站姿", "攻击", "格挡", "休眠", "苏醒"),
+            ["zht"] = new("開啟商店預覽", "商店預覽", "這只是查看商店配置的模擬介面，不會購買或改變遊戲內容。", "卡牌", "遺物", "藥水", "商品 {0}", "站姿", "攻擊", "格擋", "休眠", "甦醒"),
+            ["deu"] = new("Shop-Vorschau öffnen", "Shop-Vorschau", "Nur eine visuelle Vorschau; hier kann nichts gekauft werden.", "Karten", "Relikte", "Tränke", "Artikel {0}", "Stehen", "Angriff", "Blocken", "Schlafen", "Aufwachen"),
+            ["esp"] = new("Abrir vista de tienda", "Vista de tienda", "Solo es una maqueta visual; aquí no se puede comprar nada.", "Cartas", "Reliquias", "Pociones", "Objeto {0}", "De pie", "Ataque", "Bloqueo", "Dormir", "Despertar"),
+            ["fra"] = new("Ouvrir l’aperçu de la boutique", "Aperçu de la boutique", "Ceci est une maquette visuelle ; aucun achat n’est possible ici.", "Cartes", "Reliques", "Potions", "Objet {0}", "Debout", "Attaque", "Blocage", "Sommeil", "Réveil"),
+            ["ita"] = new("Apri anteprima negozio", "Anteprima negozio", "Solo un modello visivo: qui non è possibile acquistare nulla.", "Carte", "Reliquie", "Pozioni", "Oggetto {0}", "In piedi", "Attacco", "Blocco", "Sonno", "Risveglio"),
+            ["jpn"] = new("ショッププレビューを開く", "ショッププレビュー", "これは見た目だけのプレビューです。ここでは購入できません。", "カード", "レリック", "ポーション", "商品 {0}", "立ち姿", "攻撃", "ブロック", "休眠", "目覚め"),
+            ["kor"] = new("상점 미리보기 열기", "상점 미리보기", "시각적 모형일 뿐이며 여기서는 아무것도 구매할 수 없습니다.", "카드", "유물", "물약", "상품 {0}", "서 있기", "공격", "방어", "수면", "기상"),
+            ["pol"] = new("Otwórz podgląd sklepu", "Podgląd sklepu", "To tylko wizualna makieta; tutaj niczego nie można kupić.", "Karty", "Relikty", "Mikstury", "Przedmiot {0}", "Postawa", "Atak", "Blok", "Sen", "Pobudka"),
+            ["ptb"] = new("Abrir prévia da loja", "Prévia da loja", "Apenas uma simulação visual; nada pode ser comprado aqui.", "Cartas", "Relíquias", "Poções", "Item {0}", "Parado", "Ataque", "Bloquear", "Dormir", "Acordar"),
+            ["rus"] = new("Открыть предпросмотр магазина", "Предпросмотр магазина", "Это только визуальная имитация; покупать здесь нельзя.", "Карты", "Реликвии", "Зелья", "Товар {0}", "Стойка", "Атака", "Блок", "Сон", "Пробуждение"),
+            ["spa"] = new("Abrir vista de tienda", "Vista de tienda", "Solo es una maqueta visual; aquí no se puede comprar nada.", "Cartas", "Reliquias", "Pociones", "Objeto {0}", "De pie", "Ataque", "Bloqueo", "Dormir", "Despertar"),
+            ["tha"] = new("เปิดตัวอย่างร้านค้า", "ตัวอย่างร้านค้า", "เป็นเพียงหน้าจอจำลองเพื่อดูรูปแบบร้านค้า ไม่สามารถซื้อของได้", "การ์ด", "ของที่ระลึก", "โพชัน", "สินค้า {0}", "ท่ายืน", "โจมตี", "ป้องกัน", "หลับ", "ตื่น"),
+            ["tur"] = new("Mağaza önizlemesini aç", "Mağaza önizlemesi", "Bu yalnızca görsel bir makettir; burada alışveriş yapılamaz.", "Kartlar", "Kalıntılar", "İksirler", "Eşya {0}", "Ayakta", "Saldırı", "Blok", "Uyku", "Uyan")
         };
 
     private static OtherPreviewLanguagePack OtherPreviewText =>
@@ -612,7 +616,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private VBoxContainer _otherActionSelector = null!;
     private Node? _otherPreviewInstance;
     private string? _otherPreviewGroupId;
-    private readonly List<(Button Button, string[] Aliases)> _otherActionButtons = [];
+    private readonly List<(Button Button, OtherCreatureActionDefinition Action)>
+        _otherActionButtons = [];
     private AncientEventModel? _selectedAncient;
     private OtherEntry? _selectedOther;
     private OtherCategory _selectedCategory = OtherCategory.Ancients;
@@ -747,7 +752,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         // 不再提供一个重复的“站姿”按钮。
         _otherActionSelector.Position = new Vector2(650f, 430f);
         AddChild(_otherActionSelector);
-        AddOtherActionButton(OtherPreviewText.Attack, ["attack", "attack1", "attack_1", "atk", "bite"], loop: false);
 
         var sidebar = new MarginContainer
         {
@@ -840,10 +844,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void RefreshLocalizedText()
     {
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
-        var previewText = OtherPreviewText;
-        if (_otherActionButtons.Count > 0)
+        foreach (var action in _otherActionButtons)
         {
-            _otherActionButtons[0].Button.Text = previewText.Attack;
+            action.Button.Text = GetOtherActionText(action.Action.Kind);
         }
         foreach (var pair in _categoryButtons)
         {
@@ -873,14 +876,49 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
     }
 
-    private void AddOtherActionButton(string text, string[] animationAliases, bool loop)
+    private void RebuildOtherActionButtons(OtherCreatureDefinition? creature)
+    {
+        foreach (Node child in _otherActionSelector.GetChildren())
+        {
+            _otherActionSelector.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        _otherActionButtons.Clear();
+        if (creature == null)
+        {
+            _otherActionSelector.Visible = false;
+            return;
+        }
+
+        foreach (var action in creature.Actions)
+        {
+            AddOtherActionButton(action);
+        }
+    }
+
+    private static string GetOtherActionText(OtherCreatureActionKind kind)
+    {
+        var text = OtherPreviewText;
+        return kind switch
+        {
+            OtherCreatureActionKind.Attack => text.Attack,
+            OtherCreatureActionKind.Block => text.Block,
+            OtherCreatureActionKind.Sleep => text.Sleep,
+            OtherCreatureActionKind.Wake => text.Wake,
+            _ => kind.ToString()
+        };
+    }
+
+    private void AddOtherActionButton(OtherCreatureActionDefinition action)
     {
         var button = new Button
         {
-            Text = text,
+            Text = GetOtherActionText(action.Kind),
             CustomMinimumSize = new Vector2(104f, 44f),
             FocusMode = FocusModeEnum.All,
-            Alignment = HorizontalAlignment.Center
+            Alignment = HorizontalAlignment.Center,
+            Visible = false
         };
         ContextualSkinControls.ApplyGameTheme(button);
         button.Pressed += () =>
@@ -893,11 +931,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ManagedAncientSceneAnimation.TryPlay(
                 _otherPreviewInstance,
                 _otherPreviewGroupId,
-                animationAliases,
-                loop);
+                action.AnimationAliases,
+                action.Loop,
+                action.FollowUpAliases,
+                action.FollowUpLoop,
+                action.SfxPath);
         };
         _otherActionSelector.AddChild(button);
-        _otherActionButtons.Add((button, animationAliases));
+        _otherActionButtons.Add((button, action));
     }
 
     // The catalogue now uses the complete native merchant scene. The old synthetic inventory
@@ -1412,7 +1453,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var state = MerchantPreviewLayerPolicy.Resolve(
             _merchantInventoryOpen,
             _skinDropdown.ItemCount > 0,
-            _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true,
+            _otherActionButtons.Count > 0,
             IsVisibleInTree());
         PlaceMerchantInventoryBackButton(state);
         // The SubViewport contains the complete native shop, including its own BackButton.
@@ -1637,7 +1678,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
         _epithetLabel.Text = string.Empty;
         _skinSelector.Visible = false;
-        _otherActionSelector.Visible = false;
+        RebuildOtherActionButtons(null);
         ClearPreview();
     }
 
@@ -1659,13 +1700,15 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 // by formal and beta and still contains the MerchantButton node.
                 "res://scenes/events/custom/fake_merchant.tscn")
         ],
-        OtherCategory.Creatures =>
-        [
-            new OtherEntry(
-                "byrdpip",
-                GetLocalizedTitle("monsters", "BYRDPIP.name", "异鸟宝宝"),
-                "res://scenes/creature_visuals/byrdpip.tscn")
-        ],
+        OtherCategory.Creatures => OtherCreatureCatalog.All
+            .Select(creature => new OtherEntry(
+                creature.Id,
+                GetLocalizedTitle(
+                    creature.LocalizationTable,
+                    creature.LocalizationKey,
+                    creature.FallbackTitle),
+                creature.ScenePath))
+            .ToArray(),
         _ => []
     };
 
@@ -1695,6 +1738,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 pair.Key.Equals(entry.Id, StringComparison.OrdinalIgnoreCase));
         }
 
+        RebuildOtherActionButtons(OtherCreatureCatalog.Find(entry.Id));
         PopulateSkinDropdown(FindOtherGroup(entry));
         RebuildOtherPreview(entry);
         RefreshAuxiliaryPreviewControls();
@@ -1747,6 +1791,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _selectedCategory = OtherCategory.Ancients;
         _selectedAncient = ancient;
         _selectedOther = null;
+        RebuildOtherActionButtons(null);
         _nameLabel.Text = AncientCompendiumEntry.GetTitle(ancient);
         try
         {
@@ -1854,6 +1899,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             _otherPreviewInstance = null;
             _otherPreviewGroupId = null;
             var group = FindOtherGroup(entry);
+            var creatureDefinition = OtherCreatureCatalog.Find(entry.Id);
             // PackedScene external resources (notably Spine skeleton data) can resolve lazily
             // during Instantiate. Keep the selected provider overlay mounted for the complete
             // load+instantiate operation so a previous skin cannot leak its skeleton into this
@@ -1887,11 +1933,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 previewScene = InstantiateOtherPreviewScene(entry, group);
                 instance = previewScene.Instance;
             }
-            if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+            if (creatureDefinition != null)
             {
-                // Byrdpip's root is NCreatureVisuals. That root expects a combat creature and
-                // can overwrite a provider's skeleton during _Ready. The authored Visuals node
-                // already contains the selected Spine resource, so preview it in isolation.
+                // Companion roots are NCreatureVisuals instances authored for a live combat
+                // creature. Preview their selected Visuals resource in isolation so a provider
+                // cannot replay creature initialization and replace the chosen skeleton.
                 instance = ExtractPreviewNode(instance, "Visuals", "SpineSprite");
             }
 
@@ -2008,15 +2054,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     instance,
                     group?.Id,
                     _otherActionButtons);
-                if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+                if (creatureDefinition != null)
                 {
-                    // The creature catalogue opens in its neutral standing pose, matching the
-                    // monster bestiary. Attack remains an optional action when the selected
-                    // Spine asset actually exposes one.
+                    // Every companion opens in its authored neutral pose. Only the actions that
+                    // exist in the selected skeleton are subsequently exposed as buttons.
                     ManagedAncientSceneAnimation.TryPlay(
                         instance,
                         group?.Id,
-                        ["idle_loop", "idle", "stand", "standing"],
+                        creatureDefinition.IdleAliases,
                         loop: true);
                 }
             }
@@ -2468,7 +2513,10 @@ internal static class ManagedAncientSceneAnimation
         Node sceneRoot,
         string? groupId,
         IReadOnlyList<string> aliases,
-        bool loop)
+        bool loop,
+        IReadOnlyList<string>? followUpAliases = null,
+        bool followUpLoop = true,
+        string? sfxPath = null)
     {
         var spineNode = FindSpineNode(sceneRoot);
         if (spineNode == null)
@@ -2487,17 +2535,7 @@ internal static class ManagedAncientSceneAnimation
                     var animationNames = sprite.GetSkeleton()?.GetData()?.GetAnimationNames();
                     var animation = animationNames == null
                         ? null
-                        : aliases.Select(alias => FindAnimation(animationNames, alias))
-                            .FirstOrDefault(candidate => candidate != null);
-                    // Some skin providers keep the authored animation but rename their neutral
-                    // loop. Only the idle/standing action may use a generic fallback; attack
-                    // buttons must stay hidden when no attack animation was supplied.
-                    if (animation == null && aliases.Any(IsIdleAlias))
-                    {
-                        animation = animationNames?.FirstOrDefault(name =>
-                            !name.Equals("Dummy", StringComparison.OrdinalIgnoreCase) &&
-                            !name.StartsWith("Touch_", StringComparison.OrdinalIgnoreCase));
-                    }
+                        : ResolveAnimation(animationNames, aliases);
                     if (animation == null)
                     {
                         ModLog.Warn($"{groupId ?? "其它图鉴"} 没有匹配动作：{string.Join(", ", aliases)}");
@@ -2507,18 +2545,24 @@ internal static class ManagedAncientSceneAnimation
                     SetAnimationCompat(animationState, animation, loop);
                     if (!loop)
                     {
-                        var idle = animationNames == null
+                        var nextAliases = followUpAliases ??
+                            ["idle_loop", "idle", "stand", "standing", "default", "animation"];
+                        var followUp = animationNames == null || nextAliases.Count == 0
                             ? null
-                            : FindAnimation(animationNames, "idle_loop") ??
-                              FindAnimation(animationNames, "idle") ??
-                              FindAnimation(animationNames, "stand") ??
-                              FindAnimation(animationNames, "standing") ??
-                              FindAnimation(animationNames, "default") ??
-                              FindAnimation(animationNames, "animation");
-                        if (idle != null)
+                            : ResolveAnimation(animationNames, nextAliases);
+                        if (followUp != null)
                         {
-                            AddAnimationCompat(animationState, idle, delay: 0f, loop: true);
+                            AddAnimationCompat(
+                                animationState,
+                                followUp,
+                                delay: 0f,
+                                loop: followUpLoop);
                         }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(sfxPath))
+                    {
+                        SfxCmd.Play(sfxPath);
                     }
 
                     ModLog.Info($"已播放 {groupId ?? "其它图鉴"} 动作：{animation}");
@@ -2538,9 +2582,10 @@ internal static class ManagedAncientSceneAnimation
     public static void ConfigureActions(
         Node sceneRoot,
         string? groupId,
-        IReadOnlyList<(Button Button, string[] Aliases)> actions)
+        IReadOnlyList<(Button Button, OtherCreatureActionDefinition Action)> actions)
     {
-        foreach (var action in actions)
+        var actionSnapshot = actions.ToArray();
+        foreach (var action in actionSnapshot)
         {
             action.Button.Visible = false;
         }
@@ -2562,10 +2607,13 @@ internal static class ManagedAncientSceneAnimation
                     return;
                 }
 
-                foreach (var action in actions)
+                foreach (var action in actionSnapshot)
                 {
-                    action.Button.Visible = action.Aliases.Any(alias =>
-                        FindAnimation(names, alias) != null);
+                    if (GodotObject.IsInstanceValid(action.Button))
+                    {
+                        action.Button.Visible = action.Action.AnimationAliases.Any(alias =>
+                            FindAnimation(names, alias) != null);
+                    }
                 }
             });
         }
@@ -2673,6 +2721,22 @@ internal static class ManagedAncientSceneAnimation
         string expectedName) =>
         animationNames.FirstOrDefault(name =>
             name.Equals(expectedName, StringComparison.OrdinalIgnoreCase));
+
+    private static string? ResolveAnimation(
+        IReadOnlyList<string> animationNames,
+        IReadOnlyList<string> aliases)
+    {
+        var animation = aliases
+            .Select(alias => FindAnimation(animationNames, alias))
+            .FirstOrDefault(candidate => candidate != null);
+        // Some providers rename only their neutral loop. A generic fallback is safe for
+        // idle/standing requests, but never for an explicit attack, block, sleep or wake action.
+        return animation ?? (aliases.Any(IsIdleAlias)
+            ? animationNames.FirstOrDefault(name =>
+                !name.Equals("Dummy", StringComparison.OrdinalIgnoreCase) &&
+                !name.StartsWith("Touch_", StringComparison.OrdinalIgnoreCase))
+            : null);
+    }
 
     private static bool IsIdleAlias(string alias) =>
         alias.Equals("idle_loop", StringComparison.OrdinalIgnoreCase) ||

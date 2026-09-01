@@ -102,4 +102,66 @@ previewFocus = MerchantPreviewFocusPolicy.Resolve(
     MerchantPreviewFocusEvent.ControllerUnfocused);
 Require(!previewFocus.IsFocused, "鼠标和手柄焦点都离开后必须恢复商人默认外观。");
 
-Console.WriteLine("Merchant appearance policy tests passed.");
+var creatures = OtherCreatureCatalog.All;
+Require(creatures.Count == 2, "其它图鉴必须登记异鸟宝宝和佩尔的士兵两个生物。");
+
+var byrdpip = OtherCreatureCatalog.Find("Byrdpip") ??
+               throw new InvalidOperationException("生物 ID 查找必须忽略大小写并识别异鸟宝宝。");
+Require(
+    byrdpip.ScenePath == "res://scenes/creature_visuals/byrdpip.tscn",
+    "异鸟宝宝必须绑定游戏原生生物场景。");
+Require(byrdpip.Actions.Count == 1, "异鸟宝宝只应公开实际使用的攻击动作。");
+var byrdpipAttack = byrdpip.Actions.Single();
+Require(
+    byrdpipAttack.Kind == OtherCreatureActionKind.Attack,
+    "异鸟宝宝的公开动作必须是攻击。");
+Require(
+    byrdpipAttack.SfxPath == OtherCreatureCatalog.ByrdpipAttackSfx,
+    "异鸟宝宝攻击预览必须复用游戏原生攻击音效。");
+Require(
+    byrdpipAttack.FollowUpAliases.Contains("idle_loop", StringComparer.OrdinalIgnoreCase),
+    "异鸟宝宝攻击后必须返回待机循环。");
+Require(
+    byrdpip.Actions.SelectMany(action => action.AnimationAliases)
+        .All(alias => !alias.Contains("egg", StringComparison.OrdinalIgnoreCase) &&
+                      !alias.Contains("ignore", StringComparison.OrdinalIgnoreCase)),
+    "蛋状态和制作期废弃动作不得出现在异鸟宝宝动作列表中。");
+
+var paelsLegion = OtherCreatureCatalog.Find("paels_legion") ??
+                  throw new InvalidOperationException("其它图鉴必须登记佩尔的士兵。");
+Require(
+    paelsLegion.LocalizationTable == "relics" &&
+    paelsLegion.LocalizationKey == "PAELS_LEGION.title",
+    "佩尔的士兵必须使用游戏当前的遗物本地化名称。");
+Require(
+    paelsLegion.ScenePath == "res://scenes/creature_visuals/paels_legion.tscn",
+    "佩尔的士兵必须绑定游戏原生生物场景。");
+Require(
+    paelsLegion.Actions.Select(action => action.Kind).SequenceEqual(
+        new[]
+        {
+            OtherCreatureActionKind.Block,
+            OtherCreatureActionKind.Sleep,
+            OtherCreatureActionKind.Wake
+        }),
+    "佩尔的士兵必须按格挡、休眠、苏醒展示原版动作。");
+Require(
+    paelsLegion.Actions[0].FollowUpAliases.Contains(
+        "block_loop",
+        StringComparer.OrdinalIgnoreCase),
+    "格挡动作必须衔接持续格挡循环。");
+Require(
+    paelsLegion.Actions[1].FollowUpAliases.Contains(
+        "sleep_loop",
+        StringComparer.OrdinalIgnoreCase),
+    "休眠动作存在循环资源时必须衔接休眠循环。");
+Require(
+    paelsLegion.Actions[2].FollowUpAliases.Contains(
+        "idle_loop",
+        StringComparer.OrdinalIgnoreCase),
+    "苏醒动作必须返回待机循环。");
+Require(
+    paelsLegion.Actions.All(action => action.SfxPath == null),
+    "游戏没有为佩尔的士兵动作注册独立音效时，不应伪造音效。");
+
+Console.WriteLine("Skin Changer logic policy tests passed.");
