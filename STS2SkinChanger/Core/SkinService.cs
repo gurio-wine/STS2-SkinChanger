@@ -71,6 +71,7 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> WarmingRuntimeProviderPacks =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly SemaphoreSlim RuntimePackWarmGate = new(1, 1);
     private static RuntimeProviderScope _runtimeProviderBehaviorScope = new([], false);
     private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
@@ -92,6 +93,7 @@ internal static class SkinService
         "mock"
     };
     private static int _overlayGeneration;
+    private static int _runtimePackWarmGeneration;
     private static string _sessionId =
         $"{DateTime.Now:yyyyMMdd-HHmmss}-{System.Environment.ProcessId}-{Guid.NewGuid():N}";
     private static bool _initialized;
@@ -438,6 +440,7 @@ internal static class SkinService
                 RuntimeCanonicalDependencyPaths.Clear();
                 WarmedRuntimeProviderPacks.Clear();
                 WarmingRuntimeProviderPacks.Clear();
+                _runtimePackWarmGeneration++;
                 _runtimeProviderBehaviorScope = new RuntimeProviderScope([], false);
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
@@ -778,6 +781,7 @@ internal static class SkinService
         IEnumerable<string> activeProviders,
         string reason)
     {
+        var generation = ++_runtimePackWarmGeneration;
         var paths = new List<string>();
         foreach (var path in activeProviders
                      .SelectMany(catalog.GetProviderResourcePackPaths)
@@ -809,17 +813,31 @@ internal static class SkinService
 
         if (paths.Count > 0)
         {
-            _ = WarmRuntimeProviderPacksAsync(paths, reason);
+            _ = WarmRuntimeProviderPacksAsync(paths, reason, generation);
         }
     }
 
     private static async Task WarmRuntimeProviderPacksAsync(
         IReadOnlyCollection<string> paths,
-        string reason)
+        string reason,
+        int generation)
     {
         var started = Stopwatch.GetTimestamp();
+        await RuntimePackWarmGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            lock (Sync)
+            {
+                if (generation != _runtimePackWarmGeneration)
+                {
+                    foreach (var path in paths)
+                    {
+                        WarmingRuntimeProviderPacks.Remove(path);
+                    }
+                    return;
+                }
+            }
+
             await WarmResourcePackFilesAsync(paths).ConfigureAwait(false);
             lock (Sync)
             {
@@ -851,6 +869,10 @@ internal static class SkinService
             ModLog.Info(
                 $"后台预读{reason}皮肤资源未完成，将在实际加载时继续：" +
                 exception.GetBaseException().Message);
+        }
+        finally
+        {
+            RuntimePackWarmGate.Release();
         }
     }
 
