@@ -2,6 +2,7 @@ using STS2SkinChanger.Core;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Ui;
 using System.Reflection;
+using System.Runtime.Loader;
 
 static void Require(bool condition, string message)
 {
@@ -187,6 +188,22 @@ Require(
 Require(
     AssemblyName.GetAssemblyName(frameworkCompatibilityPath).Name == "thunninoiSkinManager",
     "兼容层的 CLR 程序集标识必须与皮肤 DLL 声明的框架引用完全一致。");
+
+var isolatedHostContext = new AssemblyLoadContext(
+    "skin-changer-framework-host-test",
+    isCollectible: true);
+var isolatedHostAssembly = isolatedHostContext.LoadFromAssemblyPath(
+    typeof(OptionalSkinFrameworkPolicy).Assembly.Location);
+var isolatedAdapterAssembly = FrameworkAssemblyLoadContextPolicy.LoadFromAssemblyPath(
+    isolatedHostAssembly,
+    frameworkCompatibilityPath);
+Require(
+    ReferenceEquals(
+        AssemblyLoadContext.GetLoadContext(isolatedAdapterAssembly),
+        isolatedHostContext),
+    "内置兼容程序集必须加载到游戏宿主程序集所在的上下文，不能固定加载到 Default 上下文。" +
+    "否则 Godot 自定义上下文中的 ModelId 会成为不同 CLR 类型，注册接口无法匹配。");
+isolatedHostContext.Unload();
 
 var open = MerchantPreviewLayerPolicy.Resolve(
     inventoryOpen: true,

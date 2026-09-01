@@ -17,6 +17,8 @@
              Link="RuntimeDependencyIsolationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/OptionalSkinFrameworkPolicy.cs"
              Link="OptionalSkinFrameworkPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/FrameworkAssemblyLoadContextPolicy.cs"
+             Link="FrameworkAssemblyLoadContextPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs"
              Link="FrameworkSkinContractScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/OtherCreatureCatalog.cs"

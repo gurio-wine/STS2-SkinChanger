@@ -1,6 +1,5 @@
 using MegaCrit.Sts2.Core.Models;
 using System.Reflection;
-using System.Runtime.Loader;
 using STS2SkinChanger.Catalog;
 
 namespace STS2SkinChanger.Core;
@@ -83,7 +82,9 @@ internal static class FrameworkCompatibilityLayer
             }
             else
             {
-                _adapterAssembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(adapterPath);
+                _adapterAssembly = FrameworkAssemblyLoadContextPolicy.LoadFromAssemblyPath(
+                    typeof(Entry).Assembly,
+                    adapterPath);
             }
 
             var registry = _adapterAssembly.GetType(RegistryTypeName, throwOnError: true)!;
