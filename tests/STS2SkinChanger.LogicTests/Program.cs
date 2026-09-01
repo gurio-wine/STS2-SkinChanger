@@ -60,6 +60,19 @@ Require(
         requestsAncientLayout: false),
     "只同时导出普通图和先古图不能让所有普通牌误用先古卡图。");
 
+Require(
+    !RuntimeDependencyIsolationPolicy.CanReuseMountedProviderDependency(
+        belongsToSelectedProvider: true,
+        isProviderExclusivePath: false,
+        isMountedBySelectedOverlay: true),
+    "使用游戏公共路径的骨骼、图集和贴图必须进入本次皮肤的独立资源包，不能复用先加载皮肤留下的缓存。");
+Require(
+    RuntimeDependencyIsolationPolicy.CanReuseMountedProviderDependency(
+        belongsToSelectedProvider: true,
+        isProviderExclusivePath: true,
+        isMountedBySelectedOverlay: true),
+    "提供者独占路径中的大型依赖可以继续复用已挂载资源，避免大型皮肤重复打包。");
+
 var open = MerchantPreviewLayerPolicy.Resolve(
     inventoryOpen: true,
     hasSkinOptions: true,

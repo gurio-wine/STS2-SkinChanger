@@ -4,6 +4,7 @@ using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using STS2SkinChanger.Core;
 using STS2SkinChanger.Pck;
 
 namespace STS2SkinChanger.Catalog;
@@ -2878,13 +2879,12 @@ internal sealed partial class SkinCatalog : IDisposable
             queue.Enqueue(runtimeResource);
 
             // The globally mounted visual overlay already exposes the selected provider's
-            // dependency graph at canonical paths. Keep walking those resources so a dependency
-            // filtered out of the global mount is still isolated, but do not copy the mounted
-            // payloads into every temporary alias PCK. Explicit runtime loads use
-            // CacheMode.IgnoreDeep, so even shared game/provider paths are read fresh from the
-            // currently authoritative overlay instead of reusing an older cached object.
+            // dependency graph. Keep provider-exclusive paths there to avoid copying a large
+            // private animation package into every temporary PCK. Public game paths and paths
+            // shared by multiple providers must still be copied below: native Godot/Spine caches
+            // can retain the first provider's object even when the mounted bytes have changed.
             if (reuseMountedPrivateDependencies &&
-                CanReuseMountedPrivateDependency(asset, index))
+                CanReuseMountedPrivateDependency(sourcePath, asset, index))
             {
                 return;
             }
@@ -2943,33 +2943,51 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         bool CanReuseMountedPrivateDependency(
+            string sourcePath,
             ResourceAsset asset,
             PckResourceIndex? index)
         {
-            if (selected == null ||
-                index == null ||
-                !index.Mod.Id.Equals(
+            var belongsToSelectedProvider =
+                selected != null &&
+                index != null &&
+                index.Mod.Id.Equals(
                     selected.EffectiveProviderId,
-                    StringComparison.OrdinalIgnoreCase) ||
-                !asset.Files.Any(file => ReferenceEquals(file.Archive, index.Archive)))
-            {
-                return false;
-            }
+                    StringComparison.OrdinalIgnoreCase) &&
+                asset.Files.Any(file => ReferenceEquals(file.Archive, index.Archive));
 
             var providerFiles = asset.Files
-                .Where(file => ReferenceEquals(file.Archive, index.Archive))
+                .Where(file => index != null && ReferenceEquals(file.Archive, index.Archive))
                 .ToArray();
-            if (providerFiles.Length == 0)
-            {
-                return false;
-            }
+            var isMountedBySelectedOverlay = selected != null &&
+                providerFiles.Length > 0 &&
+                providerFiles.All(file =>
+                    !isolatedRelicProviderPaths.Contains(NormalizeTakeoverPath(file.Path)) &&
+                    ShouldMountProviderDependency(selected!, file.Path, selectableProviderFiles));
+
+            // A logical game path, or a provider-only path supplied by more than one skin Mod,
+            // can already be owned by a previously mounted pack and by Godot/Spine's native
+            // resource cache. Such paths must be copied into this selection's fresh alias PCK.
+            // Only paths unique to the selected provider are safe to reuse from its complete pack;
+            // this preserves the large-provider optimization without letting the first skin win.
+            var normalizedSourcePath = NormalizeTakeoverPath(sourcePath);
+            var isProviderExclusivePath =
+                ResolveBaseline(sourcePath) == null &&
+                !_cosmeticIndexes.Any(candidate =>
+                    !candidate.Mod.Id.Equals(
+                        selected?.EffectiveProviderId,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    (candidate.Assets.ContainsKey(sourcePath) ||
+                     candidate.Assets.ContainsKey(normalizedSourcePath) ||
+                     candidate.Archive.Contains(sourcePath) ||
+                     candidate.Archive.Contains(normalizedSourcePath)));
 
             // Mirror BuildOverlay's filtering exactly. Provider resources excluded there (for
             // example another independently selectable creature or an isolated relic atlas)
             // cannot be reused canonically and therefore stay in this private alias package.
-            return providerFiles.All(file =>
-                !isolatedRelicProviderPaths.Contains(NormalizeTakeoverPath(file.Path)) &&
-                ShouldMountProviderDependency(selected, file.Path, selectableProviderFiles));
+            return RuntimeDependencyIsolationPolicy.CanReuseMountedProviderDependency(
+                belongsToSelectedProvider,
+                isProviderExclusivePath,
+                isMountedBySelectedOverlay);
         }
     }
 
