@@ -493,6 +493,9 @@ internal static class SkinService
 
             try
             {
+                FrameworkCompatibilityLayer.SynchronizeSelections(
+                    Catalog,
+                    GetVisualSelections());
                 InitializeMonsterSkinCategoriesAfterModels();
                 var cards = ModelDb.AllCards.ToArray();
                 var entries = cards.Select(card => new CardCatalogEntry(

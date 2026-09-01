@@ -189,6 +189,35 @@ Require(
     AssemblyName.GetAssemblyName(frameworkCompatibilityPath).Name == "thunninoiSkinManager",
     "兼容层的 CLR 程序集标识必须与皮肤 DLL 声明的框架引用完全一致。");
 
+var earlyFrameworkSyncCalls = 0;
+var earlyFrameworkSyncCount = FrameworkSelectionSynchronizer.Synchronize(
+    Array.Empty<string>(),
+    character =>
+    {
+        earlyFrameworkSyncCalls++;
+        return character;
+    },
+    _ =>
+    {
+        earlyFrameworkSyncCalls++;
+        return "selected";
+    },
+    (_, _) => earlyFrameworkSyncCalls++);
+Require(
+    earlyFrameworkSyncCount == 0 && earlyFrameworkSyncCalls == 0,
+    "游戏模型数据库尚未注册任何角色时，框架选择同步必须完全跳过，不能读取固定角色并中断 SkinService 初始化。");
+
+var synchronizedFrameworkSkins = new List<string>();
+var readyFrameworkSyncCount = FrameworkSelectionSynchronizer.Synchronize(
+    new[] { "DEFECT", "WATCHER" },
+    character => character.ToLowerInvariant(),
+    groupId => groupId == "defect" ? "ceterna" : null,
+    (character, skinId) => synchronizedFrameworkSkins.Add(character + ":" + skinId));
+Require(
+    readyFrameworkSyncCount == 2 &&
+    synchronizedFrameworkSkins.SequenceEqual(["DEFECT:ceterna", "WATCHER:default"]),
+    "模型数据库就绪后，框架同步必须覆盖所有已注册角色，并让没有框架皮肤的角色回到默认选择。");
+
 var isolatedHostContext = new AssemblyLoadContext(
     "skin-changer-framework-host-test",
     isCollectible: true);

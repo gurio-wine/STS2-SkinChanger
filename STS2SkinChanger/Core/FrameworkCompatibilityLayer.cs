@@ -1,4 +1,5 @@
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Characters;
 using System.Reflection;
 using STS2SkinChanger.Catalog;
 
@@ -135,17 +136,24 @@ internal static class FrameworkCompatibilityLayer
             return;
         }
 
-        foreach (var character in ModelDb.AllCharacters)
-        {
-            var groupId = NormalizeToken(character.Id.Entry);
-            var contract = catalog.TryGetSelectedFrameworkContract(
+        // ModelDb.AllCharacters dereferences the five built-in singleton entries and throws while
+        // Essential initialization is still building the database. Contains(Type) is available in
+        // both supported game versions and only checks the backing dictionary, so use it as the
+        // readiness gate before touching those singleton getters.
+        var registeredCharacters = ModelDb.Contains(typeof(Ironclad))
+            ? ModelDb.AllCharacters
+            : Enumerable.Empty<CharacterModel>();
+        FrameworkSelectionSynchronizer.Synchronize(
+            registeredCharacters,
+            character => NormalizeToken(character.Id.Entry),
+            groupId => catalog.TryGetSelectedFrameworkContract(
                 groupId,
                 selections.GetValueOrDefault(groupId),
                 out var selected)
-                ? selected
-                : null;
-            _setActiveSkin.Invoke(null, [character.Id, contract?.SkinId ?? "default"]);
-        }
+                ? selected.SkinId
+                : null,
+            (character, skinId) =>
+                _setActiveSkin.Invoke(null, [character.Id, skinId]));
     }
 
     public static void NotifyProviderActivated(Assembly providerAssembly)
