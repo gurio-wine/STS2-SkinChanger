@@ -1742,9 +1742,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // PackedScene external resources (notably Spine skeleton data) can resolve lazily
             // during Instantiate. Keep the selected provider overlay mounted for the complete
             // load+instantiate operation so a previous skin cannot leak its skeleton into this
-            // preview. v0.111 has standalone merchant button scenes; v0.107 embeds the same
-            // button in the room/event scene, so try the standalone resource first and fall back
-            // to the shared scene without assuming either version.
+            // preview.
             var isMerchant = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase);
             var isFakeMerchant = entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase);
             (Node Instance, string ScenePath) previewScene;
@@ -1756,12 +1754,17 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 // MerchantVisual through a provider-specific path; the catalogue must not use a
                 // second, subtly different scene-discovery implementation.
                 var merchantButton = MerchantRuntimeAppearance.InstantiateMerchantButton(
-                    isFakeMerchant ? "fake_merchant_monster" : MerchantRuntimeAppearance.GroupId);
+                    isFakeMerchant
+                        ? MerchantRuntimeAppearance.FakeMerchantGroupId
+                        : MerchantRuntimeAppearance.GroupId);
                 MakePreviewCanvasVisible(merchantButton);
                 instance = merchantButton;
-                previewScene = (instance, isFakeMerchant
-                    ? "res://scenes/events/custom/fake_merchant_button.tscn"
-                    : "res://scenes/rooms/merchant_button.tscn");
+                previewScene = (
+                    instance,
+                    MerchantRuntimeAppearance.GetMerchantScenePath(
+                        isFakeMerchant
+                            ? MerchantRuntimeAppearance.FakeMerchantGroupId
+                            : MerchantRuntimeAppearance.GroupId));
             }
             else
             {
@@ -1843,37 +1846,26 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 ModLog.Info(
                     $"商人预览节点 {entry.Id}: rootVisible={instance is CanvasItem rootCanvas && rootCanvas.Visible}, " +
                     $"visualVisible={visual?.Visible}, visualModulate={visual?.Modulate}");
-                CenterMerchantVisualWhenReady(instance, entry.Id);
             }
             _otherPreviewInstance = instance;
             _otherPreviewGroupId = group?.Id;
             if (instance is Control control)
             {
-                if (isMerchant || isFakeMerchant)
-                {
-                    // MerchantButton/FakeMerchantButton already use the game's center anchors
-                    // and authored offsets. Re-centering the root a second time moves the
-                    // MerchantVisual far outside the viewport (and was the reason both the
-                    // default and ATA merchant disappeared). Preserve that native layout and
-                    // only apply the catalogue size adjustment.
-                    control.Scale *= isMerchant ? 0.72f : 1.00f;
-                }
-                else
+                if (!isMerchant && !isFakeMerchant)
                 {
                     control.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
                     control.Position = new Vector2(960f, 540f);
                     control.Scale *= 1.35f;
                 }
+                // Merchant previews deliberately skip that block: preserve the exact anchors,
+                // offsets and scale authored by the real/fake merchant scene. Applying a
+                // catalogue multiplier made their apparent size depend on the selected provider.
                 control.MouseFilter = MouseFilterEnum.Ignore;
             }
             else if (instance is Node2D node)
             {
                 node.Position = new Vector2(960f, 600f);
-                var previewMultiplier = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
-                    ? 0.72f
-                    : entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
-                        ? 1.00f
-                    : 1.35f;
+                const float previewMultiplier = 1.35f;
                 // Keep the scale authored by the scene/provider. Replacing it with a unit
                 // scale was what made the merchant fill the whole compendium on some skins.
                 node.Scale *= previewMultiplier;
@@ -2029,65 +2021,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
             {
                 Reveal(visual);
             }
-        }
-    }
-
-    private void CenterMerchantVisualWhenReady(Node root, string entryId)
-    {
-        var visual = root.FindChild("MerchantVisual", recursive: true, owned: false) as Node2D;
-        if (visual == null)
-        {
-            ModLog.Warn($"{entryId} 预览缺少 MerchantVisual，无法计算模型边界。");
-            return;
-        }
-
-        try
-        {
-            var sprite = new MegaSprite(visual);
-            root.RunWhenSpineReady(sprite, _ =>
-            {
-                try
-                {
-                    if (!GodotObject.IsInstanceValid(visual) || !visual.IsInsideTree())
-                    {
-                        return;
-                    }
-
-                    var skeleton = sprite.GetSkeleton();
-                    if (skeleton == null)
-                    {
-                        ModLog.Warn($"{entryId} 预览 Spine 已回调但没有骨骼。");
-                        return;
-                    }
-
-                    var bounds = skeleton.GetBounds();
-                    if (bounds.Size.X <= 0f || bounds.Size.Y <= 0f)
-                    {
-                        ModLog.Warn($"{entryId} 预览 Spine 边界为空：{bounds}");
-                        return;
-                    }
-
-                    // MerchantVisual's authored position differs between game versions and
-                    // skin mods. Center the actual rendered skeleton bounds, not its node origin;
-                    // this avoids a hard-coded offset and keeps unusually sized merchant skins
-                    // visible while preserving each skin's own scale and animation.
-                    var localCenter = bounds.Position + bounds.Size * 0.5f;
-                    var renderedCenter = visual.GlobalTransform * localCenter;
-                    var targetCenter = new Vector2(960f, 540f);
-                    visual.GlobalPosition += targetCenter - renderedCenter;
-                    ModLog.Info(
-                        $"商人预览已按骨骼边界居中 {entryId}: bounds={bounds}, " +
-                        $"center={renderedCenter}->{targetCenter}, global={visual.GlobalPosition}");
-                }
-                catch (Exception exception)
-                {
-                    ModLog.Warn($"居中 {entryId} 商人预览失败：{exception.GetBaseException().Message}");
-                }
-            });
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"准备 {entryId} 商人预览边界失败：{exception.GetBaseException().Message}");
         }
     }
 

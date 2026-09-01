@@ -17,8 +17,9 @@ namespace STS2SkinChanger.Ui;
 internal static class MerchantRuntimeAppearance
 {
     internal const string GroupId = "merchant";
-    private const string MerchantButtonScenePath = "res://scenes/rooms/merchant_button.tscn";
+    internal const string FakeMerchantGroupId = "fake_merchant_monster";
     private const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
+    private const string FakeMerchantScenePath = "res://scenes/events/custom/fake_merchant.tscn";
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
     private const string PlayerBasePositionMeta = "skin_changer_shop_player_base_position";
     private const string PlayerBaseScaleMeta = "skin_changer_shop_player_base_scale";
@@ -411,7 +412,7 @@ internal static class MerchantRuntimeAppearance
         {
             previous = fakeMerchant.MerchantButton;
             previousName = previous.Name;
-            replacement = InstantiateMerchantButton("fake_merchant_monster");
+            replacement = InstantiateMerchantButton(FakeMerchantGroupId);
             ReplaceMerchantButtonCore(
                 previous,
                 replacement,
@@ -426,7 +427,7 @@ internal static class MerchantRuntimeAppearance
             previous.GetParent()?.RemoveChild(previous);
             previous.QueueFree();
 
-            var providerId = SkinService.GetSelectedFullRuntimeProvider("fake_merchant_monster");
+            var providerId = SkinService.GetSelectedFullRuntimeProvider(FakeMerchantGroupId);
             ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(
                 fakeMerchant,
                 providerId == null ? [] : [providerId]);
@@ -727,51 +728,26 @@ internal static class MerchantRuntimeAppearance
     internal static NMerchantButton InstantiateMerchantButton(
         string groupId = GroupId)
     {
-        // v0.111.0 introduced a standalone merchant_button.tscn. Older formal builds keep the
-        // same node embedded in merchant_room.tscn, so use the standalone scene when available
-        // and extract the embedded node as a version-neutral fallback.
-        // InstantiateRuntimeScene is deliberate here: GetOrLoadRuntimeScene returns a PackedScene
-        // after its temporary resource scope has already been restored. Spine external resources
-        // in that scene are lazy, so instantiating afterwards can leave MerchantVisual with a
-        // valid-looking node but no drawable skeleton (the catalogue symptom was a blank merchant
-        // for both the default and every skin). Keep loading and Instantiate in the same overlay
-        // scope, exactly like the live merchant replacement path.
-        try
-        {
-            var button = SkinService.InstantiateRuntimeScene<NMerchantButton>(
-                groupId,
-                MerchantButtonScenePath);
-            SetOwnerRecursive(button, button);
-            return button;
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn($"独立商人按钮场景不可用，改用商人房间场景：{exception.GetBaseException().Message}");
-        }
-
-        NMerchantRoom roomTemplate;
-        try
-        {
-            // The formal build embeds MerchantButton in merchant_room.tscn. Instantiate the
-            // complete room while its provider overlay is still mounted, then detach the button
-            // before returning it so all lazy Spine dependencies remain bound to the selected
-            // provider rather than the previous merchant skin.
-            roomTemplate = SkinService.InstantiateRuntimeScene<NMerchantRoom>(
-                groupId,
-                MerchantRoomScenePath);
-        }
-        catch
-        {
-            var roomScene = LoadRuntimeOrBaseScene(MerchantRoomScenePath, groupId);
-            roomTemplate = roomScene.Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
-        }
+        var scenePath = GetMerchantScenePath(groupId);
+        // Build the same complete scene that the game uses for this entity. In particular, the
+        // fake merchant has its own MerchantButton offsets and skeleton inside fake_merchant.tscn;
+        // loading the normal standalone button made its default preview indistinguishable from
+        // the real merchant. Keep load+instantiate inside the selected provider overlay so lazy
+        // Spine dependencies also come from the selected skin.
+        var sceneTemplate = SkinService.InstantiateRuntimeScene<Node>(groupId, scenePath);
 
         try
         {
-            var button = roomTemplate.GetNode<NMerchantButton>("SceneContainer/MerchantButton");
+            var button = sceneTemplate.GetNodeOrNull<NMerchantButton>("SceneContainer/MerchantButton") ??
+                         sceneTemplate.FindChild(
+                             "MerchantButton",
+                             recursive: true,
+                             owned: false) as NMerchantButton ??
+                         throw new InvalidOperationException(
+                             $"原生商人场景缺少 SceneContainer/MerchantButton：{scenePath}");
             button.GetParent()?.RemoveChild(button);
-            // The formal build embeds this node in merchant_room.tscn. Give the extracted tree
-            // its own scene owner before freeing the temporary room; otherwise %MerchantVisual
+            // Give the extracted tree its own scene owner before freeing the temporary full
+            // scene; otherwise %MerchantVisual
             // and %MerchantSelectionReticle resolve to the freed template and the button's
             // _Ready path receives Nil.
             SetOwnerRecursive(button, button);
@@ -779,12 +755,17 @@ internal static class MerchantRuntimeAppearance
         }
         finally
         {
-            if (GodotObject.IsInstanceValid(roomTemplate))
+            if (GodotObject.IsInstanceValid(sceneTemplate))
             {
-                roomTemplate.Free();
+                sceneTemplate.Free();
             }
         }
     }
+
+    internal static string GetMerchantScenePath(string groupId = GroupId) =>
+        groupId.Equals(FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase)
+            ? FakeMerchantScenePath
+            : MerchantRoomScenePath;
 
     private static PackedScene LoadRuntimeOrBaseScene(
         string scenePath,
