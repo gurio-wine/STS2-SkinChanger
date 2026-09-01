@@ -584,15 +584,16 @@ internal static class ManagedSkinModLoader
             }
 
             var installedPatches = CaptureProviderPatches(assembly);
-            // Only postfixes can be replayed after Skin Changer rebuilds the baseline.  Prefixes,
-            // transpilers and finalizers on the same entry points are still isolated below, but
-            // replaying them would re-run gameplay/input side effects (and, for Harmony
-            // `__state`, would require a matching prefix invocation).
+            // Keep the complete set of node-ready presentation callbacks.  Existing nodes still
+            // replay only postfixes (see ReplaySelectedNodeReadyBehavior), while freshly created
+            // visual nodes may safely replay their visual prefixes as well.  Merchant skins such
+            // as ATA and Merchant2CuteII put their actual skeleton/scale replacement in a Prefix;
+            // dropping it here made every hot-created merchant silently fall back to vanilla.
             var presentationPatches = installedPatches
                 .Where(IsReplayableCharacterPresentationPatch)
                 .ToArray();
             var nodeReadyPresentationPatches = installedPatches
-                .Where(IsReplayableNodeReadyPresentationPatch)
+                .Where(patch => IsNodeReadyPresentationTarget(patch.Target))
                 .ToArray();
             var managedPatches = installedPatches
                 .Where(patch =>
@@ -784,10 +785,6 @@ internal static class ManagedSkinModLoader
         IsCharacterPresentationTarget(patch.Target);
 
     private static bool IsManagedNodeReadyPresentationPatch(ProviderPatch patch) =>
-        IsNodeReadyPresentationTarget(patch.Target);
-
-    private static bool IsReplayableNodeReadyPresentationPatch(ProviderPatch patch) =>
-        patch.Kind == ProviderPatchKind.Postfix &&
         IsNodeReadyPresentationTarget(patch.Target);
 
     private static bool IsNodeReadyPresentationTarget(MethodBase target) =>
@@ -1151,7 +1148,8 @@ internal static class ManagedSkinModLoader
     /// </summary>
     public static IReadOnlyList<Node> ReplaySelectedNodeReadyBehavior(
         string providerId,
-        Node node)
+        Node node,
+        bool includePrefixes = false)
     {
         if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
             !GodotObject.IsInstanceValid(node))
@@ -1166,11 +1164,12 @@ internal static class ManagedSkinModLoader
             foreach (var patch in runtime.Patches
                          .Concat(runtime.NodeReadyPresentationPatches)
                          .Where(patch =>
-                             // Replaying a _Ready prefix can repeat one-shot subscriptions,
-                             // input blocking, or __state setup without the original call
-                             // sequence. Existing nodes only need the visual postfix; prefixes
-                             // still run normally when a fresh scene is instantiated.
-                             patch.Kind == ProviderPatchKind.Postfix &&
+                             // Existing nodes only need the visual postfix. A freshly attached
+                             // node can additionally replay visual prefixes; callers opt into that
+                             // path explicitly after the node has entered its original parent
+                             // hierarchy. Transpilers/finalizers remain isolated.
+                             (patch.Kind == ProviderPatchKind.Postfix ||
+                              (includePrefixes && patch.Kind == ProviderPatchKind.Prefix)) &&
                              patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
                              patch.Target.DeclaringType?.IsInstanceOfType(node) == true))
             {

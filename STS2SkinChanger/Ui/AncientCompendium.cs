@@ -1792,12 +1792,29 @@ internal partial class AncientCompendiumScreen : NSubmenu
                         "MerchantButton",
                         recursive: true,
                         owned: false);
+                    var nativeInventory = instance.FindChild(
+                        "Inventory",
+                        recursive: true,
+                        owned: false);
                     if (providerId != null && nativeButton != null)
                     {
-                        // Provider visual postfixes normally target NMerchantButton. Replay them
-                        // on that native child only; replaying NMerchantRoom/NFakeMerchant would
-                        // invoke gameplay initialization without a live run.
-                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, nativeButton);
+                        // Provider _Ready callbacks are isolated globally. This is a fresh button
+                        // already attached below the real NMerchantRoom/NFakeMerchant root, so
+                        // replay the visual Prefix and Postfix once in that original hierarchy.
+                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
+                            providerId,
+                            nativeButton,
+                            includePrefixes: true);
+                    }
+                    if (providerId != null && nativeInventory is NMerchantInventory merchantInventory)
+                    {
+                        // Merchant2CuteII adds its leg in NMerchantInventory._Ready Prefix. It is
+                        // part of the native shop appearance and must be present in the catalogue
+                        // too; the callback is safe here because this is a newly created inventory.
+                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
+                            providerId,
+                            merchantInventory,
+                            includePrefixes: true);
                     }
 
                     // Reconnect the normal merchant's own signal path after skipping the gameplay
