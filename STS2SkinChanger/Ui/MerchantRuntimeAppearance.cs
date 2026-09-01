@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Merchant;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Characters;
 using MegaCrit.Sts2.Core.Models.Events;
@@ -111,6 +112,85 @@ internal static class MerchantRuntimeAppearance
             return;
         }
 
+        var target = node switch
+        {
+            NMerchantButton => MerchantProviderReadyTarget.Button,
+            NMerchantHand => MerchantProviderReadyTarget.Hand,
+            _ => MerchantProviderReadyTarget.Inventory
+        };
+        if (MerchantProviderReadyPolicy.ResolvePostfixTiming(target) ==
+            MerchantProviderPostfixTiming.NextFrameThenSpineReady)
+        {
+            // A provider prefix can replace skeleton_data_res while the outgoing skeleton still
+            // reports a ready animation state. Defer one frame before resolving MegaSprite, then
+            // use the game's own readiness gate so the provider registers the final skeleton.
+            Callable.From(() => CompleteSelectedMerchantSpineNodeReady(node, providerId))
+                .CallDeferred();
+            return;
+        }
+
+        CompleteSelectedMerchantNodeReadyCore(node, providerId);
+    }
+
+    private static void CompleteSelectedMerchantSpineNodeReady(Node node, string providerId)
+    {
+        if (!IsSelectedProviderForNode(node, providerId))
+        {
+            return;
+        }
+
+        try
+        {
+            var spineNode = node switch
+            {
+                NMerchantButton button => button.GetNodeOrNull<Node>("%MerchantVisual"),
+                NMerchantHand hand => hand.GetParent<Node2D>(),
+                _ => null
+            };
+            if (spineNode == null || !GodotObject.IsInstanceValid(spineNode))
+            {
+                CompleteSelectedMerchantNodeReadyCore(node, providerId);
+                return;
+            }
+
+            var sprite = new MegaSprite(spineNode);
+            node.RunWhenSpineReady(sprite, _ =>
+            {
+                if (IsSelectedProviderForNode(node, providerId))
+                {
+                    CompleteSelectedMerchantNodeReadyCore(node, providerId);
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                $"等待商人外观骨骼就绪失败，改为完成原作者初始化：" +
+                exception.GetBaseException().Message);
+            if (IsSelectedProviderForNode(node, providerId))
+            {
+                CompleteSelectedMerchantNodeReadyCore(node, providerId);
+            }
+        }
+    }
+
+    private static bool IsSelectedProviderForNode(Node node, string providerId)
+    {
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return false;
+        }
+
+        var groupId = ResolveMerchantGroupId(node);
+        return groupId != null &&
+               string.Equals(
+                   SkinService.GetSelectedFullRuntimeProvider(groupId),
+                   providerId,
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void CompleteSelectedMerchantNodeReadyCore(Node node, string providerId)
+    {
         TrackInventoryProviderAdditions(
             node,
             ManagedSkinModLoader.ReplaySelectedNodeReadyPostfixes(providerId, node));

@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../STS2SkinChanger/Core/PromotedPackOverlayPolicy.cs"
+             Link="PromotedPackOverlayPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/MerchantProviderReadyPolicy.cs"
+             Link="MerchantProviderReadyPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantPreviewLayerPolicy.cs"
              Link="MerchantPreviewLayerPolicy.cs" />
   </ItemGroup>

@@ -3714,8 +3714,7 @@ internal static class SkinService
         var promotedPackResourcePaths = largeProviderMountPlan.PromotedPackPaths
             .Where(MountedLargeRuntimeProviderPacks.ContainsKey)
             .SelectMany(path => MountedLargeRuntimeProviderPacks[path].ResourcePaths)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var promotedPackRestoreGroups = catalog.GetRuntimeDependencyRestoreGroups(
             string.Empty,
             promotedPackResourcePaths);
@@ -3731,7 +3730,25 @@ internal static class SkinService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var files = catalog.BuildBaselineDependencyOverlay(staleCanonicalPaths);
-        foreach (var selectedFile in catalog.BuildOverlay(Config.Selections, overlayGroups))
+        var selectedOverlay = catalog.BuildOverlay(Config.Selections, overlayGroups);
+        // The selected complete PCK is already mounted directly below this correction overlay.
+        // A vanilla canonical resource in the correction overlay would hide a selected provider's
+        // <canonical path>.remap and produce a mixed skin (for example, a selected merchant body
+        // with the vanilla merchant hand). Remove only canonical paths whose provider remap is in
+        // the selected overlay. Other files from a multi-group PCK must stay on the baseline.
+        var selectedProviderOverlayPaths = selectedOverlay
+            .Where(pair =>
+                largeProviderMountPlan.PromotedPackPaths.Contains(pair.Value.Archive.Path))
+            .Select(pair => pair.Key);
+        foreach (var ownedPath in
+                 PromotedPackOverlayPolicy.FindBaselinePathsShadowingSelectedRemaps(
+                     files.Keys,
+                     selectedProviderOverlayPaths))
+        {
+            files.Remove(ownedPath);
+        }
+
+        foreach (var selectedFile in selectedOverlay)
         {
             if (largeProviderMountPlan.PromotedPackPaths.Contains(selectedFile.Value.Archive.Path) &&
                 selectedFile.Key.Equals(
