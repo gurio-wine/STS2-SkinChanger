@@ -88,5 +88,20 @@ Require(
 Require(
     !MerchantProviderReadyPolicy.ShouldRefreshFocusAfterProviderReady(isFocused: false),
     "未悬浮的商人按钮不能在提供者完成注册后被错误切成描边外观。");
+Require(
+    MerchantProviderReadyPolicy.ShouldAdoptProviderSkeletonWrapper(
+        expectedNativeSkeletonId: 42UL,
+        capturedNativeSkeletonId: 42UL),
+    "提供者使用同一原生骨骼初始化出的包装对象必须交还给游戏悬浮字段。");
+Require(
+    !MerchantProviderReadyPolicy.ShouldAdoptProviderSkeletonWrapper(
+        expectedNativeSkeletonId: 42UL,
+        capturedNativeSkeletonId: 0UL),
+    "尚未捕获有效骨骼时不能覆盖游戏悬浮字段。");
+Require(
+    !MerchantProviderReadyPolicy.ShouldAdoptProviderSkeletonWrapper(
+        expectedNativeSkeletonId: 42UL,
+        capturedNativeSkeletonId: 43UL),
+    "提供者回调中其它骨骼的包装对象不能覆盖商人主体悬浮字段。");
 
 Console.WriteLine("Merchant appearance policy tests passed.");

@@ -72,8 +72,16 @@ internal static class MerchantRuntimeAppearance
         AccessTools.Method(typeof(NMerchantButton), "RefreshFocus");
     private static readonly List<WeakReference<Node>> ReplayedInventoryAdditions = [];
     private static readonly Dictionary<ulong, List<WeakReference<Node2D>>> ShopProviderRoots = [];
-    private static readonly Dictionary<ulong, WeakReference<NMerchantButton>>
-        MerchantButtonsBySkeleton = [];
+
+    [ThreadStatic]
+    private static MerchantProviderSkeletonCapture? _activeProviderSkeletonCapture;
+
+    private sealed class MerchantProviderSkeletonCapture(ulong expectedNativeSkeletonId)
+    {
+        internal ulong ExpectedNativeSkeletonId { get; } = expectedNativeSkeletonId;
+
+        internal MegaSkeleton? CapturedSkeleton { get; set; }
+    }
 
     internal static NMerchantCharacter? GetLocalPlayerVisual()
     {
@@ -200,17 +208,28 @@ internal static class MerchantRuntimeAppearance
 
     private static void CompleteSelectedMerchantNodeReadyCore(Node node, string providerId)
     {
+        MerchantProviderSkeletonCapture? capture = null;
         if (node is NMerchantButton preReplayButton)
         {
-            TrackMerchantSkeleton(preReplayButton, providerId, "provider-before");
+            capture = CreateProviderSkeletonCapture(preReplayButton);
         }
 
-        TrackInventoryProviderAdditions(
-            node,
-            ManagedSkinModLoader.ReplaySelectedNodeReadyPostfixes(providerId, node));
+        var previousCapture = _activeProviderSkeletonCapture;
+        _activeProviderSkeletonCapture = capture;
+        try
+        {
+            TrackInventoryProviderAdditions(
+                node,
+                ManagedSkinModLoader.ReplaySelectedNodeReadyPostfixes(providerId, node));
+        }
+        finally
+        {
+            _activeProviderSkeletonCapture = previousCapture;
+        }
+
         if (node is NMerchantButton button)
         {
-            TrackMerchantSkeleton(button, providerId, "provider-after");
+            AdoptProviderSkeletonWrapper(button, providerId, capture);
             RefreshMerchantFocusAfterProviderReady(button, providerId);
         }
 
@@ -220,110 +239,77 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
-    private static void TrackMerchantSkeleton(
-        NMerchantButton button,
-        string providerId,
-        string phase)
+    private static MerchantProviderSkeletonCapture? CreateProviderSkeletonCapture(
+        NMerchantButton button)
     {
         try
         {
             var privateSkeleton = MerchantSkeletonField?.GetValue(button) as MegaSkeleton;
-            var visualNode = button.GetNodeOrNull<Node>("%MerchantVisual");
-            var visualSkeleton = visualNode == null
+            var expectedId = privateSkeleton?.BoundObject?.GetInstanceId() ?? 0UL;
+            return expectedId == 0UL
                 ? null
-                : new MegaSprite(visualNode).GetSkeleton();
-            RegisterMerchantSkeleton(button, privateSkeleton);
-            RegisterMerchantSkeleton(button, visualSkeleton);
-
-            var privateId = privateSkeleton?.BoundObject?.GetInstanceId() ?? 0UL;
-            var visualId = visualSkeleton?.BoundObject?.GetInstanceId() ?? 0UL;
-            ModLog.Info(
-                $"商人悬浮诊断 phase={phase} context={ResolveMerchantContext(button)} " +
-                $"provider={providerId} button={button.GetInstanceId()} " +
-                $"privateSkeleton={privateId} visualSkeleton={visualId} same={privateId != 0 && privateId == visualId}");
+                : new MerchantProviderSkeletonCapture(expectedId);
         }
         catch (Exception exception)
         {
-            ModLog.Warn("记录商人悬浮骨骼失败：" + exception.GetBaseException().Message);
+            ModLog.Warn("准备商人提供者骨骼包装对象接管失败：" + exception.GetBaseException().Message);
+            return null;
         }
     }
 
-    private static void RegisterMerchantSkeleton(
-        NMerchantButton button,
-        MegaSkeleton? skeleton)
+    internal static void CaptureProviderSkeletonWrapper(MegaSkeleton? skeleton)
     {
+        var capture = _activeProviderSkeletonCapture;
         var boundObject = skeleton?.BoundObject;
-        if (boundObject != null && GodotObject.IsInstanceValid(boundObject))
+        if (capture == null ||
+            capture.CapturedSkeleton != null ||
+            boundObject == null ||
+            !GodotObject.IsInstanceValid(boundObject) ||
+            !MerchantProviderReadyPolicy.ShouldAdoptProviderSkeletonWrapper(
+                capture.ExpectedNativeSkeletonId,
+                boundObject.GetInstanceId()))
         {
-            MerchantButtonsBySkeleton[boundObject.GetInstanceId()] =
-                new WeakReference<NMerchantButton>(button);
+            return;
         }
+
+        // Keep the exact managed wrapper used by the provider's _Ready postfix. Some providers
+        // associate state with GodotObject wrapper identity rather than with the native instance
+        // ID, so another wrapper around the same SpineSkeleton cannot retrieve that state later.
+        capture.CapturedSkeleton = skeleton;
     }
 
-    internal static void LogMerchantFocus(NMerchantButton button, string phase)
+    private static void AdoptProviderSkeletonWrapper(
+        NMerchantButton button,
+        string providerId,
+        MerchantProviderSkeletonCapture? capture)
     {
+        var captured = capture?.CapturedSkeleton;
+        var boundObject = captured?.BoundObject;
+        if (capture == null ||
+            boundObject == null ||
+            !MerchantProviderReadyPolicy.ShouldAdoptProviderSkeletonWrapper(
+                capture.ExpectedNativeSkeletonId,
+                boundObject.GetInstanceId()))
+        {
+            return;
+        }
+
         try
         {
-            var isFocused = MerchantFocusedProperty?.GetValue(button) is bool focused && focused;
-            var skeleton = MerchantSkeletonField?.GetValue(button) as MegaSkeleton;
-            var skeletonId = skeleton?.BoundObject?.GetInstanceId() ?? 0UL;
+            if (MerchantSkeletonField == null)
+            {
+                ModLog.Warn("无法接管商人提供者骨骼包装对象：_merchantSkeleton 字段不可用。");
+                return;
+            }
+
+            MerchantSkeletonField.SetValue(button, captured);
             ModLog.Info(
-                $"商人悬浮诊断 phase={phase} context={ResolveMerchantContext(button)} " +
-                $"provider={SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? "original"} " +
-                $"button={button.GetInstanceId()} focused={isFocused} hasFocus={button.HasFocus()} " +
-                $"enabled={button.IsEnabled} visible={button.IsVisibleInTree()} " +
-                $"mouseFilter={button.MouseFilter} skeleton={skeletonId}");
+                $"商人悬浮已复用提供者初始化时的骨骼包装对象：{providerId}");
         }
         catch (Exception exception)
         {
-            ModLog.Warn("记录商人悬浮入口失败：" + exception.GetBaseException().Message);
+            ModLog.Warn("接管商人提供者骨骼包装对象失败：" + exception.GetBaseException().Message);
         }
-    }
-
-    internal static void LogMerchantNativeSkinCall(
-        MegaSpineBinding binding,
-        string methodName,
-        Variant[] args)
-    {
-        if (binding is not MegaSkeleton ||
-            !methodName.Equals("set_skin_by_name", StringComparison.Ordinal) ||
-            args.Length == 0)
-        {
-            return;
-        }
-
-        var boundObject = binding.BoundObject;
-        if (boundObject == null ||
-            !MerchantButtonsBySkeleton.TryGetValue(
-                boundObject.GetInstanceId(),
-                out var buttonReference) ||
-            !buttonReference.TryGetTarget(out var button) ||
-            !GodotObject.IsInstanceValid(button))
-        {
-            return;
-        }
-
-        ModLog.Info(
-            $"商人悬浮诊断 phase=native-skin context={ResolveMerchantContext(button)} " +
-            $"provider={SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? "original"} " +
-            $"button={button.GetInstanceId()} skeleton={boundObject.GetInstanceId()} " +
-            $"skin={args[0].AsString()}");
-    }
-
-    private static string ResolveMerchantContext(Node node) =>
-        IsMerchantPreviewDescendant(node) ? "compendium" : "live";
-
-    private static bool IsMerchantPreviewDescendant(Node node)
-    {
-        for (Node? current = node; current != null; current = current.GetParent())
-        {
-            if (IsMerchantPreviewRoot(current))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static void RefreshMerchantFocusAfterProviderReady(
@@ -1671,7 +1657,6 @@ internal static class MerchantPreviewFocusPatch
     [HarmonyPrefix]
     private static bool Prefix(NMerchantButton __instance)
     {
-        MerchantRuntimeAppearance.LogMerchantFocus(__instance, "focus-before");
         if (!IsPreviewDescendant(__instance))
         {
             return true;
@@ -1685,10 +1670,6 @@ internal static class MerchantPreviewFocusPatch
 
         return false;
     }
-
-    [HarmonyPostfix]
-    private static void Postfix(NMerchantButton __instance) =>
-        MerchantRuntimeAppearance.LogMerchantFocus(__instance, "focus-after");
 
     private static bool IsPreviewDescendant(Node node)
     {
@@ -1704,21 +1685,12 @@ internal static class MerchantPreviewFocusPatch
     }
 }
 
-[HarmonyPatch]
-internal static class MerchantSpineCallDiagnosticPatch
+[HarmonyPatch(typeof(MegaSprite), nameof(MegaSprite.GetSkeleton))]
+internal static class MerchantProviderSkeletonCapturePatch
 {
-    private static MethodBase? TargetMethod() =>
-        AccessTools.Method(
-            typeof(MegaSpineBinding),
-            "Call",
-            [typeof(string), typeof(Variant[])]);
-
-    [HarmonyPrefix]
-    private static void Prefix(
-        MegaSpineBinding __instance,
-        string methodName,
-        Variant[] args) =>
-        MerchantRuntimeAppearance.LogMerchantNativeSkinCall(__instance, methodName, args);
+    [HarmonyPostfix]
+    private static void Postfix(MegaSkeleton? __result) =>
+        MerchantRuntimeAppearance.CaptureProviderSkeletonWrapper(__result);
 }
 
 // The catalogue uses the real NMerchantInventory scene so hover tips, hand pointing and the

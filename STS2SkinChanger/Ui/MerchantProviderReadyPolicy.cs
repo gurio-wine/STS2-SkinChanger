@@ -28,4 +28,10 @@ internal static class MerchantProviderReadyPolicy
             : MerchantProviderPostfixTiming.Immediate;
 
     internal static bool ShouldRefreshFocusAfterProviderReady(bool isFocused) => isFocused;
+
+    internal static bool ShouldAdoptProviderSkeletonWrapper(
+        ulong expectedNativeSkeletonId,
+        ulong capturedNativeSkeletonId) =>
+        expectedNativeSkeletonId != 0UL &&
+        expectedNativeSkeletonId == capturedNativeSkeletonId;
 }
