@@ -1,10 +1,17 @@
 namespace STS2SkinChanger.Ui;
 
+internal enum MerchantPreviewBackButtonHost
+{
+    InventorySubViewport,
+    CompendiumOverlay
+}
+
 internal readonly record struct MerchantPreviewLayerState(
     int PreviewZIndex,
     bool SkinSelectorVisible,
     bool ActionSelectorVisible,
-    bool CompendiumBackEnabled);
+    bool CompendiumBackEnabled,
+    MerchantPreviewBackButtonHost NativeBackButtonHost);
 
 internal static class MerchantPreviewLayerPolicy
 {
@@ -24,13 +31,15 @@ internal static class MerchantPreviewLayerPolicy
                 OpenInventoryPreviewZIndex,
                 SkinSelectorVisible: false,
                 ActionSelectorVisible: false,
-                CompendiumBackEnabled: false);
+                CompendiumBackEnabled: false,
+                NativeBackButtonHost: MerchantPreviewBackButtonHost.CompendiumOverlay);
         }
 
         return new MerchantPreviewLayerState(
             NormalPreviewZIndex,
             SkinSelectorVisible: hasSkinOptions,
             ActionSelectorVisible: actionSelectorRequested,
-            CompendiumBackEnabled: compendiumVisible);
+            CompendiumBackEnabled: compendiumVisible,
+            NativeBackButtonHost: MerchantPreviewBackButtonHost.InventorySubViewport);
     }
 }

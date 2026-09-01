@@ -354,7 +354,7 @@ internal static class MerchantRuntimeAppearance
     /// button, inventory and open/close signal path are otherwise the same native nodes and methods
     /// used by a live shop.
     /// </summary>
-    internal static void PrepareMerchantPreviewInteraction(
+    internal static NBackButton? PrepareMerchantPreviewInteraction(
         NMerchantRoom preview,
         Action<bool>? inventoryVisibilityChanged = null)
     {
@@ -365,7 +365,7 @@ internal static class MerchantRuntimeAppearance
                 MerchantRoomProceedButtonField == null)
             {
                 ModLog.Warn("商人预览缺少原生交互字段，保留按钮视觉但不连接打开逻辑。");
-                return;
+                return null;
             }
 
             var button = preview.GetNodeOrNull<NMerchantButton>("%MerchantButton") ??
@@ -377,7 +377,7 @@ internal static class MerchantRuntimeAppearance
             if (button == null || inventory == null || proceed == null)
             {
                 ModLog.Warn("商人预览场景缺少 MerchantButton/Inventory/ProceedButton，跳过原生交互连接。");
-                return;
+                return null;
             }
 
             var previewPlayer = CreatePreviewPlayer("SkinChangerMerchantPreview");
@@ -406,14 +406,16 @@ internal static class MerchantRuntimeAppearance
             // control instead of exposing its uninitialized scene placeholder ("Tally-ho").
             proceed.Visible = false;
             ModLog.Info("商人预览已连接游戏原生 MerchantOpened → OpenInventory 交互路径。");
+            return inventory.GetNodeOrNull<NBackButton>("%BackButton");
         }
         catch (Exception exception)
         {
             ModLog.Warn("连接商人预览原生交互失败：" + exception.GetBaseException().Message);
+            return null;
         }
     }
 
-    internal static void PrepareFakeMerchantPreviewInteraction(
+    internal static NBackButton? PrepareFakeMerchantPreviewInteraction(
         NFakeMerchant preview,
         Action<bool>? inventoryVisibilityChanged = null)
     {
@@ -424,7 +426,7 @@ internal static class MerchantRuntimeAppearance
                 FakeMerchantOpenInventoryMethod == null)
             {
                 ModLog.Warn("假商人预览缺少原生交互字段，保留按钮视觉但不连接打开逻辑。");
-                return;
+                return null;
             }
 
             var button = preview.GetNodeOrNull<NMerchantButton>("%MerchantButton") ??
@@ -436,7 +438,7 @@ internal static class MerchantRuntimeAppearance
             if (button == null || inventory == null || proceed == null)
             {
                 ModLog.Warn("假商人预览场景缺少 MerchantButton/Inventory/ProceedButton，跳过原生交互连接。");
-                return;
+                return null;
             }
 
             var previewPlayer = CreatePreviewPlayer("SkinChangerFakeMerchantPreview");
@@ -468,10 +470,12 @@ internal static class MerchantRuntimeAppearance
                 Callable.From(() => inventoryVisibilityChanged?.Invoke(false)));
             proceed.Visible = false;
             ModLog.Info("假商人预览已连接游戏原生 MerchantOpened → OpenInventory 交互路径。");
+            return inventory.GetNodeOrNull<NBackButton>("%BackButton");
         }
         catch (Exception exception)
         {
             ModLog.Warn("连接假商人预览原生交互失败：" + exception.GetBaseException().Message);
+            return null;
         }
     }
 

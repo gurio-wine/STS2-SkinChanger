@@ -604,6 +604,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
     private NBackButton _compendiumBackButton = null!;
+    private NBackButton? _merchantInventoryBackButton;
+    private Node? _merchantInventoryBackButtonParent;
+    private int _merchantInventoryBackButtonIndex;
+    private int _merchantInventoryBackButtonZIndex;
+    private bool _merchantInventoryBackButtonZAsRelative;
     private VBoxContainer _otherActionSelector = null!;
     private Node? _otherPreviewInstance;
     private string? _otherPreviewGroupId;
@@ -1409,6 +1414,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             _skinDropdown.ItemCount > 0,
             _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true,
             IsVisibleInTree());
+        PlaceMerchantInventoryBackButton(state);
         // The SubViewport contains the complete native shop, including its own BackButton.
         // Raise the composite viewport as one unit while the inventory is open so the catalogue
         // name, category list and outer BackButton cannot cover any part of the shop.
@@ -1430,6 +1436,79 @@ internal partial class AncientCompendiumScreen : NSubmenu
         // disabling the catalogue button prevents its hotkey from popping the whole compendium.
         _compendiumBackButton.Disable();
         _compendiumBackButton.MoveToHidePosition();
+    }
+
+    private void CaptureMerchantInventoryBackButton(NBackButton? backButton)
+    {
+        _merchantInventoryBackButton = backButton;
+        _merchantInventoryBackButtonParent = backButton?.GetParent();
+        _merchantInventoryBackButtonIndex = backButton?.GetIndex() ?? -1;
+        _merchantInventoryBackButtonZIndex = backButton?.ZIndex ?? 0;
+        _merchantInventoryBackButtonZAsRelative = backButton?.ZAsRelative ?? true;
+        if (backButton == null || !GodotObject.IsInstanceValid(backButton))
+        {
+            ModLog.Warn("商人预览没有找到原生库存返回键。");
+        }
+    }
+
+    private void PlaceMerchantInventoryBackButton(MerchantPreviewLayerState state)
+    {
+        var backButton = _merchantInventoryBackButton;
+        if (backButton == null || !GodotObject.IsInstanceValid(backButton))
+        {
+            return;
+        }
+
+        if (state.NativeBackButtonHost == MerchantPreviewBackButtonHost.CompendiumOverlay)
+        {
+            if (!ReferenceEquals(backButton.GetParent(), this))
+            {
+                // NBackButton positions itself from Window.ContentScaleSize and listens to the
+                // root Window's SizeChanged signal. That assumption is valid in a live shop, but
+                // not while the same node is rendered inside our SubViewport. Move the actual
+                // native button—not a clone—onto the main compendium canvas while open; its
+                // original Released → NMerchantInventory.Close signal remains connected.
+                backButton.Reparent(this, keepGlobalTransform: false);
+                backButton.ZAsRelative = true;
+                backButton.ZIndex = state.PreviewZIndex + 1;
+                backButton.Disable();
+                backButton.MoveToHidePosition();
+                backButton.Enable();
+                Callable.From(() =>
+                {
+                    if (GodotObject.IsInstanceValid(backButton))
+                    {
+                        ModLog.Info(
+                            "商人预览原生返回键已迁入主覆盖层：" +
+                            $"visible={backButton.IsVisibleInTree()}, position={backButton.Position}, " +
+                            $"size={backButton.Size}, z={backButton.ZIndex}。");
+                    }
+                }).CallDeferred();
+            }
+
+            return;
+        }
+
+        var originalParent = _merchantInventoryBackButtonParent;
+        if (originalParent == null || !GodotObject.IsInstanceValid(originalParent))
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(backButton.GetParent(), originalParent))
+        {
+            backButton.Disable();
+            backButton.Reparent(originalParent, keepGlobalTransform: false);
+            originalParent.MoveChild(
+                backButton,
+                Math.Clamp(
+                    _merchantInventoryBackButtonIndex,
+                    0,
+                    Math.Max(0, originalParent.GetChildCount() - 1)));
+            backButton.ZIndex = _merchantInventoryBackButtonZIndex;
+            backButton.ZAsRelative = _merchantInventoryBackButtonZAsRelative;
+            backButton.MoveToHidePosition();
+        }
     }
 
     private void RefreshAncients()
@@ -1869,15 +1948,17 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     // transparent click proxy or synthetic shop overlay is installed.
                     if (isMerchant && instance is NMerchantRoom previewMerchantRoom)
                     {
-                        MerchantRuntimeAppearance.PrepareMerchantPreviewInteraction(
-                            previewMerchantRoom,
-                            SetMerchantInventoryOpen);
+                        CaptureMerchantInventoryBackButton(
+                            MerchantRuntimeAppearance.PrepareMerchantPreviewInteraction(
+                                previewMerchantRoom,
+                                SetMerchantInventoryOpen));
                     }
                     else if (isFakeMerchant && instance is NFakeMerchant previewFakeMerchant)
                     {
-                        MerchantRuntimeAppearance.PrepareFakeMerchantPreviewInteraction(
-                            previewFakeMerchant,
-                            SetMerchantInventoryOpen);
+                        CaptureMerchantInventoryBackButton(
+                            MerchantRuntimeAppearance.PrepareFakeMerchantPreviewInteraction(
+                                previewFakeMerchant,
+                                SetMerchantInventoryOpen));
                     }
                 }
             }
@@ -2181,6 +2262,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
             _previewViewport.RemoveChild(child);
             child.QueueFree();
         }
+
+        _merchantInventoryBackButton = null;
+        _merchantInventoryBackButtonParent = null;
+        _merchantInventoryBackButtonIndex = -1;
     }
 
     private static Label BuildLabel(int fontSize, Color color)
