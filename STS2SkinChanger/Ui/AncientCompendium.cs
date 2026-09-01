@@ -1794,7 +1794,32 @@ internal partial class AncientCompendiumScreen : NSubmenu
                        ? null
                        : SkinService.BeginRuntimeResourceScope(group.Id, previewScene.ScenePath))
             {
-                _previewViewport.AddChild(instance);
+                if (isMerchant || isFakeMerchant)
+                {
+                    // MerchantButton's authored anchors are relative to a full-screen Control
+                    // in the live room. A SubViewport is a Node, not a Control, so attaching
+                    // the button directly makes its center anchors resolve against a zero-sized
+                    // parent and places MerchantVisual outside the viewport. Recreate the same
+                    // layout parent used by the game's preview scenes.
+                    var merchantHost = new Control
+                    {
+                        Name = "MerchantPreviewHost",
+                        MouseFilter = MouseFilterEnum.Ignore,
+                        ProcessMode = ProcessModeEnum.Always
+                    };
+                    // Use an explicit size as well as top-left anchors. SubViewport is not a
+                    // Control parent, and relying on its inferred size differs between Godot
+                    // builds; the preview viewport size is fixed by BuildUi.
+                    merchantHost.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+                    merchantHost.Size = _previewViewport.Size;
+                    _previewViewport.AddChild(merchantHost);
+                    merchantHost.AddChild(instance);
+                }
+                else
+                {
+                    _previewViewport.AddChild(instance);
+                }
+
                 if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
                     entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
                 {
