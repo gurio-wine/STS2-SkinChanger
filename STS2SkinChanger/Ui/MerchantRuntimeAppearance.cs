@@ -1,10 +1,17 @@
 using System.Reflection;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Entities.Merchant;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Characters;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
+using MegaCrit.Sts2.Core.Rooms;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Unlocks;
 using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui;
@@ -35,6 +42,10 @@ internal static class MerchantRuntimeAppearance
         AccessTools.Method(typeof(NFakeMerchant), "OnMerchantOpened");
     private static readonly FieldInfo? MerchantHandField =
         AccessTools.Field(typeof(NMerchantInventory), "<MerchantHand>k__BackingField");
+    private static readonly FieldInfo? MerchantRoomInventoryField =
+        AccessTools.Field(typeof(NMerchantRoom), "<Inventory>k__BackingField");
+    private static readonly FieldInfo? MerchantRoomProceedButtonField =
+        AccessTools.Field(typeof(NMerchantRoom), "_proceedButton");
     private static readonly FieldInfo? MerchantRoomModelField =
         AccessTools.Field(typeof(NMerchantRoom), "<Room>k__BackingField");
     private static readonly FieldInfo? MerchantRoomPlayersField =
@@ -241,6 +252,65 @@ internal static class MerchantRuntimeAppearance
         GodotObject.IsInstanceValid(node) &&
         node.HasMeta(MerchantPreviewRootMeta) &&
         node.GetMeta(MerchantPreviewRootMeta).AsBool();
+
+    /// <summary>
+    /// Restores the original merchant-button signal path for a catalogue preview without running
+    /// NMerchantRoom._Ready (which requires a live map/run). The inventory node is still the
+    /// game's own NMerchantInventory scene and receives a disposable normal-merchant model, so
+    /// hover, focus, hand animation and the native open/close transition behave like a real shop.
+    /// </summary>
+    internal static void PrepareMerchantPreviewInteraction(NMerchantRoom preview)
+    {
+        try
+        {
+            if (MerchantButtonField == null ||
+                MerchantRoomInventoryField == null ||
+                MerchantRoomProceedButtonField == null)
+            {
+                ModLog.Warn("商人预览缺少原生交互字段，保留按钮视觉但不连接打开逻辑。");
+                return;
+            }
+
+            var button = preview.GetNodeOrNull<NMerchantButton>("%MerchantButton") ??
+                         preview.FindChild("MerchantButton", recursive: true, owned: false) as NMerchantButton;
+            var inventory = preview.GetNodeOrNull<NMerchantInventory>("%Inventory") ??
+                            preview.FindChild("Inventory", recursive: true, owned: false) as NMerchantInventory;
+            var proceed = preview.GetNodeOrNull<NProceedButton>("%ProceedButton") ??
+                          preview.FindChild("ProceedButton", recursive: true, owned: false) as NProceedButton;
+            if (button == null || inventory == null || proceed == null)
+            {
+                ModLog.Warn("商人预览场景缺少 MerchantButton/Inventory/ProceedButton，跳过原生交互连接。");
+                return;
+            }
+
+            var previewPlayer = Player.CreateForNewRun(
+                ModelDb.Character<Ironclad>(),
+                UnlockState.all,
+                0x534b494e50525631UL);
+            _ = RunState.CreateForTest(
+                [previewPlayer],
+                seed: "SkinChangerMerchantPreview");
+            previewPlayer.Gold = 9999;
+            var model = MerchantInventory.CreateForNormalMerchant(previewPlayer);
+
+            MerchantRoomInventoryField.SetValue(preview, inventory);
+            MerchantRoomProceedButtonField.SetValue(preview, proceed);
+            MerchantButtonField.SetValue(preview, button);
+            button.IsLocalPlayerDead = false;
+            button.PlayerDeadLines = MerchantRoom.Dialogue.PlayerDeadLines;
+            inventory.MouseFilter = Control.MouseFilterEnum.Ignore;
+            inventory.Initialize(model, MerchantRoom.Dialogue);
+            button.Connect(
+                NMerchantButton.SignalName.MerchantOpened,
+                Callable.From<NMerchantButton>(_ => preview.OpenInventory()));
+            proceed.Enable();
+            ModLog.Info("商人预览已连接游戏原生 MerchantOpened → OpenInventory 交互路径。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("连接商人预览原生交互失败：" + exception.GetBaseException().Message);
+        }
+    }
 
     internal static void CaptureInventoryReadyBaseline(NMerchantInventory inventory)
     {
@@ -1058,6 +1128,24 @@ internal static class MerchantRoomPlayerAppearancePatch
     }
 }
 
+[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._EnterTree))]
+internal static class MerchantRoomPreviewEnterTreePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(NMerchantRoom __instance) =>
+        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+}
+
+[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._ExitTree))]
+internal static class MerchantRoomPreviewExitTreePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(NMerchantRoom __instance) =>
+        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+}
+
 [HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._Ready))]
 internal static class FakeMerchantAppearancePatch
 {
@@ -1085,6 +1173,24 @@ internal static class FakeMerchantAppearancePatch
             ModLog.Warn("重放假商人外观初始化失败：" + exception.GetBaseException().Message);
         }
     }
+}
+
+[HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._EnterTree))]
+internal static class FakeMerchantPreviewEnterTreePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(NFakeMerchant __instance) =>
+        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+}
+
+[HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._ExitTree))]
+internal static class FakeMerchantPreviewExitTreePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(NFakeMerchant __instance) =>
+        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
 }
 
 [HarmonyPatch(typeof(NRestSiteRoom), nameof(NRestSiteRoom._Ready))]

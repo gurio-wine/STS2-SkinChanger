@@ -1798,6 +1798,15 @@ internal partial class AncientCompendiumScreen : NSubmenu
                         // invoke gameplay initialization without a live run.
                         ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, nativeButton);
                     }
+
+                    // Reconnect the normal merchant's own signal path after skipping the gameplay
+                    // root _Ready. This is the native MerchantOpened → OpenInventory flow; no
+                    // transparent click proxy or synthetic shop overlay is installed.
+                    if (isMerchant && instance is NMerchantRoom previewMerchantRoom)
+                    {
+                        MerchantRuntimeAppearance.PrepareMerchantPreviewInteraction(
+                            previewMerchantRoom);
+                    }
                 }
             }
             if (isMerchant || isFakeMerchant)
