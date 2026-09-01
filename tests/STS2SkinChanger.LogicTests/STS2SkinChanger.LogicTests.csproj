@@ -9,6 +9,8 @@
   <ItemGroup>
     <Compile Include="../../STS2SkinChanger/Core/PromotedPackOverlayPolicy.cs"
              Link="PromotedPackOverlayPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/AncientStyleMethodPolicy.cs"
+             Link="AncientStyleMethodPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/OtherCreatureCatalog.cs"
              Link="OtherCreatureCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantProviderReadyPolicy.cs"

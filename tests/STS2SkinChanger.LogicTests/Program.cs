@@ -41,6 +41,25 @@ Require(
         requestsExpandedPortrait: true) == CardPresentationLayout.Ancient,
     "游戏原生先古卡不能被扩展异画版式降级成普通卡。");
 
+var providerAncientStyleMethod = AncientStyleMethodPolicy.Find(
+    [typeof(ForeignCardProvider.ConfigHelper)]);
+Require(
+    providerAncientStyleMethod?.DeclaringType == typeof(ForeignCardProvider.ConfigHelper),
+    "卡牌皮肤的先古样式开关必须按能力发现，不能限定为某个固定命名空间。");
+Require(
+    providerAncientStyleMethod?.Invoke(null, ["SovereignBlade"]) is true,
+    "普通牌被提供者明确切换为先古异画时，必须读取到该提供者的卡图开关。");
+Require(
+    AncientStyleMethodPolicy.ResolveWithoutProviderMethod(
+        isNativeAncient: false,
+        requestsAncientLayout: true),
+    "没有独立开关方法时，提供者明确声明的先古版式必须同时选择先古卡图。");
+Require(
+    !AncientStyleMethodPolicy.ResolveWithoutProviderMethod(
+        isNativeAncient: false,
+        requestsAncientLayout: false),
+    "只同时导出普通图和先古图不能让所有普通牌误用先古卡图。");
+
 var open = MerchantPreviewLayerPolicy.Resolve(
     inventoryOpen: true,
     hasSkinOptions: true,
@@ -197,3 +216,12 @@ Require(
     "游戏没有为佩尔的士兵动作注册独立音效时，不应伪造音效。");
 
 Console.WriteLine("Skin Changer logic policy tests passed.");
+
+internal static class ForeignCardProvider
+{
+    internal static class ConfigHelper
+    {
+        internal static bool IsAncientStyleEnabled(string cardTypeName) =>
+            cardTypeName.Equals("SovereignBlade", StringComparison.Ordinal);
+    }
+}

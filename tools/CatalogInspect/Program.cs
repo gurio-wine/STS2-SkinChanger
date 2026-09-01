@@ -442,6 +442,54 @@ if (validateIndex >= 0)
             failures.Add($"cards/{option.Id}: cannot isolate sample card: {exception.Message}");
         }
     }
+
+    // Declarative exporters may expose portraits only through card_replacements.json.
+    // Those paths are intentionally not duplicated into option.Assets, so validating only the
+    // asset dictionary previously reported "0 passed" even when every visible card depended on
+    // these resources. Validate the declared portrait map itself to catch a layout that routes to
+    // AncientPortrait while its selected image cannot actually be isolated.
+    var declaredCardPortraits = catalog.CardGroups
+        .SelectMany(group => group.Options.Select(option => (GroupId: group.Id, Option: option)))
+        .Concat(catalog.PckCardOptions.Select(option => (GroupId: string.Empty, Option: option)))
+        .SelectMany(entry => entry.Option.NormalPortraits.Values
+            .Concat(entry.Option.AncientPortraits.Values.SelectMany(portrait => new[]
+            {
+                portrait.NormalPortrait,
+                portrait.AncientPortrait
+            }))
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => (entry.GroupId, entry.Option, Path: path)))
+        .DistinctBy(
+            entry => $"{entry.Option.Id}\n{entry.Path}",
+            StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    foreach (var declared in declaredCardPortraits)
+    {
+        try
+        {
+            var overlay = catalog.BuildIsolatedCardResource(
+                declared.GroupId,
+                declared.Option.Id,
+                declared.Path,
+                useSelectedProvider: true,
+                $"validate/card/{validatedCardResources:D4}");
+            if (!overlay.ResourcePaths.ContainsKey(declared.Path) || overlay.Files.Count == 0)
+            {
+                failures.Add(
+                    $"cards/{declared.Option.Id}: declared portrait resource is empty: " +
+                    declared.Path);
+                continue;
+            }
+
+            validatedCardResources++;
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"cards/{declared.Option.Id}: cannot isolate declared portrait {declared.Path}: " +
+                exception.Message);
+        }
+    }
     Console.WriteLine($"card resource validation: {validatedCardResources} passed");
 
     var validatedPresentations = 0;

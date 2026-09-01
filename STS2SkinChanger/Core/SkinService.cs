@@ -2519,13 +2519,7 @@ internal static class SkinService
             method = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(assembly => assembly.GetName().Name?.Equals(
                     option.ProviderId ?? option.Id, StringComparison.OrdinalIgnoreCase) == true)
-                .Select(assembly => assembly.GetType("CardPortraitsCore.ConfigHelper", throwOnError: false))
-                .Where(type => type != null)
-                .Select(type => type!.GetMethod(
-                    "IsAncientStyleEnabled",
-                    System.Reflection.BindingFlags.Static |
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic))
+                .Select(AncientStyleMethodPolicy.Find)
                 .FirstOrDefault(candidate => candidate != null);
             if (method == null)
             {
@@ -2542,8 +2536,14 @@ internal static class SkinService
             // Exported card projects commonly declare both image and ancientImage for every
             // card.  Without their optional ConfigHelper, ancientImage belongs to the game's
             // Ancient layout only; using it for every normal card makes a 375x527 portrait get
-            // fitted into the normal 375x285 slot and visibly narrows the artwork.
-            return card.Rarity == CardRarity.Ancient;
+            // fitted into the normal 375x285 slot and visibly narrows the artwork. A provider
+            // presentation that explicitly requests the Ancient layout is different: choosing
+            // the normal/base image there would produce an Ancient frame with vanilla art.
+            var requestsAncientLayout = option.CardPresentations
+                .GetValueOrDefault(cardType)?.UseAncientLayout == true;
+            return AncientStyleMethodPolicy.ResolveWithoutProviderMethod(
+                card.Rarity == CardRarity.Ancient,
+                requestsAncientLayout);
         }
 
         try
