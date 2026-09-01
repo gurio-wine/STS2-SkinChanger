@@ -239,6 +239,41 @@ if (Directory.Exists(civilightRoot))
                 relic.Resources.ContainsKey("PackedIconOutlinePath") &&
                 relic.Resources.ContainsKey("BigIconPath"))),
         "框架契约必须保留破损核心与注能核心的小图、轮廓和大图。");
+
+    var crackedCoreSmall = FrameworkRelicVisualPolicy.Resolve(
+        contracts[0].Relics,
+        "CrackedCore",
+        largeIcon: false);
+    Require(
+        crackedCoreSmall != null &&
+        crackedCoreSmall.IconPath.EndsWith(
+            "/relics/theresa_dolls.png",
+            StringComparison.OrdinalIgnoreCase) &&
+        crackedCoreSmall.OutlinePath?.EndsWith(
+            "/relics/theresa_outline.png",
+            StringComparison.OrdinalIgnoreCase) == true,
+        "框架遗物的小图刷新必须同时选择当前皮肤的小图与轮廓，不能继续使用首次缓存的原版素材。");
+
+    var infusedCoreLarge = FrameworkRelicVisualPolicy.Resolve(
+        contracts[0].Relics,
+        "InfusedCore",
+        largeIcon: true);
+    Require(
+        infusedCoreLarge is
+        {
+            OutlinePath: null
+        } &&
+        infusedCoreLarge.IconPath.EndsWith(
+            "/relics/theresa_amiya_dolls.png",
+            StringComparison.OrdinalIgnoreCase),
+        "框架遗物的大图必须直接解析当前皮肤资源，不能经过游戏只解析一次的原版路径缓存。");
+
+    Require(
+        FrameworkRelicVisualPolicy.Resolve(
+            contracts[0].Relics,
+            "UnrelatedRelic",
+            largeIcon: true) == null,
+        "框架遗物刷新不能把一件遗物的素材泄漏到未声明的其它遗物。");
 }
 
 var frameworkManagerRoot =

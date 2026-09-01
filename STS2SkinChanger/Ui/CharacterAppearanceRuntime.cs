@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Orbs;
+using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Runs;
@@ -1493,7 +1494,45 @@ internal static class CharacterAppearanceRuntime
             ModLog.Warn("刷新地图角色标记失败：" + exception.GetBaseException().Message);
         }
 
+        RefreshVisibleRelicIcons(run);
         RefreshCurrentEnergyCounter(player);
+    }
+
+    private static void RefreshVisibleRelicIcons(NRun run)
+    {
+        foreach (var relic in EnumerateDescendants<NRelic>(run))
+        {
+            try
+            {
+                // Assigning the existing model invokes the game's private Reload method even
+                // when the model reference itself did not change. This refreshes both small and
+                // large icons immediately after a framework character skin switch.
+                relic.Model = relic.Model;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    "刷新框架遗物图标失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static IEnumerable<TNode> EnumerateDescendants<TNode>(Node root)
+        where TNode : Node
+    {
+        foreach (var child in root.GetChildren())
+        {
+            if (child is TNode match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in EnumerateDescendants<TNode>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static void RefreshCurrentEnergyCounter(Player player)

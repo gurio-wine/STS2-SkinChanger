@@ -119,6 +119,15 @@ internal static class FrameworkSkinRuntime
         return descriptor != null && descriptor.Resources.TryGetValue(propertyName, out path!);
     }
 
+    public static FrameworkRelicVisualPlan? ResolveRelicVisual(
+        RelicModel model,
+        bool largeIcon) =>
+        FrameworkRelicVisualPolicy.Resolve(
+            SkinService.GetSelectedFrameworkContracts()
+                .SelectMany(contract => contract.Relics),
+            model.GetType().Name,
+            largeIcon);
+
     public static bool HasSelectedCharacterContract(CharacterModel model) =>
         TryGetCharacterContract(model, out _);
 
@@ -419,17 +428,77 @@ internal static class FrameworkRelicOutlinePatch
             "PackedIconOutlinePath");
 }
 
-[HarmonyPatch]
-internal static class FrameworkRelicBigIconPatch
+[HarmonyPatch(typeof(RelicModel), "get_Icon")]
+internal static class FrameworkRelicIconTexturePatch
 {
-    private static IEnumerable<MethodBase> TargetMethods() =>
-        FrameworkRelicPackedIconPatch.RelicGetters("BigIconPath")
-            .Concat(FrameworkRelicPackedIconPatch.RelicGetters("ResolvedBigIconPath"))
-            .Distinct();
-
     [HarmonyPrefix]
-    private static bool Prefix(RelicModel __instance, ref string __result) =>
-        FrameworkRelicPackedIconPatch.Apply(__instance, ref __result, "BigIconPath");
+    [HarmonyPriority(Priority.High)]
+    private static bool Prefix(RelicModel __instance, ref Texture2D __result)
+    {
+        var plan = FrameworkSkinRuntime.ResolveRelicVisual(__instance, largeIcon: false);
+        if (plan == null)
+        {
+            return true;
+        }
+
+        return FrameworkRelicTextureLoader.Apply(plan.IconPath, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(RelicModel), "get_IconOutline")]
+internal static class FrameworkRelicOutlineTexturePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.High)]
+    private static bool Prefix(RelicModel __instance, ref Texture2D __result)
+    {
+        var plan = FrameworkSkinRuntime.ResolveRelicVisual(__instance, largeIcon: false);
+        if (plan?.OutlinePath == null)
+        {
+            return true;
+        }
+
+        return FrameworkRelicTextureLoader.Apply(plan.OutlinePath, ref __result);
+    }
+}
+
+[HarmonyPatch(typeof(RelicModel), "get_BigIcon")]
+internal static class FrameworkRelicBigIconTexturePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.High)]
+    private static bool Prefix(RelicModel __instance, ref Texture2D __result)
+    {
+        var plan = FrameworkSkinRuntime.ResolveRelicVisual(__instance, largeIcon: true);
+        if (plan == null)
+        {
+            return true;
+        }
+
+        // RelicModel caches ResolvedBigIconPath after its first access. Returning the selected
+        // texture from the public BigIcon boundary avoids both the stale vanilla cache and
+        // contaminating that cache when the player later switches back to another skin.
+        return FrameworkRelicTextureLoader.Apply(plan.IconPath, ref __result);
+    }
+}
+
+internal static class FrameworkRelicTextureLoader
+{
+    public static bool Apply(string path, ref Texture2D result)
+    {
+        var texture = ResourceLoader.Load<Texture2D>(
+            path,
+            null,
+            ResourceLoader.CacheMode.Reuse);
+        if (texture == null)
+        {
+            ModLog.Warn($"无法加载框架遗物图片：{path}");
+            return true;
+        }
+
+        result = texture;
+        return false;
+    }
 }
 
 [HarmonyPatch]

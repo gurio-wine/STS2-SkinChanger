@@ -25,6 +25,8 @@
              Link="DeferredRegistrationQueue.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkEntryAnimationPolicy.cs"
              Link="FrameworkEntryAnimationPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/FrameworkRelicVisualPolicy.cs"
+             Link="FrameworkRelicVisualPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs"
              Link="FrameworkSkinContractScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/OtherCreatureCatalog.cs"
