@@ -66,10 +66,14 @@ internal static class MerchantRuntimeAppearance
         AccessTools.Field(typeof(NMerchantRoom), "_dialogue");
     private static readonly PropertyInfo? MerchantFocusedProperty =
         AccessTools.Property(typeof(NClickableControl), "IsFocused");
+    private static readonly FieldInfo? MerchantSkeletonField =
+        AccessTools.Field(typeof(NMerchantButton), "_merchantSkeleton");
     private static readonly MethodInfo? MerchantRefreshFocusMethod =
         AccessTools.Method(typeof(NMerchantButton), "RefreshFocus");
     private static readonly List<WeakReference<Node>> ReplayedInventoryAdditions = [];
     private static readonly Dictionary<ulong, List<WeakReference<Node2D>>> ShopProviderRoots = [];
+    private static readonly Dictionary<ulong, WeakReference<NMerchantButton>>
+        MerchantButtonsBySkeleton = [];
 
     internal static NMerchantCharacter? GetLocalPlayerVisual()
     {
@@ -196,11 +200,17 @@ internal static class MerchantRuntimeAppearance
 
     private static void CompleteSelectedMerchantNodeReadyCore(Node node, string providerId)
     {
+        if (node is NMerchantButton preReplayButton)
+        {
+            TrackMerchantSkeleton(preReplayButton, providerId, "provider-before");
+        }
+
         TrackInventoryProviderAdditions(
             node,
             ManagedSkinModLoader.ReplaySelectedNodeReadyPostfixes(providerId, node));
         if (node is NMerchantButton button)
         {
+            TrackMerchantSkeleton(button, providerId, "provider-after");
             RefreshMerchantFocusAfterProviderReady(button, providerId);
         }
 
@@ -208,6 +218,112 @@ internal static class MerchantRuntimeAppearance
         {
             MakeProviderInventoryVisualsPassThrough();
         }
+    }
+
+    private static void TrackMerchantSkeleton(
+        NMerchantButton button,
+        string providerId,
+        string phase)
+    {
+        try
+        {
+            var privateSkeleton = MerchantSkeletonField?.GetValue(button) as MegaSkeleton;
+            var visualNode = button.GetNodeOrNull<Node>("%MerchantVisual");
+            var visualSkeleton = visualNode == null
+                ? null
+                : new MegaSprite(visualNode).GetSkeleton();
+            RegisterMerchantSkeleton(button, privateSkeleton);
+            RegisterMerchantSkeleton(button, visualSkeleton);
+
+            var privateId = privateSkeleton?.BoundObject?.GetInstanceId() ?? 0UL;
+            var visualId = visualSkeleton?.BoundObject?.GetInstanceId() ?? 0UL;
+            ModLog.Info(
+                $"商人悬浮诊断 phase={phase} context={ResolveMerchantContext(button)} " +
+                $"provider={providerId} button={button.GetInstanceId()} " +
+                $"privateSkeleton={privateId} visualSkeleton={visualId} same={privateId != 0 && privateId == visualId}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("记录商人悬浮骨骼失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static void RegisterMerchantSkeleton(
+        NMerchantButton button,
+        MegaSkeleton? skeleton)
+    {
+        var boundObject = skeleton?.BoundObject;
+        if (boundObject != null && GodotObject.IsInstanceValid(boundObject))
+        {
+            MerchantButtonsBySkeleton[boundObject.GetInstanceId()] =
+                new WeakReference<NMerchantButton>(button);
+        }
+    }
+
+    internal static void LogMerchantFocus(NMerchantButton button, string phase)
+    {
+        try
+        {
+            var isFocused = MerchantFocusedProperty?.GetValue(button) is bool focused && focused;
+            var skeleton = MerchantSkeletonField?.GetValue(button) as MegaSkeleton;
+            var skeletonId = skeleton?.BoundObject?.GetInstanceId() ?? 0UL;
+            ModLog.Info(
+                $"商人悬浮诊断 phase={phase} context={ResolveMerchantContext(button)} " +
+                $"provider={SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? "original"} " +
+                $"button={button.GetInstanceId()} focused={isFocused} hasFocus={button.HasFocus()} " +
+                $"enabled={button.IsEnabled} visible={button.IsVisibleInTree()} " +
+                $"mouseFilter={button.MouseFilter} skeleton={skeletonId}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("记录商人悬浮入口失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    internal static void LogMerchantNativeSkinCall(
+        MegaSpineBinding binding,
+        string methodName,
+        Variant[] args)
+    {
+        if (binding is not MegaSkeleton ||
+            !methodName.Equals("set_skin_by_name", StringComparison.Ordinal) ||
+            args.Length == 0)
+        {
+            return;
+        }
+
+        var boundObject = binding.BoundObject;
+        if (boundObject == null ||
+            !MerchantButtonsBySkeleton.TryGetValue(
+                boundObject.GetInstanceId(),
+                out var buttonReference) ||
+            !buttonReference.TryGetTarget(out var button) ||
+            !GodotObject.IsInstanceValid(button))
+        {
+            return;
+        }
+
+        ModLog.Info(
+            $"商人悬浮诊断 phase=native-skin context={ResolveMerchantContext(button)} " +
+            $"provider={SkinService.GetSelectedFullRuntimeProvider(GroupId) ?? "original"} " +
+            $"button={button.GetInstanceId()} skeleton={boundObject.GetInstanceId()} " +
+            $"skin={args[0].AsString()}");
+    }
+
+    private static string ResolveMerchantContext(Node node) =>
+        IsMerchantPreviewDescendant(node) ? "compendium" : "live";
+
+    private static bool IsMerchantPreviewDescendant(Node node)
+    {
+        for (Node? current = node; current != null; current = current.GetParent())
+        {
+            if (IsMerchantPreviewRoot(current))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void RefreshMerchantFocusAfterProviderReady(
@@ -1555,6 +1671,7 @@ internal static class MerchantPreviewFocusPatch
     [HarmonyPrefix]
     private static bool Prefix(NMerchantButton __instance)
     {
+        MerchantRuntimeAppearance.LogMerchantFocus(__instance, "focus-before");
         if (!IsPreviewDescendant(__instance))
         {
             return true;
@@ -1569,6 +1686,10 @@ internal static class MerchantPreviewFocusPatch
         return false;
     }
 
+    [HarmonyPostfix]
+    private static void Postfix(NMerchantButton __instance) =>
+        MerchantRuntimeAppearance.LogMerchantFocus(__instance, "focus-after");
+
     private static bool IsPreviewDescendant(Node node)
     {
         for (Node? current = node; current != null; current = current.GetParent())
@@ -1581,6 +1702,23 @@ internal static class MerchantPreviewFocusPatch
 
         return false;
     }
+}
+
+[HarmonyPatch]
+internal static class MerchantSpineCallDiagnosticPatch
+{
+    private static MethodBase? TargetMethod() =>
+        AccessTools.Method(
+            typeof(MegaSpineBinding),
+            "Call",
+            [typeof(string), typeof(Variant[])]);
+
+    [HarmonyPrefix]
+    private static void Prefix(
+        MegaSpineBinding __instance,
+        string methodName,
+        Variant[] args) =>
+        MerchantRuntimeAppearance.LogMerchantNativeSkinCall(__instance, methodName, args);
 }
 
 // The catalogue uses the real NMerchantInventory scene so hover tips, hand pointing and the
