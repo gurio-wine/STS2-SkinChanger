@@ -8,6 +8,8 @@
 /tools/OnlineCacheProbe/obj/
 /tools/WorkshopPublisher/bin/
 /tools/WorkshopPublisher/obj/
+/tests/STS2SkinChanger.LogicTests/bin/
+/tests/STS2SkinChanger.LogicTests/obj/
 /workshop/content/
 *.user
 *.suo

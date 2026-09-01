@@ -1393,34 +1393,43 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void RefreshAuxiliaryPreviewControls()
     {
         _skinSelector.ZIndex = 10;
-        _skinSelector.Visible = !_merchantInventoryOpen && _skinDropdown.ItemCount > 0;
-        _otherActionSelector.Visible = _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true;
+        ApplyMerchantPreviewLayerState();
     }
 
     private void SetMerchantInventoryOpen(bool isOpen)
     {
         _merchantInventoryOpen = isOpen;
-        if (isOpen)
+        ApplyMerchantPreviewLayerState();
+    }
+
+    private void ApplyMerchantPreviewLayerState()
+    {
+        var state = MerchantPreviewLayerPolicy.Resolve(
+            _merchantInventoryOpen,
+            _skinDropdown.ItemCount > 0,
+            _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true,
+            IsVisibleInTree());
+        // The SubViewport contains the complete native shop, including its own BackButton.
+        // Raise the composite viewport as one unit while the inventory is open so the catalogue
+        // name, category list and outer BackButton cannot cover any part of the shop.
+        _previewContainer.ZIndex = state.PreviewZIndex;
+        _skinSelector.Visible = state.SkinSelectorVisible;
+        _otherActionSelector.Visible = state.ActionSelectorVisible;
+        if (!GodotObject.IsInstanceValid(_compendiumBackButton))
         {
-            // The inventory's BackButton is now the active native back control. Disable the
-            // submenu BackButton as well as hiding it, otherwise its cancel hotkey pops the whole
-            // compendium at the same time that the shop tries to close.
-            _skinSelector.Visible = false;
-            _otherActionSelector.Visible = false;
-            if (GodotObject.IsInstanceValid(_compendiumBackButton))
-            {
-                _compendiumBackButton.Disable();
-                _compendiumBackButton.MoveToHidePosition();
-            }
             return;
         }
 
-        _skinSelector.Visible = _skinDropdown.ItemCount > 0;
-        RefreshAuxiliaryPreviewControls();
-        if (IsVisibleInTree() && GodotObject.IsInstanceValid(_compendiumBackButton))
+        if (state.CompendiumBackEnabled)
         {
             _compendiumBackButton.Enable();
+            return;
         }
+
+        // The inventory's native BackButton owns cancel/back while the shop is open. Hiding and
+        // disabling the catalogue button prevents its hotkey from popping the whole compendium.
+        _compendiumBackButton.Disable();
+        _compendiumBackButton.MoveToHidePosition();
     }
 
     private void RefreshAncients()
