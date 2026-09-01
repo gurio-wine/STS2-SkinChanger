@@ -130,6 +130,43 @@ internal static class SkinService
         return effective;
     }
 
+    internal static bool TryGetSelectedFrameworkContract(
+        string groupId,
+        out FrameworkCharacterSkinContract contract)
+    {
+        lock (Sync)
+        {
+            contract = null!;
+            return Catalog != null && Catalog.TryGetSelectedFrameworkContract(
+                groupId,
+                GetVisualSelection(groupId),
+                out contract);
+        }
+    }
+
+    internal static IReadOnlyList<FrameworkCharacterSkinContract>
+        GetSelectedFrameworkContracts()
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return [];
+            }
+
+            return Catalog.Groups
+                .Select(group => Catalog.TryGetSelectedFrameworkContract(
+                    group.Id,
+                    GetVisualSelection(group.Id),
+                    out var contract)
+                    ? contract
+                    : null)
+                .Where(contract => contract != null)
+                .Cast<FrameworkCharacterSkinContract>()
+                .ToArray();
+        }
+    }
+
     public static bool TryBuildSessionCharacterSelection(
         string groupId,
         string optionId,
@@ -2655,7 +2692,8 @@ internal static class SkinService
             if (catalog.IsRuntimeProviderOption(groupId, selection) &&
                 catalog.ProviderUsesManagedGodotScripts(selection))
             {
-                ManagedSkinModLoader.EnsureProviderGodotScripts(selection);
+                ManagedSkinModLoader.EnsureProviderGodotScripts(
+                    catalog.ResolveVisualProviderId(selection));
             }
 
             var restoreGroups = prepared.RestoreGroups
@@ -2944,10 +2982,15 @@ internal static class SkinService
             }
 
             var selection = GetVisualSelection(groupId);
+            if (!Catalog.TryGetVisualProviderId(groupId, selection, out var providerId))
+            {
+                return null;
+            }
+
             return Catalog.IsRuntimeProviderOption(groupId, selection) &&
-                   Catalog.ProviderUsesFullRuntime(selection) &&
-                   Catalog.IsFullRuntimeProviderFullySelected(selection, GetVisualSelections())
-                ? selection
+                   Catalog.ProviderUsesFullRuntime(providerId) &&
+                   Catalog.IsFullRuntimeProviderFullySelected(providerId, GetVisualSelections())
+                ? providerId
                 : null;
         }
     }
@@ -3705,6 +3748,7 @@ internal static class SkinService
     {
         var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        FrameworkCompatibilityLayer.SynchronizeSelections(catalog, GetVisualSelections());
         var activeRuntimeProviders = GetActiveRuntimeProviders(catalog);
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
@@ -3793,7 +3837,8 @@ internal static class SkinService
                 // Register before a private PackedScene is instantiated. The compatibility patch
                 // on Godot's path map makes this operation idempotent when the provider initializer
                 // also calls LookupScriptsInAssembly (a common pattern in complete character packs).
-                ManagedSkinModLoader.EnsureProviderGodotScripts(selectedId);
+                ManagedSkinModLoader.EnsureProviderGodotScripts(
+                    catalog.ResolveVisualProviderId(selectedId));
             }
         }
 
@@ -3921,7 +3966,7 @@ internal static class SkinService
         var selectedOptions = catalog.Groups
             .Select(group =>
             {
-                var selection = Config.GetSelection(group.Id);
+                var selection = GetVisualSelection(group.Id);
                 var option = group.Options.FirstOrDefault(option =>
                     option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase) &&
                     option.IsRuntimeProvider);

@@ -15,7 +15,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "0.9.125.1";
+    public const string InternalTestVersion = "0.9.125.2";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -28,6 +28,7 @@ public static class Entry
         ModLog.Info(
             $"内测版本 {InternalTestVersion}；程序集={assembly.GetName().Name} " +
             $"{assembly.GetName().Version}；路径={assembly.Location}");
+        FrameworkCompatibilityLayer.Initialize();
         ManagedSkinModLoader.Initialize();
         var harmony = new Harmony(ModId);
         try

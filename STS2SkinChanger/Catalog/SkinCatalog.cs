@@ -128,7 +128,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visualGroupsByProvider = _groups
             .SelectMany(group => group.Options.Select(option =>
-                (GroupId: group.Id, ProviderId: option.Id)))
+                (GroupId: group.Id, ProviderId: option.EffectiveProviderId)))
             .GroupBy(pair => pair.ProviderId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
@@ -146,7 +146,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var characterVisualGroupsByProvider = _groups
             .SelectMany(group => group.Options
                 .Where(OptionOwnsCharacterRuntimeAssets)
-                .Select(option => (GroupId: group.Id, ProviderId: option.Id)))
+                .Select(option => (GroupId: group.Id, ProviderId: option.EffectiveProviderId)))
             .GroupBy(pair => pair.ProviderId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
@@ -170,7 +170,7 @@ internal sealed partial class SkinCatalog : IDisposable
                         groupId,
                         StringComparison.OrdinalIgnoreCase))
                     .Options.Any(option =>
-                        option.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
+                        option.EffectiveProviderId.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
                         (option.RuntimeImagePath != null ||
                          OptionUsesManagedAncientLayers(groupId, option)))))
             .Select(pair => pair.Key)
@@ -181,7 +181,7 @@ internal sealed partial class SkinCatalog : IDisposable
                         groupId,
                         StringComparison.OrdinalIgnoreCase))
                     .Options.Any(option =>
-                        option.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
+                        option.EffectiveProviderId.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
                         option.IsManagedMonsterRuntimeProfile)))
             .ToDictionary(
                 pair => pair.Key,
@@ -698,6 +698,19 @@ internal sealed partial class SkinCatalog : IDisposable
                             : 0;
                         hasInteractiveScenes = managedScriptCount > 0 && ContainsInteractiveScene(archive);
                         visualGroups = CountProbeVisualGroups(index, baselineIndexes);
+                        var frameworkContracts = FrameworkSkinContractScanner.Scan(
+                                mod.RootPath,
+                                mod.Id)
+                            .Where(contract => FrameworkContractResourceClosureComplete(
+                                index,
+                                contract))
+                            .ToArray();
+                        visualGroups = Math.Max(
+                            visualGroups,
+                            frameworkContracts
+                                .Select(contract => contract.TargetGroupId)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .Count());
                         var configuredCardGroups = BuildCardGroups([index]);
                         cardAssets = configuredCardGroups
                             .Sum(group => group.Options.Sum(option =>
@@ -1094,9 +1107,25 @@ internal sealed partial class SkinCatalog : IDisposable
             .IsRuntimeProvider == true;
     }
 
+    public bool TryGetSelectedFrameworkContract(
+        string groupId,
+        string? optionId,
+        out FrameworkCharacterSkinContract contract)
+    {
+        contract = Groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase))?
+            .FrameworkContract!;
+        return contract != null;
+    }
+
     public bool ProviderUsesManagedCharacterScene(string groupId, string optionId)
     {
-        if (!_managedGodotScriptProviders.Contains(optionId))
+        var providerId = ResolveVisualProviderId(optionId);
+        if (!_managedGodotScriptProviders.Contains(providerId))
         {
             return false;
         }
@@ -1114,7 +1143,7 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     public bool ProviderUsesManagedGodotScripts(string optionId) =>
-        _managedGodotScriptProviders.Contains(optionId);
+        _managedGodotScriptProviders.Contains(ResolveVisualProviderId(optionId));
 
     /// <summary>
     /// A provider can contain selectable cards and still have an independently useful scene
@@ -1124,7 +1153,7 @@ internal sealed partial class SkinCatalog : IDisposable
     /// selected.
     /// </summary>
     public bool ProviderUsesInteractiveRuntime(string optionId) =>
-        _interactiveRuntimeProviders.Contains(optionId);
+        _interactiveRuntimeProviders.Contains(ResolveVisualProviderId(optionId));
 
     /// <summary>
     /// Providers with scene behaviour or managed Godot scripts must keep their exported package
@@ -1140,7 +1169,7 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyDictionary<string, string> selections) =>
         _groups
             .Where(group => selections.TryGetValue(group.Id, out var selectedId))
-            .Select(group => selections[group.Id])
+            .Select(group => ResolveVisualProviderId(selections[group.Id]))
             .Where(ProviderUsesInteractiveRuntime)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -1150,11 +1179,13 @@ internal sealed partial class SkinCatalog : IDisposable
     /// IsEnabled(profile) decision back to the independently selected monster group.
     /// </summary>
     public bool ProviderUsesScopedMonsterRuntime(string optionId) =>
-        _scopedMonsterRuntimeProviders.Contains(optionId);
+        _scopedMonsterRuntimeProviders.Contains(ResolveVisualProviderId(optionId));
 
     public IReadOnlyList<string> GetProviderResourcePackPaths(string optionId) =>
         _cosmeticIndexes
-            .Where(index => index.Mod.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            .Where(index => index.Mod.Id.Equals(
+                ResolveVisualProviderId(optionId),
+                StringComparison.OrdinalIgnoreCase))
             .Select(index => index.Archive.Path)
             .Where(File.Exists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1168,7 +1199,7 @@ internal sealed partial class SkinCatalog : IDisposable
         _scopedMonsterRuntimeProviders
             .Where(providerId => _scopedMonsterRuntimeProviderGroups[providerId].Any(groupId =>
                 selections.TryGetValue(groupId, out var selectedId) &&
-                selectedId.Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+                SelectionUsesProvider(groupId, selectedId, providerId)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     public string? ResolveManagedMonsterGroupId(string monsterId)
@@ -1186,10 +1217,10 @@ internal sealed partial class SkinCatalog : IDisposable
     /// partially selected character, companion or monster skin.
     /// </summary>
     public bool ProviderUsesFullRuntime(string optionId) =>
-        _fullRuntimeProviders.Contains(optionId);
+        _fullRuntimeProviders.Contains(ResolveVisualProviderId(optionId));
 
     public IReadOnlyList<string> GetFullRuntimeProviderGroups(string optionId) =>
-        _fullRuntimeProviderGroups.GetValueOrDefault(optionId) ?? [];
+        _fullRuntimeProviderGroups.GetValueOrDefault(ResolveVisualProviderId(optionId)) ?? [];
 
     public bool IsCharacterAppearanceGroup(string groupId)
     {
@@ -1202,14 +1233,15 @@ internal sealed partial class SkinCatalog : IDisposable
         string optionId,
         IReadOnlyDictionary<string, string> selections)
     {
-        if (!_fullRuntimeProviderGroups.TryGetValue(optionId, out var groupIds) || groupIds.Count == 0)
+        var providerId = ResolveVisualProviderId(optionId);
+        if (!_fullRuntimeProviderGroups.TryGetValue(providerId, out var groupIds) || groupIds.Count == 0)
         {
             return false;
         }
 
         return groupIds.All(groupId =>
             selections.TryGetValue(groupId, out var selectedId) &&
-            selectedId.Equals(optionId, StringComparison.OrdinalIgnoreCase));
+            SelectionUsesProvider(groupId, selectedId, providerId));
     }
 
     public IReadOnlySet<string> GetFullySelectedFullRuntimeProviders(
@@ -1224,15 +1256,18 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyDictionary<string, string> selections)
     {
         var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var targetGroupIds = ProviderUsesFullRuntime(optionId)
-            ? GetFullRuntimeProviderGroups(optionId)
+        var requestedProviderId = ResolveVisualProviderId(optionId);
+        var targetGroupIds = ProviderUsesFullRuntime(requestedProviderId)
+            ? GetFullRuntimeProviderGroups(requestedProviderId)
             : [groupId];
         var displacedProviders = targetGroupIds
-            .Select(targetGroupId => selections.GetValueOrDefault(targetGroupId))
-            .Where(selectedId =>
-                selectedId != null &&
-                ProviderUsesFullRuntime(selectedId) &&
-                !selectedId.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            .Select(targetGroupId => selections.TryGetValue(targetGroupId, out var selectedId)
+                ? ResolveVisualProviderId(selectedId)
+                : null)
+            .Where(providerId =>
+                providerId != null &&
+                ProviderUsesFullRuntime(providerId) &&
+                !providerId.Equals(requestedProviderId, StringComparison.OrdinalIgnoreCase))
             .Cast<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase);
         foreach (var displacedProviderId in displacedProviders)
@@ -1240,7 +1275,7 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var ownedGroupId in GetFullRuntimeProviderGroups(displacedProviderId))
             {
                 if (selections.TryGetValue(ownedGroupId, out var selectedId) &&
-                    selectedId.Equals(displacedProviderId, StringComparison.OrdinalIgnoreCase))
+                    SelectionUsesProvider(ownedGroupId, selectedId, displacedProviderId))
                 {
                     updates[ownedGroupId] = BaseOptionId;
                 }
@@ -1248,16 +1283,56 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         updates[groupId] = optionId;
-        if (ProviderUsesFullRuntime(optionId))
+        if (ProviderUsesFullRuntime(requestedProviderId))
         {
-            foreach (var ownedGroupId in GetFullRuntimeProviderGroups(optionId))
+            foreach (var ownedGroupId in GetFullRuntimeProviderGroups(requestedProviderId))
             {
-                updates[ownedGroupId] = optionId;
+                if (ownedGroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var ownedOption = _groups.First(group => group.Id.Equals(
+                        ownedGroupId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Options.FirstOrDefault(candidate => candidate.EffectiveProviderId.Equals(
+                        requestedProviderId,
+                        StringComparison.OrdinalIgnoreCase));
+                if (ownedOption != null)
+                {
+                    updates[ownedGroupId] = ownedOption.Id;
+                }
             }
         }
 
         return updates;
     }
+
+    public string ResolveVisualProviderId(string optionOrProviderId)
+    {
+        if (string.IsNullOrWhiteSpace(optionOrProviderId))
+        {
+            return optionOrProviderId;
+        }
+
+        return _groups.SelectMany(group => group.Options)
+                   .FirstOrDefault(option => option.Id.Equals(
+                       optionOrProviderId,
+                       StringComparison.OrdinalIgnoreCase))?
+                   .EffectiveProviderId ?? optionOrProviderId;
+    }
+
+    private bool SelectionUsesProvider(
+        string groupId,
+        string selectionId,
+        string providerId) =>
+        _groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option => option.Id.Equals(
+                selectionId,
+                StringComparison.OrdinalIgnoreCase))?
+            .EffectiveProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) == true;
 
     public bool IsResourceBackedOption(string groupId, string optionId)
     {
@@ -1431,7 +1506,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // Private provider namespaces have no baseline and are harmless after the callbacks stop.
         var relevantFullRuntimeProviders = includedGroups
             .SelectMany(group => group.Options)
-            .Select(option => option.Id)
+            .Select(option => option.EffectiveProviderId)
             .Where(ProviderUsesFullRuntime)
             .Distinct(StringComparer.OrdinalIgnoreCase);
         foreach (var providerId in relevantFullRuntimeProviders)
@@ -1780,6 +1855,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private IReadOnlyDictionary<string, ResourceFile> CollectFullRuntimeProviderBaselineOverlay(
         string providerId)
     {
+        providerId = ResolveVisualProviderId(providerId);
         if (_fullRuntimeProviderBaselineOverlays.TryGetValue(providerId, out var cached))
         {
             return cached;
@@ -4833,6 +4909,68 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in indexes)
         {
             var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
+            var frameworkContracts = FrameworkSkinContractScanner.Scan(
+                    index.Mod.RootPath,
+                    index.Mod.Id)
+                .Where(contract => FrameworkContractResourceClosureComplete(index, contract))
+                .ToArray();
+            var frameworkTargetIds = frameworkContracts
+                .Select(contract => contract.TargetGroupId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var contract in frameworkContracts)
+            {
+                if (!knownGroupIds.Contains(contract.TargetGroupId))
+                {
+                    continue;
+                }
+
+                if (!groups.TryGetValue(contract.TargetGroupId, out var frameworkGroup))
+                {
+                    frameworkGroup = new SkinGroup(
+                        contract.TargetGroupId,
+                        DisplayName(contract.TargetGroupId));
+                    groups.Add(contract.TargetGroupId, frameworkGroup);
+                }
+
+                var mappedAssets = new Dictionary<string, ResourceAsset>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var resource in contract.CharacterResources)
+                {
+                    var canonicalPath = GetFrameworkCharacterCanonicalPath(
+                        resource.Key,
+                        contract.TargetGroupId);
+                    var asset = index.Assets.GetValueOrDefault(resource.Value) ??
+                                index.TryBuildAsset(resource.Value);
+                    if (canonicalPath != null && asset != null)
+                    {
+                        mappedAssets[canonicalPath] = asset;
+                    }
+                }
+
+                // Remove a coarse Mod-level option for this same character. Framework contracts
+                // are deliberately split by SkinData registration, so retaining the aggregate
+                // option would mix the resources of two skins from one DLL.
+                frameworkGroup.Options.RemoveAll(option =>
+                    option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
+                var existingFrameworkIndex = frameworkGroup.Options.FindIndex(option =>
+                    option.Id.Equals(contract.OptionId, StringComparison.OrdinalIgnoreCase));
+                var frameworkOption = new SkinOption(
+                    contract.OptionId,
+                    contract.DisplayName,
+                    mappedAssets,
+                    IsRuntimeProvider: true,
+                    ProviderId: index.Mod.Id,
+                    FrameworkContract: contract);
+                if (existingFrameworkIndex >= 0)
+                {
+                    frameworkGroup.Options[existingFrameworkIndex] = frameworkOption;
+                }
+                else
+                {
+                    frameworkGroup.Options.Add(frameworkOption);
+                }
+            }
+
             var managedCharacterReplacements = ManagedCharacterAssetReplacementScanner.Scan(
                 index.Mod.RootPath,
                 index.Mod.Id);
@@ -4853,6 +4991,12 @@ internal sealed partial class SkinCatalog : IDisposable
             var managedDependencyPaths = CollectManagedCharacterDependencyPaths(
                 index,
                 managedRuntimeMappings.Keys);
+            var frameworkDependencyPaths = CollectManagedCharacterDependencyPaths(
+                index,
+                frameworkContracts.SelectMany(contract => contract.ResourcePaths));
+            var declarativeDependencyPaths = managedDependencyPaths
+                .Concat(frameworkDependencyPaths)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var indexedAssets = index.Assets.Values.ToArray();
             // The lightweight PCK index eagerly registers canonical game animation/scene paths,
             // but a DLL provider may keep its routed scene below any private top-level folder.
@@ -4886,7 +5030,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     Asset: asset,
                     Mapping: managedRuntimeMappings.TryGetValue(asset.SourcePath, out var managedMapping)
                         ? managedMapping
-                        : managedDependencyPaths.Contains(asset.SourcePath)
+                        : declarativeDependencyPaths.Contains(asset.SourcePath)
                             ? null
                             : TryGetRuntimeProviderAsset(index.Mod.Id, asset.SourcePath)))
                 .Where(pair => pair.Mapping != null)
@@ -4898,6 +5042,7 @@ internal sealed partial class SkinCatalog : IDisposable
             // explicit registration has routed those resources to the real character group.
             var managedTargetIds = managedCharacterReplacements
                 .Select(replacement => replacement.TargetGroupId)
+                .Concat(frameworkTargetIds)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var sourceGroup in groups.Values
                          .Where(group => !managedTargetIds.Contains(group.Id))
@@ -4907,7 +5052,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase) &&
                     option.Assets.Count > 0 &&
                     option.Assets.Values.Any(asset =>
-                        managedDependencyPaths.Contains(asset.SourcePath)));
+                        declarativeDependencyPaths.Contains(asset.SourcePath)));
                 if (sourceGroup.Options.Count == 0)
                 {
                     groups.Remove(sourceGroup.Id);
@@ -4918,6 +5063,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Select(pair => pair.Mapping.Identity)
                 .Where(identity =>
                     knownGroupIds.Contains(identity.Id) &&
+                    !frameworkTargetIds.Contains(identity.Id) &&
                     (enabledGroupIds == null ||
                      enabledGroupIds.Contains(identity.Id) ||
                      managedTargetIds.Contains(identity.Id)))
@@ -4966,6 +5112,37 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
     }
+
+    private static bool FrameworkContractResourceClosureComplete(
+        PckResourceIndex index,
+        FrameworkCharacterSkinContract contract) =>
+        contract.ResourcePaths.Count > 0 &&
+        contract.ResourcePaths.All(path =>
+            index.Archive.Paths.Contains(path, StringComparer.OrdinalIgnoreCase) ||
+            index.Archive.Paths.Contains(path + ".remap", StringComparer.OrdinalIgnoreCase) ||
+            index.Archive.Paths.Contains(path + ".import", StringComparer.OrdinalIgnoreCase));
+
+    private static string? GetFrameworkCharacterCanonicalPath(
+        string propertyName,
+        string targetGroupId) => propertyName switch
+        {
+            "CombatVisual" => $"res://scenes/creature_visuals/{targetGroupId}.tscn",
+            "MerchantVisual" => $"res://scenes/merchant/characters/{targetGroupId}_merchant.tscn",
+            "RestVisual" => $"res://scenes/rest_site/characters/{targetGroupId}_rest_site.tscn",
+            "CharacterSelectBg" => $"res://scenes/screens/char_select/char_select_bg_{targetGroupId}.tscn",
+            "CharacterSelectPortrait" => $"res://images/packed/character_select/char_select_{targetGroupId}.png",
+            "CharacterSelectTransition" => $"res://materials/transitions/{targetGroupId}_transition_mat.tres",
+            "CharacterIcon" => $"res://images/ui/top_panel/character_icon_{targetGroupId}.png",
+            "CharacterIconOutline" => $"res://images/ui/top_panel/character_icon_{targetGroupId}_outline.png",
+            "CharacterIconScene" => $"res://scenes/ui/character_icons/{targetGroupId}_icon.tscn",
+            "CharacterMapMarker" => $"res://images/packed/map/icons/map_marker_{targetGroupId}.png",
+            "CardTrail" => $"res://scenes/vfx/card_trail_{targetGroupId}.tscn",
+            "HandPoint" => $"res://images/ui/hands/multiplayer_hand_{targetGroupId}_point.png",
+            "HandRock" => $"res://images/ui/hands/multiplayer_hand_{targetGroupId}_rock.png",
+            "HandPaper" => $"res://images/ui/hands/multiplayer_hand_{targetGroupId}_paper.png",
+            "HandScissors" => $"res://images/ui/hands/multiplayer_hand_{targetGroupId}_scissors.png",
+            _ => null
+        };
 
     private static IReadOnlySet<string> CollectManagedCharacterDependencyPaths(
         PckResourceIndex index,
@@ -6022,7 +6199,8 @@ internal sealed record SkinOption(
     ResourceAsset? ManagedMonsterScene = null,
     RuntimeMonsterVisualMode? RuntimeMonsterVisualMode = null,
     string? ProviderId = null,
-    bool IsManagedMonsterRuntimeProfile = false)
+    bool IsManagedMonsterRuntimeProfile = false,
+    FrameworkCharacterSkinContract? FrameworkContract = null)
 {
     public string EffectiveProviderId =>
         ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;

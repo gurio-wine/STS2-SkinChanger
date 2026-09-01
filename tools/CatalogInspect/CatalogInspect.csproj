@@ -14,6 +14,7 @@
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPortraitReplacementScanner.cs" Link="ManagedCardPortraitReplacementScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ProviderCardBehaviorScanner.cs" Link="ProviderCardBehaviorScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCharacterAssetReplacementScanner.cs" Link="ManagedCharacterAssetReplacementScanner.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs" Link="FrameworkSkinContractScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedMonsterSceneScanner.cs" Link="ManagedMonsterSceneScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/RuntimeMonsterVisualModeScanner.cs" Link="RuntimeMonsterVisualModeScanner.cs" />
   </ItemGroup>

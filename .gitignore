@@ -4,12 +4,16 @@
 /tools/PckInspect/obj/
 /tools/CatalogInspect/bin/
 /tools/CatalogInspect/obj/
+/tools/FrameworkCompatProbe/bin/
+/tools/FrameworkCompatProbe/obj/
 /tools/OnlineCacheProbe/bin/
 /tools/OnlineCacheProbe/obj/
 /tools/WorkshopPublisher/bin/
 /tools/WorkshopPublisher/obj/
 /tests/STS2SkinChanger.LogicTests/bin/
 /tests/STS2SkinChanger.LogicTests/obj/
+/compat/ThunninoiSkinManagerCompat/bin/
+/compat/ThunninoiSkinManagerCompat/obj/
 /workshop/content/
 *.user
 *.suo

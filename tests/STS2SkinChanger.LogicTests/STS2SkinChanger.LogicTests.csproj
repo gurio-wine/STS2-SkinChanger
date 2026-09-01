@@ -7,12 +7,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj"
+                      ReferenceOutputAssembly="false" />
     <Compile Include="../../STS2SkinChanger/Core/PromotedPackOverlayPolicy.cs"
              Link="PromotedPackOverlayPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/AncientStyleMethodPolicy.cs"
              Link="AncientStyleMethodPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/RuntimeDependencyIsolationPolicy.cs"
              Link="RuntimeDependencyIsolationPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/OptionalSkinFrameworkPolicy.cs"
+             Link="OptionalSkinFrameworkPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs"
+             Link="FrameworkSkinContractScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/OtherCreatureCatalog.cs"
              Link="OtherCreatureCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantProviderReadyPolicy.cs"
@@ -26,4 +32,9 @@
     <Compile Include="../../STS2SkinChanger/Ui/CardPresentationLayoutPolicy.cs"
              Link="CardPresentationLayoutPolicy.cs" />
   </ItemGroup>
+
+  <Target Name="CopyFrameworkCompatibilityFixture" AfterTargets="Build">
+    <Copy SourceFiles="../../compat/ThunninoiSkinManagerCompat/bin/$(Configuration)/net9.0/thunninoiSkinManager.dll"
+          DestinationFolder="$(OutputPath)" />
+  </Target>
 </Project>

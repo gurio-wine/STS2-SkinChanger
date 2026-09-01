@@ -458,7 +458,7 @@ if (validateIndex >= 0)
                 portrait.AncientPortrait
             }))
             .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => (entry.GroupId, entry.Option, Path: path)))
+            .Select(path => (entry.GroupId, entry.Option, Path: path!)))
         .DistinctBy(
             entry => $"{entry.Option.Id}\n{entry.Path}",
             StringComparer.OrdinalIgnoreCase)

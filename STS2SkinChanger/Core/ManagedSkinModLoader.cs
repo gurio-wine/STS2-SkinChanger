@@ -9,6 +9,7 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Pck;
 using System.Reflection;
 using System.Runtime.Loader;
 
@@ -55,6 +56,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedVisualPostfixes =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, OptionalSkinFrameworkEvidence>
+        OptionalFrameworkEvidence = new(StringComparer.OrdinalIgnoreCase);
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
 
@@ -388,6 +391,13 @@ internal static class ManagedSkinModLoader
             return;
         }
 
+        if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(mod.manifest.id))
+        {
+            // The host's API identity is already supplied by the behaviour-free adapter. Loading
+            // its original DLL here would reintroduce the UI, save file and global skin patches.
+            return;
+        }
+
         var assemblyPath = Path.GetFullPath(Path.Combine(mod.path, mod.manifest.id + ".dll"));
         if (!File.Exists(assemblyPath))
         {
@@ -396,7 +406,8 @@ internal static class ManagedSkinModLoader
         }
 
         var hasDeclarativeCharacterAssetReplacement =
-            ManagedCharacterAssetReplacementScanner.Scan(mod.path, mod.manifest.id).Count > 0;
+            ManagedCharacterAssetReplacementScanner.Scan(mod.path, mod.manifest.id).Count > 0 ||
+            FrameworkSkinContractScanner.Scan(mod.path, mod.manifest.id).Count > 0;
         ProviderAssemblies[mod.manifest.id] = new ProviderAssembly(
             assemblyPath,
             mod.manifest.name ?? mod.manifest.id,
@@ -553,6 +564,7 @@ internal static class ManagedSkinModLoader
                 EnsureProviderGodotScripts(providerId);
                 new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
                     .PatchAll(assembly);
+                FrameworkCompatibilityLayer.NotifyProviderActivated(assembly);
                 if (provider.HasDeclarativeCharacterAssetReplacement)
                 {
                     ModLog.Info(
@@ -2381,8 +2393,23 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
+        if (FrameworkCompatibilityLayer.IsKnownFrameworkHost(manifest.id) &&
+            !FrameworkCompatibilityLayer.IsBundledFrameworkHost(manifest.id))
+        {
+            return false;
+        }
+
+        if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(manifest.id))
+        {
+            // This Mod is only a manifest placeholder once the equivalent API assembly has been
+            // installed. Its own BaseLib/PCK/min-version requirements belong to executable UI and
+            // global patches that are intentionally not loaded.
+            return true;
+        }
+
         if (manifest.dependencies?.Any(dependency =>
-                !DependencyIsSatisfied(mods, dependency)) == true)
+                !DependencyIsSatisfied(mods, dependency) &&
+                !IsOptionalFrameworkDependencySatisfied(mod, dependency)) == true)
         {
             return false;
         }
@@ -2440,6 +2467,34 @@ internal static class ManagedSkinModLoader
                 return true;
             }
 
+            if (FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id))
+            {
+                provider = new SkinProviderProbe(
+                    mod.manifest!.id!,
+                    mod.path,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false);
+                ProvidersByRoot[root] = provider;
+                if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(mod.manifest?.id) &&
+                    !IsRequiredByAnotherMod(mod, ModManager.Mods))
+                {
+                    ModLog.Info(
+                        $"已由内置兼容层接管皮肤框架 {mod.manifest?.name ?? mod.manifest?.id}；" +
+                        "原框架 DLL/PCK 不会执行或全局挂载。");
+                }
+                else
+                {
+                    ModLog.Info(
+                        $"已把皮肤框架 {mod.manifest?.name ?? mod.manifest?.id} 纳入加载顺序检查；" +
+                        "本次不满足安全替代条件，保留原框架执行。");
+                }
+                return true;
+            }
+
             if (!NegativeProviderRoots.Add(root))
             {
                 provider = null!;
@@ -2483,10 +2538,122 @@ internal static class ManagedSkinModLoader
     public static bool IsRequiredByAnotherMod(Mod mod, IEnumerable<Mod> mods)
     {
         var modId = mod.manifest?.id;
-        return modId != null && mods.Any(other =>
-            !ReferenceEquals(other, mod) &&
-            other.manifest?.dependencies?.Any(dependency =>
-                string.Equals(dependency.id, modId, StringComparison.OrdinalIgnoreCase)) == true);
+        if (modId == null)
+        {
+            return false;
+        }
+
+        var dependents = mods
+            .Where(other => !ReferenceEquals(other, mod))
+            .SelectMany(other => other.manifest?.dependencies?
+                .Where(dependency => dependency.id.Equals(
+                    modId,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(dependency => BuildOptionalFrameworkEvidence(other, dependency.id)) ?? [])
+            .ToArray();
+        if (dependents.Length == 0)
+        {
+            return false;
+        }
+
+        return OptionalSkinFrameworkPolicy.IsFrameworkHostRequired(
+            modId,
+            dependents,
+            FrameworkCompatibilityLayer.CompatibilityAssemblyNames);
+    }
+
+    public static bool CanInstallFrameworkCompatibilityAssembly(string assemblyName)
+    {
+        var candidates = new List<OptionalSkinFrameworkEvidence>();
+        foreach (var mod in ModManager.Mods)
+        {
+            var manifest = mod.manifest;
+            var modId = manifest?.id;
+            if (string.IsNullOrWhiteSpace(modId) ||
+                Entry.IsSelfModId(modId) ||
+                modId.Equals(assemblyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var declaresDependency = manifest!.dependencies?.Any(dependency =>
+                dependency.id.Equals(assemblyName, StringComparison.OrdinalIgnoreCase)) == true;
+            var referencesFramework = FrameworkSkinContractScanner.Scan(mod.path, modId)
+                .Any(contract => contract.FrameworkAssemblyName.Equals(
+                    assemblyName,
+                    StringComparison.OrdinalIgnoreCase));
+            if (declaresDependency || referencesFramework)
+            {
+                candidates.Add(BuildOptionalFrameworkEvidence(mod, assemblyName));
+            }
+        }
+
+        return OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+            assemblyName,
+            candidates);
+    }
+
+    private static bool IsOptionalFrameworkDependencySatisfied(
+        Mod dependent,
+        ModDependency dependency) =>
+        OptionalSkinFrameworkPolicy.CanSatisfyMissingDependency(
+            BuildOptionalFrameworkEvidence(dependent, dependency.id),
+            FrameworkCompatibilityLayer.CompatibilityAssemblyNames);
+
+    private static OptionalSkinFrameworkEvidence BuildOptionalFrameworkEvidence(
+        Mod dependent,
+        string dependencyId)
+    {
+        var dependentId = dependent.manifest?.id ?? string.Empty;
+        var cacheKey = dependentId + "\n" + dependencyId;
+        if (OptionalFrameworkEvidence.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        var allContracts = FrameworkSkinContractScanner.Scan(dependent.path, dependentId);
+        var contracts = allContracts
+            .Where(contract => contract.FrameworkAssemblyName.Equals(
+                dependencyId,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var referencedAssemblyName = contracts.FirstOrDefault()?.FrameworkAssemblyName ??
+                                     allContracts.FirstOrDefault()?.FrameworkAssemblyName ??
+                                     string.Empty;
+        var closureComplete = false;
+        var pckPath = dependent.manifest?.hasPck == true
+            ? Path.Combine(dependent.path, dependentId + ".pck")
+            : null;
+        if (contracts.Length > 0 && pckPath != null && File.Exists(pckPath))
+        {
+            try
+            {
+                using var archive = PckArchive.Open(pckPath);
+                var paths = archive.Paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                closureComplete = contracts
+                    .SelectMany(contract => contract.ResourcePaths)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .All(path =>
+                        paths.Contains(path) ||
+                        paths.Contains(path + ".remap") ||
+                        paths.Contains(path + ".import"));
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"验证 {dependent.manifest?.name ?? dependentId} 的框架皮肤资源闭包失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        var evidence = new OptionalSkinFrameworkEvidence(
+            dependentId,
+            dependencyId,
+            referencedAssemblyName,
+            contracts.Length > 0,
+            closureComplete);
+        OptionalFrameworkEvidence[cacheKey] = evidence;
+        return evidence;
     }
 
     private static string NormalizePath(string path) =>

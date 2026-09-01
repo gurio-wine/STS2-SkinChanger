@@ -1,5 +1,7 @@
 using STS2SkinChanger.Core;
+using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Ui;
+using System.Reflection;
 
 static void Require(bool condition, string message)
 {
@@ -72,6 +74,119 @@ Require(
         isProviderExclusivePath: true,
         isMountedBySelectedOverlay: true),
     "提供者独占路径中的大型依赖可以继续复用已挂载资源，避免大型皮肤重复打包。");
+
+var compatibleFramework = new OptionalSkinFrameworkEvidence(
+    DependentModId: "example.skin",
+    DependencyId: "example.skin.framework",
+    ReferencedAssemblyName: "example.skin.framework",
+    HasDeclarativeSkinContract: true,
+    ResourceClosureComplete: true);
+Require(
+    OptionalSkinFrameworkPolicy.CanSatisfyMissingDependency(
+        compatibleFramework,
+        ["example.skin.framework"]),
+    "只有兼容层已提供同名程序集、且皮肤契约和资源闭包都完整时，框架依赖才可降为可选。");
+Require(
+    !OptionalSkinFrameworkPolicy.CanSatisfyMissingDependency(
+        compatibleFramework with { ResourceClosureComplete = false },
+        ["example.skin.framework"]),
+    "皮肤包缺少契约引用资源时不能绕过原框架依赖。");
+Require(
+    !OptionalSkinFrameworkPolicy.CanSatisfyMissingDependency(
+        compatibleFramework with { ReferencedAssemblyName = "unrelated.framework" },
+        ["example.skin.framework"]),
+    "不能仅凭依赖名称相似就把无关 DLL 依赖当成皮肤框架。");
+Require(
+    !OptionalSkinFrameworkPolicy.IsFrameworkHostRequired(
+        "example.skin.framework",
+        [compatibleFramework],
+        ["example.skin.framework"]),
+    "所有依赖者都已通过完整契约接管时，原框架宿主不应继续执行。");
+Require(
+    OptionalSkinFrameworkPolicy.IsFrameworkHostRequired(
+        "example.skin.framework",
+        [compatibleFramework, compatibleFramework with
+        {
+            DependentModId = "unsafe.skin",
+            HasDeclarativeSkinContract = false
+        }],
+        ["example.skin.framework"]),
+    "只要仍有一个依赖者不能安全接管，就必须保留原框架宿主。");
+Require(
+    OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+        "example.skin.framework",
+        [compatibleFramework]),
+    "兼容层加载前必须允许全部依赖者都可安全接管的框架程序集。");
+Require(
+    !OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+        "example.skin.framework",
+        []),
+    "没有任何皮肤需要兼容框架时不应抢先加载同名程序集。");
+Require(
+    !OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+        "example.skin.framework",
+        [compatibleFramework, compatibleFramework with
+        {
+            DependentModId = "unsafe.skin",
+            ResourceClosureComplete = false
+        }]),
+    "任一依赖者无法安全接管时，不得让内置兼容程序集抢占原框架身份。");
+
+var civilightRoot =
+    "/mnt/d/Programs/Steam/steamapps/workshop/content/2868840/3749568885";
+if (Directory.Exists(civilightRoot))
+{
+    var contracts = FrameworkSkinContractScanner.Scan(civilightRoot, "CEdefect");
+    Require(contracts.Count == 2, "同一框架皮肤包声明的两套角色皮肤必须拆成两个选项。");
+    Require(
+        contracts.Select(contract => contract.DisplayName).SequenceEqual(
+            ["Civilight Eterna", "Condolences"]),
+        "框架皮肤选项必须使用注册时的玩家可见名称，而不是 DLL 类型名。");
+    Require(
+        contracts.All(contract =>
+            contract.TargetGroupId == "defect" &&
+            contract.FrameworkAssemblyName == "thunninoiSkinManager"),
+        "框架契约必须从泛型基类解析目标角色与所需兼容程序集。");
+    Require(
+        contracts[0].CharacterResources["CombatVisual"].EndsWith(
+            "/default/ce_combat.tscn",
+            StringComparison.OrdinalIgnoreCase) &&
+        contracts[1].CharacterResources["CombatVisual"].EndsWith(
+            "/epoque/ce_epoque_combat.tscn",
+            StringComparison.OrdinalIgnoreCase),
+        "两套皮肤的私有战斗场景不能被合并成同一个 Mod 级选项。");
+    Require(
+        contracts.All(contract => contract.CharacterResourceLists
+            .GetValueOrDefault("EnergyLayers")?.Count == 5),
+        "框架契约必须保留能量球的全部分层资源，而不是只取最后一张图。");
+    Require(
+        contracts.All(contract => contract.Orbs.Any(orb => orb.TargetModelName == "PlasmaOrb")),
+        "框架契约必须保留与角色皮肤一起注册的充能球外观。");
+    Require(
+        contracts.All(contract => contract.Relics.Any(relic => relic.TargetModelName == "CrackedCore")),
+        "框架契约必须保留与角色皮肤一起注册的遗物外观。");
+}
+
+var frameworkManagerRoot =
+    "/mnt/d/Programs/Steam/steamapps/workshop/content/2868840/3749563676";
+if (Directory.Exists(frameworkManagerRoot))
+{
+    Require(
+        FrameworkSkinContractScanner.Scan(
+            frameworkManagerRoot,
+            "thunninoiSkinManager").Count == 0,
+        "框架宿主本身不能因为声明了通用基类就被误识别成一套可选择皮肤。");
+}
+
+var frameworkCompatibilityPath = Path.Combine(
+    AppContext.BaseDirectory,
+    "thunninoiSkinManager.dll");
+Require(
+    File.Exists(frameworkCompatibilityPath),
+    "构建必须携带可独立满足框架程序集引用的轻量兼容层。");
+Require(
+    AssemblyName.GetAssemblyName(frameworkCompatibilityPath).Name == "thunninoiSkinManager",
+    "兼容层的 CLR 程序集标识必须与皮肤 DLL 声明的框架引用完全一致。");
 
 var open = MerchantPreviewLayerPolicy.Resolve(
     inventoryOpen: true,

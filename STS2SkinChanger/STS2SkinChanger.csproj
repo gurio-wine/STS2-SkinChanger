@@ -24,6 +24,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj"
+                      ReferenceOutputAssembly="false" />
     <Reference Include="sts2">
       <HintPath>$(GameAssemblyDir)/sts2.dll</HintPath>
       <Private>false</Private>
@@ -41,4 +43,9 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <Target Name="CopyBundledSkinFrameworkCompatibility" AfterTargets="Build">
+    <Copy SourceFiles="../compat/ThunninoiSkinManagerCompat/bin/$(Configuration)/net9.0/thunninoiSkinManager.dll"
+          DestinationFolder="$(OutputPath)" />
+  </Target>
 </Project>
