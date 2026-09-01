@@ -642,94 +642,183 @@ internal sealed partial class SkinCatalog : IDisposable
     }
 
     public static IReadOnlyList<SkinProviderProbe> ProbeSkinProviders(
-        IEnumerable<SkinModDescriptor> mods)
+        IEnumerable<SkinModDescriptor> mods,
+        string? gamePckPath = null)
     {
+        var modList = mods.ToArray();
         var providers = new List<SkinProviderProbe>();
-        foreach (var mod in mods.Where(mod => !mod.AffectsGameplay))
+        var importedToSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var baselineIndexes = new List<PckResourceIndex>();
+        try
         {
-            var visualGroups = 0;
-            var cardAssets = 0;
-            var cardPresentations = 0;
-            var managedScriptCount = 0;
-            var hasInteractiveScenes = false;
-            if (mod.PckPath != null && File.Exists(mod.PckPath))
+            if (gamePckPath != null && File.Exists(gamePckPath))
             {
-                PckArchive? archive = null;
-                PckResourceIndex? index = null;
-                try
-                {
-                    archive = PckArchive.Open(mod.PckPath);
-                    index = PckResourceIndex.Build(
-                        mod,
-                        archive,
-                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                        remapFilter: null);
-                    managedScriptCount = mod.HasDll
-                        ? CountManagedGodotScripts(archive)
-                        : 0;
-                    hasInteractiveScenes = managedScriptCount > 0 && ContainsInteractiveScene(archive);
-                    visualGroups = BuildGroups([index])
-                        .Count(group => group.Options.Count > 0);
-                    var configuredCardGroups = BuildCardGroups([index]);
-                    cardAssets = configuredCardGroups
-                        .Sum(group => group.Options.Sum(option =>
-                            option.NormalPortraits.Count + option.AncientPortraits.Count));
-                    cardPresentations = configuredCardGroups
-                        .Sum(group => group.Options.Sum(option => option.CardPresentations.Count));
-                    var pckCardOptions = BuildPckCardOptions([index]);
-                    cardAssets += pckCardOptions.Sum(option =>
-                        option.Assets.Count +
-                        option.NormalPortraits.Count +
-                        option.AncientPortraits.Count);
-                    cardPresentations += pckCardOptions.Sum(option => option.CardPresentations.Count);
-                }
-                catch (Exception exception)
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"无法探测皮肤提供者 {mod.Id}: {exception.Message}");
-                }
-                finally
-                {
-                    if (index != null)
-                    {
-                        index.Dispose();
-                    }
-                    else
-                    {
-                        archive?.Dispose();
-                    }
-                }
+                TryAddProbeBaselineIndex(
+                    new SkinModDescriptor("game", "游戏原版", gamePckPath, true),
+                    importedToSource,
+                    baselineIndexes,
+                    IsAnimationRemap);
             }
 
-            var runtimeImages = 0;
-            if (mod.RootPath != null)
+            foreach (var baselineMod in modList.Where(mod =>
+                         mod.AffectsGameplay &&
+                         mod.PckPath != null &&
+                         File.Exists(mod.PckPath) &&
+                         !string.Equals(mod.PckPath, gamePckPath, StringComparison.OrdinalIgnoreCase)))
             {
-                runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
-
-                if (mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
-                    LooksLikeDllSkinProvider(mod))
-                {
-                    // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
-                    // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。
-                    visualGroups = 1;
-                }
+                TryAddProbeBaselineIndex(
+                    baselineMod,
+                    importedToSource,
+                    baselineIndexes,
+                    remapFilter: null);
             }
 
-            if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0)
+            foreach (var mod in modList.Where(mod => !mod.AffectsGameplay))
             {
-                providers.Add(new SkinProviderProbe(
-                    mod.Id,
-                    mod.RootPath,
-                    visualGroups,
-                    cardAssets,
-                    cardPresentations,
-                    runtimeImages,
-                    managedScriptCount,
-                    hasInteractiveScenes));
+                var visualGroups = 0;
+                var cardAssets = 0;
+                var cardPresentations = 0;
+                var managedScriptCount = 0;
+                var hasInteractiveScenes = false;
+                if (mod.PckPath != null && File.Exists(mod.PckPath))
+                {
+                    PckArchive? archive = null;
+                    PckResourceIndex? index = null;
+                    try
+                    {
+                        archive = PckArchive.Open(mod.PckPath);
+                        index = PckResourceIndex.Build(
+                            mod,
+                            archive,
+                            importedToSource,
+                            remapFilter: null);
+                        managedScriptCount = mod.HasDll
+                            ? CountManagedGodotScripts(archive)
+                            : 0;
+                        hasInteractiveScenes = managedScriptCount > 0 && ContainsInteractiveScene(archive);
+                        visualGroups = CountProbeVisualGroups(index, baselineIndexes);
+                        var configuredCardGroups = BuildCardGroups([index]);
+                        cardAssets = configuredCardGroups
+                            .Sum(group => group.Options.Sum(option =>
+                                option.NormalPortraits.Count + option.AncientPortraits.Count));
+                        cardPresentations = configuredCardGroups
+                            .Sum(group => group.Options.Sum(option => option.CardPresentations.Count));
+                        var pckCardOptions = BuildPckCardOptions([index]);
+                        cardAssets += pckCardOptions.Sum(option =>
+                            option.Assets.Count +
+                            option.NormalPortraits.Count +
+                            option.AncientPortraits.Count);
+                        cardPresentations += pckCardOptions.Sum(option => option.CardPresentations.Count);
+                    }
+                    catch (Exception exception)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"无法探测皮肤提供者 {mod.Id}: {exception.Message}");
+                    }
+                    finally
+                    {
+                        if (index != null)
+                        {
+                            index.Dispose();
+                        }
+                        else
+                        {
+                            archive?.Dispose();
+                        }
+                    }
+                }
+
+                var runtimeImages = 0;
+                if (mod.RootPath != null)
+                {
+                    runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
+
+                    if (mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
+                        LooksLikeDllSkinProvider(mod))
+                    {
+                        // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
+                        // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。
+                        visualGroups = 1;
+                    }
+                }
+
+                if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0)
+                {
+                    providers.Add(new SkinProviderProbe(
+                        mod.Id,
+                        mod.RootPath,
+                        visualGroups,
+                        cardAssets,
+                        cardPresentations,
+                        runtimeImages,
+                        managedScriptCount,
+                        hasInteractiveScenes));
+                }
+            }
+        }
+        finally
+        {
+            foreach (var baselineIndex in baselineIndexes)
+            {
+                baselineIndex.Dispose();
             }
         }
 
         return providers;
+    }
+
+    private static void TryAddProbeBaselineIndex(
+        SkinModDescriptor mod,
+        Dictionary<string, string> importedToSource,
+        ICollection<PckResourceIndex> baselineIndexes,
+        Func<string, bool>? remapFilter)
+    {
+        if (mod.PckPath == null)
+        {
+            return;
+        }
+
+        PckArchive? archive = null;
+        try
+        {
+            archive = PckArchive.Open(mod.PckPath);
+            var index = PckResourceIndex.Build(mod, archive, importedToSource, remapFilter);
+            baselineIndexes.Add(index);
+            archive = null;
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"无法建立皮肤探测基线 {mod.Id}: {exception.Message}");
+        }
+        finally
+        {
+            archive?.Dispose();
+        }
+    }
+
+    private static int CountProbeVisualGroups(
+        PckResourceIndex index,
+        IReadOnlyCollection<PckResourceIndex> baselineIndexes)
+    {
+        if (baselineIndexes.Count > 0)
+        {
+            return BuildGroups([index], baselineIndexes)
+                .Count(group => group.Options.Count > 0);
+        }
+
+        var groupIds = index.Assets.Keys
+            .Select(TryGetPrimaryGroup)
+            .Where(group => group != null)
+            .Cast<GroupIdentity>()
+            .Select(group => group.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in BuildGroups([index]).Where(group => group.Options.Count > 0))
+        {
+            groupIds.Add(group.Id);
+        }
+
+        return groupIds.Count;
     }
 
     private static int CountManagedGodotScripts(PckArchive archive)
@@ -911,19 +1000,7 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var value = patchMetadata.ToString();
-            if (HasPatchTarget(value, "CharacterModel", "CreateVisuals", "CharacterSelectIcon", "IconTexture") ||
-                HasPatchTarget(value, "MonsterModel", "CreateVisuals") ||
-                HasPatchTarget(value, "EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
-                // Merchant skin providers commonly patch NMerchantButton/NMerchantRoom rather
-                // than CharacterModel.  They still need the same load-time isolation; otherwise
-                // a provider such as ATA_Merchant remains globally active and overwrites every
-                // subsequent merchant preview, including the game's default option.
-                HasPatchTarget(value, "NMerchantButton", "_Ready", "MerchantVisual", "SetSkin") ||
-                HasPatchTarget(value, "NMerchantRoom", "_Ready", "MerchantButton") ||
-                HasPatchTarget(value, "NMerchantHand", "_Ready", "skeleton") ||
-                HasPatchTarget(value, "CardModel", "Portrait", "PortraitPath") ||
-                HasPatchTarget(value, "AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
-                HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas"))
+            if (HasDirectVisualPatchTargetMetadata(value))
             {
                 return true;
             }
@@ -941,6 +1018,22 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return hasCreatureLifecyclePatch && hasCharacterSelectPatch;
+
+        static bool HasPatchTarget(string metadata, string typeName, params string[] members) =>
+            metadata.Contains(typeName, StringComparison.Ordinal) &&
+            members.Any(member => metadata.Contains(member, StringComparison.Ordinal));
+    }
+
+    internal static bool HasDirectVisualPatchTargetMetadata(string value)
+    {
+        return HasPatchTarget(value, "CharacterModel", "CreateVisuals", "CharacterSelectIcon", "IconTexture") ||
+               HasPatchTarget(value, "MonsterModel", "CreateVisuals") ||
+               HasPatchTarget(value, "EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
+               HasPatchTarget(value, "NMerchantButton", "_Ready", "MerchantVisual", "SetSkin") ||
+               HasPatchTarget(value, "NMerchantHand", "_Ready", "skeleton") ||
+               HasPatchTarget(value, "CardModel", "Portrait", "PortraitPath") ||
+               HasPatchTarget(value, "AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
+               HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas");
 
         static bool HasPatchTarget(string metadata, string typeName, params string[] members) =>
             metadata.Contains(typeName, StringComparison.Ordinal) &&
@@ -4990,6 +5083,11 @@ internal sealed partial class SkinCatalog : IDisposable
                     continue;
                 }
 
+                if (IsSpineAtlasTexture(path))
+                {
+                    continue;
+                }
+
                 var relativePath = System.IO.Path.GetRelativePath(rootPath, path)
                     .Replace('\\', '/');
                 var segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -5033,6 +5131,20 @@ internal sealed partial class SkinCatalog : IDisposable
                 $"无法扫描外置先古图库 {mod.Id}: {exception.Message}");
             return [];
         }
+    }
+
+    private static bool IsSpineAtlasTexture(string imagePath)
+    {
+        var stemPath = System.IO.Path.Combine(
+            System.IO.Path.GetDirectoryName(imagePath) ?? string.Empty,
+            System.IO.Path.GetFileNameWithoutExtension(imagePath));
+        if (!File.Exists(stemPath + ".atlas"))
+        {
+            return false;
+        }
+
+        return new[] { ".spjson", ".skel", ".json" }
+            .Any(extension => File.Exists(stemPath + extension));
     }
 
     private void AddRuntimeProviderOption(
@@ -5704,7 +5816,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private static partial Regex MerchantAppearancePathRegex();
 
     [GeneratedRegex(
-        "^(?:res://animations/backgrounds/fake_merchant_room/.*|" +
+        "^(?:res://animations/backgrounds/fake_merchant_room/(?:top|hand)/.*|" +
         "res://scenes/backgrounds/fake_merchant_event_encounter/.*|" +
         "res://scenes/events/custom/fake_merchant(?:_button|_inventory)?\\.tscn)$",
         RegexOptions.IgnoreCase)]

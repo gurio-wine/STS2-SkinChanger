@@ -11,6 +11,12 @@ if (args.Length == 1 && args[0].Equals("--self-test-game-pack-locator", StringCo
     return;
 }
 
+if (args.Length == 1 && args[0].Equals("--self-test-provider-probe", StringComparison.OrdinalIgnoreCase))
+{
+    RunProviderProbeSelfTest();
+    return;
+}
+
 if (args.Length == 2 && args[1].Equals("--self-test-card-export", StringComparison.OrdinalIgnoreCase))
 {
     RunCardExportSelfTest(args[0]);
@@ -304,7 +310,7 @@ if (validateIndex >= 0)
     var failures = new List<string>();
     var validated = 0;
     ValidateLocalizationOwnership(catalog, descriptors, failures);
-    var probes = SkinCatalog.ProbeSkinProviders(descriptors);
+    var probes = SkinCatalog.ProbeSkinProviders(descriptors, args[0]);
     foreach (var probe in probes)
     {
         Console.WriteLine(
@@ -1523,6 +1529,156 @@ static void RunGamePackLocatorSelfTest()
         if (Directory.Exists(testRoot))
         {
             Directory.Delete(testRoot, recursive: true);
+        }
+    }
+}
+
+static void RunProviderProbeSelfTest()
+{
+    var tempRoot = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(),
+        "skin-changer-provider-probe-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tempRoot);
+    try
+    {
+        var canonicalPckPath = System.IO.Path.Combine(tempRoot, "CanonicalMonsterSkin.pck");
+        PckArchive.Write(
+            canonicalPckPath,
+            new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://animations/monsters/shrinker_beetle/shrinker_beetle_skel_data.tres"] =
+                    Encoding.UTF8.GetBytes("canonical monster presentation")
+            });
+        var canonicalProbe = SkinCatalog.ProbeSkinProviders(
+            [new SkinModDescriptor(
+                "canonical-monster-skin",
+                "Canonical Monster Skin",
+                canonicalPckPath,
+                false,
+                tempRoot,
+                false)]);
+        Require(
+            canonicalProbe.Count == 1 && canonicalProbe[0].VisualGroupCount == 1,
+            "只替换游戏既有怪物资源的普通 PCK 必须在加载前被识别为皮肤提供者。");
+
+        var baselinePckPath = System.IO.Path.Combine(tempRoot, "Baseline.pck");
+        const string baselineSource =
+            "res://animations/characters/ironclad/ironclad.png";
+        const string baselinePayload =
+            "res://.godot/imported/ironclad.png-test.ctex";
+        PckArchive.Write(
+            baselinePckPath,
+            new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                [baselineSource + ".import"] = Encoding.UTF8.GetBytes(
+                    "[remap]\npath=\"" + baselinePayload + "\"\n" +
+                    "[deps]\ndest_files=[\"" + baselinePayload + "\"]\n"),
+                [baselinePayload] = [0]
+            });
+        var payloadOnlyRoot = System.IO.Path.Combine(tempRoot, "payload-only");
+        Directory.CreateDirectory(payloadOnlyRoot);
+        var payloadOnlyPckPath = System.IO.Path.Combine(payloadOnlyRoot, "PayloadOnly.pck");
+        PckArchive.Write(
+            payloadOnlyPckPath,
+            new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                [baselinePayload] = [1]
+            });
+        var payloadOnlyProbe = SkinCatalog.ProbeSkinProviders(
+            [new SkinModDescriptor(
+                "payload-only-skin",
+                "Payload Only Skin",
+                payloadOnlyPckPath,
+                false,
+                payloadOnlyRoot,
+                false)],
+            baselinePckPath);
+        Require(
+            payloadOnlyProbe.Count == 1 && payloadOnlyProbe[0].VisualGroupCount == 1,
+            "只携带 .godot/imported 载荷的皮肤必须借助游戏资源映射在加载前被识别。");
+
+        var animatedTanxRoot = System.IO.Path.Combine(tempRoot, "animated-tanx");
+        Directory.CreateDirectory(animatedTanxRoot);
+        File.WriteAllBytes(System.IO.Path.Combine(animatedTanxRoot, "tanx.png"), [1]);
+        File.WriteAllText(System.IO.Path.Combine(animatedTanxRoot, "tanx.atlas"), "tanx.png");
+        File.WriteAllText(System.IO.Path.Combine(animatedTanxRoot, "tanx.spjson"), "{}");
+        var animatedTanxProbe = SkinCatalog.ProbeSkinProviders(
+            [new SkinModDescriptor(
+                "animated-tanx",
+                "Animated Tanx",
+                null,
+                false,
+                animatedTanxRoot,
+                false)]);
+        Require(
+            animatedTanxProbe.Count == 0,
+            "带同名 Spine atlas/骨骼文件的模型贴图不能被误认成外置先古静态皮肤。");
+
+        var staticAncientRoot = System.IO.Path.Combine(tempRoot, "static-ancient", "tanx");
+        Directory.CreateDirectory(staticAncientRoot);
+        File.WriteAllBytes(System.IO.Path.Combine(staticAncientRoot, "ancient_girl.png"), [1]);
+        var staticAncientProbe = SkinCatalog.ProbeSkinProviders(
+            [new SkinModDescriptor(
+                "static-ancient",
+                "Static Ancient",
+                null,
+                false,
+                System.IO.Path.Combine(tempRoot, "static-ancient"),
+                false)]);
+        Require(
+            staticAncientProbe.Count == 1 && staticAncientProbe[0].RuntimeImageCount == 1,
+            "真正放在先古 ID 目录下的独立静态图仍必须被识别。");
+
+        var eventBackgroundRoot = System.IO.Path.Combine(tempRoot, "event-background-only");
+        Directory.CreateDirectory(eventBackgroundRoot);
+        var eventBackgroundPckPath = System.IO.Path.Combine(eventBackgroundRoot, "EventBackgroundOnly.pck");
+        const string eventBackgroundSource =
+            "res://animations/backgrounds/fake_merchant_room/bottom/shop_fake_merchant_bottom.png";
+        const string eventBackgroundPayload =
+            "res://.godot/imported/shop_fake_merchant_bottom.png-test.ctex";
+        PckArchive.Write(
+            eventBackgroundPckPath,
+            new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                [eventBackgroundSource + ".import"] = Encoding.UTF8.GetBytes(
+                    "[remap]\npath=\"" + eventBackgroundPayload + "\"\n" +
+                    "[deps]\ndest_files=[\"" + eventBackgroundPayload + "\"]\n"),
+                [eventBackgroundPayload] = [1]
+            });
+        var eventBackgroundProbe = SkinCatalog.ProbeSkinProviders(
+            [new SkinModDescriptor(
+                "event-background-only",
+                "Event Background Only",
+                eventBackgroundPckPath,
+                false,
+                eventBackgroundRoot,
+                false)]);
+        Require(
+            eventBackgroundProbe.Count == 0,
+            "只替换假商人事件底层背景的 Mod 不能被误认成商人皮肤。");
+
+        Require(
+            !SkinCatalog.HasDirectVisualPatchTargetMetadata("NMerchantRoom|_Ready"),
+            "仅给商店房间附加功能的 _Ready 补丁不能作为商人皮肤证据。");
+        Require(
+            SkinCatalog.HasDirectVisualPatchTargetMetadata("NMerchantButton|_Ready"),
+            "直接替换商人按钮呈现的补丁仍应作为商人皮肤证据。");
+
+        Console.WriteLine("Skin provider probe self-test passed.");
+    }
+    finally
+    {
+        if (Directory.Exists(tempRoot))
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    static void Require(bool condition, string message)
+    {
+        if (!condition)
+        {
+            throw new InvalidOperationException(message);
         }
     }
 }

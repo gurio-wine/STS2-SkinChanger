@@ -279,7 +279,19 @@ internal static class ManagedSkinModLoader
             .Where(mod => !Entry.IsSelfModId(mod.manifest!.id))
             .Select(ToDescriptor)
             .ToArray();
-        var probes = SkinCatalog.ProbeSkinProviders(descriptors);
+        string? gamePckPath = null;
+        try
+        {
+            gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "加载前无法建立游戏资源映射，少数仅含导入载荷的皮肤可能无法接管：" +
+                exception.GetBaseException().Message);
+        }
+
+        var probes = SkinCatalog.ProbeSkinProviders(descriptors, gamePckPath);
         foreach (var probe in probes)
         {
             if (probe.RootPath == null)
