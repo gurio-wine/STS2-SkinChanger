@@ -1161,61 +1161,190 @@ internal static class ManagedSkinModLoader
         var replayed = 0;
         try
         {
-            foreach (var patch in runtime.Patches
-                         .Concat(runtime.NodeReadyPresentationPatches)
-                         .Where(patch =>
-                             // Existing nodes only need the visual postfix. A freshly attached
-                             // node can additionally replay visual prefixes; callers opt into that
-                             // path explicitly after the node has entered its original parent
-                             // hierarchy. Transpilers/finalizers remain isolated.
-                             (patch.Kind == ProviderPatchKind.Postfix ||
-                              (includePrefixes && patch.Kind == ProviderPatchKind.Prefix)) &&
-                             patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
-                             patch.Target.DeclaringType?.IsInstanceOfType(node) == true))
-            {
-                if (!TryBuildNodeReadyArguments(
-                        patch.Callback,
-                        patch.Target,
-                        node,
-                        out var arguments))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    patch.Callback.Invoke(null, arguments);
-                    replayed++;
-                }
-                catch (Exception exception)
-                {
-                    ModLog.Warn(
-                        $"重放 {providerId} 的场景外观初始化 " +
-                        $"{patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
-                        exception.GetBaseException().Message);
-                }
-            }
+            replayed = InvokeSelectedNodeReadyCallbacks(
+                providerId,
+                runtime,
+                node,
+                includePrefixes,
+                includePostfixes: true);
         }
         finally
         {
             EndSelectedNodeReadyTracking(providerId, node);
         }
 
-        var addedRoots = runtime.NodeReadyMutations.TryGetValue(
-                node.GetInstanceId(),
-                out var mutation)
-            ? mutation.AddedRoots
-                .Select(reference => reference.TryGetTarget(out var addedNode) ? addedNode : null)
-                .Where(addedNode => addedNode != null && GodotObject.IsInstanceValid(addedNode))
-                .Cast<Node>()
-                .ToArray()
-            : [];
+        var addedRoots = GetTrackedNodeReadyAdditions(runtime, node);
         if (replayed > 0)
         {
             ModLog.Info($"已为现有场景节点重放 {providerId} 的 {replayed} 个外观初始化步骤。");
         }
 
         return addedRoots;
+    }
+
+    /// <summary>
+    /// Runs an isolated provider's visual _Ready prefixes before the game's original _Ready.
+    /// Merchant providers use this phase to replace the skeleton resource that the original
+    /// button/hand then binds to. Replaying the same prefix after _Ready leaves the game holding
+    /// a stale MegaSkeleton and breaks hover outlines and hand variants.
+    /// </summary>
+    public static IReadOnlyList<Node> ReplaySelectedNodeReadyPrefixes(
+        string providerId,
+        Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return [];
+        }
+
+        var nodeId = node.GetInstanceId();
+        RestoreNodeReadyMutation(runtime, nodeId);
+        var baseline = new NodeReadyBaseline(
+            new WeakReference<Node>(node),
+            CaptureNodeReadyState(node));
+        var replayed = InvokeSelectedNodeReadyCallbacks(
+            providerId,
+            runtime,
+            node,
+            includePrefixes: true,
+            includePostfixes: false);
+        var mutation = BuildNodeReadyMutation(node, baseline);
+        if (mutation != null)
+        {
+            runtime.NodeReadyMutations[nodeId] = mutation;
+        }
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已在原生 _Ready 前重放 {providerId} 的 {replayed} 个外观初始化步骤。");
+        }
+
+        return GetTrackedNodeReadyAdditions(runtime, node);
+    }
+
+    /// <summary>
+    /// Completes a split native _Ready replay after the game's original method has initialized
+    /// its fields and signals. Prefix and postfix mutations are merged in reverse application
+    /// order so deselection can restore both without undoing vanilla _Ready state.
+    /// </summary>
+    public static IReadOnlyList<Node> ReplaySelectedNodeReadyPostfixes(
+        string providerId,
+        Node node)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ||
+            !GodotObject.IsInstanceValid(node))
+        {
+            return [];
+        }
+
+        var nodeId = node.GetInstanceId();
+        var baseline = new NodeReadyBaseline(
+            new WeakReference<Node>(node),
+            CaptureNodeReadyState(node));
+        var replayed = InvokeSelectedNodeReadyCallbacks(
+            providerId,
+            runtime,
+            node,
+            includePrefixes: false,
+            includePostfixes: true);
+        var postfixMutation = BuildNodeReadyMutation(node, baseline);
+        if (postfixMutation != null)
+        {
+            runtime.NodeReadyMutations[nodeId] = runtime.NodeReadyMutations.TryGetValue(
+                    nodeId,
+                    out var prefixMutation)
+                ? MergeNodeReadyMutations(prefixMutation, postfixMutation)
+                : postfixMutation;
+        }
+
+        if (replayed > 0)
+        {
+            ModLog.Info($"已在原生 _Ready 后重放 {providerId} 的 {replayed} 个外观初始化步骤。");
+        }
+
+        return GetTrackedNodeReadyAdditions(runtime, node);
+    }
+
+    public static void RestoreSelectedNodeReadyBehavior(string providerId, Node node)
+    {
+        if (ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) &&
+            GodotObject.IsInstanceValid(node))
+        {
+            RestoreNodeReadyMutation(runtime, node.GetInstanceId());
+        }
+    }
+
+    private static int InvokeSelectedNodeReadyCallbacks(
+        string providerId,
+        ActiveProviderRuntime runtime,
+        Node node,
+        bool includePrefixes,
+        bool includePostfixes)
+    {
+        var replayed = 0;
+        foreach (var patch in runtime.Patches
+                     .Concat(runtime.NodeReadyPresentationPatches)
+                     .Where(patch =>
+                         ((includePrefixes && patch.Kind == ProviderPatchKind.Prefix) ||
+                          (includePostfixes && patch.Kind == ProviderPatchKind.Postfix)) &&
+                         patch.Target.Name.Equals("_Ready", StringComparison.Ordinal) &&
+                         patch.Target.DeclaringType?.IsInstanceOfType(node) == true)
+                     .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind)))
+        {
+            if (!TryBuildNodeReadyArguments(
+                    patch.Callback,
+                    patch.Target,
+                    node,
+                    out var arguments))
+            {
+                continue;
+            }
+
+            try
+            {
+                patch.Callback.Invoke(null, arguments);
+                replayed++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重放 {providerId} 的场景外观初始化 " +
+                    $"{patch.Callback.DeclaringType?.FullName}.{patch.Callback.Name} 失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        return replayed;
+    }
+
+    private static IReadOnlyList<Node> GetTrackedNodeReadyAdditions(
+        ActiveProviderRuntime runtime,
+        Node node) =>
+        runtime.NodeReadyMutations.TryGetValue(node.GetInstanceId(), out var mutation)
+            ? mutation.AddedRoots
+                .Select(reference => reference.TryGetTarget(out var addedNode) ? addedNode : null)
+                .Where(addedNode => addedNode != null && GodotObject.IsInstanceValid(addedNode))
+                .Cast<Node>()
+                .ToArray()
+            : [];
+
+    private static NodeReadyMutation MergeNodeReadyMutations(
+        NodeReadyMutation prefix,
+        NodeReadyMutation postfix)
+    {
+        var added = postfix.AddedRoots
+            .Concat(prefix.AddedRoots)
+            .Where(reference => reference.TryGetTarget(out var node) &&
+                                GodotObject.IsInstanceValid(node))
+            .DistinctBy(reference =>
+                reference.TryGetTarget(out var node) ? node.GetInstanceId() : 0UL)
+            .ToArray();
+        // Restore the latest changes first. If both phases touched the same property, the
+        // postfix returns it to the prefix-applied value and the prefix then returns the true
+        // pre-provider value.
+        var changes = postfix.Changes.Concat(prefix.Changes).ToArray();
+        return new NodeReadyMutation(added, changes);
     }
 
     /// <summary>

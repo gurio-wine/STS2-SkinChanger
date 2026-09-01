@@ -540,6 +540,8 @@ internal static class AncientCompendiumEntry
 
 internal partial class AncientCompendiumScreen : NSubmenu
 {
+    private static readonly Vector2I PreviewLogicalSize = new(1920, 1080);
+
     private enum OtherCategory
     {
         Ancients,
@@ -601,6 +603,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private OptionButton _skinDropdown = null!;
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
+    private NBackButton _compendiumBackButton = null!;
     private VBoxContainer _otherActionSelector = null!;
     private Node? _otherPreviewInstance;
     private string? _otherPreviewGroupId;
@@ -610,6 +613,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private OtherCategory _selectedCategory = OtherCategory.Ancients;
     private int _otherPreviewRequest;
     private bool _updatingDropdown;
+    private bool _merchantInventoryOpen;
 
     protected override Control? InitialFocusedControl =>
         _categoryButtons.Values.FirstOrDefault() ?? _entryButtons.Values.FirstOrDefault();
@@ -619,11 +623,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         BuildUi();
         ConnectSignals();
+        GetTree().Root.Connect(
+            Viewport.SignalName.SizeChanged,
+            Callable.From(ConfigurePreviewResolution));
+        ConfigurePreviewResolution();
     }
 
     public override void OnSubmenuOpened()
     {
         base.OnSubmenuOpened();
+        ConfigurePreviewResolution();
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
         RefreshAncients();
     }
@@ -646,12 +655,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             AnchorLeft = 0,
             AnchorTop = 0,
-            AnchorRight = 1,
-            AnchorBottom = 1,
+            AnchorRight = 0,
+            AnchorBottom = 0,
             OffsetLeft = 0,
             OffsetTop = 0,
-            OffsetRight = 0,
-            OffsetBottom = 0,
+            OffsetRight = PreviewLogicalSize.X,
+            OffsetBottom = PreviewLogicalSize.Y,
             Stretch = true,
             MouseFilter = MouseFilterEnum.Ignore
         };
@@ -659,7 +668,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         _previewViewport = new SubViewport
         {
-            Size = new Vector2I(1920, 1080),
+            Size = PreviewLogicalSize,
+            // The render target follows the physical window size, while Controls inside keep
+            // the game's authored 1920x1080 coordinates. This avoids upscaling a 1080p merchant
+            // Spine texture on 1440p/4K displays without moving its anchors.
+            Size2DOverride = PreviewLogicalSize,
+            Size2DOverrideStretch = true,
             TransparentBg = false,
             // Re-enabled only for the native merchant scene in RebuildOtherPreview. Other
             // catalogue previews keep input disabled unless their provider explicitly opts in.
@@ -783,12 +797,39 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _entryList.AddThemeConstantOverride("separation", 10);
         scroll.AddChild(_entryList);
 
-        var backButton = PreloadManager.Cache
+        _compendiumBackButton = PreloadManager.Cache
             .GetScene(SceneHelper.GetScenePath("ui/back_button"))
             .Instantiate<NBackButton>(PackedScene.GenEditState.Disabled);
-        backButton.Name = "BackButton";
-        AddChild(backButton);
+        _compendiumBackButton.Name = "BackButton";
+        AddChild(_compendiumBackButton);
         ModLocalization.Bind(this, RefreshLocalizedText);
+    }
+
+    private void ConfigurePreviewResolution()
+    {
+        if (_previewContainer == null || _previewViewport == null)
+        {
+            return;
+        }
+
+        var windowSize = DisplayServer.WindowGetSize();
+        var physicalScale = MathF.Min(
+            windowSize.X / (float)PreviewLogicalSize.X,
+            windowSize.Y / (float)PreviewLogicalSize.Y);
+        if (!float.IsFinite(physicalScale) || physicalScale <= 0f)
+        {
+            physicalScale = 1f;
+        }
+
+        var renderSize = new Vector2I(
+            Math.Max(2, Mathf.RoundToInt(PreviewLogicalSize.X * physicalScale)),
+            Math.Max(2, Mathf.RoundToInt(PreviewLogicalSize.Y * physicalScale)));
+        _previewContainer.Size = new Vector2(renderSize.X, renderSize.Y);
+        _previewContainer.Scale = new Vector2(
+            PreviewLogicalSize.X / (float)renderSize.X,
+            PreviewLogicalSize.Y / (float)renderSize.Y);
+        _previewViewport.Size2DOverride = PreviewLogicalSize;
+        _previewViewport.Size2DOverrideStretch = true;
     }
 
     private void RefreshLocalizedText()
@@ -1352,7 +1393,34 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void RefreshAuxiliaryPreviewControls()
     {
         _skinSelector.ZIndex = 10;
+        _skinSelector.Visible = !_merchantInventoryOpen && _skinDropdown.ItemCount > 0;
         _otherActionSelector.Visible = _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private void SetMerchantInventoryOpen(bool isOpen)
+    {
+        _merchantInventoryOpen = isOpen;
+        if (isOpen)
+        {
+            // The inventory's BackButton is now the active native back control. Disable the
+            // submenu BackButton as well as hiding it, otherwise its cancel hotkey pops the whole
+            // compendium at the same time that the shop tries to close.
+            _skinSelector.Visible = false;
+            _otherActionSelector.Visible = false;
+            if (GodotObject.IsInstanceValid(_compendiumBackButton))
+            {
+                _compendiumBackButton.Disable();
+                _compendiumBackButton.MoveToHidePosition();
+            }
+            return;
+        }
+
+        _skinSelector.Visible = _skinDropdown.ItemCount > 0;
+        RefreshAuxiliaryPreviewControls();
+        if (IsVisibleInTree() && GodotObject.IsInstanceValid(_compendiumBackButton))
+        {
+            _compendiumBackButton.Enable();
+        }
     }
 
     private void RefreshAncients()
@@ -1638,7 +1706,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _skinDropdown.Select(selectedIndex);
         _skinDropdown.SetMeta("sts2_skin_group", group.Id);
         _updatingDropdown = false;
-        _skinSelector.Visible = true;
+        _skinSelector.Visible = !_merchantInventoryOpen;
     }
 
     private void OnSkinSelected(int index)
@@ -1716,9 +1784,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Node instance;
             if (isMerchant || isFakeMerchant)
             {
-                // Keep the full native room/event hierarchy in the catalogue. The factory strips
-                // only the gameplay root script before the node enters the tree, so the authored
-                // SceneContainer offsets, merchant background and button hierarchy are preserved.
+                // Keep the full native room/event hierarchy in the catalogue. Only the root's
+                // run/map lifecycle is skipped by a narrowly scoped Harmony prefix; every visual
+                // child still enters the tree through its normal _Ready sequence.
                 var merchantPreview = MerchantRuntimeAppearance.InstantiateMerchantPreviewScene(
                     isFakeMerchant
                         ? MerchantRuntimeAppearance.FakeMerchantGroupId
@@ -1773,7 +1841,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     // Control parent, and relying on its inferred size differs between Godot
                     // builds; the preview viewport size is fixed by BuildUi.
                     merchantHost.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
-                    merchantHost.Size = _previewViewport.Size;
+                    merchantHost.Size = new Vector2(
+                        PreviewLogicalSize.X,
+                        PreviewLogicalSize.Y);
                     _previewViewport.AddChild(merchantHost);
                     merchantHost.AddChild(instance);
                 }
@@ -1785,50 +1855,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
                     entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
                 {
-                    var providerId = group == null
-                        ? null
-                        : SkinService.GetSelectedFullRuntimeProvider(group.Id);
-                    var nativeButton = instance.FindChild(
-                        "MerchantButton",
-                        recursive: true,
-                        owned: false);
-                    var nativeInventory = instance.FindChild(
-                        "Inventory",
-                        recursive: true,
-                        owned: false);
-                    if (providerId != null && nativeButton != null)
-                    {
-                        // Provider _Ready callbacks are isolated globally. This is a fresh button
-                        // already attached below the real NMerchantRoom/NFakeMerchant root, so
-                        // replay the visual Prefix and Postfix once in that original hierarchy.
-                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                            providerId,
-                            nativeButton,
-                            includePrefixes: true);
-                    }
-                    if (providerId != null && nativeInventory is NMerchantInventory merchantInventory)
-                    {
-                        // Merchant2CuteII adds its leg in NMerchantInventory._Ready Prefix. It is
-                        // part of the native shop appearance and must be present in the catalogue
-                        // too; the callback is safe here because this is a newly created inventory.
-                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                            providerId,
-                            merchantInventory,
-                            includePrefixes: true);
-                    }
-
                     // Reconnect the normal merchant's own signal path after skipping the gameplay
                     // root _Ready. This is the native MerchantOpened → OpenInventory flow; no
                     // transparent click proxy or synthetic shop overlay is installed.
                     if (isMerchant && instance is NMerchantRoom previewMerchantRoom)
                     {
                         MerchantRuntimeAppearance.PrepareMerchantPreviewInteraction(
-                            previewMerchantRoom);
+                            previewMerchantRoom,
+                            SetMerchantInventoryOpen);
                     }
                     else if (isFakeMerchant && instance is NFakeMerchant previewFakeMerchant)
                     {
                         MerchantRuntimeAppearance.PrepareFakeMerchantPreviewInteraction(
-                            previewFakeMerchant);
+                            previewFakeMerchant,
+                            SetMerchantInventoryOpen);
                     }
                 }
             }
@@ -2109,6 +2149,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void ClearPreview()
     {
+        SetMerchantInventoryOpen(false);
         _otherPreviewInstance = null;
         _otherPreviewGroupId = null;
         if (_otherActionSelector != null)

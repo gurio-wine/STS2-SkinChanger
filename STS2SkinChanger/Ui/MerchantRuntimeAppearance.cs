@@ -63,7 +63,6 @@ internal static class MerchantRuntimeAppearance
     private static readonly FieldInfo? MerchantRoomDialogueField =
         AccessTools.Field(typeof(NMerchantRoom), "_dialogue");
     private static readonly List<WeakReference<Node>> ReplayedInventoryAdditions = [];
-    private static readonly Dictionary<ulong, HashSet<ulong>> InventoryReadyBaselines = [];
     private static readonly Dictionary<ulong, List<WeakReference<Node2D>>> ShopProviderRoots = [];
 
     internal static NMerchantCharacter? GetLocalPlayerVisual()
@@ -86,6 +85,81 @@ internal static class MerchantRuntimeAppearance
         return group == null
             ? null
             : SkinService.GetSelectedFullRuntimeProvider(group.Id);
+    }
+
+    internal static string? BeginSelectedMerchantNodeReady(Node node)
+    {
+        var groupId = ResolveMerchantGroupId(node);
+        var providerId = groupId == null
+            ? null
+            : SkinService.GetSelectedFullRuntimeProvider(groupId);
+        if (providerId == null)
+        {
+            return null;
+        }
+
+        TrackInventoryProviderAdditions(
+            node,
+            ManagedSkinModLoader.ReplaySelectedNodeReadyPrefixes(providerId, node));
+        return providerId;
+    }
+
+    internal static void CompleteSelectedMerchantNodeReady(Node node, string? providerId)
+    {
+        if (providerId == null || !GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        TrackInventoryProviderAdditions(
+            node,
+            ManagedSkinModLoader.ReplaySelectedNodeReadyPostfixes(providerId, node));
+        if (node is NMerchantInventory)
+        {
+            MakeProviderInventoryVisualsPassThrough();
+        }
+    }
+
+    private static string? ResolveMerchantGroupId(Node node)
+    {
+        for (Node? current = node; current != null; current = current.GetParent())
+        {
+            if (current is NFakeMerchant or NFakeMerchantInventory)
+            {
+                return FakeMerchantGroupId;
+            }
+
+            if (current is NMerchantRoom)
+            {
+                return GroupId;
+            }
+        }
+
+        return null;
+    }
+
+    private static void TrackInventoryProviderAdditions(
+        Node owner,
+        IEnumerable<Node> addedRoots)
+    {
+        if (owner is not NMerchantInventory)
+        {
+            return;
+        }
+
+        var existingIds = ReplayedInventoryAdditions
+            .Select(reference => reference.TryGetTarget(out var node) &&
+                                 GodotObject.IsInstanceValid(node)
+                ? node.GetInstanceId()
+                : 0UL)
+            .ToHashSet();
+        foreach (var addedRoot in addedRoots.Where(GodotObject.IsInstanceValid))
+        {
+            if (existingIds.Add(addedRoot.GetInstanceId()))
+            {
+                ReplayedInventoryAdditions.Add(new WeakReference<Node>(addedRoot));
+            }
+        }
     }
 
     internal static CharacterCombatTransform GetLocalPlayerTransform(string groupId)
@@ -166,6 +240,16 @@ internal static class MerchantRuntimeAppearance
 
     internal static void PrepareMerchantSelectionChange()
     {
+        var room = NMerchantRoom.Instance;
+        var providerId = SkinService.GetSelectedFullRuntimeProvider(GroupId);
+        if (room?.Inventory != null && providerId != null)
+        {
+            // A provider can remain active because its fake-merchant skin is still selected.
+            // Restore the real inventory explicitly before changing only the real merchant so
+            // a prefix-added leg or other inventory visual cannot survive into the next skin.
+            ManagedSkinModLoader.RestoreSelectedNodeReadyBehavior(providerId, room.Inventory);
+        }
+
         foreach (var reference in ReplayedInventoryAdditions.ToArray())
         {
             if (!reference.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node))
@@ -270,7 +354,9 @@ internal static class MerchantRuntimeAppearance
     /// button, inventory and open/close signal path are otherwise the same native nodes and methods
     /// used by a live shop.
     /// </summary>
-    internal static void PrepareMerchantPreviewInteraction(NMerchantRoom preview)
+    internal static void PrepareMerchantPreviewInteraction(
+        NMerchantRoom preview,
+        Action<bool>? inventoryVisibilityChanged = null)
     {
         try
         {
@@ -307,7 +393,14 @@ internal static class MerchantRuntimeAppearance
             inventory.Initialize(model, MerchantRoom.Dialogue);
             button.Connect(
                 NMerchantButton.SignalName.MerchantOpened,
-                Callable.From<NMerchantButton>(_ => preview.OpenInventory()));
+                Callable.From<NMerchantButton>(_ =>
+                {
+                    preview.OpenInventory();
+                    inventoryVisibilityChanged?.Invoke(inventory.IsOpen);
+                }));
+            inventory.Connect(
+                NMerchantInventory.SignalName.InventoryClosed,
+                Callable.From(() => inventoryVisibilityChanged?.Invoke(false)));
             // A catalogue is not a room and cannot travel to the map. Keep the native node in the
             // hierarchy (so the scene layout remains identical), but hide the native proceed
             // control instead of exposing its uninitialized scene placeholder ("Tally-ho").
@@ -320,7 +413,9 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
-    internal static void PrepareFakeMerchantPreviewInteraction(NFakeMerchant preview)
+    internal static void PrepareFakeMerchantPreviewInteraction(
+        NFakeMerchant preview,
+        Action<bool>? inventoryVisibilityChanged = null)
     {
         try
         {
@@ -364,7 +459,13 @@ internal static class MerchantRuntimeAppearance
             button.Connect(
                 NMerchantButton.SignalName.MerchantOpened,
                 Callable.From<NMerchantButton>(_ =>
-                    FakeMerchantOpenInventoryMethod.Invoke(preview, null)));
+                {
+                    FakeMerchantOpenInventoryMethod.Invoke(preview, null);
+                    inventoryVisibilityChanged?.Invoke(inventory.IsOpen);
+                }));
+            inventory.Connect(
+                NMerchantInventory.SignalName.InventoryClosed,
+                Callable.From(() => inventoryVisibilityChanged?.Invoke(false)));
             proceed.Visible = false;
             ModLog.Info("假商人预览已连接游戏原生 MerchantOpened → OpenInventory 交互路径。");
         }
@@ -386,36 +487,6 @@ internal static class MerchantRuntimeAppearance
             netId);
         _ = RunState.CreateForTest([player], seed: seed);
         return player;
-    }
-
-    internal static void CaptureInventoryReadyBaseline(NMerchantInventory inventory)
-    {
-        if (SkinService.GetSelectedFullRuntimeProvider(GroupId) == null)
-        {
-            return;
-        }
-
-        InventoryReadyBaselines[inventory.GetInstanceId()] = EnumerateNodeTree(inventory)
-            .Select(node => node.GetInstanceId())
-            .ToHashSet();
-    }
-
-    internal static void TrackInventoryReadyAdditions(NMerchantInventory inventory)
-    {
-        if (!InventoryReadyBaselines.Remove(inventory.GetInstanceId(), out var baselineIds))
-        {
-            return;
-        }
-
-        foreach (var node in EnumerateNodeTree(inventory)
-                     .Where(node => !baselineIds.Contains(node.GetInstanceId()))
-                     .Where(node => node.GetParent() is not { } parent ||
-                                    baselineIds.Contains(parent.GetInstanceId())))
-        {
-            ReplayedInventoryAdditions.Add(new WeakReference<Node>(node));
-        }
-
-        MakeProviderInventoryVisualsPassThrough();
     }
 
     internal static bool TryRefreshMerchant(out string? error)
@@ -474,18 +545,9 @@ internal static class MerchantRuntimeAppearance
             var providerId = SkinService.GetSelectedFullRuntimeProvider(GroupId);
             if (providerId != null)
             {
-                // The provider's _Ready callbacks are globally isolated. These nodes are freshly
-                // attached under their original NMerchantRoom/NMerchantInventory ancestors, so
-                // replay both visual prefixes and postfixes once, preserving the provider's live
-                // offset, skeleton, hand and inventory additions.
-                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                    providerId,
-                    newButton,
-                    includePrefixes: true);
-                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                    providerId,
-                    room.Inventory.MerchantHand,
-                    includePrefixes: true);
+                // The replacement button and hand have already passed through the split native
+                // _Ready bridge while being attached. The inventory itself is retained so bought
+                // items and open state survive; replay only its selected provider callbacks here.
                 foreach (var addedNode in ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
                              providerId,
                              room.Inventory,
@@ -617,13 +679,6 @@ internal static class MerchantRuntimeAppearance
             swapped = true;
 
             var providerId = SkinService.GetSelectedFullRuntimeProvider(FakeMerchantGroupId);
-            if (providerId != null)
-            {
-                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                    providerId,
-                    replacement,
-                    includePrefixes: true);
-            }
 
             // The fake merchant event keeps its inventory and dialogue objects; only the
             // merchant button/visual is replaced. This avoids re-running event initialization
@@ -634,9 +689,22 @@ internal static class MerchantRuntimeAppearance
             ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(
                 fakeMerchant,
                 providerId == null ? [] : [providerId]);
+            ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(
+                fakeMerchant.Inventory,
+                providerId == null ? [] : [providerId]);
+            ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(
+                fakeMerchant.Inventory.MerchantHand,
+                providerId == null ? [] : [providerId]);
             if (providerId != null)
             {
                 ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(fakeMerchant, providerId);
+                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
+                    providerId,
+                    fakeMerchant.Inventory,
+                    includePrefixes: true);
+                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
+                    providerId,
+                    fakeMerchant.Inventory.MerchantHand);
             }
 
             replacement = null;
@@ -1195,28 +1263,6 @@ internal static class MerchantRoomPlayerAppearancePatch
             return;
         }
 
-        // Replay merchant-specific provider callbacks before looking at the local player.
-        // Some formal-build paths finish the merchant visuals before PlayerVisuals is populated;
-        // an early return here would otherwise leave ATA/Merchant2CuteII un-applied for the
-        // whole live shop even though the room itself is ready.
-        var merchantProviderId = SkinService.GetSelectedFullRuntimeProvider(
-            MerchantRuntimeAppearance.GroupId);
-        if (merchantProviderId != null)
-        {
-            _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                merchantProviderId,
-                __instance.MerchantButton,
-                includePrefixes: true);
-            _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                merchantProviderId,
-                __instance.Inventory,
-                includePrefixes: true);
-            _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                merchantProviderId,
-                __instance.Inventory.MerchantHand,
-                includePrefixes: true);
-        }
-
         var player = CharacterAppearanceRuntime.GetLocalPlayer();
         if (player == null || __instance.PlayerVisuals.Count == 0)
         {
@@ -1287,21 +1333,6 @@ internal static class FakeMerchantAppearancePatch
         {
             var providerId = SkinService.GetSelectedFullRuntimeProvider("fake_merchant_monster");
             ManagedSkinModLoader.ReplaySelectedRoomReadyBehaviors(__instance, providerId);
-            if (providerId != null)
-            {
-                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                    providerId,
-                    __instance.MerchantButton,
-                    includePrefixes: true);
-                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                    providerId,
-                    __instance.Inventory,
-                    includePrefixes: true);
-                _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
-                    providerId,
-                    __instance.Inventory.MerchantHand,
-                    includePrefixes: true);
-            }
         }
         catch (Exception exception)
         {
@@ -1340,18 +1371,46 @@ internal static class RestSitePlayerAppearancePatch
     }
 }
 
-[HarmonyPatch(typeof(NMerchantInventory), nameof(NMerchantInventory._Ready))]
-internal static class MerchantInventoryAppearanceTrackingPatch
+[HarmonyPatch(typeof(NMerchantButton), nameof(NMerchantButton._Ready))]
+internal static class MerchantButtonProviderReadyBridgePatch
 {
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
-    private static void Prefix(NMerchantInventory __instance) =>
-        MerchantRuntimeAppearance.CaptureInventoryReadyBaseline(__instance);
+    private static void Prefix(NMerchantButton __instance, out string? __state) =>
+        __state = MerchantRuntimeAppearance.BeginSelectedMerchantNodeReady(__instance);
 
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NMerchantInventory __instance) =>
-        MerchantRuntimeAppearance.TrackInventoryReadyAdditions(__instance);
+    private static void Postfix(NMerchantButton __instance, string? __state) =>
+        MerchantRuntimeAppearance.CompleteSelectedMerchantNodeReady(__instance, __state);
+}
+
+[HarmonyPatch(typeof(NMerchantInventory), nameof(NMerchantInventory._Ready))]
+internal static class MerchantInventoryProviderReadyBridgePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NMerchantInventory __instance, out string? __state) =>
+        __state = MerchantRuntimeAppearance.BeginSelectedMerchantNodeReady(__instance);
+
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NMerchantInventory __instance, string? __state) =>
+        MerchantRuntimeAppearance.CompleteSelectedMerchantNodeReady(__instance, __state);
+}
+
+[HarmonyPatch(typeof(NMerchantHand), nameof(NMerchantHand._Ready))]
+internal static class MerchantHandProviderReadyBridgePatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NMerchantHand __instance, out string? __state) =>
+        __state = MerchantRuntimeAppearance.BeginSelectedMerchantNodeReady(__instance);
+
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NMerchantHand __instance, string? __state) =>
+        MerchantRuntimeAppearance.CompleteSelectedMerchantNodeReady(__instance, __state);
 }
 
 // NMerchantButton.RefreshFocus normally asks NTargetManager.Instance whether the player is in
