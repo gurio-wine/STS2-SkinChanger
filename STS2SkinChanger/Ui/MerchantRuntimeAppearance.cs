@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Models.Characters;
 using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rooms;
@@ -63,6 +64,10 @@ internal static class MerchantRuntimeAppearance
         AccessTools.Field(typeof(NMerchantRoom), "_players");
     private static readonly FieldInfo? MerchantRoomDialogueField =
         AccessTools.Field(typeof(NMerchantRoom), "_dialogue");
+    private static readonly PropertyInfo? MerchantFocusedProperty =
+        AccessTools.Property(typeof(NClickableControl), "IsFocused");
+    private static readonly MethodInfo? MerchantRefreshFocusMethod =
+        AccessTools.Method(typeof(NMerchantButton), "RefreshFocus");
     private static readonly List<WeakReference<Node>> ReplayedInventoryAdditions = [];
     private static readonly Dictionary<ulong, List<WeakReference<Node2D>>> ShopProviderRoots = [];
 
@@ -194,9 +199,49 @@ internal static class MerchantRuntimeAppearance
         TrackInventoryProviderAdditions(
             node,
             ManagedSkinModLoader.ReplaySelectedNodeReadyPostfixes(providerId, node));
+        if (node is NMerchantButton button)
+        {
+            RefreshMerchantFocusAfterProviderReady(button, providerId);
+        }
+
         if (node is NMerchantInventory)
         {
             MakeProviderInventoryVisualsPassThrough();
+        }
+    }
+
+    private static void RefreshMerchantFocusAfterProviderReady(
+        NMerchantButton button,
+        string providerId)
+    {
+        var isFocused = MerchantFocusedProperty?.GetValue(button) is bool focused && focused;
+        if (!MerchantProviderReadyPolicy.ShouldRefreshFocusAfterProviderReady(isFocused))
+        {
+            return;
+        }
+
+        if (MerchantRefreshFocusMethod == null)
+        {
+            ModLog.Warn("无法在商人外观就绪后重新同步悬浮状态：RefreshFocus 不可用。");
+            return;
+        }
+
+        try
+        {
+            // NMerchantButton registers its native Spine-ready callback before SkinChanger can
+            // replay the selected provider's postfix. If the pointer is already over the merchant,
+            // native code therefore asks the new skeleton for "outline" before providers such as
+            // ATA have registered their default/outline remapping. Replay the exact same native
+            // focus entry once registration is complete; the preview adapter and the live shop now
+            // receive the same post-provider-ready refresh instead of keeping different final state.
+            MerchantRefreshFocusMethod.Invoke(button, null);
+            ModLog.Info($"商人外观提供者就绪后已重新同步悬浮状态：{providerId}");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "商人外观提供者就绪后重新同步悬浮状态失败：" +
+                exception.GetBaseException().Message);
         }
     }
 

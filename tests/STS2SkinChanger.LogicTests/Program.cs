@@ -82,5 +82,11 @@ Require(
     MerchantProviderReadyPolicy.ResolvePostfixTiming(MerchantProviderReadyTarget.Inventory) ==
     MerchantProviderPostfixTiming.Immediate,
     "不依赖 Spine 的库存节点应立即完成提供者 Postfix。");
+Require(
+    MerchantProviderReadyPolicy.ShouldRefreshFocusAfterProviderReady(isFocused: true),
+    "商人骨骼提供者完成注册后，已处于悬浮状态的按钮必须重新应用悬浮外观。");
+Require(
+    !MerchantProviderReadyPolicy.ShouldRefreshFocusAfterProviderReady(isFocused: false),
+    "未悬浮的商人按钮不能在提供者完成注册后被错误切成描边外观。");
 
 Console.WriteLine("Merchant appearance policy tests passed.");

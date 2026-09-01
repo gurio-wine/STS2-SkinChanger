@@ -26,4 +26,6 @@ internal static class MerchantProviderReadyPolicy
         target is MerchantProviderReadyTarget.Button or MerchantProviderReadyTarget.Hand
             ? MerchantProviderPostfixTiming.NextFrameThenSpineReady
             : MerchantProviderPostfixTiming.Immediate;
+
+    internal static bool ShouldRefreshFocusAfterProviderReady(bool isFocused) => isFocused;
 }
