@@ -730,16 +730,42 @@ internal static class MerchantRuntimeAppearance
         // v0.111.0 introduced a standalone merchant_button.tscn. Older formal builds keep the
         // same node embedded in merchant_room.tscn, so use the standalone scene when available
         // and extract the embedded node as a version-neutral fallback.
-        var standalone = TryLoadRuntimeOrBaseScene(MerchantButtonScenePath, groupId);
-        if (standalone != null)
+        // InstantiateRuntimeScene is deliberate here: GetOrLoadRuntimeScene returns a PackedScene
+        // after its temporary resource scope has already been restored. Spine external resources
+        // in that scene are lazy, so instantiating afterwards can leave MerchantVisual with a
+        // valid-looking node but no drawable skeleton (the catalogue symptom was a blank merchant
+        // for both the default and every skin). Keep loading and Instantiate in the same overlay
+        // scope, exactly like the live merchant replacement path.
+        try
         {
-            var button = standalone.Instantiate<NMerchantButton>(PackedScene.GenEditState.Disabled);
+            var button = SkinService.InstantiateRuntimeScene<NMerchantButton>(
+                groupId,
+                MerchantButtonScenePath);
             SetOwnerRecursive(button, button);
             return button;
         }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"独立商人按钮场景不可用，改用商人房间场景：{exception.GetBaseException().Message}");
+        }
 
-        var roomScene = LoadRuntimeOrBaseScene(MerchantRoomScenePath, groupId);
-        var roomTemplate = roomScene.Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
+        NMerchantRoom roomTemplate;
+        try
+        {
+            // The formal build embeds MerchantButton in merchant_room.tscn. Instantiate the
+            // complete room while its provider overlay is still mounted, then detach the button
+            // before returning it so all lazy Spine dependencies remain bound to the selected
+            // provider rather than the previous merchant skin.
+            roomTemplate = SkinService.InstantiateRuntimeScene<NMerchantRoom>(
+                groupId,
+                MerchantRoomScenePath);
+        }
+        catch
+        {
+            var roomScene = LoadRuntimeOrBaseScene(MerchantRoomScenePath, groupId);
+            roomTemplate = roomScene.Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
+        }
+
         try
         {
             var button = roomTemplate.GetNode<NMerchantButton>("SceneContainer/MerchantButton");
