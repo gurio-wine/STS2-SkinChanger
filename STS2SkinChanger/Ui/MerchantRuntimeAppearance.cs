@@ -21,6 +21,7 @@ internal static class MerchantRuntimeAppearance
     private const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
     private const string FakeMerchantScenePath = "res://scenes/events/custom/fake_merchant.tscn";
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
+    private const string MerchantPreviewRootMeta = "skin_changer_merchant_preview_root";
     private const string PlayerBasePositionMeta = "skin_changer_shop_player_base_position";
     private const string PlayerBaseScaleMeta = "skin_changer_shop_player_base_scale";
     private const string ProviderRootBasePositionMeta = "skin_changer_shop_provider_root_position";
@@ -179,8 +180,24 @@ internal static class MerchantRuntimeAppearance
             // A merchant selection changed later in the same game process cannot invalidate that
             // cache, so save/reload would recreate the startup skin while replaying the current
             // provider's code. Build from SkinChanger's selection-keyed runtime scene instead.
-            var replacement = LoadRuntimeOrBaseScene(MerchantRoomScenePath)
-                .Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
+            // InstantiateRuntimeScene keeps the selected provider pack mounted while Godot resolves
+            // lazy external resources (especially ATA/Merchant2Cute Spine data). If a provider
+            // does not ship a replacement room scene, retain the base-game fallback.
+            NMerchantRoom replacement;
+            var replacementTransferred = false;
+            try
+            {
+                replacement = SkinService.InstantiateRuntimeScene<NMerchantRoom>(
+                    GroupId,
+                    MerchantRoomScenePath);
+            }
+            catch (Exception runtimeException)
+            {
+                ModLog.Warn("当前商人没有独立房间场景，使用游戏场景兜底：" +
+                            runtimeException.GetBaseException().Message);
+                replacement = LoadRuntimeOrBaseScene(MerchantRoomScenePath)
+                    .Instantiate<NMerchantRoom>(PackedScene.GenEditState.Disabled);
+            }
             try
             {
                 MerchantRoomModelField.SetValue(
@@ -201,12 +218,12 @@ internal static class MerchantRuntimeAppearance
                 targetPlayers.AddRange(sourcePlayers);
 
                 currentRoom = replacement;
-                replacement = null;
+                replacementTransferred = true;
                 return true;
             }
             finally
             {
-                if (replacement != null && GodotObject.IsInstanceValid(replacement))
+                if (!replacementTransferred && GodotObject.IsInstanceValid(replacement))
                 {
                     replacement.Free();
                 }
@@ -219,6 +236,11 @@ internal static class MerchantRuntimeAppearance
             return false;
         }
     }
+
+    internal static bool IsMerchantPreviewRoot(Node node) =>
+        GodotObject.IsInstanceValid(node) &&
+        node.HasMeta(MerchantPreviewRootMeta) &&
+        node.GetMeta(MerchantPreviewRootMeta).AsBool();
 
     internal static void CaptureInventoryReadyBaseline(NMerchantInventory inventory)
     {
@@ -277,8 +299,22 @@ internal static class MerchantRuntimeAppearance
         try
         {
             newButton = InstantiateMerchantButton();
-            inventoryTemplate = LoadRuntimeOrBaseScene(MerchantInventoryScenePath)
-                .Instantiate<NMerchantInventory>(PackedScene.GenEditState.Disabled);
+            try
+            {
+                // Inventory providers can replace the hand scene or its child Spine resources.
+                // Instantiate while the selected merchant overlay is mounted so a hot swap never
+                // binds the previous merchant's cached hand/skeleton.
+                inventoryTemplate = SkinService.InstantiateRuntimeScene<NMerchantInventory>(
+                    GroupId,
+                    MerchantInventoryScenePath);
+            }
+            catch (Exception runtimeException)
+            {
+                ModLog.Warn("当前商人没有独立库存场景，使用游戏场景兜底：" +
+                            runtimeException.GetBaseException().Message);
+                inventoryTemplate = LoadRuntimeOrBaseScene(MerchantInventoryScenePath)
+                    .Instantiate<NMerchantInventory>(PackedScene.GenEditState.Disabled);
+            }
             newHandContainer = inventoryTemplate.GetNodeOrNull<Node2D>("MerchantHandContainer") ??
                                FindMerchantHand(inventoryTemplate)?.GetParent() as Node2D ??
                                throw new InvalidOperationException("商店库存场景缺少 MerchantHandContainer 节点");
@@ -766,21 +802,16 @@ internal static class MerchantRuntimeAppearance
         string groupId = GroupId)
     {
         var scenePath = GetMerchantScenePath(groupId);
-        // The catalogue can show the game's complete merchant scene, but adding NMerchantRoom
-        // or NFakeMerchant with its gameplay script intact would run the real room/event _Ready
-        // path and require map, player, inventory and dialogue state. Remove only that root
-        // script before entering the tree; all authored visual children (including the native
-        // MerchantButton, background and animation players) remain in their original hierarchy.
-        var scene = SkinService.InstantiateRuntimeScene<Node>(groupId, scenePath);
-        var instanceId = scene.GetInstanceId();
-        scene.SetScript(default(Variant));
-        var detachedRoot = GodotObject.InstanceFromId(instanceId) as Node;
-        if (detachedRoot == null || !GodotObject.IsInstanceValid(detachedRoot))
-        {
-            throw new InvalidOperationException($"原生商人预览根节点无法脱离游戏逻辑：{scenePath}");
-        }
-
-        return (detachedRoot, scenePath);
+        // Keep the native root type while previewing. Provider code uses the ancestor type to
+        // distinguish a real merchant from the fake merchant (Merchant2Cute, for example,
+        // chooses a different scale/offset for NMerchantRoom versus NFakeMerchant). The root
+        // _Ready method is skipped by the preview Harmony prefix below, so no run/map/inventory
+        // state is touched; every visual child and authored hierarchy remains intact.
+        Node scene = groupId.Equals(FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase)
+            ? SkinService.InstantiateRuntimeScene<NFakeMerchant>(groupId, scenePath)
+            : SkinService.InstantiateRuntimeScene<NMerchantRoom>(groupId, scenePath);
+        scene.SetMeta(MerchantPreviewRootMeta, true);
+        return (scene, scenePath);
     }
 
     internal static string GetMerchantScenePath(string groupId = GroupId) =>
@@ -980,10 +1011,23 @@ internal static class MerchantRoomCreateAppearancePatch
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._Ready))]
 internal static class MerchantRoomPlayerAppearancePatch
 {
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(NMerchantRoom __instance) =>
+        // The compendium keeps the real NMerchantRoom type so provider patches can distinguish
+        // it from NFakeMerchant. Its gameplay _Ready would otherwise touch map/run state, so only
+        // the preview instance is skipped; live rooms keep the game's original lifecycle.
+        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NMerchantRoom __instance)
     {
+        if (MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
+        {
+            return;
+        }
+
         var player = CharacterAppearanceRuntime.GetLocalPlayer();
         if (player == null || __instance.PlayerVisuals.Count == 0)
         {
@@ -1017,10 +1061,20 @@ internal static class MerchantRoomPlayerAppearancePatch
 [HarmonyPatch(typeof(NFakeMerchant), nameof(NFakeMerchant._Ready))]
 internal static class FakeMerchantAppearancePatch
 {
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(NFakeMerchant __instance) =>
+        !MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance);
+
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NFakeMerchant __instance)
     {
+        if (MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
+        {
+            return;
+        }
+
         try
         {
             var providerId = SkinService.GetSelectedFullRuntimeProvider("fake_merchant_monster");

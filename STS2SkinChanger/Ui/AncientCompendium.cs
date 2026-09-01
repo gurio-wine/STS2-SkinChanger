@@ -600,9 +600,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private OptionButton _skinDropdown = null!;
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
-    private Button _merchantClickArea = null!;
     private VBoxContainer _otherActionSelector = null!;
-    private Control? _shopPreviewOverlay;
     private Node? _otherPreviewInstance;
     private string? _otherPreviewGroupId;
     private readonly List<(Button Button, string[] Aliases)> _otherActionButtons = [];
@@ -611,8 +609,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private OtherCategory _selectedCategory = OtherCategory.Ancients;
     private int _otherPreviewRequest;
     private bool _updatingDropdown;
-    private static readonly ConditionalWeakTable<MerchantInventory, object> PreviewInventories = new();
-    private static readonly object PreviewInventoryMarker = new();
 
     protected override Control? InitialFocusedControl =>
         _categoryButtons.Values.FirstOrDefault() ?? _entryButtons.Values.FirstOrDefault();
@@ -638,8 +634,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         // the player returns to the compendium or enters a run. Release the preview scene at the
         // same lifecycle boundary as the submenu itself; reopening rebuilds the selected preview.
         ClearPreview();
-        CloseSimulatedShopPreview();
-        _merchantClickArea.Visible = false;
         _otherActionSelector.Visible = false;
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
         base.OnSubmenuClosed();
@@ -666,37 +660,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             Size = new Vector2I(1920, 1080),
             TransparentBg = false,
+            // Re-enabled only for the native merchant scene in RebuildOtherPreview. Other
+            // catalogue previews keep input disabled unless their provider explicitly opts in.
             GuiDisableInput = true,
             // 子菜单打开时切为 Always 以持续播放 Spine/AnimationPlayer；关闭时禁用。
             RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled
         };
         _previewContainer.AddChild(_previewViewport);
-
-        // Merchant previews are visual-only nodes inside a SubViewport. A transparent
-        // screen-level hit target makes the interaction reliable on both game versions and
-        // lets the compendium show a shop-shaped mockup without forwarding clicks to the game.
-        _merchantClickArea = new Button
-        {
-            Name = "MerchantPreviewClickArea",
-            Visible = false,
-            Flat = true,
-            FocusMode = FocusModeEnum.None,
-            MouseFilter = MouseFilterEnum.Stop,
-            ZIndex = 4,
-            TooltipText = OtherPreviewText.OpenShop
-        };
-        _merchantClickArea.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
-        _merchantClickArea.Position = new Vector2(570f, 170f);
-        _merchantClickArea.Size = new Vector2(780f, 720f);
-        _merchantClickArea.AddThemeStyleboxOverride(
-            "normal",
-            ContextualSkinControls.CreateStyleBox(Colors.Transparent, Colors.Transparent, 0));
-        _merchantClickArea.AddThemeStyleboxOverride(
-            "hover",
-            ContextualSkinControls.CreateStyleBox(new Color(1f, 1f, 1f, 0.035f),
-                new Color("efc85066"), 2));
-        _merchantClickArea.Pressed += OpenSimulatedShopPreview;
-        AddChild(_merchantClickArea);
 
         _nameLabel = BuildLabel(48, new Color("efc850"));
         _nameLabel.HorizontalAlignment = HorizontalAlignment.Left;
@@ -824,7 +794,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
         var previewText = OtherPreviewText;
-        _merchantClickArea.TooltipText = previewText.OpenShop;
         if (_otherActionButtons.Count > 0)
         {
             _otherActionButtons[0].Button.Text = previewText.Attack;
@@ -884,6 +853,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _otherActionButtons.Add((button, animationAliases));
     }
 
+    // The catalogue now uses the complete native merchant scene. The old synthetic inventory
+    // overlay is intentionally kept out of the build: it created a second shop lifecycle outside
+    // a run and was the source of NMerchantCard/NMerchantCardRemoval teardown errors.
+#if false
     private void OpenSimulatedShopPreview()
     {
         try
@@ -1373,15 +1346,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
         RefreshAuxiliaryPreviewControls();
     }
 
+#endif
+
     private void RefreshAuxiliaryPreviewControls()
     {
-        _skinSelector.ZIndex = _shopPreviewOverlay == null ? 10 : 90;
-        var merchant = _selectedOther != null &&
-                       (_selectedOther.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
-                        _selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase));
-        _merchantClickArea.Visible = merchant && _shopPreviewOverlay == null;
-        _otherActionSelector.Visible = _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true &&
-                                       _shopPreviewOverlay == null;
+        _skinSelector.ZIndex = 10;
+        _otherActionSelector.Visible = _selectedOther?.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private void RefreshAncients()
@@ -1510,7 +1480,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _nameLabel.Text = ModLocalization.Get(ModText.NoAncientsAvailable);
         _epithetLabel.Text = string.Empty;
         _skinSelector.Visible = false;
-        _merchantClickArea.Visible = false;
         _otherActionSelector.Visible = false;
         ClearPreview();
     }
@@ -1557,7 +1526,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void SelectOther(OtherEntry entry)
     {
-        CloseSimulatedShopPreview();
         _otherPreviewRequest++;
         _selectedAncient = null;
         _selectedOther = entry;
@@ -1619,7 +1587,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void SelectAncient(AncientEventModel ancient)
     {
-        CloseSimulatedShopPreview();
         _selectedCategory = OtherCategory.Ancients;
         _selectedAncient = ancient;
         _selectedOther = null;
@@ -1702,7 +1669,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
             var entry = _selectedOther;
             var request = ++_otherPreviewRequest;
             var expectedOption = optionId;
-            var reopenShop = GodotObject.IsInstanceValid(_shopPreviewOverlay);
             Callable.From(() =>
             {
                 // Multiple dropdown clicks can queue several deferred rebuilds. An old rebuild
@@ -1719,14 +1685,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 }
 
                 RebuildOtherPreview(entry);
-                if (reopenShop)
-                {
-                    // The simulated shop is a separate vanilla scene overlay. Recreate it
-                    // after a skin change so its hand, merchant-specific textures, and item
-                    // previews follow the same selection as the catalogue model underneath.
-                    CloseSimulatedShopPreview();
-                    OpenSimulatedShopPreview();
-                }
             }).CallDeferred();
         }
     }
@@ -1745,6 +1703,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
             // preview.
             var isMerchant = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase);
             var isFakeMerchant = entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase);
+            // The complete native merchant/event scene owns its own hover, focus and reticle
+            // controls. Let those controls receive input directly in the SubViewport; no
+            // screen-level transparent button or synthetic shop overlay is involved anymore.
+            var nativeMerchantInteraction = isMerchant || isFakeMerchant;
+            _previewContainer.MouseFilter = nativeMerchantInteraction
+                ? MouseFilterEnum.Stop
+                : MouseFilterEnum.Ignore;
+            _previewViewport.GuiDisableInput = !nativeMerchantInteraction;
             (Node Instance, string ScenePath) previewScene;
             Node instance;
             if (isMerchant || isFakeMerchant)
@@ -2113,10 +2079,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         _otherPreviewInstance = null;
         _otherPreviewGroupId = null;
-        if (_merchantClickArea != null)
-        {
-            _merchantClickArea.Visible = false;
-        }
         if (_otherActionSelector != null)
         {
             _otherActionSelector.Visible = false;
@@ -2191,23 +2153,6 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
     }
 
-}
-
-[HarmonyPatch(typeof(MerchantEntry), nameof(MerchantEntry.OnTryPurchaseWrapper))]
-internal static class AncientCompendiumPreviewPurchaseGuardPatch
-{
-    private static bool Prefix(MerchantInventory? inventory, ref Task<bool> __result)
-    {
-        if (!AncientCompendiumScreen.IsPreviewInventory(inventory))
-        {
-            return true;
-        }
-
-        // Keep the native NMerchantCard/NMerchantRelic/NMerchantPotion interaction surface, but
-        // make every catalogue entry read-only so a click can never spend gold or mutate a run.
-        __result = Task.FromResult(false);
-        return false;
-    }
 }
 
 internal static class ManagedAncientLayeredImage
