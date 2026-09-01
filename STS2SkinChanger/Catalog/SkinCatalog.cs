@@ -914,6 +914,13 @@ internal sealed partial class SkinCatalog : IDisposable
             if (HasPatchTarget(value, "CharacterModel", "CreateVisuals", "CharacterSelectIcon", "IconTexture") ||
                 HasPatchTarget(value, "MonsterModel", "CreateVisuals") ||
                 HasPatchTarget(value, "EventModel", "CreateBackgroundScene", "MapIcon", "RunHistoryIcon") ||
+                // Merchant skin providers commonly patch NMerchantButton/NMerchantRoom rather
+                // than CharacterModel.  They still need the same load-time isolation; otherwise
+                // a provider such as ATA_Merchant remains globally active and overwrites every
+                // subsequent merchant preview, including the game's default option.
+                HasPatchTarget(value, "NMerchantButton", "_Ready", "MerchantVisual", "SetSkin") ||
+                HasPatchTarget(value, "NMerchantRoom", "_Ready", "MerchantButton") ||
+                HasPatchTarget(value, "NMerchantHand", "_Ready", "skeleton") ||
                 HasPatchTarget(value, "CardModel", "Portrait", "PortraitPath") ||
                 HasPatchTarget(value, "AssetCache", "GetScene", "GetTexture2D", "GetAsset") ||
                 HasPatchTarget(value, "AtlasManager", "GetSprite", "LoadAtlas"))

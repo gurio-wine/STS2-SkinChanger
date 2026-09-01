@@ -795,7 +795,17 @@ internal static class ManagedSkinModLoader
         target.DeclaringType != null &&
         (typeof(NCreature).IsAssignableFrom(target.DeclaringType) ||
          typeof(NMerchantRoom).IsAssignableFrom(target.DeclaringType) ||
-         typeof(NRestSiteRoom).IsAssignableFrom(target.DeclaringType));
+         typeof(NRestSiteRoom).IsAssignableFrom(target.DeclaringType) ||
+         // Merchant skin DLLs usually put their visual override on the button/hand/inventory
+         // node itself. Keep these checks name-based so both formal and beta game assemblies
+         // remain compatible even when one build moves a merchant node to another namespace.
+         target.DeclaringType.Name is
+             "NMerchantButton" or
+             "NMerchantHand" or
+             "NMerchantInventory" or
+             "NMerchantSlot" or
+             "NMerchantDialogue" or
+             "NFakeMerchant");
 
     /// <summary>
     /// Replays presentation-only postfixes after Skin Changer has rebuilt the current character
