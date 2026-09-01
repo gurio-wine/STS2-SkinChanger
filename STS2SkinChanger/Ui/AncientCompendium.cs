@@ -1,14 +1,19 @@
 using System.Text.RegularExpressions;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.Merchant;
+using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Characters;
+using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Events;
@@ -18,7 +23,11 @@ using MegaCrit.Sts2.Core.Nodes.Potions;
 using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens;
+using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Rooms;
+using MegaCrit.Sts2.Core.Unlocks;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
@@ -602,6 +611,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private OtherCategory _selectedCategory = OtherCategory.Ancients;
     private int _otherPreviewRequest;
     private bool _updatingDropdown;
+    private static readonly ConditionalWeakTable<MerchantInventory, object> PreviewInventories = new();
+    private static readonly object PreviewInventoryMarker = new();
 
     protected override Control? InitialFocusedControl =>
         _categoryButtons.Values.FirstOrDefault() ?? _entryButtons.Values.FirstOrDefault();
@@ -924,84 +935,124 @@ internal partial class AncientCompendiumScreen : NSubmenu
         mask.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         overlay.AddChild(mask);
 
-        // Use the game's own merchant inventory scene. It provides the exact rug and slot
-        // layout; unlike a second hand-written mockup it remains in sync with the game UI.
-        // The scene is not initialized/opened because the catalogue has no live shop model.
+        // Use the game's own merchant inventory scene and its normal Initialize path. The
+        // catalogue supplies a disposable test player/run only because there is no live shop
+        // model outside a run; every visual, hover tip, hand animation and inspect action is
+        // still created by the same NMerchantInventory/NMerchantSlot code used in a real shop.
         var inventoryPath = _selectedOther.Id.Equals(
             "fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
             ? "res://scenes/events/custom/fake_merchant_inventory.tscn"
             : "res://scenes/merchant/merchant_inventory.tscn";
         var group = FindOtherGroup(_selectedOther);
-        var selection = group == null
-            ? SkinCatalog.BaseOptionId
-            : SkinService.Config.GetSelection(group.Id);
-        Control inventory;
-        if (group != null && !selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        var fakeMerchant = _selectedOther.Id.Equals(
+            "fake_merchant_monster", StringComparison.OrdinalIgnoreCase);
+        MerchantInventory model;
+        try
         {
-            // Instantiate while the provider overlay is mounted; PackedScene dependencies such
-            // as Spine data are lazy and would otherwise bind to the previously selected skin.
-            inventory = SkinService.InstantiateRuntimeScene<Control>(group.Id, inventoryPath);
+            // A real MerchantInventory requires a Player.RunState even though the catalogue is
+            // outside a run. This transient test run never becomes NRun's active state and is
+            // discarded with the overlay; it exists solely for the game's own FillSlot logic.
+            var previewPlayer = Player.CreateForNewRun(
+                ModelDb.Character<Ironclad>(),
+                UnlockState.all,
+                0x534b494e50525631UL);
+            _ = RunState.CreateForTest(
+                [previewPlayer],
+                seed: "SkinChangerMerchantPreview");
+            previewPlayer.Gold = 9999;
+            model = fakeMerchant
+                ? CreateFakeMerchantPreviewInventory(previewPlayer)
+                : MerchantInventory.CreateForNormalMerchant(previewPlayer);
         }
-        else
+        catch (Exception exception)
         {
-            var inventoryScene = ResourceLoader.Load<PackedScene>(
-                inventoryPath,
-                null,
-                ResourceLoader.CacheMode.IgnoreDeep) ??
-                throw new InvalidOperationException($"无法加载原版商店界面：{inventoryPath}");
-            inventory = inventoryScene.Instantiate<Control>(PackedScene.GenEditState.Disabled);
-        }
-        inventory = StripPreviewScripts(inventory) as Control ??
-                    throw new InvalidOperationException("商店预览脚本隔离后节点已失效。");
-        inventory.Name = "VanillaMerchantInventory";
-        inventory.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        inventory.MouseFilter = MouseFilterEnum.Ignore;
-        // The real inventory's _Ready subscribes to the active run and expects a live
-        // MerchantInventory model. Strip behaviour scripts before entering the tree so the
-        // catalogue gets the original visual scene without opening a real shop or touching save
-        // state. The authored controls, textures and slot layout remain intact.
-        overlay.AddChild(inventory);
-
-        // NMerchantInventory normally moves SlotsContainer from -1000 to 80 in Open(). Do the
-        // final visual placement directly and avoid game-state, audio and purchase code.
-        var slots = inventory.GetNodeOrNull<Control>("SlotsContainer");
-        if (slots != null)
-        {
-            // The shop scene is authored for an in-run canvas whose root transform is supplied by
-            // NMerchantRoom. In a catalogue viewport that transform is absent, so normalize the
-            // container to a top-left canvas while retaining the game's own size and child offsets.
-            slots.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
-            slots.Position = new Vector2(86f, 20f);
-            slots.Size = new Vector2(1747f, 978f);
+            throw new InvalidOperationException("无法创建商店预览商品数据。", exception);
         }
 
-        var backstop = inventory.GetNodeOrNull<CanvasItem>("Backstop");
-        if (backstop != null)
+        using (group == null
+                   ? null
+                   : SkinService.BeginRuntimeResourceScope(group.Id, inventoryPath))
         {
-            backstop.Modulate = new Color(1f, 1f, 1f, 0.8f);
+            NMerchantInventory inventory;
+            if (group != null)
+            {
+                inventory = SkinService.InstantiateRuntimeScene<NMerchantInventory>(
+                    group.Id,
+                    inventoryPath);
+            }
+            else
+            {
+                var scene = ResourceLoader.Load<PackedScene>(
+                    inventoryPath,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep) ??
+                            throw new InvalidOperationException($"无法加载原版商店界面：{inventoryPath}");
+                inventory = scene.Instantiate<NMerchantInventory>(PackedScene.GenEditState.Disabled);
+            }
+
+            inventory.Name = "VanillaMerchantInventory";
+            inventory.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+            overlay.AddChild(inventory);
+            inventory.Initialize(
+                model,
+                fakeMerchant ? FakeMerchant.Dialogue : MerchantRoom.Dialogue);
+            PreviewInventories.Add(model, PreviewInventoryMarker);
+            inventory.Connect(
+                NMerchantInventory.SignalName.InventoryClosed,
+                Callable.From(CloseSimulatedShopPreview));
+
+            // NMerchantInventory.Open normally applies these exact end values after its tween.
+            // Calling Open here would mutate the real merchant FTUE/screen context, so keep the
+            // native layout and hand/hover process without those run-level side effects.
+            var slots = inventory.GetNodeOrNull<Control>("%SlotsContainer") ??
+                        inventory.GetNodeOrNull<Control>("SlotsContainer");
+            if (slots != null)
+            {
+                slots.Position = new Vector2(slots.Position.X, 80f);
+            }
+
+            var backstop = inventory.GetNodeOrNull<CanvasItem>("Backstop");
+            if (backstop != null)
+            {
+                backstop.Modulate = new Color(1f, 1f, 1f, 0.8f);
+            }
+
+            var backButton = inventory.GetNodeOrNull<NBackButton>("%BackButton") ??
+                             inventory.GetNodeOrNull<NBackButton>("BackButton");
+            backButton?.Enable();
+
+            var removal = inventory.GetNodeOrNull<NMerchantCardRemoval>("%MerchantCardRemoval") ??
+                          inventory.GetNodeOrNull<NMerchantCardRemoval>("MerchantCardRemoval");
+            if (removal != null)
+            {
+                // Card removal has a separate purchase wrapper. Keep its native artwork but make
+                // the purchase-only target inert in the catalogue.
+                removal.MouseFilter = Control.MouseFilterEnum.Ignore;
+                removal.FocusMode = FocusModeEnum.None;
+                removal.Hitbox.MouseFilter = Control.MouseFilterEnum.Ignore;
+            }
         }
-
-        PreparePreviewShopInteraction(inventory);
-        FillPreviewShopSlots(
-            inventory,
-            _selectedOther.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase));
-
-        // Keep the original layout and our read-only item controls interactive. The transaction
-        // scripts were stripped above, so no button can mutate gold, inventory, or run state.
-        var close = new Button
-        {
-            Name = "CloseVanillaShopPreview",
-            Text = ModLocalization.Get(ModText.Close),
-            CustomMinimumSize = new Vector2(138f, 50f),
-            FocusMode = FocusModeEnum.All,
-            ZIndex = 3
-        };
-        ContextualSkinControls.ApplyGameTheme(close);
-        close.SetAnchorsAndOffsetsPreset(LayoutPreset.TopRight);
-        close.Position = new Vector2(-190f, 38f);
-        close.Pressed += CloseSimulatedShopPreview;
-        overlay.AddChild(close);
     }
+
+    private static MerchantInventory CreateFakeMerchantPreviewInventory(Player player)
+    {
+        var inventory = new MerchantInventory(player);
+        // FakeMerchant keeps its six relics in a private encounter table.  The catalogue only
+        // needs the same native six-slot layout, so use the first six canonical relics as
+        // disposable preview entries; their visuals, hover tips and costs still come from the
+        // game's NMerchantRelic/MerchantRelicEntry implementation.
+        foreach (var relic in ModelDb.AllRelics
+                     .OrderBy(relic => relic.Id.Entry, StringComparer.OrdinalIgnoreCase)
+                     .Take(6))
+        {
+            inventory.AddRelicEntry(new MerchantRelicEntry(relic.ToMutable(), player));
+        }
+
+        return inventory;
+    }
+
+    internal static bool IsPreviewInventory(MerchantInventory? inventory) =>
+        inventory != null && PreviewInventories.TryGetValue(inventory, out _);
 
     private static void PreparePreviewShopInteraction(Node root)
     {
@@ -1752,13 +1803,23 @@ internal partial class AncientCompendiumScreen : NSubmenu
             _otherPreviewGroupId = group?.Id;
             if (instance is Control control)
             {
-                control.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
-                control.Position = new Vector2(960f, 540f);
-                control.Scale *= entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase)
-                    ? 0.72f
-                    : entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase)
-                        ? 1.00f
-                    : 1.35f;
+                var isMerchant = entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase);
+                var isFakeMerchant = entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase);
+                if (isMerchant || isFakeMerchant)
+                {
+                    // MerchantButton/FakeMerchantButton already use the game's center anchors
+                    // and authored offsets. Re-centering the root a second time moves the
+                    // MerchantVisual far outside the viewport (and was the reason both the
+                    // default and ATA merchant disappeared). Preserve that native layout and
+                    // only apply the catalogue size adjustment.
+                    control.Scale *= isMerchant ? 0.72f : 1.00f;
+                }
+                else
+                {
+                    control.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
+                    control.Position = new Vector2(960f, 540f);
+                    control.Scale *= 1.35f;
+                }
                 control.MouseFilter = MouseFilterEnum.Ignore;
             }
             else if (instance is Node2D node)
@@ -2104,6 +2165,23 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
     }
 
+}
+
+[HarmonyPatch(typeof(MerchantEntry), nameof(MerchantEntry.OnTryPurchaseWrapper))]
+internal static class AncientCompendiumPreviewPurchaseGuardPatch
+{
+    private static bool Prefix(MerchantInventory? inventory, ref Task<bool> __result)
+    {
+        if (!AncientCompendiumScreen.IsPreviewInventory(inventory))
+        {
+            return true;
+        }
+
+        // Keep the native NMerchantCard/NMerchantRelic/NMerchantPotion interaction surface, but
+        // make every catalogue entry read-only so a click can never spend gold or mutate a run.
+        __result = Task.FromResult(false);
+        return false;
+    }
 }
 
 internal static class ManagedAncientLayeredImage
