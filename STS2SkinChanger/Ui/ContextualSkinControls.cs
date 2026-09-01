@@ -2287,8 +2287,21 @@ internal static class CharacterSelectionSkinPatch
         ContextualSkinControls.CaptureCharacterBackgroundHostLayout(__instance);
 
     [HarmonyPriority(Priority.First)]
-    private static void Postfix(NCharacterSelectScreen __instance, CharacterModel characterModel) =>
+    private static void Postfix(NCharacterSelectScreen __instance, CharacterModel characterModel)
+    {
         ContextualSkinControls.ShowCharacter(__instance, characterModel);
+        var relic = characterModel.StartingRelics.FirstOrDefault();
+        if (relic == null ||
+            FrameworkSkinRuntime.ResolveRelicVisual(relic, largeIcon: false) is not { } plan)
+        {
+            return;
+        }
+
+        var icon = __instance.GetNodeOrNull<TextureRect>("InfoPanel/VBoxContainer/Relic/Icon");
+        ModLog.Info(
+            $"框架遗物诊断：选角边界={characterModel.Id.Entry}，" +
+            $"期望={plan.IconPath}，当前={icon?.Texture?.ResourcePath ?? "<null>"}。");
+    }
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewSingleplayerRun")]
