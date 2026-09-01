@@ -83,4 +83,23 @@ Require(
     MerchantProviderPostfixTiming.Immediate,
     "不依赖 Spine 的库存节点应立即完成提供者 Postfix。");
 
+var previewFocus = MerchantPreviewFocusState.None;
+previewFocus = MerchantPreviewFocusPolicy.Resolve(
+    previewFocus,
+    MerchantPreviewFocusEvent.MouseEntered);
+Require(previewFocus.IsFocused, "鼠标进入图鉴商人代理层时必须显示悬浮外观。");
+previewFocus = MerchantPreviewFocusPolicy.Resolve(
+    previewFocus,
+    MerchantPreviewFocusEvent.ControllerFocused);
+previewFocus = MerchantPreviewFocusPolicy.Resolve(
+    previewFocus,
+    MerchantPreviewFocusEvent.MouseExited);
+Require(
+    previewFocus.IsFocused,
+    "鼠标离开但手柄焦点仍在图鉴商人代理层时不能提前取消悬浮外观。");
+previewFocus = MerchantPreviewFocusPolicy.Resolve(
+    previewFocus,
+    MerchantPreviewFocusEvent.ControllerUnfocused);
+Require(!previewFocus.IsFocused, "鼠标和手柄焦点都离开后必须恢复商人默认外观。");
+
 Console.WriteLine("Merchant appearance policy tests passed.");

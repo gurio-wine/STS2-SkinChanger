@@ -13,5 +13,7 @@
              Link="MerchantProviderReadyPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantPreviewLayerPolicy.cs"
              Link="MerchantPreviewLayerPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/MerchantPreviewFocusPolicy.cs"
+             Link="MerchantPreviewFocusPolicy.cs" />
   </ItemGroup>
 </Project>
