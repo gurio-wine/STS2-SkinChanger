@@ -22,6 +22,25 @@ Require(
     "[SC] Existing Prefix",
     "Mod 列表反复刷新时不能重复叠加 [SC] 前缀。");
 
+Require(
+    CardPresentationLayoutPolicy.Resolve(
+        isNativeAncient: false,
+        requestsAncientLayout: false,
+        requestsExpandedPortrait: true) == CardPresentationLayout.ExpandedPortrait,
+    "普通异画借用先古大图层时只能进入扩展异画版式，不能被判成先古卡。");
+Require(
+    CardPresentationLayoutPolicy.Resolve(
+        isNativeAncient: false,
+        requestsAncientLayout: true,
+        requestsExpandedPortrait: true) == CardPresentationLayout.Ancient,
+    "皮肤明确声明先古版式时，先古意图必须高于扩展异画版式。");
+Require(
+    CardPresentationLayoutPolicy.Resolve(
+        isNativeAncient: true,
+        requestsAncientLayout: false,
+        requestsExpandedPortrait: true) == CardPresentationLayout.Ancient,
+    "游戏原生先古卡不能被扩展异画版式降级成普通卡。");
+
 var open = MerchantPreviewLayerPolicy.Resolve(
     inventoryOpen: true,
     hasSkinOptions: true,

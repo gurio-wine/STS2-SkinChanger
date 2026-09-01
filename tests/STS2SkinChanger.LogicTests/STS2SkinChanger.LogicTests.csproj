@@ -19,5 +19,7 @@
              Link="MerchantPreviewFocusPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/ManagedModListNamePolicy.cs"
              Link="ManagedModListNamePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/CardPresentationLayoutPolicy.cs"
+             Link="CardPresentationLayoutPolicy.cs" />
   </ItemGroup>
 </Project>

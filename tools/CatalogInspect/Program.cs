@@ -185,7 +185,8 @@ foreach (var group in catalog.CardGroups)
             $"  {option.Id}\t{option.Name}\t" +
             $"{option.Assets.Count} assets, " +
             $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient, " +
-            $"{option.CardPresentations.Count} presentations");
+            $"{option.CardPresentations.Count} presentations, " +
+            $"{option.CardPresentations.Count(pair => pair.Value.UseExpandedPortraitLayout)} expanded-portrait");
         if (showAssets)
         {
             foreach (var presentation in option.CardPresentations.OrderBy(
@@ -195,6 +196,7 @@ foreach (var group in catalog.CardGroups)
                 Console.WriteLine(
                     $"    presentation:{presentation.Key} " +
                     $"ancient={presentation.Value.UseAncientLayout}, " +
+                    $"expanded-portrait={presentation.Value.UseExpandedPortraitLayout}, " +
                     $"full-frame={presentation.Value.UseFullFrameArt}");
             }
         }
@@ -209,6 +211,7 @@ foreach (var option in catalog.PckCardOptions)
         $"card-provider:{option.Id}\t{option.Name}\t{option.Assets.Count} assets, " +
         $"{option.NormalPortraits.Count} normal, {option.AncientPortraits.Count} ancient, " +
         $"{option.CardPresentations.Count(pair => pair.Value.UseFullFrameArt)} full-frame, " +
+        $"{option.CardPresentations.Count(pair => pair.Value.UseExpandedPortraitLayout)} expanded-portrait, " +
         $"{namespaceFiles.Count} namespace files, " +
         $"{option.CardPresentations.Count} presentations");
     if (showAssets)
@@ -220,6 +223,7 @@ foreach (var option in catalog.PckCardOptions)
             Console.WriteLine(
                 $"    presentation:{presentation.Key} " +
                 $"ancient={presentation.Value.UseAncientLayout}, " +
+                $"expanded-portrait={presentation.Value.UseExpandedPortraitLayout}, " +
                 $"full-frame={presentation.Value.UseFullFrameArt}");
         }
     }

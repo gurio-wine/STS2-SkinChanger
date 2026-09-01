@@ -9,8 +9,9 @@ namespace STS2SkinChanger.Catalog;
 
 /// <summary>
 /// Reads presentation intent from managed providers without loading or executing them.
-/// This covers DLL-only visual patches that turn an ordinary card into the game's
-/// Ancient layout, while keeping provider initializers and Harmony patches disabled.
+/// This covers DLL-only visual patches that either request the game's Ancient layout or
+/// borrow its full-height portrait node for ordinary alternate art, while keeping provider
+/// initializers and Harmony patches disabled.
 /// </summary>
 internal static class ManagedCardPresentationScanner
 {
@@ -125,6 +126,7 @@ internal static class ManagedCardPresentationScanner
                 .Select(candidate => candidate.TypeName)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            var useExpandedPortraitLayout = false;
             if (cardTypes.Length == 0)
             {
                 // Registry-driven exporters do not reference every concrete CardModel type from
@@ -148,14 +150,33 @@ internal static class ManagedCardPresentationScanner
                 {
                     continue;
                 }
+
+                // A registry-driven portrait patch often reuses AncientPortrait solely for its
+                // taller aspect ratio. It is not declaring the game's Ancient card UI; the
+                // provider's own frame manifest controls that separately. Keep this intent as a
+                // distinct expanded-portrait layout so the candle, Ancient banner and black
+                // Ancient text background are not added to ordinary alternate-art cards.
+                useExpandedPortraitLayout = true;
             }
 
-            var frame = FindResource(strings, "ancient_card_border");
-            var textBackground = FindResource(strings, "ancient_card_text_bg");
-            var banner = FindResource(strings, "ancient_banner.tres");
-            var bannerMaterial = FindResource(strings, "card_banner_ancient_mat");
+            // These are Ancient defaults used by the game's actual layout. A registry portrait
+            // patch does not replace the normal banner/text layers, so do not feed those default
+            // paths into the expanded-portrait presentation.
+            var frame = useExpandedPortraitLayout
+                ? null
+                : FindResource(strings, "ancient_card_border");
+            var textBackground = useExpandedPortraitLayout
+                ? null
+                : FindResource(strings, "ancient_card_text_bg");
+            var banner = useExpandedPortraitLayout
+                ? null
+                : FindResource(strings, "ancient_banner.tres");
+            var bannerMaterial = useExpandedPortraitLayout
+                ? null
+                : FindResource(strings, "card_banner_ancient_mat");
             var definition = new CardPresentationDefinition(
-                UseAncientLayout: true,
+                UseAncientLayout: !useExpandedPortraitLayout,
+                UseExpandedPortraitLayout: useExpandedPortraitLayout,
                 Frame: frame,
                 BannerTexture: banner,
                 BannerMaterial: bannerMaterial,

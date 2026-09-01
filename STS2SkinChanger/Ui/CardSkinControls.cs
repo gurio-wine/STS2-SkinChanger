@@ -452,8 +452,12 @@ internal static class CardSkinControls
             return;
         }
 
-        var useAncientLayout = presentation.UseAncientLayout ||
-                               card.Model!.Rarity == CardRarity.Ancient;
+        var layout = CardPresentationLayoutPolicy.Resolve(
+            card.Model!.Rarity == CardRarity.Ancient,
+            presentation.UseAncientLayout,
+            presentation.UseExpandedPortraitLayout);
+        var useAncientLayout = layout == CardPresentationLayout.Ancient;
+        var useExpandedPortrait = layout == CardPresentationLayout.ExpandedPortrait;
 
         if (useAncientLayout)
         {
@@ -506,6 +510,61 @@ internal static class CardSkinControls
                     maskMaterialPath);
             }
         }
+        else if (useExpandedPortrait)
+        {
+            // Some providers use the game's AncientPortrait node as a convenient tall canvas
+            // for ordinary alternate art. Keep that canvas and (when requested) its border, but
+            // leave all Ancient-only effects disabled: no candle, Ancient banner, glass overlay,
+            // or black Ancient description background.
+            SetVisible(portrait, false);
+            SetVisible(portraitBorder, false);
+            SetVisible(frame, false);
+            SetVisible(ancientPortrait, true);
+            SetVisible(ancientGlass, false);
+            SetVisible(ancientBanner, false);
+            SetVisible(ancientTextBg, false);
+            SetVisible(ancientHighlight, false);
+            if (fire != null)
+            {
+                fire.Visible = false;
+                fire.Stop();
+            }
+
+            if (ancientBorder is { Texture: null } border)
+            {
+                border.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    AncientBorderPath);
+            }
+            SetVisible(ancientBorder, presentation.FrameVisible ?? true);
+            if (portraitCanvas != null)
+            {
+                var maskMaterialPath = card.Visibility == ModelVisibility.Visible
+                    ? "res://scenes/cards/card_canvas_group_mask_material.tres"
+                    : "res://scenes/cards/card_canvas_group_mask_blur_material.tres";
+                portraitCanvas.Material = SkinService.LoadCardPresentationResource<Material>(
+                    card.Model!,
+                    maskMaterialPath);
+            }
+        }
+        else
+        {
+            // Reassert the normal layout as well as restoring the baseline. Cards are pooled by
+            // the library and combat queue, so a card that previously used Ancient/expanded art
+            // must not depend on a baseline callback having run in the same frame before it is
+            // rebound to a normal presentation.
+            SetVisible(ancientPortrait, false);
+            SetVisible(ancientGlass, false);
+            SetVisible(ancientBorder, false);
+            SetVisible(ancientTextBg, false);
+            SetVisible(ancientBanner, false);
+            SetVisible(ancientHighlight, false);
+            if (fire != null)
+            {
+                fire.Visible = false;
+                fire.Stop();
+            }
+        }
 
         ApplyTexture(card, frame, presentation.Frame);
         ApplyTexture(card, ancientBorder, presentation.Frame);
@@ -527,8 +586,10 @@ internal static class CardSkinControls
 
         if (presentation.FrameVisible is { } frameVisible)
         {
-            SetVisible(frame, frameVisible && !useAncientLayout);
-            SetVisible(ancientBorder, frameVisible && useAncientLayout);
+            SetVisible(frame, frameVisible && layout == CardPresentationLayout.Normal);
+            SetVisible(
+                ancientBorder,
+                frameVisible && layout != CardPresentationLayout.Normal);
         }
         if (presentation.BannerVisible is { } bannerVisible)
         {
@@ -539,23 +600,30 @@ internal static class CardSkinControls
         {
             SetVisible(ancientTextBg, presentation.TextBackgroundVisible);
         }
+        else if (useExpandedPortrait)
+        {
+            SetVisible(ancientTextBg, false);
+            RemoveNormalTextBackground(card);
+        }
         else
         {
             ApplyNormalTextBackground(card, presentation);
         }
         if (presentation.PortraitBorderVisible is { } portraitBorderVisible)
         {
-            SetVisible(portraitBorder, portraitBorderVisible && !useAncientLayout);
+            SetVisible(
+                portraitBorder,
+                portraitBorderVisible && layout == CardPresentationLayout.Normal);
         }
         if (presentation.PortraitVisible is { } portraitVisible)
         {
-            SetVisible(portrait, portraitVisible && !useAncientLayout);
-            SetVisible(ancientPortrait, portraitVisible && useAncientLayout);
+            SetVisible(portrait, portraitVisible && layout == CardPresentationLayout.Normal);
+            SetVisible(ancientPortrait, portraitVisible && layout != CardPresentationLayout.Normal);
         }
         SetVisible(energyIcon, presentation.EnergyIconVisible);
         if (presentation.HighlightVisible is { } highlightVisible)
         {
-            SetVisible(highlight, highlightVisible && !useAncientLayout);
+            SetVisible(highlight, highlightVisible && layout == CardPresentationLayout.Normal);
             SetVisible(ancientHighlight, highlightVisible && useAncientLayout);
         }
         if (!preserveExternalText)
@@ -776,6 +844,18 @@ internal static class CardSkinControls
         overlay.Visible = overlay.Texture != null;
     }
 
+    private static void RemoveNormalTextBackground(NCard card)
+    {
+        var overlay = card.GetNodeOrNull<TextureRect>(NormalTextBackgroundOverlayName);
+        if (overlay == null)
+        {
+            return;
+        }
+
+        overlay.GetParent()?.RemoveChild(overlay);
+        overlay.QueueFree();
+    }
+
     private static Texture2D GetNormalTextBackgroundCoverTexture()
     {
         if (_normalTextBackgroundCoverTexture != null &&
@@ -863,8 +943,10 @@ internal static class CardSkinControls
 
         // CardModel.Portrait 的 getter 已被 Priority.Last 的 Postfix 接管，这里拿到的已是换肤后的贴图。
         var portrait = card.Model.Portrait;
+        var presentation = SkinService.GetCardPresentation(card.Model);
         var targetPath = card.Model.Rarity == CardRarity.Ancient ||
-                         SkinService.GetCardPresentation(card.Model)?.UseAncientLayout == true
+                         presentation?.UseAncientLayout == true ||
+                         presentation?.UseExpandedPortraitLayout == true
             ? "%AncientPortrait"
             : "%Portrait";
         var target = card.GetNodeOrNull<TextureRect>(targetPath);

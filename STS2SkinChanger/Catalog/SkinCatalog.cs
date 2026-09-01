@@ -4309,10 +4309,17 @@ internal sealed partial class SkinCatalog : IDisposable
                 // An omitted uiMode is not an explicit request for the normal layout. Exported
                 // card managers commonly keep frame visibility in JSON while routing the same
                 // declared portraits to AncientPortrait from their disabled DLL patch. Preserve
-                // both halves of that presentation. A non-empty uiMode remains authoritative.
-                if (!explicitUiModes.Contains(inferred.Key) && inferred.Value.UseAncientLayout)
+                // the inferred Ancient-vs-expanded intent; a non-empty uiMode remains
+                // authoritative because it is the provider's explicit layout declaration.
+                if (!explicitUiModes.Contains(inferred.Key) &&
+                    (inferred.Value.UseAncientLayout ||
+                     inferred.Value.UseExpandedPortraitLayout))
                 {
-                    presentations[inferred.Key] = configured with { UseAncientLayout = true };
+                    presentations[inferred.Key] = configured with
+                    {
+                        UseAncientLayout = inferred.Value.UseAncientLayout,
+                        UseExpandedPortraitLayout = inferred.Value.UseExpandedPortraitLayout
+                    };
                 }
             }
             else
@@ -6127,6 +6134,7 @@ internal sealed record CardPresentationDefinition(
     bool? DescriptionVisible = null,
     bool? InfectionOverlayVisible = null,
     bool UseFullFrameArt = false,
+    bool UseExpandedPortraitLayout = false,
     string? FrameOverlay = null,
     bool? PortraitVisible = null,
     float? FrameOverlayOffsetTop = null,
