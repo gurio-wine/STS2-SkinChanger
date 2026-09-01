@@ -1749,22 +1749,15 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Node instance;
             if (isMerchant || isFakeMerchant)
             {
-                // Reuse the exact factory used by the live merchant room. Merchant skin mods
-                // often replace the standalone MerchantButton scene or resolve its unique
-                // MerchantVisual through a provider-specific path; the catalogue must not use a
-                // second, subtly different scene-discovery implementation.
-                var merchantButton = MerchantRuntimeAppearance.InstantiateMerchantButton(
+                // Keep the full native room/event hierarchy in the catalogue. The factory strips
+                // only the gameplay root script before the node enters the tree, so the authored
+                // SceneContainer offsets, merchant background and button hierarchy are preserved.
+                var merchantPreview = MerchantRuntimeAppearance.InstantiateMerchantPreviewScene(
                     isFakeMerchant
                         ? MerchantRuntimeAppearance.FakeMerchantGroupId
                         : MerchantRuntimeAppearance.GroupId);
-                MakePreviewCanvasVisible(merchantButton);
-                instance = merchantButton;
-                previewScene = (
-                    instance,
-                    MerchantRuntimeAppearance.GetMerchantScenePath(
-                        isFakeMerchant
-                            ? MerchantRuntimeAppearance.FakeMerchantGroupId
-                            : MerchantRuntimeAppearance.GroupId));
+                instance = merchantPreview.Scene;
+                previewScene = merchantPreview;
             }
             else
             {
@@ -1789,10 +1782,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 instance.Name = "OtherCompendiumPreview";
             }
             instance.ProcessMode = ProcessModeEnum.Always;
-            // Adding NMerchantButton to the tree runs its normal _Ready callback. Keep the
-            // selected overlay mounted through that callback, then replay the selected
-            // provider's isolated NMerchantButton presentation hook (ATA changes its skeleton
-            // there instead of replacing merchant_button.tscn).
+            // Keep the selected overlay mounted while the complete native hierarchy enters the
+            // tree. Child _Ready callbacks (including NMerchantButton and NSpineAutoPlayer) now
+            // run against their original parent paths instead of a detached button.
             using (group == null
                        ? null
                        : SkinService.BeginRuntimeResourceScope(group.Id, previewScene.ScenePath))
@@ -1829,9 +1821,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
                     var providerId = group == null
                         ? null
                         : SkinService.GetSelectedFullRuntimeProvider(group.Id);
-                    if (providerId != null)
+                    var nativeButton = instance.FindChild(
+                        "MerchantButton",
+                        recursive: true,
+                        owned: false);
+                    if (providerId != null && nativeButton != null)
                     {
-                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, instance);
+                        // Provider visual postfixes normally target NMerchantButton. Replay them
+                        // on that native child only; replaying NMerchantRoom/NFakeMerchant would
+                        // invoke gameplay initialization without a live run.
+                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, nativeButton);
                     }
                 }
             }
@@ -1871,36 +1870,27 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 node.Scale *= previewMultiplier;
             }
 
-            // Creature scenes do not get NCreature's normal animation setup when previewed in
-            // isolation. Reuse the same generic Spine starter used by Ancient previews so a
-            // Byrdpip/merchant skin with an idle loop remains animated in the compendium.
-            ManagedAncientSceneAnimation.TryStart(group?.Id, instance);
-            ManagedAncientSceneAnimation.ConfigureActions(
-                instance,
-                group?.Id,
-                _otherActionButtons);
-            if (entry.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) ||
-                entry.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+            if (!isMerchant && !isFakeMerchant)
             {
-                // NMerchantButton normally starts this animation from _Ready. Explicitly select
-                // the neutral pose as well, because provider hooks may replace the skeleton or
-                // leave its initial track empty after the preview is detached from a room.
-                ManagedAncientSceneAnimation.TryPlay(
+                // Creature scenes do not get NCreature's normal animation setup when previewed in
+                // isolation. Reuse the same generic Spine starter used by Ancient previews so a
+                // Byrdpip skin with an idle loop remains animated in the compendium.
+                ManagedAncientSceneAnimation.TryStart(group?.Id, instance);
+                ManagedAncientSceneAnimation.ConfigureActions(
                     instance,
                     group?.Id,
-                    ["idle_loop", "idle", "stand", "standing", "default", "animation"],
-                    loop: true);
-            }
-            else if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
-            {
-                // The creature catalogue opens in its neutral standing pose, matching the
-                // monster bestiary. Attack remains an optional action when the selected Spine
-                // asset actually exposes one.
-                ManagedAncientSceneAnimation.TryPlay(
-                    instance,
-                    group?.Id,
-                    ["idle_loop", "idle", "stand", "standing"],
-                    loop: true);
+                    _otherActionButtons);
+                if (entry.Id.Equals("byrdpip", StringComparison.OrdinalIgnoreCase))
+                {
+                    // The creature catalogue opens in its neutral standing pose, matching the
+                    // monster bestiary. Attack remains an optional action when the selected
+                    // Spine asset actually exposes one.
+                    ManagedAncientSceneAnimation.TryPlay(
+                        instance,
+                        group?.Id,
+                        ["idle_loop", "idle", "stand", "standing"],
+                        loop: true);
+                }
             }
             RefreshAuxiliaryPreviewControls();
 

@@ -762,6 +762,27 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
+    internal static (Node Scene, string ScenePath) InstantiateMerchantPreviewScene(
+        string groupId = GroupId)
+    {
+        var scenePath = GetMerchantScenePath(groupId);
+        // The catalogue can show the game's complete merchant scene, but adding NMerchantRoom
+        // or NFakeMerchant with its gameplay script intact would run the real room/event _Ready
+        // path and require map, player, inventory and dialogue state. Remove only that root
+        // script before entering the tree; all authored visual children (including the native
+        // MerchantButton, background and animation players) remain in their original hierarchy.
+        var scene = SkinService.InstantiateRuntimeScene<Node>(groupId, scenePath);
+        var instanceId = scene.GetInstanceId();
+        scene.SetScript(default(Variant));
+        var detachedRoot = GodotObject.InstanceFromId(instanceId) as Node;
+        if (detachedRoot == null || !GodotObject.IsInstanceValid(detachedRoot))
+        {
+            throw new InvalidOperationException($"原生商人预览根节点无法脱离游戏逻辑：{scenePath}");
+        }
+
+        return (detachedRoot, scenePath);
+    }
+
     internal static string GetMerchantScenePath(string groupId = GroupId) =>
         groupId.Equals(FakeMerchantGroupId, StringComparison.OrdinalIgnoreCase)
             ? FakeMerchantScenePath
