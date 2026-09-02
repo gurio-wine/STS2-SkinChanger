@@ -2,6 +2,8 @@ using System.Reflection;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Animation;
+using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -12,6 +14,7 @@ using MegaCrit.Sts2.Core.Nodes.Orbs;
 using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Models;
@@ -69,6 +72,7 @@ internal static class CharacterAppearanceRuntime
     private const string CurrentReticleOffsetYMeta = "skin_changer_reticle_current_offset_y";
     private const string CurrentReticleFollowScaleMeta = "skin_changer_reticle_follow_scale";
     private const string CurrentReticleFollowMovementMeta = "skin_changer_reticle_follow_movement";
+    private const string BossMapRefreshGenerationMeta = "skin_changer_boss_map_refresh_generation";
 
     private static readonly FieldInfo? VisualsField =
         AccessTools.Field(typeof(NCreature), "<Visuals>k__BackingField");
@@ -86,6 +90,18 @@ internal static class CharacterAppearanceRuntime
         AccessTools.Field(typeof(NRun), "_state");
     private static readonly FieldInfo? MapMarkerField =
         AccessTools.Field(typeof(NMapScreen), "_marker");
+    private static readonly FieldInfo? BossMapUsesSpineField =
+        AccessTools.Field(typeof(NBossMapPoint), "_usesSpine");
+    private static readonly FieldInfo? BossMapAnimatorField =
+        AccessTools.Field(typeof(NBossMapPoint), "_animController");
+    private static readonly FieldInfo? BossMapMaterialField =
+        AccessTools.Field(typeof(NBossMapPoint), "_material");
+    private static readonly FieldInfo? BossMapPlaceholderImageField =
+        AccessTools.Field(typeof(NBossMapPoint), "_placeholderImage");
+    private static readonly FieldInfo? BossMapPlaceholderOutlineField =
+        AccessTools.Field(typeof(NBossMapPoint), "_placeholderOutline");
+    private static readonly MethodInfo? BossMapRefreshColorMethod =
+        AccessTools.Method(typeof(NBossMapPoint), "RefreshColorInstantly");
     private static readonly FieldInfo? OrbNodesField =
         AccessTools.Field(typeof(NOrbManager), "_orbs");
     private static readonly FieldInfo? EnergyCounterField =
@@ -1704,7 +1720,10 @@ internal static class CharacterAppearanceRuntime
             {
                 foreach (var bossPoint in EnumerateDescendants<NBossMapPoint>(mapScreen))
                 {
-                    RefreshBossMapPointPresentation(bossPoint, selectedProviders);
+                    RefreshBossMapPointPresentation(
+                        bossPoint,
+                        selectedProviders,
+                        refreshNativePresentation: true);
                 }
             }
 
@@ -1725,30 +1744,114 @@ internal static class CharacterAppearanceRuntime
 
     internal static void RefreshBossMapPointPresentation(NBossMapPoint bossPoint)
     {
-        var run = NRun.Instance;
-        if (run == null || RunStateField?.GetValue(run) is not IRunState runState)
+        try
         {
-            return;
-        }
+            var run = NRun.Instance;
+            if (run == null || RunStateField?.GetValue(run) is not IRunState runState)
+            {
+                return;
+            }
 
-        var selectedProviders = ResolveCurrentBossGroupIds(runState)
-            .Select(SkinService.GetSelectedRuntimeProvider)
-            .Where(providerId => providerId != null)
-            .Cast<string>()
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        RefreshBossMapPointPresentation(bossPoint, selectedProviders);
+            var selectedProviders = ResolveCurrentBossGroupIds(runState)
+                .Select(SkinService.GetSelectedRuntimeProvider)
+                .Where(providerId => providerId != null)
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            // The original _Ready has already loaded the selected resource overlay. Only the
+            // isolated DLL callback needs replaying here; forcing the native Spine resource a
+            // second time would restart its asynchronous initialization for no visual benefit.
+            RefreshBossMapPointPresentation(
+                bossPoint,
+                selectedProviders,
+                refreshNativePresentation: false);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "初始化 Boss 地图皮肤失败，保留游戏当前图标：" +
+                exception.GetBaseException().Message);
+        }
     }
 
     private static void RefreshBossMapPointPresentation(
         NBossMapPoint bossPoint,
-        IEnumerable<string> selectedProviders)
+        IEnumerable<string> selectedProviders,
+        bool refreshNativePresentation)
     {
         ManagedSkinModLoader.RestoreAllNodeReadyBehaviors(bossPoint);
+        if (refreshNativePresentation &&
+            RunStateField?.GetValue(NRun.Instance) is IRunState runState)
+        {
+            RefreshNativeBossMapPoint(bossPoint, runState);
+        }
+
         foreach (var providerId in selectedProviders)
         {
             ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, bossPoint);
         }
+    }
+
+    internal static void RefreshNativeBossMapPoint(
+        NBossMapPoint bossPoint,
+        IRunState runState)
+    {
+        var encounter = bossPoint.Point == runState.Map.SecondBossMapPoint
+            ? runState.Act.SecondBossEncounter
+            : runState.Act.BossEncounter;
+        if (encounter == null)
+        {
+            return;
+        }
+
+        var spineNode = bossPoint.GetNode<Node2D>("%SpineSprite");
+        var placeholderImage = bossPoint.GetNode<TextureRect>("%PlaceholderImage");
+        var placeholderOutline = bossPoint.GetNode<TextureRect>("%PlaceholderOutline");
+        var generation = bossPoint.GetMeta(BossMapRefreshGenerationMeta, 0L).AsInt64() + 1L;
+        bossPoint.SetMeta(BossMapRefreshGenerationMeta, generation);
+        if (encounter.BossNodeSpineResource is { } skeletonData)
+        {
+            placeholderImage.Visible = false;
+            placeholderOutline.Visible = false;
+            spineNode.Visible = true;
+            var animator = BossMapAnimatorField?.GetValue(bossPoint) as MegaSprite ??
+                           new MegaSprite(spineNode);
+            animator.SetSkeletonDataRes(skeletonData);
+            BossMapAnimatorField?.SetValue(bossPoint, animator);
+            BossMapUsesSpineField?.SetValue(bossPoint, true);
+            if (animator.GetNormalMaterial() is ShaderMaterial material)
+            {
+                BossMapMaterialField?.SetValue(bossPoint, material);
+            }
+
+            bossPoint.RunWhenSpineReady(animator, animationState =>
+            {
+                if (GodotObject.IsInstanceValid(bossPoint) &&
+                    bossPoint.GetMeta(BossMapRefreshGenerationMeta, 0L).AsInt64() == generation)
+                {
+                    if (animator.GetNormalMaterial() is ShaderMaterial readyMaterial)
+                    {
+                        BossMapMaterialField?.SetValue(bossPoint, readyMaterial);
+                    }
+
+                    animationState.SetAnimation("animation");
+                    BossMapRefreshColorMethod?.Invoke(bossPoint, null);
+                }
+            });
+            return;
+        }
+
+        spineNode.Visible = false;
+        placeholderImage.Texture = PreloadManager.Cache.GetAsset<Texture2D>(
+            encounter.BossNodePath + ".png");
+        placeholderOutline.Texture = PreloadManager.Cache.GetAsset<Texture2D>(
+            encounter.BossNodePath + "_outline.png");
+        placeholderImage.Visible = true;
+        placeholderOutline.Visible = true;
+        BossMapPlaceholderImageField?.SetValue(bossPoint, placeholderImage);
+        BossMapPlaceholderOutlineField?.SetValue(bossPoint, placeholderOutline);
+        BossMapUsesSpineField?.SetValue(bossPoint, false);
+        BossMapRefreshColorMethod?.Invoke(bossPoint, null);
     }
 
     private static void RefreshVisibleRelicIcons(NRun run)

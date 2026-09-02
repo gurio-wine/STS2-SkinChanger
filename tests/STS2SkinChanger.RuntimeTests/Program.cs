@@ -141,6 +141,19 @@ if (bossPresentationRefresh == null ||
         "局内修改本阶段 Boss 皮肤后必须有统一刷新地图大图标、顶部图标和悬浮名称的入口。");
 }
 
+var nativeBossMapRefresh = appearanceRuntimeType.GetMethod(
+    "RefreshNativeBossMapPoint",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+if (nativeBossMapRefresh == null ||
+    nativeBossMapRefresh.GetParameters() is not
+        [{ ParameterType: var nativeBossPointType }, { ParameterType: var runStateType }] ||
+    nativeBossPointType != typeof(NBossMapPoint) ||
+    runStateType.FullName != "MegaCrit.Sts2.Core.Runs.IRunState")
+{
+    throw new InvalidOperationException(
+        "Boss 地图大图标必须能从当前游戏资源重建；仅重放 DLL 皮肤回调会漏掉纯资源皮肤。 ");
+}
+
 var bossMapPointPresentationPatch = RequirePatchType(
     "STS2SkinChanger.Ui.BossMapPointSkinPresentationPatch",
     "缺少 Boss 地图大图标的托管初始化补丁；新生成的地图节点不会应用当前皮肤。");
