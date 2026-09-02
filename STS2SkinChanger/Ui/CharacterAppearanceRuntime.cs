@@ -4,6 +4,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Animation;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
+using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -76,6 +77,8 @@ internal static class CharacterAppearanceRuntime
 
     private static readonly FieldInfo? VisualsField =
         AccessTools.Field(typeof(NCreature), "<Visuals>k__BackingField");
+    private static readonly FieldInfo? CombatBackgroundField =
+        AccessTools.Field(typeof(NCombatRoom), "<Background>k__BackingField");
     private static readonly FieldInfo? SpineAnimatorField =
         AccessTools.Field(typeof(NCreature), "_spineAnimator");
     private static readonly FieldInfo? SelectionReticleField =
@@ -118,12 +121,16 @@ internal static class CharacterAppearanceRuntime
         AccessTools.Method(typeof(NCreature), "SetOrbManagerPosition");
 
     private static PendingSelection? _pendingSelection;
+    private static PendingMonsterRefresh? _pendingMonsterRefresh;
     private static WeakReference<NCombatRoom>? _playerLayoutRoom;
     private static readonly HashSet<string> CombatRuntimeGroupIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> CombatRuntimeMonsterGroupIds =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> PersistentCombatRuntimeGroupIds =
         new(StringComparer.OrdinalIgnoreCase);
     private static long _combatRuntimeScopeLease;
+    private static bool _combatRuntimeScopeActive;
     private static float _playerLayoutScaling = 1f;
     private static bool _fullyCenterPlayers;
 
@@ -227,10 +234,10 @@ internal static class CharacterAppearanceRuntime
     {
         try
         {
-            var groupIds = additionalGroupIds?
-                .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase) ??
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var groupIds = RuntimeProviderScopePolicy.MergeVisibleGroups(
+                    additionalGroupIds,
+                    CombatRuntimeGroupIds)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var activeRun = run ?? NRun.Instance;
             if (activeRun != null && RunStateField?.GetValue(activeRun) is IRunState runState)
             {
@@ -242,50 +249,64 @@ internal static class CharacterAppearanceRuntime
                     .Cast<string>());
                 var actMonsterGroupIds = ResolveMonsterGroupIds(runState.Act.AllMonsters);
                 groupIds.UnionWith(ResolveCurrentBossGroupIds(runState));
+                var activeCombatMonsterGroupIds = ResolveActiveCombatMonsterGroupIds();
                 var runEnvironmentProviders = SkinService.GetMonsterRunEnvironmentProviders(
                     "act:" + runState.Act.Id.Entry.ToLowerInvariant(),
-                    actMonsterGroupIds);
+                    actMonsterGroupIds,
+                    _combatRuntimeScopeActive
+                        ? activeCombatMonsterGroupIds
+                        : null);
 
                 if (expectedScopeLease.HasValue)
                 {
-                    return SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                    return TrackCombatScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
                         expectedScopeLease.Value,
                         groupIds,
                         runEnvironmentProviders,
                         reason,
                         out var scopeLease)
                         ? scopeLease
-                        : 0;
+                        : 0);
                 }
 
-                return SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                return TrackCombatScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                     groupIds,
                     runEnvironmentProviders,
-                    reason);
+                    reason));
             }
 
             if (expectedScopeLease.HasValue)
             {
-                return SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                return TrackCombatScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
                     expectedScopeLease.Value,
                     groupIds,
                     runEnvironmentProviderIds: [],
                     reason,
                     out var scopeLease)
                     ? scopeLease
-                    : 0;
+                    : 0);
             }
 
-            return SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            return TrackCombatScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                 groupIds,
                 runEnvironmentProviderIds: [],
-                reason);
+                reason));
         }
         catch (Exception exception)
         {
             ModLog.Warn("收窄当前场景皮肤行为失败：" + exception.GetBaseException().Message);
             return 0;
         }
+    }
+
+    private static long TrackCombatScopeLease(long scopeLease)
+    {
+        if (scopeLease != 0 && _combatRuntimeScopeActive)
+        {
+            _combatRuntimeScopeLease = scopeLease;
+        }
+
+        return scopeLease;
     }
 
     private static HashSet<string> ResolveMonsterGroupIds(IEnumerable<MonsterModel> monsters) =>
@@ -309,9 +330,71 @@ internal static class CharacterAppearanceRuntime
             .SelectMany(encounter => encounter!.AllPossibleMonsters));
     }
 
+    private static HashSet<string> ResolveActiveCombatMonsterGroupIds()
+    {
+        if (NCombatRoom.Instance is not { } room || !room.IsInsideTree())
+        {
+            return CombatRuntimeMonsterGroupIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return room.CreatureNodes
+            .Where(creature => creature.Entity.Monster != null)
+            .Select(creature => ContextualSkinControls.FindGroup(
+                creature.Entity.ModelId.Entry,
+                creature.Entity.Monster!.GetType().Name)?.Id)
+            .Where(groupId => groupId != null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    internal static bool TryGetBossMapAppearance(
+        NBossMapPoint bossPoint,
+        out SkinGroup group,
+        out string title)
+    {
+        group = null!;
+        title = string.Empty;
+        try
+        {
+            if (RunStateField?.GetValue(NRun.Instance) is not IRunState runState)
+            {
+                return false;
+            }
+
+            var encounter = bossPoint.Point == runState.Map.SecondBossMapPoint
+                ? runState.Act.SecondBossEncounter
+                : runState.Act.BossEncounter;
+            if (encounter == null)
+            {
+                return false;
+            }
+
+            group = encounter.AllPossibleMonsters
+                .Select(monster => ContextualSkinControls.FindGroup(
+                    monster.Id.Entry,
+                    monster.GetType().Name))
+                .FirstOrDefault(candidate => candidate is { Options.Count: > 0 })!;
+            if (group == null)
+            {
+                return false;
+            }
+
+            title = encounter.Title.GetFormattedText();
+            return true;
+        }
+        catch
+        {
+            group = null!;
+            title = string.Empty;
+            return false;
+        }
+    }
+
     internal static void FocusRuntimeProviderBehaviorsOnCombatRoom(ICombatRoomVisuals visuals)
     {
+        _combatRuntimeScopeActive = true;
         CombatRuntimeGroupIds.Clear();
+        CombatRuntimeMonsterGroupIds.Clear();
         PersistentCombatRuntimeGroupIds.Clear();
         foreach (var creature in visuals.Allies.Concat(visuals.Enemies))
         {
@@ -321,6 +404,10 @@ internal static class CharacterAppearanceRuntime
             if (group != null)
             {
                 CombatRuntimeGroupIds.Add(group.Id);
+                if (creature.Monster != null)
+                {
+                    CombatRuntimeMonsterGroupIds.Add(group.Id);
+                }
                 if (creature.Player != null)
                 {
                     PersistentCombatRuntimeGroupIds.Add(group.Id);
@@ -335,7 +422,14 @@ internal static class CharacterAppearanceRuntime
 
     internal static void AddVisibleCombatRuntimeGroup(string groupId)
     {
-        if (NRun.Instance == null || !CombatRuntimeGroupIds.Add(groupId))
+        if (NRun.Instance == null)
+        {
+            return;
+        }
+
+        var added = CombatRuntimeGroupIds.Add(groupId);
+        CombatRuntimeMonsterGroupIds.Add(groupId);
+        if (!added)
         {
             return;
         }
@@ -349,10 +443,12 @@ internal static class CharacterAppearanceRuntime
     {
         var combatScopeLease = _combatRuntimeScopeLease;
         _combatRuntimeScopeLease = 0;
+        _combatRuntimeScopeActive = false;
         var transientGroups = RuntimeResourceRetentionPolicy.SelectTransientCombatGroups(
             CombatRuntimeGroupIds,
             PersistentCombatRuntimeGroupIds);
         CombatRuntimeGroupIds.Clear();
+        CombatRuntimeMonsterGroupIds.Clear();
         PersistentCombatRuntimeGroupIds.Clear();
         SkinService.ReleaseTransientRuntimeResources(transientGroups);
         if (combatScopeLease != 0)
@@ -375,8 +471,30 @@ internal static class CharacterAppearanceRuntime
         var affected = affectedGroupIds
             .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        FocusRuntimeProviderBehaviorsOnRunContext(affected, reason);
-        RefreshCurrentBossPresentation(affected);
+        if (affected.Count == 0)
+        {
+            return;
+        }
+
+        if (!CanApplySelectionNow())
+        {
+            if (_pendingMonsterRefresh == null)
+            {
+                _pendingMonsterRefresh = new PendingMonsterRefresh(affected, reason);
+            }
+            else
+            {
+                _pendingMonsterRefresh.GroupIds.UnionWith(affected);
+                _pendingMonsterRefresh = _pendingMonsterRefresh with { Reason = reason };
+            }
+
+            NRun.Instance?
+                .GetNodeOrNull<CharacterAppearanceRuntimeNode>("SkinChangerAppearanceRuntime")?
+                .Wake();
+            return;
+        }
+
+        _ = ApplyRunAppearanceRefresh(affected, reason);
     }
 
     internal static NCreature? GetCurrentCreature(Player? player)
@@ -391,8 +509,7 @@ internal static class CharacterAppearanceRuntime
 
     internal static bool ProcessPendingSelection()
     {
-        var pending = _pendingSelection;
-        if (pending == null)
+        if (_pendingSelection == null && _pendingMonsterRefresh == null)
         {
             return false;
         }
@@ -401,16 +518,32 @@ internal static class CharacterAppearanceRuntime
             return true;
         }
 
-        _pendingSelection = null;
-        var result = ApplySelectionNow(pending.GroupId, pending.OptionId);
-        QueuedSelectionFinished?.Invoke(
-            pending.GroupId,
-            result.State == AppearanceSelectionRequestState.Applied,
-            result.Error);
-        return false;
+        if (_pendingSelection is { } pendingSelection)
+        {
+            _pendingSelection = null;
+            var result = ApplySelectionNow(pendingSelection.GroupId, pendingSelection.OptionId);
+            QueuedSelectionFinished?.Invoke(
+                pendingSelection.GroupId,
+                result.State == AppearanceSelectionRequestState.Applied,
+                result.Error);
+        }
+
+        if (_pendingMonsterRefresh is { } pendingMonsterRefresh)
+        {
+            _pendingMonsterRefresh = null;
+            _ = ApplyRunAppearanceRefresh(
+                pendingMonsterRefresh.GroupIds,
+                pendingMonsterRefresh.Reason);
+        }
+
+        return _pendingSelection != null || _pendingMonsterRefresh != null;
     }
 
-    internal static void ClearPendingSelection() => _pendingSelection = null;
+    internal static void ClearPendingSelection()
+    {
+        _pendingSelection = null;
+        _pendingMonsterRefresh = null;
+    }
 
     internal static bool CanApplySelectionImmediately() => CanApplySelectionNow();
 
@@ -922,9 +1055,10 @@ internal static class CharacterAppearanceRuntime
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             affectedGroups.Add(groupId);
 
-            var refreshErrors = RefreshLiveCreatures(affectedGroups);
+            var refreshErrors = ApplyRunAppearanceRefresh(
+                affectedGroups,
+                "局内外观切换");
             RefreshCurrentCharacterUi();
-            RefreshCurrentBossPresentation(affectedGroups);
             MultiplayerSkinSync.OnLocalCharacterSelectionChanged(groupId);
             if (refreshErrors.Count > 0)
             {
@@ -1006,6 +1140,98 @@ internal static class CharacterAppearanceRuntime
         }
 
         return errors;
+    }
+
+    private static List<string> ApplyRunAppearanceRefresh(
+        IReadOnlySet<string> affectedGroups,
+        string reason)
+    {
+        FocusRuntimeProviderBehaviorsOnRunContext(affectedGroups, reason);
+
+        var errors = RefreshLiveCreatures(affectedGroups);
+        if (ResolveActiveCombatMonsterGroupIds().Overlaps(affectedGroups) &&
+            CombatManager.Instance.IsInProgress &&
+            NCombatRoom.Instance != null)
+        {
+            if (!RefreshCurrentCombatBackground())
+            {
+                errors.Add("current combat background");
+            }
+
+            ManagedSkinModLoader.RefreshRunEnvironmentPresentation();
+        }
+
+        RefreshCurrentBossPresentation(affectedGroups);
+        return errors;
+    }
+
+    internal static bool RefreshCurrentCombatBackground()
+    {
+        var room = NCombatRoom.Instance;
+        var combatState = CombatManager.Instance.DebugOnlyGetState();
+        var encounter = combatState?.Encounter;
+        if (!CombatManager.Instance.IsInProgress ||
+            room == null ||
+            !room.IsInsideTree() ||
+            combatState == null ||
+            encounter == null ||
+            CombatBackgroundField == null)
+        {
+            return false;
+        }
+
+        var oldBackground = room.Background;
+        var parent = oldBackground?.GetParent() ?? room.GetNodeOrNull<Control>("%BgContainer");
+        if (parent == null)
+        {
+            return false;
+        }
+
+        NCombatBackground? newBackground = null;
+        try
+        {
+            newBackground = encounter.CreateBackground(
+                combatState.RunState.Act,
+                NCombatRoom.GenerateBackgroundRngForCurrentPoint(combatState.RunState));
+            if (newBackground == null)
+            {
+                throw new InvalidOperationException("CreateBackground returned null");
+            }
+
+            var desiredName = oldBackground?.Name ?? newBackground.Name;
+            newBackground.Name = "SkinChangerPendingCombatBackground";
+
+            parent.AddChild(newBackground);
+            if (oldBackground != null && GodotObject.IsInstanceValid(oldBackground))
+            {
+                parent.MoveChild(newBackground, oldBackground.GetIndex());
+            }
+
+            CombatBackgroundField.SetValue(room, newBackground);
+            if (oldBackground != null && GodotObject.IsInstanceValid(oldBackground))
+            {
+                oldBackground.GetParent()?.RemoveChild(oldBackground);
+                oldBackground.QueueFree();
+            }
+            newBackground.Name = desiredName;
+
+            ModLog.Info($"已按当前遭遇重新加载战斗背景：{encounter.Id.Entry}。");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            if (newBackground != null && GodotObject.IsInstanceValid(newBackground))
+            {
+                newBackground.GetParent()?.RemoveChild(newBackground);
+                newBackground.QueueFree();
+            }
+
+            CombatBackgroundField.SetValue(room, oldBackground);
+            ModLog.Warn(
+                "重新加载当前战斗背景失败，已保留原背景：" +
+                exception.GetBaseException().Message);
+            return false;
+        }
     }
 
     internal static void RefreshPlayerAppearance(ulong playerNetId)
@@ -1958,6 +2184,8 @@ internal static class CharacterAppearanceRuntime
     }
 
     private sealed record PendingSelection(string GroupId, string OptionId);
+
+    private sealed record PendingMonsterRefresh(HashSet<string> GroupIds, string Reason);
 }
 
 internal partial class CharacterAppearanceRuntimeNode : Node

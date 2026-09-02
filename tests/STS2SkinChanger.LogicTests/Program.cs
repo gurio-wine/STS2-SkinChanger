@@ -167,6 +167,11 @@ var environmentPriorityCandidates = new RuntimeProviderPriorityCandidate[]
 {
     new("DisabledMonsterPack", Enabled: false, IsRunWideMonsterProvider: true),
     new("TextureOnlyPack", Enabled: true, IsRunWideMonsterProvider: false),
+    new(
+        "InactiveEnvironmentPack",
+        Enabled: true,
+        IsRunWideMonsterProvider: true,
+        AppliesToCurrentCombat: false),
     new("CznEnemySkin", Enabled: true, IsRunWideMonsterProvider: true),
     new("LaterEnvironmentPack", Enabled: true, IsRunWideMonsterProvider: true)
 };
@@ -174,6 +179,33 @@ Require(
     RuntimeProviderScopePolicy.SelectRunEnvironmentProviders(environmentPriorityCandidates)
         .SetEquals(["CznEnemySkin"]),
     "地区环境只能采用优先级最高且已启用的整局怪物提供者，不能叠加多个背景或音乐来源。");
+Require(
+    RuntimeProviderScopePolicy.SelectRunEnvironmentProviders(
+            [
+                new RuntimeProviderPriorityCandidate(
+                    "InactiveEnvironmentPack",
+                    Enabled: true,
+                    IsRunWideMonsterProvider: true,
+                    AppliesToCurrentCombat: false)
+            ])
+        .Count == 0,
+    "战斗中的背景与 BGM 不能采用本场没有任何怪物实际选择的整局皮肤提供者。");
+Require(
+    RuntimeProviderScopePolicy.MergeVisibleGroups(
+            ["changed_monster"],
+            ["other_live_monster", "current_player"])
+        .SetEquals(["changed_monster", "other_live_monster", "current_player"]),
+    "局内只修改一只怪物时仍必须保留本场其它怪物和玩家的运行期提供者。");
+Require(
+    RunEnvironmentRefreshPolicy.SelectMusicMode(
+        isCombatInProgress: true,
+        hasCombatState: true) == RunEnvironmentMusicMode.Combat,
+    "战斗中切换怪物或地区优先级必须恢复本场战斗 BGM，不能误播地区地图音乐。");
+Require(
+    RunEnvironmentRefreshPolicy.SelectMusicMode(
+        isCombatInProgress: false,
+        hasCombatState: true) == RunEnvironmentMusicMode.Map,
+    "战斗已经结束时不能因仍可读取旧 CombatState 而继续播放战斗 BGM。");
 Require(
     RuntimeProviderScopePolicy.IsRunEnvironmentPatchTarget(
         "EncounterModel",

@@ -1,6 +1,8 @@
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using STS2SkinChanger.Core;
 
@@ -432,9 +434,21 @@ internal static partial class ContextualSkinControls
                 Populate(selector, group);
             }
 
-            CharacterAppearanceRuntime.RefreshRunMonsterSelection(
-                MonsterCategoryGroupCache.GetValueOrDefault(categoryId) ?? [],
-                "局内怪物地区优先级");
+            var categoryGroups = MonsterCategoryGroupCache.GetValueOrDefault(categoryId) ?? [];
+            if (NRun.Instance != null)
+            {
+                CharacterAppearanceRuntime.RefreshRunMonsterSelection(
+                    categoryGroups,
+                    "局内怪物地区优先级");
+            }
+            else
+            {
+                SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                    categoryGroups,
+                    runEnvironmentProviderIds: [],
+                    reason: "怪物图鉴名称刷新");
+            }
+            RefreshBestiaryMonsterNames(screen);
 
             BuildMonsterPriorityOverlay(screen, selector, overlay);
             RefreshMonsterPriorityButton(selector);
@@ -442,7 +456,79 @@ internal static partial class ContextualSkinControls
             {
                 RunRefresh(refresh);
             }
+
+            if (group != null)
+            {
+                if (NRun.Instance != null)
+                {
+                    CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+                        [group.Id],
+                        "局内怪物图鉴");
+                }
+                else
+                {
+                    SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                        [group.Id],
+                        runEnvironmentProviderIds: [],
+                        reason: "怪物图鉴");
+                }
+            }
         }).CallDeferred();
+    }
+
+    private static void RefreshBestiaryMonsterNames(NBestiary screen)
+    {
+        if (!GodotObject.IsInstanceValid(screen))
+        {
+            return;
+        }
+
+        try
+        {
+            var list = screen.GetNodeOrNull<VBoxContainer>("%BestiaryList");
+            if (list != null)
+            {
+                foreach (var entry in list.GetChildren().OfType<NBestiaryEntry>()
+                             .Where(entry => entry.IsDiscovered))
+                {
+                    ManagedSkinModLoader.RestoreAllNodeReadyBehaviors(entry);
+                    var label = entry.GetNodeOrNull<RichTextLabel>("%Label");
+                    if (label != null)
+                    {
+                        label.Text = entry.Entry.GetEntryTitle();
+                    }
+
+                    var monster = entry.Entry.monsterModel;
+                    var group = monster == null
+                        ? null
+                        : FindGroup(monster.Id.Entry, monster.GetType().Name);
+                    var providerId = group == null
+                        ? null
+                        : SkinService.GetSelectedRuntimeProvider(group.Id);
+                    if (providerId != null)
+                    {
+                        ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, entry);
+                    }
+                }
+            }
+
+            var selectedEntry = AccessTools.Field(typeof(NBestiary), "_selectedEntry")?
+                .GetValue(screen) as NBestiaryEntry;
+            if (selectedEntry is { IsDiscovered: true })
+            {
+                var selectedName = screen.GetNodeOrNull<RichTextLabel>("%MonsterName");
+                if (selectedName != null)
+                {
+                    selectedName.Text = selectedEntry.Entry.GetEntryTitle();
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "刷新怪物图鉴名称失败：" +
+                exception.GetBaseException().Message);
+        }
     }
 
     private sealed record MonsterSkinCategory(

@@ -14,7 +14,24 @@ internal sealed record RuntimeProviderScope(
 internal sealed record RuntimeProviderPriorityCandidate(
     string ProviderId,
     bool Enabled,
-    bool IsRunWideMonsterProvider);
+    bool IsRunWideMonsterProvider,
+    bool AppliesToCurrentCombat = true);
+
+internal enum RunEnvironmentMusicMode
+{
+    Map,
+    Combat
+}
+
+internal static class RunEnvironmentRefreshPolicy
+{
+    public static RunEnvironmentMusicMode SelectMusicMode(
+        bool isCombatInProgress,
+        bool hasCombatState) =>
+        isCombatInProgress && hasCombatState
+            ? RunEnvironmentMusicMode.Combat
+            : RunEnvironmentMusicMode.Map;
+}
 
 internal static class RuntimeProviderScopePolicy
 {
@@ -52,10 +69,29 @@ internal static class RuntimeProviderScopePolicy
         IEnumerable<RuntimeProviderPriorityCandidate> priorities)
     {
         var selected = priorities.FirstOrDefault(candidate =>
-            candidate.Enabled && candidate.IsRunWideMonsterProvider);
+            candidate.Enabled &&
+            candidate.IsRunWideMonsterProvider &&
+            candidate.AppliesToCurrentCombat);
         return selected == null
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>([selected.ProviderId], StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static IReadOnlySet<string> MergeVisibleGroups(
+        IEnumerable<string>? requestedGroupIds,
+        IEnumerable<string>? currentCombatGroupIds)
+    {
+        var merged = requestedGroupIds?
+            .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ??
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (currentCombatGroupIds != null)
+        {
+            merged.UnionWith(currentCombatGroupIds.Where(groupId =>
+                !string.IsNullOrWhiteSpace(groupId)));
+        }
+
+        return merged;
     }
 
     public static bool IsRunEnvironmentPatchTarget(string typeName, string methodName) =>

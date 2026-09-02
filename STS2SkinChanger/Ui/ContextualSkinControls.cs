@@ -638,6 +638,9 @@ internal static partial class ContextualSkinControls
         string groupId,
         string optionId)
     {
+        var previousSelections = new Dictionary<string, string>(
+            SkinService.Config.Selections,
+            StringComparer.OrdinalIgnoreCase);
         var applied = optionId.Equals(
             SkinService.InheritMonsterSelectionId,
             StringComparison.OrdinalIgnoreCase)
@@ -663,9 +666,22 @@ internal static partial class ContextualSkinControls
         // This method is shared by several selectors. The multiplayer sync method verifies that
         // groupId belongs to the current local character, so non-character selectors are ignored.
         MultiplayerSkinSync.OnLocalCharacterSelectionChanged(groupId);
+        var affectedGroups = previousSelections.Keys
+            .Concat(SkinService.Config.Selections.Keys)
+            .Where(key => !string.Equals(
+                previousSelections.GetValueOrDefault(key),
+                SkinService.Config.Selections.GetValueOrDefault(key),
+                StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        affectedGroups.Add(groupId);
         CharacterAppearanceRuntime.RefreshRunMonsterSelection(
-            [groupId],
+            affectedGroups,
             "局内怪物图鉴");
+
+        if (selector.GetParent() is NBestiary bestiary)
+        {
+            RefreshBestiaryMonsterNames(bestiary);
+        }
 
         if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
         {

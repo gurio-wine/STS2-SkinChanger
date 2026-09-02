@@ -14,6 +14,7 @@ using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Runs;
@@ -104,6 +105,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private NMerchantCharacter? _targetShopPlayerVisual;
     private NMerchantButton? _targetMerchantButton;
     private NFakeMerchant? _targetFakeMerchant;
+    private NBossMapPoint? _targetBossMapPoint;
+    private string? _targetBossTitle;
     private Player? _player;
     private SkinGroup? _group;
     private string? _transformKey;
@@ -926,6 +929,12 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             return;
         }
 
+        if (_targetBossMapPoint != null && GodotObject.IsInstanceValid(_targetBossMapPoint))
+        {
+            _title.Text = _targetBossTitle ?? _group?.DisplayName ?? string.Empty;
+            return;
+        }
+
         if (_targetMerchantButton != null)
         {
             _title.Text = new LocString("map", "LEGEND_MERCHANT.title").GetFormattedText();
@@ -939,6 +948,22 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         _title.Text = ModLocalization.Get(ModText.CharacterAppearance);
+    }
+
+    private static IEnumerable<T> EnumerateDescendants<T>(Node root) where T : Node
+    {
+        foreach (var child in root.GetChildren())
+        {
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in EnumerateDescendants<T>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private void OnTransformChanged(bool save = true)
@@ -1061,6 +1086,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetShopPlayerVisual = null;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
+        _targetBossMapPoint = null;
+        _targetBossTitle = null;
         _group = null;
         _transformKey = null;
         _canEditSkin = true;
@@ -1136,6 +1163,26 @@ internal partial class CharacterAppearanceScreen : NSubmenu
                 fakeMerchant);
         }
 
+        var bossTarget = NMapScreen.Instance is { } mapScreen && mapScreen.IsVisibleInTree()
+            ? EnumerateDescendants<NBossMapPoint>(mapScreen)
+                .Where(point =>
+                    GodotObject.IsInstanceValid(point) &&
+                    point.IsVisibleInTree())
+                .Select(point => new
+                {
+                    Point = point,
+                    HasRect = _dragSurface.TryGetCanvasRect(point, 8f, out var rect),
+                    Rect = rect
+                })
+                .Where(candidate => candidate.HasRect && candidate.Rect.HasPoint(localPosition))
+                .OrderBy(candidate => candidate.Rect.Size.X * candidate.Rect.Size.Y)
+                .FirstOrDefault()
+            : null;
+        if (bossTarget != null)
+        {
+            return SelectBossMapTarget(bossTarget.Point, bossTarget.Rect.GetCenter());
+        }
+
         if (!AncientRuntimeAppearance.TryGetCurrent(
                 out var ancient,
                 out var layout,
@@ -1158,6 +1205,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetShopPlayerVisual = null;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
+        _targetBossMapPoint = null;
+        _targetBossTitle = null;
         _group = ancientGroup;
         _transformKey = null;
         _canEditSkin = true;
@@ -1168,6 +1217,45 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             canSelectSkin: true,
             supportsIntent: false);
         PositionPanelAwayFrom(localPosition);
+        _panel.Visible = true;
+        RefreshTargetTitle();
+        PopulateSkinDropdown();
+        SetTransformControlsEnabled(true);
+        UpdateDragSurfaceCreature();
+        SetStatus(string.Empty, warning: false);
+        GetTargetInitialFocus().TryGrabFocus();
+        return true;
+    }
+
+    private bool SelectBossMapTarget(NBossMapPoint bossPoint, Vector2 targetCenter)
+    {
+        if (!CharacterAppearanceRuntime.TryGetBossMapAppearance(
+                bossPoint,
+                out var group,
+                out var title))
+        {
+            return false;
+        }
+
+        _selectionMode = false;
+        EndSelectionReticlePreview();
+        _targetCreature = null;
+        _targetAncient = null;
+        _targetShopPlayerVisual = null;
+        _targetMerchantButton = null;
+        _targetFakeMerchant = null;
+        _targetBossMapPoint = bossPoint;
+        _targetBossTitle = title;
+        _group = group;
+        _transformKey = null;
+        _canEditSkin = true;
+        _canEditTransform = false;
+        SetTargetControlsVisible(
+            supportsModel: false,
+            isCreature: false,
+            canSelectSkin: true,
+            supportsIntent: false);
+        PositionPanelAwayFrom(targetCenter);
         _panel.Visible = true;
         RefreshTargetTitle();
         PopulateSkinDropdown();
@@ -1191,6 +1279,9 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetAncient = null;
         _targetShopPlayerVisual = null;
         _targetMerchantButton = null;
+        _targetFakeMerchant = null;
+        _targetBossMapPoint = null;
+        _targetBossTitle = null;
         _group = binding.Group;
         _transformKey = binding.TransformKey;
         _canEditSkin = binding.CanSelectSkin &&
@@ -1240,6 +1331,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetShopPlayerVisual = visual;
         _targetMerchantButton = null;
         _targetFakeMerchant = null;
+        _targetBossMapPoint = null;
+        _targetBossTitle = null;
         _group = group;
         _transformKey = null;
         _canEditSkin = MultiplayerSkinSync.CanEditLocalPlayerSkinInRun();
@@ -1283,6 +1376,8 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _targetShopPlayerVisual = null;
         _targetMerchantButton = merchantButton;
         _targetFakeMerchant = fakeMerchant;
+        _targetBossMapPoint = null;
+        _targetBossTitle = null;
         _group = group;
         _transformKey = null;
         _canEditSkin = true;

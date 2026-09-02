@@ -1537,7 +1537,8 @@ internal static class SkinService
 
     public static IReadOnlySet<string> GetMonsterRunEnvironmentProviders(
         string categoryId,
-        IEnumerable<string> groupIds)
+        IEnumerable<string> groupIds,
+        IReadOnlySet<string>? activeCombatGroupIds = null)
     {
         lock (Sync)
         {
@@ -1574,13 +1575,26 @@ internal static class SkinService
                 priorities.Add(new MonsterSkinPriorityEntry(option.Id, Enabled: true));
             }
 
+            var activeProviderIds = activeCombatGroupIds?
+                .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+                .Select(groupId => catalog.ResolveVisualProviderId(GetVisualSelection(groupId)))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var manuallySelectedActiveProviderIds = activeCombatGroupIds?
+                .Where(groupId => Config.MonsterGroupsWithManualSelection.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                .Select(groupId => catalog.ResolveVisualProviderId(GetVisualSelection(groupId)))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ??
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             var candidates = priorities.Select(entry =>
             {
                 var providerId = catalog.ResolveVisualProviderId(entry.OptionId);
                 return new RuntimeProviderPriorityCandidate(
                     providerId,
-                    entry.Enabled,
-                    catalog.ProviderUsesScopedMonsterRuntime(providerId));
+                    entry.Enabled || manuallySelectedActiveProviderIds.Contains(providerId),
+                    catalog.ProviderUsesScopedMonsterRuntime(providerId),
+                    activeProviderIds == null || activeProviderIds.Contains(providerId));
             });
             return RuntimeProviderScopePolicy.SelectRunEnvironmentProviders(candidates);
         }

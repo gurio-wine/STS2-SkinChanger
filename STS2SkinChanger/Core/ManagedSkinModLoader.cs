@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
@@ -78,6 +79,7 @@ internal static class ManagedSkinModLoader
     private static bool _initialized;
     private static bool _reflectionTargetsReady;
     private static SceneTree? _providerNodeMonitorTree;
+    private static long _runEnvironmentRefreshGeneration;
 
     public static bool IsBeforeAllSkinProviders { get; private set; } = true;
     public static IReadOnlyList<Mod> SkinProvidersBeforeSelf { get; private set; } = [];
@@ -132,8 +134,7 @@ internal static class ManagedSkinModLoader
 
         RunEnvironmentProviderIds.Clear();
         RunEnvironmentProviderIds.UnionWith(next);
-        var refreshNativeMusic = false;
-        var restoreNativeMusic = runtimesToDisable.Length > 0;
+        var shouldRefreshPresentation = runtimesToDisable.Length > 0;
         foreach (var pair in ActiveProviderRuntimes.ToArray())
         {
             var shouldEnable = next.Contains(pair.Key);
@@ -153,31 +154,92 @@ internal static class ManagedSkinModLoader
             }
 
             pair.Value.RunEnvironmentEnabled = shouldEnable;
-            refreshNativeMusic = true;
+            shouldRefreshPresentation = true;
             ModLog.Info(
                 $"已{(shouldEnable ? "启用" : "停用")} {pair.Key} 的地区背景与音乐行为；" +
                 "怪物模型、动作和 Boss 图标仍按各自皮肤选择独立生效。");
         }
 
-        if (refreshNativeMusic && NRunMusicController.Instance is { } musicController)
+        if (shouldRefreshPresentation)
         {
-            try
-            {
-                if (restoreNativeMusic)
-                {
-                    musicController.StopCustomMusic();
-                }
+            ScheduleRunEnvironmentPresentationRefresh();
+        }
+    }
 
-                musicController.UpdateMusic();
+    /// <summary>
+    /// Rebuilds the active run audio from the state that is actually on screen. In combat this
+    /// deliberately re-enters each selected provider's combat callback; calling UpdateMusic alone
+    /// tells providers such as CZN that the map is active and replaces battle music with act music.
+    /// </summary>
+    public static void RefreshRunEnvironmentPresentation()
+    {
+        Interlocked.Increment(ref _runEnvironmentRefreshGeneration);
+        RefreshRunEnvironmentPresentationCore();
+    }
+
+    private static void ScheduleRunEnvironmentPresentationRefresh()
+    {
+        var generation = Interlocked.Increment(ref _runEnvironmentRefreshGeneration);
+        if (Engine.GetMainLoop() is not SceneTree)
+        {
+            return;
+        }
+
+        Callable.From(() =>
+        {
+            if (generation == Volatile.Read(ref _runEnvironmentRefreshGeneration))
+            {
+                RefreshRunEnvironmentPresentationCore();
+            }
+        }).CallDeferred();
+    }
+
+    private static void RefreshRunEnvironmentPresentationCore()
+    {
+        if (NRunMusicController.Instance is not { } musicController)
+        {
+            return;
+        }
+
+        try
+        {
+            var combatManager = CombatManager.Instance;
+            var combatState = combatManager.DebugOnlyGetState();
+            var mode = RunEnvironmentRefreshPolicy.SelectMusicMode(
+                combatManager.IsInProgress &&
+                NCombatRoom.Instance is { } combatRoom &&
+                combatRoom.IsInsideTree(),
+                combatState != null);
+            var controllers = ActiveProviderRuntimes.Values
+                .Where(runtime => runtime.RunEnvironmentEnabled)
+                .SelectMany(runtime => runtime.RunEnvironmentControllers)
+                .Distinct(ReferenceEqualityComparer.Instance)
+                .ToArray();
+
+            ResetRunEnvironmentControllers(controllers);
+            musicController.StopCustomMusic();
+            if (mode == RunEnvironmentMusicMode.Combat && combatState != null)
+            {
+                // StopCustomMusic restores the native act track. Set its progress and ambience to
+                // the current encounter before a selected provider optionally suppresses it with
+                // that encounter's custom battle track.
                 musicController.UpdateTrack();
                 musicController.UpdateAmbience();
+                RestartRunEnvironmentControllersForCombat(controllers, combatState);
+                ModLog.Info("已按当前遭遇重新加载战斗 BGM 与环境音。");
+                return;
             }
-            catch (Exception exception)
-            {
-                ModLog.Warn(
-                    "恢复当前地区原生音乐失败：" +
-                    exception.GetBaseException().Message);
-            }
+
+            musicController.UpdateMusic();
+            musicController.UpdateTrack();
+            musicController.UpdateAmbience();
+            ModLog.Info("已按当前地区重新加载地图 BGM 与环境音。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "重新加载当前背景音乐失败：" +
+                exception.GetBaseException().Message);
         }
     }
 
@@ -2350,6 +2412,37 @@ internal static class ManagedSkinModLoader
             {
                 ModLog.Warn(
                     $"重置第三方地区音乐状态失败：{controller.GetType().FullName}：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    private static void RestartRunEnvironmentControllersForCombat(
+        IEnumerable<object> controllers,
+        CombatState combatState)
+    {
+        string[] callbackNames = ["OnCombatBegan", "OnCombatStarted", "OnCombatSetUp"];
+        foreach (var controller in controllers)
+        {
+            try
+            {
+                var callback = callbackNames
+                    .SelectMany(name => controller.GetType().GetMethods(
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                        .Where(method => method.Name.Equals(name, StringComparison.Ordinal)))
+                    .FirstOrDefault(method =>
+                    {
+                        var parameters = method.GetParameters();
+                        return method.ReturnType == typeof(void) &&
+                               parameters.Length == 1 &&
+                               parameters[0].ParameterType.IsInstanceOfType(combatState);
+                    });
+                callback?.Invoke(controller, [combatState]);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重新进入第三方战斗音乐状态失败：{controller.GetType().FullName}：" +
                     exception.GetBaseException().Message);
             }
         }

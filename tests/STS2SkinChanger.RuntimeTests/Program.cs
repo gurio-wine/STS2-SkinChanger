@@ -1,9 +1,11 @@
 using HarmonyLib;
+using Godot;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Rooms;
@@ -115,6 +117,18 @@ if (configureRunEnvironment == null)
         "托管皮肤提供者缺少独立的地区环境行为开关，无法隔离背景、地图音乐和战斗 BGM。");
 }
 
+var refreshRunEnvironment = managedLoaderType.GetMethod(
+    "RefreshRunEnvironmentPresentation",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: Type.EmptyTypes,
+    modifiers: null);
+if (refreshRunEnvironment == null)
+{
+    throw new InvalidOperationException(
+        "地区环境切换后必须能按当前地图/战斗状态统一重建 BGM，而不是直接调用地图音乐更新。");
+}
+
 var inRunScopePatch = RequirePatchType(
     "STS2SkinChanger.Ui.InRunCharacterAppearanceRuntimePatch",
     "缺少进入对局时的皮肤运行期范围补丁。");
@@ -130,6 +144,47 @@ if (inRunScopePrefix.ReturnType != typeof(void) ||
 var appearanceRuntimeType = typeof(Entry).Assembly.GetType(
                                 "STS2SkinChanger.Ui.CharacterAppearanceRuntime") ??
                             throw new InvalidOperationException("找不到局内外观运行时。");
+var combatBackgroundRefresh = appearanceRuntimeType.GetMethod(
+    "RefreshCurrentCombatBackground",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: Type.EmptyTypes,
+    modifiers: null);
+if (combatBackgroundRefresh?.ReturnType != typeof(bool))
+{
+    throw new InvalidOperationException(
+        "局内修改怪物皮肤或地区优先级后必须通过统一入口重建当前战斗背景。");
+}
+
+var contextualControlsType = typeof(Entry).Assembly.GetType(
+                                 "STS2SkinChanger.Ui.ContextualSkinControls") ??
+                             throw new InvalidOperationException("找不到图鉴皮肤控件类型。");
+var bestiaryNameRefresh = contextualControlsType.GetMethod(
+    "RefreshBestiaryMonsterNames",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: [typeof(NBestiary)],
+    modifiers: null);
+if (bestiaryNameRefresh == null)
+{
+    throw new InvalidOperationException(
+        "地区皮肤优先级变化后必须刷新怪物图鉴当前地区已有条目与选中怪物的名称。");
+}
+
+var appearanceScreenType = typeof(Entry).Assembly.GetType(
+                               "STS2SkinChanger.Ui.CharacterAppearanceScreen") ??
+                           throw new InvalidOperationException("找不到局内外观界面。");
+var bossMapTargetSelection = appearanceScreenType.GetMethod(
+    "SelectBossMapTarget",
+    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: [typeof(NBossMapPoint), typeof(Vector2)],
+    modifiers: null);
+if (bossMapTargetSelection?.ReturnType != typeof(bool))
+{
+    throw new InvalidOperationException(
+        "地图外观模式必须能把 Boss 大图标作为只切换皮肤的目标。");
+}
 var bossPresentationRefresh = appearanceRuntimeType.GetMethod(
     "RefreshCurrentBossPresentation",
     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
