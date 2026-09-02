@@ -89,6 +89,24 @@ if (combatRoomCreate == null)
 
 var skinServiceType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.SkinService") ??
                       throw new InvalidOperationException("找不到 SkinService 类型。");
+var characterPreviewApply = skinServiceType.GetMethod(
+    "ApplyCharacterPreviewSelection",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: [typeof(string), typeof(string)],
+    modifiers: null);
+var characterPreviewClear = skinServiceType.GetMethod(
+    "ClearCharacterPreviewSelection",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: [typeof(bool)],
+    modifiers: null);
+if (characterPreviewApply?.ReturnType != typeof(bool) ||
+    characterPreviewClear?.ReturnType != typeof(bool))
+{
+    throw new InvalidOperationException(
+        "选角皮肤悬浮必须使用不写配置的临时选择层，并能在列表关闭后恢复持久选择。");
+}
 var focusRuntimeProviders = skinServiceType.GetMethod(
     "FocusRuntimeProviderBehaviorsOnGroups",
     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,

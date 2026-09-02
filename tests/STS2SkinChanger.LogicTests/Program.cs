@@ -186,6 +186,42 @@ Require(
         configuredSourceContainsResource: true) == "TreessaSkin",
     "已卸载的头像来源必须安全回退到跟随皮肤。");
 
+var persistentVisualSelections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+{
+    ["watcher"] = "WatcherSkinA",
+    ["ironclad"] = "IroncladSkinA"
+};
+var previewVisualSelections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+{
+    ["watcher"] = "WatcherSkinB"
+};
+var remoteVisualSelections = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+{
+    ["watcher"] = "RemoteWatcherSkin"
+};
+var previewMergedSelections = VisualSelectionOverlayPolicy.Merge(
+    persistentVisualSelections,
+    previewVisualSelections,
+    scopedSelections: null);
+Require(
+    previewMergedSelections["watcher"] == "WatcherSkinB" &&
+    previewMergedSelections["ironclad"] == "IroncladSkinA" &&
+    persistentVisualSelections["watcher"] == "WatcherSkinA",
+    "选角悬浮预览必须临时覆盖当前角色，又不能改写玩家已经保存的皮肤选择。");
+var scopedMergedSelections = VisualSelectionOverlayPolicy.Merge(
+    persistentVisualSelections,
+    previewVisualSelections,
+    remoteVisualSelections);
+Require(
+    scopedMergedSelections["watcher"] == "RemoteWatcherSkin",
+    "联机玩家的实例化作用域必须高于本机选角悬浮预览，不能把预览皮肤串给其他玩家。");
+Require(
+    VisualSelectionOverlayPolicy.AffectedGroups(
+            ["watcher", "watcher:relic"],
+            ["watcher", "watcher:portrait"])
+        .SetEquals(["watcher", "watcher:relic", "watcher:portrait"]),
+    "切换或关闭悬浮预览时必须同时恢复上一预览和下一预览涉及的全部外观分组。");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

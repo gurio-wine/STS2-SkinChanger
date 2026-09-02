@@ -35,6 +35,8 @@
              Link="AliasedDependencyCachePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterIconSelectionPolicy.cs"
              Link="CharacterIconSelectionPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/VisualSelectionOverlayPolicy.cs"
+             Link="VisualSelectionOverlayPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterCombatTransform.cs"
              Link="CharacterCombatTransform.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterTransformResetPolicy.cs"

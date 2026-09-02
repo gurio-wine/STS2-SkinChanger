@@ -60,6 +60,8 @@ internal static class SkinService
     private static readonly CanonicalResourceOwnershipTracker CardCanonicalResourceOwners = new();
     private static readonly Dictionary<string, string> CardPreviewSelections =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> CharacterPreviewSelections =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, System.Reflection.MethodInfo> AncientStyleMethods =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> MissingAncientStyleMethods =
@@ -125,7 +127,9 @@ internal static class SkinService
     }
 
     private static string GetVisualSelection(string groupId) =>
-        MultiplayerSkinSync.GetScopedSelection(groupId) ?? Config.GetSelection(groupId);
+        MultiplayerSkinSync.GetScopedSelection(groupId) ??
+        CharacterPreviewSelections.GetValueOrDefault(groupId) ??
+        Config.GetSelection(groupId);
 
     private static string ResolveCharacterIconResourceSelection(
         string groupId,
@@ -150,20 +154,10 @@ internal static class SkinService
 
     private static IReadOnlyDictionary<string, string> GetVisualSelections()
     {
-        var scoped = MultiplayerSkinSync.GetScopedSelections();
-        if (scoped == null)
-        {
-            return Config.Selections;
-        }
-
-        var effective = new Dictionary<string, string>(
+        return VisualSelectionOverlayPolicy.Merge(
             Config.Selections,
-            StringComparer.OrdinalIgnoreCase);
-        foreach (var pair in scoped)
-        {
-            effective[pair.Key] = pair.Value;
-        }
-        return effective;
+            CharacterPreviewSelections,
+            MultiplayerSkinSync.GetScopedSelections());
     }
 
     internal static bool TryGetSelectedFrameworkContract(
@@ -230,6 +224,81 @@ internal static class SkinService
                 group.Id,
                 optionId,
                 workingSelections);
+            return true;
+        }
+    }
+
+    public static bool ApplyCharacterPreviewSelection(string groupId, string optionId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            var group = catalog?.Groups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (catalog == null || group == null || !catalog.IsCharacterAppearanceGroup(group.Id) ||
+                (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                 group.Options.All(option =>
+                     option.IsCharacterIconOnly ||
+                     !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
+            {
+                LastError = $"未知的角色皮肤预览：{groupId}/{optionId}";
+                return false;
+            }
+
+            var nextPreview = catalog.BuildVisualSelectionTransaction(
+                group.Id,
+                optionId,
+                Config.Selections);
+            var previousPreview = new Dictionary<string, string>(
+                CharacterPreviewSelections,
+                StringComparer.OrdinalIgnoreCase);
+            var affectedGroups = VisualSelectionOverlayPolicy.AffectedGroups(
+                previousPreview.Keys,
+                nextPreview.Keys);
+            try
+            {
+                CharacterPreviewSelections.Clear();
+                foreach (var pair in nextPreview)
+                {
+                    CharacterPreviewSelections[pair.Key] = pair.Value;
+                }
+
+                MountOverlay(affectedGroups);
+                LastError = null;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                CharacterPreviewSelections.Clear();
+                foreach (var pair in previousPreview)
+                {
+                    CharacterPreviewSelections[pair.Key] = pair.Value;
+                }
+
+                TryRestoreOverlay(affectedGroups, cardOverlay: false);
+                LastError = exception.Message;
+                ModLog.Error($"预览 {groupId}/{optionId} 失败：{exception}");
+                return false;
+            }
+        }
+    }
+
+    public static bool ClearCharacterPreviewSelection(bool restoreOverlay)
+    {
+        lock (Sync)
+        {
+            if (CharacterPreviewSelections.Count == 0)
+            {
+                return false;
+            }
+
+            var affectedGroups = CharacterPreviewSelections.Keys
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            CharacterPreviewSelections.Clear();
+            if (restoreOverlay)
+            {
+                TryRestoreOverlay(affectedGroups, cardOverlay: false);
+            }
             return true;
         }
     }
@@ -462,6 +531,7 @@ internal static class SkinService
                 FailedCardPortraitRequests.Clear();
                 IsolatedCardOverlayCache.Clear();
                 CardCanonicalResourceOwners.Reset();
+                CharacterPreviewSelections.Clear();
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
                 AncientStyleMethods.Clear();
                 MissingAncientStyleMethods.Clear();
@@ -4465,7 +4535,8 @@ internal static class SkinService
         var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
         RefreshScopedMonsterSelectionSnapshot(catalog);
-        FrameworkCompatibilityLayer.SynchronizeSelections(catalog, GetVisualSelections());
+        var effectiveSelections = GetVisualSelections();
+        FrameworkCompatibilityLayer.SynchronizeSelections(catalog, effectiveSelections);
         var activeRuntimeProviders = GetActiveRuntimeProviders(catalog);
         ManagedSkinModLoader.ConfigureRunEnvironmentProviders(
             _runtimeProviderBehaviorScope?.RunEnvironmentProviderIds ?? []);
@@ -4493,7 +4564,7 @@ internal static class SkinService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var files = catalog.BuildBaselineDependencyOverlay(staleCanonicalPaths);
-        var selectedOverlay = catalog.BuildOverlay(Config.Selections, overlayGroups);
+        var selectedOverlay = catalog.BuildOverlay(effectiveSelections, overlayGroups);
         // The selected complete PCK is already mounted directly below this correction overlay.
         // A vanilla canonical resource in the correction overlay would hide a selected provider's
         // <canonical path>.remap and produce a mixed skin (for example, a selected merchant body
@@ -4549,7 +4620,9 @@ internal static class SkinService
         // resource fields in provider assemblies are often initialized on their first type access.
         foreach (var group in catalog.Groups.Where(group => groups.Contains(group.Id)))
         {
-            var selectedId = Config.GetSelection(group.Id);
+            var selectedId = effectiveSelections.GetValueOrDefault(
+                group.Id,
+                SkinCatalog.BaseOptionId);
             if (catalog.IsRuntimeProviderOption(group.Id, selectedId) &&
                 catalog.ProviderUsesManagedGodotScripts(selectedId))
             {
@@ -4829,14 +4902,15 @@ internal static class SkinService
 
     private static HashSet<string> GetActiveRuntimeProviders(SkinCatalog catalog)
     {
-        var selectionSets = new List<IReadOnlyDictionary<string, string>> { Config.Selections };
+        var localSelections = GetVisualSelections();
+        var selectionSets = new List<IReadOnlyDictionary<string, string>> { localSelections };
         selectionSets.AddRange(MultiplayerSkinSync.GetAvailableSelectionMaps());
-        var selectedProviders = catalog.GetFullySelectedFullRuntimeProviders(Config.Selections)
+        var selectedProviders = catalog.GetFullySelectedFullRuntimeProviders(localSelections)
             .Union(
-                catalog.GetSelectedInteractiveRuntimeProviders(Config.Selections),
+                catalog.GetSelectedInteractiveRuntimeProviders(localSelections),
                 StringComparer.OrdinalIgnoreCase)
             .Union(
-                catalog.GetSelectedScopedMonsterRuntimeProviders(Config.Selections),
+                catalog.GetSelectedScopedMonsterRuntimeProviders(localSelections),
                 StringComparer.OrdinalIgnoreCase)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var selections in selectionSets.Skip(1))
@@ -4925,16 +4999,17 @@ internal static class SkinService
             return string.Empty;
         }
 
+        var visualSelections = GetVisualSelections();
         var activePaths = catalog.FilterModdedLocalizationTables(
                 MountedLocalizationFiles.Keys,
-                Config.Selections)
+                visualSelections)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var activeFiles = MountedLocalizationFiles
             .Where(pair => activePaths.Contains(pair.Key))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
         return BuildOverlaySignature(activeFiles, "localization") + "\n" + string.Join(
             "\n",
-            catalog.GetSelectedLocalizationProviderIds(Config.Selections)
+            catalog.GetSelectedLocalizationProviderIds(visualSelections)
                 .Order(StringComparer.OrdinalIgnoreCase));
     }
 
@@ -4943,7 +5018,7 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            return Catalog?.FilterModdedLocalizationTables(localizationPaths, Config.Selections) ??
+            return Catalog?.FilterModdedLocalizationTables(localizationPaths, GetVisualSelections()) ??
                    localizationPaths.ToArray();
         }
     }
