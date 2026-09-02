@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -49,6 +50,8 @@ internal static class ManagedSkinModLoader
     private static readonly HashSet<Assembly> ActivatingProviderAssemblies = [];
     private static readonly HashSet<MethodBase> ScopedMonsterIsEnabledMethods = [];
     private static readonly HashSet<MethodBase> ScopedMonsterSetEnabledMethods = [];
+    private static readonly ConcurrentDictionary<MethodBase, Func<object, string?>>
+        ScopedMonsterIdAccessors = new();
     private static readonly Harmony ScopedMonsterSelectionHarmony =
         new($"{Entry.ModId}.scoped-monster-selection");
     // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
@@ -127,6 +130,9 @@ internal static class ManagedSkinModLoader
                     continue;
                 }
 
+                ScopedMonsterIdAccessors[method] =
+                    ScopedMonsterRoutePolicy.CreateMonsterIdAccessor(
+                        method.GetParameters()[0].ParameterType);
                 ScopedMonsterSelectionHarmony.Patch(method, prefix: prefix);
                 patched++;
             }
@@ -209,12 +215,12 @@ internal static class ManagedSkinModLoader
                 return true;
             }
 
-            var target = __0.GetType().GetProperty(
-                "Target",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(__0);
-            var monsterId = target?.GetType().GetProperty(
-                "MonsterId",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(target) as string;
+            if (!ScopedMonsterIdAccessors.TryGetValue(__originalMethod, out var getMonsterId))
+            {
+                return true;
+            }
+
+            var monsterId = getMonsterId(__0);
             if (string.IsNullOrWhiteSpace(monsterId))
             {
                 return true;

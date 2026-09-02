@@ -104,6 +104,8 @@ internal static class CharacterAppearanceRuntime
     private static WeakReference<NCombatRoom>? _playerLayoutRoom;
     private static readonly HashSet<string> CombatRuntimeGroupIds =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> PersistentCombatRuntimeGroupIds =
+        new(StringComparer.OrdinalIgnoreCase);
     private static long _combatRuntimeScopeLease;
     private static float _playerLayoutScaling = 1f;
     private static bool _fullyCenterPlayers;
@@ -248,6 +250,7 @@ internal static class CharacterAppearanceRuntime
     internal static void FocusRuntimeProviderBehaviorsOnCombatRoom(ICombatRoomVisuals visuals)
     {
         CombatRuntimeGroupIds.Clear();
+        PersistentCombatRuntimeGroupIds.Clear();
         foreach (var creature in visuals.Allies.Concat(visuals.Enemies))
         {
             var modelType = creature.Monster?.GetType().Name ??
@@ -256,6 +259,10 @@ internal static class CharacterAppearanceRuntime
             if (group != null)
             {
                 CombatRuntimeGroupIds.Add(group.Id);
+                if (creature.Player != null)
+                {
+                    PersistentCombatRuntimeGroupIds.Add(group.Id);
+                }
             }
         }
 
@@ -280,7 +287,12 @@ internal static class CharacterAppearanceRuntime
     {
         var combatScopeLease = _combatRuntimeScopeLease;
         _combatRuntimeScopeLease = 0;
+        var transientGroups = RuntimeResourceRetentionPolicy.SelectTransientCombatGroups(
+            CombatRuntimeGroupIds,
+            PersistentCombatRuntimeGroupIds);
         CombatRuntimeGroupIds.Clear();
+        PersistentCombatRuntimeGroupIds.Clear();
+        SkinService.ReleaseTransientRuntimeResources(transientGroups);
         if (combatScopeLease != 0)
         {
             FocusRuntimeProviderBehaviorsOnRunContext(

@@ -72,6 +72,7 @@ internal static class SkinService
     private static readonly HashSet<string> WarmingRuntimeProviderPacks =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim RuntimePackWarmGate = new(1, 1);
+    private static readonly ScopedMonsterSelectionSnapshot ScopedMonsterSelections = new();
     private static RuntimeProviderScope? _runtimeProviderBehaviorScope;
     private static readonly RuntimeProviderScopeLeaseTracker RuntimeProviderScopeLeases = new();
     private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
@@ -442,6 +443,9 @@ internal static class SkinService
                 WarmedRuntimeProviderPacks.Clear();
                 WarmingRuntimeProviderPacks.Clear();
                 _runtimePackWarmGeneration++;
+                ScopedMonsterSelections.Replace(
+                    new Dictionary<string, IReadOnlyCollection<string>>(
+                        StringComparer.OrdinalIgnoreCase));
                 _runtimeProviderBehaviorScope = null;
                 RuntimeProviderScopeLeases.Reset();
                 MountedLocalizationFiles.Clear();
@@ -3185,19 +3189,50 @@ internal static class SkinService
 
     public static bool IsScopedMonsterRuntimeProviderSelected(
         string providerId,
-        string monsterId)
+        string monsterId) => ScopedMonsterSelections.IsSelected(providerId, monsterId);
+
+    internal static void ReleaseTransientRuntimeResources(IEnumerable<string> groupIds)
     {
         lock (Sync)
         {
-            var catalog = Catalog;
-            if (catalog == null || !catalog.ProviderUsesScopedMonsterRuntime(providerId))
+            var releasedResources = 0;
+            var releasedBundles = 0;
+            foreach (var groupId in groupIds
+                         .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                return false;
+                var prefix = groupId + "\n";
+                foreach (var key in RuntimeResourceCache.Keys
+                             .Where(key => key.StartsWith(
+                                 prefix,
+                                 StringComparison.OrdinalIgnoreCase))
+                             .ToArray())
+                {
+                    if (RuntimeResourceCache.Remove(key))
+                    {
+                        releasedResources++;
+                    }
+                }
+
+                foreach (var key in RuntimeResourceBundles.Keys
+                             .Where(key => key.StartsWith(
+                                 prefix,
+                                 StringComparison.OrdinalIgnoreCase))
+                             .ToArray())
+                {
+                    if (RuntimeResourceBundles.Remove(key))
+                    {
+                        releasedBundles++;
+                    }
+                }
             }
 
-            var groupId = catalog.ResolveManagedMonsterGroupId(monsterId);
-            return groupId != null && Config.GetSelection(groupId)
-                .Equals(providerId, StringComparison.OrdinalIgnoreCase);
+            if (releasedResources > 0 || releasedBundles > 0)
+            {
+                ModLog.Info(
+                    $"战斗房间退出后已释放 {releasedResources} 个怪物资源引用/" +
+                    $"{releasedBundles} 个资源包缓存；已生成的运行包仍保留供下次快速复用。");
+            }
         }
     }
 
@@ -3913,6 +3948,7 @@ internal static class SkinService
     {
         var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        RefreshScopedMonsterSelectionSnapshot(catalog);
         FrameworkCompatibilityLayer.SynchronizeSelections(catalog, GetVisualSelections());
         var activeRuntimeProviders = GetActiveRuntimeProviders(catalog);
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
@@ -4034,6 +4070,23 @@ internal static class SkinService
             $"资源包={mountElapsed.TotalMilliseconds:F1} ms，" +
             $"本地化={localizationElapsed.TotalMilliseconds:F1} ms，" +
             $"总计={Stopwatch.GetElapsedTime(totalStarted).TotalMilliseconds:F1} ms。");
+    }
+
+    private static void RefreshScopedMonsterSelectionSnapshot(SkinCatalog catalog)
+    {
+        var selectedMonsterIdsByProvider = new Dictionary<string, IReadOnlyCollection<string>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var providerId in catalog.GetSelectedScopedMonsterRuntimeProviders(
+                     Config.Selections))
+        {
+            selectedMonsterIdsByProvider[providerId] = catalog
+                .GetRuntimeProviderGroups(providerId)
+                .Where(groupId => catalog.ResolveVisualProviderId(Config.GetSelection(groupId))
+                    .Equals(providerId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        ScopedMonsterSelections.Replace(selectedMonsterIdsByProvider);
     }
 
     private sealed class MountedRuntimeResourceScope(IReadOnlySet<string> restoreGroups) : IDisposable

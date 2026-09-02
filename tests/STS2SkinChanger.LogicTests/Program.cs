@@ -63,6 +63,94 @@ Require(
         .SetEquals(["MeirinWatcherSkin", "CznEnemySkin"]),
     "进入对局后应保留当前角色，并允许负责地图、背景和音乐的整局怪物提供者运行。");
 
+var scopedMonsterSnapshotType = typeof(RuntimeProviderScopePolicy).Assembly.GetType(
+    "STS2SkinChanger.Core.ScopedMonsterSelectionSnapshot");
+Require(
+    scopedMonsterSnapshotType != null,
+    "逐怪物皮肤启用判断必须使用可原子替换的只读快照，不能在 CZN 的高频判断入口里反射、加全局锁并重新查询目录。");
+var scopedMonsterSnapshot = Activator.CreateInstance(scopedMonsterSnapshotType!);
+var replaceScopedMonsterSelections = scopedMonsterSnapshotType!.GetMethod("Replace");
+var isScopedMonsterSelectedMethod = scopedMonsterSnapshotType.GetMethod("IsSelected");
+Require(
+    scopedMonsterSnapshot != null &&
+    replaceScopedMonsterSelections != null &&
+    isScopedMonsterSelectedMethod != null,
+    "逐怪物选择快照必须提供 Replace 与 IsSelected 行为。");
+replaceScopedMonsterSelections!.Invoke(scopedMonsterSnapshot, [
+    new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["CznEnemySkin"] = ["SEAPUNK", "CORPSE_SLUG"]
+    }
+]);
+var isScopedMonsterSelected = (Func<string, string, bool>)isScopedMonsterSelectedMethod!
+    .CreateDelegate(typeof(Func<string, string, bool>), scopedMonsterSnapshot);
+Require(
+    isScopedMonsterSelected("cznenemyskin", "seapunk"),
+    "逐怪物选择快照必须按不区分大小写的 Mod 与怪物 ID 路由 CZN 皮肤。");
+replaceScopedMonsterSelections.Invoke(scopedMonsterSnapshot, [
+    new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["CznEnemySkin"] = ["SEWER_CLAM"]
+    }
+]);
+Require(
+    !isScopedMonsterSelected("CznEnemySkin", "SEAPUNK") &&
+    isScopedMonsterSelected("CznEnemySkin", "sewer_clam"),
+    "替换逐怪物选择快照时必须同时移除旧选择，不能让上一场战斗的 CZN 路由残留。");
+
+var scopedMonsterRoutePolicyType = typeof(RuntimeProviderScopePolicy).Assembly.GetType(
+    "STS2SkinChanger.Core.ScopedMonsterRoutePolicy");
+var createMonsterIdAccessor = scopedMonsterRoutePolicyType?.GetMethod(
+    "CreateMonsterIdAccessor",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+Require(
+    createMonsterIdAccessor != null,
+    "逐怪物路由必须为提供者的 Profile 类型预编译 MonsterId 读取器，不能在每次判断时重复反射属性。");
+var monsterIdAccessor = (Func<object, string?>)createMonsterIdAccessor!.Invoke(
+    null,
+    [typeof(ScopedMonsterProfileFixture)])!;
+var scopedMonsterProfile = new ScopedMonsterProfileFixture("PHANTASMAL_GARDENER");
+Require(
+    monsterIdAccessor(scopedMonsterProfile) == "PHANTASMAL_GARDENER",
+    "预编译的逐怪物路由必须读取 Profile.Target.MonsterId。");
+var nonPublicMonsterIdAccessor = (Func<object, string?>)createMonsterIdAccessor.Invoke(
+    null,
+    [typeof(NonPublicScopedMonsterProfileFixture)])!;
+Require(
+    nonPublicMonsterIdAccessor(new NonPublicScopedMonsterProfileFixture("TORCH_HEAD_AMALGAM")) ==
+    "TORCH_HEAD_AMALGAM",
+    "原提供者以非公开属性保存 Target/MonsterId 时，预编译路由也必须保持兼容。");
+_ = monsterIdAccessor(scopedMonsterProfile);
+_ = isScopedMonsterSelected("CznEnemySkin", "SEWER_CLAM");
+var scopedRouteAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+for (var index = 0; index < 50_000; index++)
+{
+    _ = monsterIdAccessor(scopedMonsterProfile);
+    _ = isScopedMonsterSelected("CznEnemySkin", "SEWER_CLAM");
+}
+var scopedRouteAllocated = GC.GetAllocatedBytesForCurrentThread() - scopedRouteAllocatedBefore;
+Require(
+    scopedRouteAllocated <= 1024,
+    $"逐怪物热路径执行 50,000 次只允许产生极少量运行时分配，实际为 {scopedRouteAllocated} 字节。");
+
+var runtimeResourceRetentionPolicyType = typeof(RuntimeProviderScopePolicy).Assembly.GetType(
+    "STS2SkinChanger.Core.RuntimeResourceRetentionPolicy");
+var selectTransientCombatGroups = runtimeResourceRetentionPolicyType?.GetMethod(
+    "SelectTransientCombatGroups",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+Require(
+    selectTransientCombatGroups != null,
+    "战斗资源缓存必须区分整局角色与当前房间怪物，离开房间后不能继续强引用所有遇到过的 CZN 场景和纹理。");
+var transientCombatGroups = (IReadOnlySet<string>)selectTransientCombatGroups!.Invoke(
+    null,
+    [
+        new[] { "ironclad", "SEAPUNK", "CORPSE_SLUG" },
+        new[] { "IRONCLAD" }
+    ])!;
+Require(
+    transientCombatGroups.SetEquals(["seapunk", "corpse_slug"]),
+    "战斗结束时只应释放当前房间怪物资源，整局角色资源必须继续缓存供下一场复用。");
+
 var runtimeScopeLeases = new RuntimeProviderScopeLeaseTracker();
 var combatScopeLease = runtimeScopeLeases.Claim();
 var merchantScopeLease = runtimeScopeLeases.Claim();
@@ -628,4 +716,24 @@ internal static class ForeignCardProvider
         internal static bool IsAncientStyleEnabled(string cardTypeName) =>
             cardTypeName.Equals("SovereignBlade", StringComparison.Ordinal);
     }
+}
+
+internal sealed class ScopedMonsterProfileFixture(string monsterId)
+{
+    public ScopedMonsterTargetFixture Target { get; } = new(monsterId);
+}
+
+internal sealed class ScopedMonsterTargetFixture(string monsterId)
+{
+    public string MonsterId { get; } = monsterId;
+}
+
+internal sealed class NonPublicScopedMonsterProfileFixture(string monsterId)
+{
+    internal NonPublicScopedMonsterTargetFixture Target { get; } = new(monsterId);
+}
+
+internal sealed class NonPublicScopedMonsterTargetFixture(string monsterId)
+{
+    internal string MonsterId { get; } = monsterId;
 }

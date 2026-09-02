@@ -1,3 +1,5 @@
+using System.Linq.Expressions;
+
 namespace STS2SkinChanger.Core;
 
 internal sealed record RuntimeProviderCandidate(
@@ -35,6 +37,76 @@ internal static class RuntimeProviderScopePolicy
                 (scope.IncludeRunWideMonsterProviders && candidate.IsRunWideMonsterProvider) ||
                 candidate.GroupIds.Any(visibleGroups.Contains))
             .Select(candidate => candidate.ProviderId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+}
+
+internal sealed class ScopedMonsterSelectionSnapshot
+{
+    private Dictionary<string, HashSet<string>> _selectedMonsterIdsByProvider =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public void Replace(
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> selectedMonsterIdsByProvider)
+    {
+        var next = selectedMonsterIdsByProvider.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+        Volatile.Write(ref _selectedMonsterIdsByProvider, next);
+    }
+
+    public bool IsSelected(string providerId, string monsterId)
+    {
+        var snapshot = Volatile.Read(ref _selectedMonsterIdsByProvider);
+        return snapshot.TryGetValue(providerId, out var monsterIds) &&
+               monsterIds.Contains(monsterId);
+    }
+}
+
+internal static class ScopedMonsterRoutePolicy
+{
+    public static Func<object, string?> CreateMonsterIdAccessor(Type profileType)
+    {
+        const System.Reflection.BindingFlags propertyFlags =
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic;
+        var targetProperty = profileType.GetProperty("Target", propertyFlags);
+        var monsterIdProperty = targetProperty?.PropertyType.GetProperty(
+            "MonsterId",
+            propertyFlags);
+        if (targetProperty == null || monsterIdProperty?.PropertyType != typeof(string))
+        {
+            return _ => null;
+        }
+
+        var profileParameter = Expression.Parameter(typeof(object), "profile");
+        var typedProfile = Expression.Convert(profileParameter, profileType);
+        var target = Expression.Property(typedProfile, targetProperty);
+        Expression monsterId = Expression.Property(target, monsterIdProperty);
+        if (!targetProperty.PropertyType.IsValueType ||
+            Nullable.GetUnderlyingType(targetProperty.PropertyType) != null)
+        {
+            monsterId = Expression.Condition(
+                Expression.Equal(target, Expression.Constant(null, targetProperty.PropertyType)),
+                Expression.Constant(null, typeof(string)),
+                monsterId);
+        }
+
+        return Expression.Lambda<Func<object, string?>>(monsterId, profileParameter).Compile();
+    }
+}
+
+internal static class RuntimeResourceRetentionPolicy
+{
+    public static IReadOnlySet<string> SelectTransientCombatGroups(
+        IEnumerable<string> visibleGroupIds,
+        IEnumerable<string> persistentGroupIds)
+    {
+        var persistent = persistentGroupIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return visibleGroupIds
+            .Where(groupId => !persistent.Contains(groupId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 }
