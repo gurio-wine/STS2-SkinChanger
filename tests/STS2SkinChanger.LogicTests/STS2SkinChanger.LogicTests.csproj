@@ -23,6 +23,8 @@
              Link="OptionalSkinFrameworkPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedProviderDisplayPolicy.cs"
              Link="ManagedProviderDisplayPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/ManagedCharacterAssetRegistrationPolicy.cs"
+             Link="ManagedCharacterAssetRegistrationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkAssemblyLoadContextPolicy.cs"
              Link="FrameworkAssemblyLoadContextPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkSelectionSynchronizer.cs"

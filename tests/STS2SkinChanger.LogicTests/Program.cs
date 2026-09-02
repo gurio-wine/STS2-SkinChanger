@@ -40,6 +40,23 @@ Require(
         ["KaguyaSilentRavenSkin"]),
     "不同 ID、不同来源的普通功能 Mod 不能因为正式版存在本地皮肤快照而误标 [SC]。");
 
+var managedCharacterAssetProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{
+    "ATA_IronClad",
+    "ChizuruIroncladSkin"
+};
+Require(
+    ManagedCharacterAssetRegistrationPolicy.ShouldSuppress(
+        "ata_ironclad",
+        managedCharacterAssetProviders),
+    "已由 Skin Changer 接管的皮肤不能继续把角色场景写入 RitsuLib 全局注册表；" +
+    "否则切走后商店、营火与战斗仍会加载上一个皮肤的私有路径。");
+Require(
+    !ManagedCharacterAssetRegistrationPolicy.ShouldSuppress(
+        "CznStyleUI",
+        managedCharacterAssetProviders),
+    "普通 UI 或玩法 Mod 的 RitsuLib 注册不能被皮肤接管策略误拦截。");
+
 var runtimeProviderCandidates = new RuntimeProviderCandidate[]
 {
     new("MeirinWatcherSkin", ["watcher"], IsRunWideMonsterProvider: false),

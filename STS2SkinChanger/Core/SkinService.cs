@@ -478,6 +478,7 @@ internal static class SkinService
                     .ToArray();
 
                 Catalog = SkinCatalog.Build(gamePckPath, mods);
+                ManagedCharacterAssetRegistrationGuard.Configure(Catalog);
                 Config = LoadConfig();
                 _configLoaded = true;
                 SanitizeSelections();
@@ -711,6 +712,10 @@ internal static class SkinService
                 ManagedSkinModLoader.EnsureScopedMonsterSelectionRouter(providerId);
             }
             ManagedSkinModLoader.ActivateSelectedProviders(activeProviders);
+            // Provider initializers can write character paths into a framework-owned registry.
+            // Suppress and clear those writes after every activation so deselected providers
+            // cannot keep controlling combat, merchant, rest-site or UI scenes indirectly.
+            ManagedCharacterAssetRegistrationGuard.SuppressCurrentRegistrations();
             ScheduleRuntimeProviderPackWarm(catalog, activeProviders, reason);
             ModLog.Info(
                 $"已按{reason}将皮肤代码行为收窄到 {nextScope.Count} 个可见外观组；" +
