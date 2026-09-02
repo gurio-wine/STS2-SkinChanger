@@ -231,6 +231,21 @@ Require(
     new PauseMenuAppearanceEntryDecision(CreateButton: true, ShowButton: true),
     "玩家重新启用局内外观入口后，下一次打开暂停菜单必须重新建立按钮。");
 
+var infoPanelPlacement = CharacterSelectorPlacementPolicy.Resolve(useTopRight: false);
+Require(
+    infoPanelPlacement.Host == CharacterSelectorHost.InfoPanel &&
+    infoPanelPlacement.AnchorLeft == 0.5f &&
+    infoPanelPlacement.AnchorRight == 0.5f,
+    "默认选角皮肤控件必须继续锚定在角色信息框上方，不能因新增位置选项改变旧布局。");
+var topRightPlacement = CharacterSelectorPlacementPolicy.Resolve(useTopRight: true);
+Require(
+    topRightPlacement.Host == CharacterSelectorHost.Screen &&
+    topRightPlacement.AnchorLeft == 1f &&
+    topRightPlacement.AnchorRight == 1f &&
+    topRightPlacement.OffsetRight < 0f &&
+    topRightPlacement.OffsetTop > 77f,
+    "右上角布局必须相对整个选角屏幕锚定，并避开原版右上角的章节选择器。");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

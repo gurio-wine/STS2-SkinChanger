@@ -481,6 +481,30 @@ internal static class SkinService
         }
     }
 
+    public static bool ShouldPlaceCharacterSelectorTopRight()
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            return Config.CharacterSelectorTopRight;
+        }
+    }
+
+    public static void SetCharacterSelectorTopRight(bool enabled)
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            if (Config.CharacterSelectorTopRight == enabled)
+            {
+                return;
+            }
+
+            Config.CharacterSelectorTopRight = enabled;
+            Config.Save(ConfigPath);
+        }
+    }
+
     public static bool ShouldShowLoadOrderWarning(bool isBeforeAllSkinMods)
     {
         lock (Sync)

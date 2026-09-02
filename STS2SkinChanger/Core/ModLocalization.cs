@@ -70,6 +70,7 @@ internal enum ModText
     DirectDragIntentHint,
     LoadOtherPlayersCustomSkins,
     ShowInRunAppearanceEntry,
+    CharacterSelectorTopRight,
     CharacterIcon,
     FollowCharacterSkin,
     RestorePlayerPosition
@@ -960,6 +961,26 @@ internal static class ModLocalization
             ["tur"] = "Duraklatma menüsünde “Görünüm”ü göster"
         };
 
+    private static readonly IReadOnlyDictionary<string, string> CharacterSelectorTopRightTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "Skin controls at top right",
+            ["zhs"] = "皮肤选项放在右上角",
+            ["zht"] = "外觀選項放在右上角",
+            ["deu"] = "Skin-Auswahl oben rechts",
+            ["esp"] = "Controles de aspecto arriba a la derecha",
+            ["fra"] = "Skins en haut à droite",
+            ["ita"] = "Controlli skin in alto a destra",
+            ["jpn"] = "スキン操作を右上に配置",
+            ["kor"] = "스킨 설정을 오른쪽 위에 배치",
+            ["pol"] = "Skórki w prawym górnym rogu",
+            ["ptb"] = "Controles de visual no canto superior direito",
+            ["rus"] = "Выбор облика в правом верхнем углу",
+            ["spa"] = "Controles de aspecto arriba a la derecha",
+            ["tha"] = "วางตัวเลือกสกินไว้ด้านขวาบน",
+            ["tur"] = "Görünüm seçenekleri sağ üstte"
+        };
+
     private sealed record CharacterIconLanguagePack(string CharacterIcon, string FollowCharacterSkin);
 
     private static readonly IReadOnlyDictionary<string, CharacterIconLanguagePack>
@@ -1183,6 +1204,8 @@ internal static class ModLocalization
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]
             : text == ModText.ShowInRunAppearanceEntry
                 ? InRunAppearanceEntryTexts[CurrentLanguage]
+            : text == ModText.CharacterSelectorTopRight
+                ? CharacterSelectorTopRightTexts[CurrentLanguage]
             : text == ModText.CharacterIcon
                 ? CharacterIconPacks[CurrentLanguage].CharacterIcon
             : text == ModText.FollowCharacterSkin

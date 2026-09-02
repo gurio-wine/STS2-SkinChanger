@@ -92,6 +92,8 @@ internal sealed class SkinConfig
 
     public bool ShowInRunAppearanceEntry { get; set; } = true;
 
+    public bool CharacterSelectorTopRight { get; set; }
+
     public static SkinConfig Load(string path)
     {
         var backupPath = path + ".bak";

@@ -25,6 +25,7 @@ internal static partial class ContextualSkinControls
     private const string SelectorName = "STS2SkinSelector";
     private const string MultiplayerSkinLoadingToggleName = "MultiplayerSkinLoadingToggle";
     private const string InRunAppearanceEntryToggleName = "InRunAppearanceEntryToggle";
+    private const string CharacterSelectorTopRightToggleName = "CharacterSelectorTopRightToggle";
     private const string DropdownName = "SkinDropdown";
     private const string CharacterIconLabelName = "CharacterIconLabel";
     private const string CharacterIconDropdownName = "CharacterIconDropdown";
@@ -196,28 +197,104 @@ internal static partial class ContextualSkinControls
             return new HBoxContainer();
         }
 
-        var existing = infoPanel.GetNodeOrNull<HBoxContainer>(SelectorName);
+        var existing = FindCharacterSelector(screen);
         if (existing != null)
         {
+            ApplyCharacterSelectorPlacement(screen, infoPanel, existing);
             EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
             EnsureInRunAppearanceEntryToggle(infoPanel);
+            EnsureCharacterSelectorTopRightToggle(screen, infoPanel, existing);
             return existing;
         }
 
         var selector = BuildSelector(includeCharacterIconControls: true);
-        selector.AnchorLeft = 0.5f;
-        selector.AnchorTop = 0;
-        selector.AnchorRight = 0.5f;
-        selector.AnchorBottom = 0;
-        selector.OffsetLeft = -226;
-        selector.OffsetTop = -80;
-        selector.OffsetRight = 226;
-        selector.OffsetBottom = -36;
         infoPanel.AddChild(selector);
+        ApplyCharacterSelectorPlacement(screen, infoPanel, selector);
         EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
         EnsureInRunAppearanceEntryToggle(infoPanel);
+        EnsureCharacterSelectorTopRightToggle(screen, infoPanel, selector);
         ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
         return selector;
+    }
+
+    private static HBoxContainer? FindCharacterSelector(NCharacterSelectScreen screen) =>
+        screen.GetNodeOrNull<HBoxContainer>(SelectorName) ??
+        screen.GetNodeOrNull<HBoxContainer>($"InfoPanel/{SelectorName}");
+
+    private static void ApplyCharacterSelectorPlacement(
+        NCharacterSelectScreen screen,
+        Control infoPanel,
+        HBoxContainer selector)
+    {
+        var placement = CharacterSelectorPlacementPolicy.Resolve(
+            SkinService.ShouldPlaceCharacterSelectorTopRight());
+        var host = placement.Host == CharacterSelectorHost.Screen ? screen : infoPanel;
+        if (selector.GetParent() != host)
+        {
+            selector.Reparent(host, keepGlobalTransform: false);
+        }
+
+        selector.AnchorLeft = placement.AnchorLeft;
+        selector.AnchorTop = placement.AnchorTop;
+        selector.AnchorRight = placement.AnchorRight;
+        selector.AnchorBottom = placement.AnchorBottom;
+        selector.OffsetLeft = placement.OffsetLeft;
+        selector.OffsetTop = placement.OffsetTop;
+        selector.OffsetRight = placement.OffsetRight;
+        selector.OffsetBottom = placement.OffsetBottom;
+        selector.ZIndex = placement.Host == CharacterSelectorHost.Screen ? 20 : 0;
+    }
+
+    private static void EnsureCharacterSelectorTopRightToggle(
+        NCharacterSelectScreen screen,
+        Control infoPanel,
+        HBoxContainer selector)
+    {
+        var toggle = infoPanel.GetNodeOrNull<CheckButton>(CharacterSelectorTopRightToggleName);
+        if (toggle == null)
+        {
+            toggle = new CheckButton
+            {
+                Name = CharacterSelectorTopRightToggleName,
+                AnchorLeft = 0.5f,
+                AnchorTop = 0f,
+                AnchorRight = 0.5f,
+                AnchorBottom = 0f,
+                OffsetLeft = -210f,
+                OffsetTop = -224f,
+                OffsetRight = 210f,
+                OffsetBottom = -180f,
+                Alignment = HorizontalAlignment.Center,
+                MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
+            };
+            toggle.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            toggle.AddThemeColorOverride("font_hover_color", Colors.White);
+            toggle.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
+            toggle.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+            toggle.AddThemeConstantOverride("outline_size", 3);
+            toggle.AddThemeFontSizeOverride("font_size", 18);
+            if (GameFont != null)
+            {
+                toggle.AddThemeFontOverride("font", GameFont);
+            }
+
+            toggle.SetPressedNoSignal(SkinService.ShouldPlaceCharacterSelectorTopRight());
+            toggle.Toggled += enabled =>
+            {
+                SkinService.SetCharacterSelectorTopRight(enabled);
+                ApplyCharacterSelectorPlacement(screen, infoPanel, selector);
+            };
+            infoPanel.AddChild(toggle);
+            ModLocalization.Bind(toggle, () =>
+            {
+                toggle.Text = ModLocalization.Get(ModText.CharacterSelectorTopRight);
+                toggle.SetPressedNoSignal(SkinService.ShouldPlaceCharacterSelectorTopRight());
+            });
+        }
+
+        toggle.Visible = true;
+        toggle.SetPressedNoSignal(SkinService.ShouldPlaceCharacterSelectorTopRight());
     }
 
     private static void EnsureInRunAppearanceEntryToggle(Control infoPanel)
@@ -573,10 +650,10 @@ internal static partial class ContextualSkinControls
     {
         CancelCharacterDropdownPreview(
             screen,
-            screen.GetNodeOrNull<HBoxContainer>($"InfoPanel/{SelectorName}"),
+            FindCharacterSelector(screen),
             restoreOverlay: true,
             restoreDisplay: false);
-        var selector = screen.GetNodeOrNull<Control>($"InfoPanel/{SelectorName}");
+        var selector = FindCharacterSelector(screen);
         if (selector != null)
         {
             selector.Visible = false;
@@ -594,6 +671,13 @@ internal static partial class ContextualSkinControls
         if (appearanceEntryToggle != null)
         {
             appearanceEntryToggle.Visible = false;
+        }
+
+        var placementToggle = screen.GetNodeOrNull<Control>(
+            $"InfoPanel/{CharacterSelectorTopRightToggleName}");
+        if (placementToggle != null)
+        {
+            placementToggle.Visible = false;
         }
     }
 
@@ -986,7 +1070,7 @@ internal static partial class ContextualSkinControls
     {
         CancelCharacterDropdownPreview(
             screen,
-            screen.GetNodeOrNull<HBoxContainer>($"InfoPanel/{SelectorName}"),
+            FindCharacterSelector(screen),
             restoreOverlay: true,
             restoreDisplay: false);
         var overlay = screen.GetNodeOrNull<PanelContainer>(CharacterLoadingOverlayName);
@@ -999,7 +1083,7 @@ internal static partial class ContextualSkinControls
             CharacterLoadingGenerationMeta,
             screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() + 1L);
         overlay.Visible = false;
-        var selector = screen.GetNodeOrNull<HBoxContainer>($"InfoPanel/{SelectorName}");
+        var selector = FindCharacterSelector(screen);
         if (selector != null)
         {
             selector.SetMeta(UpdatingMeta, false);
