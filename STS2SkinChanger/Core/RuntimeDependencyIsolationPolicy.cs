@@ -5,8 +5,10 @@ internal static class RuntimeDependencyIsolationPolicy
     public static bool CanReuseMountedProviderDependency(
         bool belongsToSelectedProvider,
         bool isProviderExclusivePath,
-        bool isMountedBySelectedOverlay) =>
+        bool isMountedBySelectedOverlay,
+        bool requiresAliasedLocation = false) =>
         belongsToSelectedProvider &&
         isProviderExclusivePath &&
-        isMountedBySelectedOverlay;
+        isMountedBySelectedOverlay &&
+        !requiresAliasedLocation;
 }

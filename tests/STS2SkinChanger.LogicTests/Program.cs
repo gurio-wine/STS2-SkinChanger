@@ -229,6 +229,13 @@ Require(
         isProviderExclusivePath: true,
         isMountedBySelectedOverlay: true),
     "提供者独占路径中的大型依赖可以继续复用已挂载资源，避免大型皮肤重复打包。");
+Require(
+    !RuntimeDependencyIsolationPolicy.CanReuseMountedProviderDependency(
+        belongsToSelectedProvider: true,
+        isProviderExclusivePath: true,
+        isMountedBySelectedOverlay: true,
+        requiresAliasedLocation: true),
+    "已进入独立别名空间的 Spine 图集必须同时复制其相对纹理页，不能复用原路径下的提供者资源。");
 
 var compatibleFramework = new OptionalSkinFrameworkEvidence(
     DependentModId: "example.skin",

@@ -2950,7 +2950,8 @@ internal sealed partial class SkinCatalog : IDisposable
         void IncludeResource(
             string sourcePath,
             ResourceAsset asset,
-            PckResourceIndex? index)
+            PckResourceIndex? index,
+            bool requiresAliasedLocation = false)
         {
             if (discoveredResourcesByPath.ContainsKey(sourcePath))
             {
@@ -2972,7 +2973,11 @@ internal sealed partial class SkinCatalog : IDisposable
             // shared by multiple providers must still be copied below: native Godot/Spine caches
             // can retain the first provider's object even when the mounted bytes have changed.
             if (reuseMountedPrivateDependencies &&
-                CanReuseMountedPrivateDependency(sourcePath, asset, index))
+                CanReuseMountedPrivateDependency(
+                    sourcePath,
+                    asset,
+                    index,
+                    requiresAliasedLocation))
             {
                 return;
             }
@@ -2986,7 +2991,14 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var textureAsset in GetSiblingAtlasTextureAssets(index, sourcePath))
             {
-                IncludeResource(textureAsset.SourcePath, textureAsset, index);
+                // Spine resolves every page name relative to the atlas resource. Once the atlas
+                // lives in this fresh alias namespace, all of its sibling pages must live there
+                // too; a canonical page from the mounted provider cannot satisfy that path.
+                IncludeResource(
+                    textureAsset.SourcePath,
+                    textureAsset,
+                    index,
+                    requiresAliasedLocation: true);
             }
         }
 
@@ -3033,7 +3045,8 @@ internal sealed partial class SkinCatalog : IDisposable
         bool CanReuseMountedPrivateDependency(
             string sourcePath,
             ResourceAsset asset,
-            PckResourceIndex? index)
+            PckResourceIndex? index,
+            bool requiresAliasedLocation)
         {
             var belongsToSelectedProvider =
                 selected != null &&
@@ -3075,7 +3088,8 @@ internal sealed partial class SkinCatalog : IDisposable
             return RuntimeDependencyIsolationPolicy.CanReuseMountedProviderDependency(
                 belongsToSelectedProvider,
                 isProviderExclusivePath,
-                isMountedBySelectedOverlay);
+                isMountedBySelectedOverlay,
+                requiresAliasedLocation);
         }
     }
 
