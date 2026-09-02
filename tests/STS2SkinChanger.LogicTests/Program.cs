@@ -24,6 +24,21 @@ Require(
     ManagedModListNamePolicy.Format("[SC] Existing Prefix", isManagedProvider: true) ==
     "[SC] Existing Prefix",
     "Mod 列表反复刷新时不能重复叠加 [SC] 前缀。");
+Require(
+    ManagedProviderDisplayPolicy.IsManaged(
+        "KaguyaSilentRavenSkin",
+        @"D:\\Steam\\workshop\\3786286239",
+        [@"D:\\Formal\\mods\\KaguyaSilentRavenSkin"],
+        ["KaguyaSilentRavenSkin"]),
+    "同一皮肤 Mod 的正式版本地快照与 Steam 副本路径不同，也必须都按清单 ID 显示 [SC]；" +
+    "不能只依赖被扫描到的那一个根目录。");
+Require(
+    !ManagedProviderDisplayPolicy.IsManaged(
+        "MoreActionEffects",
+        @"D:\\Steam\\workshop\\utility",
+        [@"D:\\Formal\\mods\\KaguyaSilentRavenSkin"],
+        ["KaguyaSilentRavenSkin"]),
+    "不同 ID、不同来源的普通功能 Mod 不能因为正式版存在本地皮肤快照而误标 [SC]。");
 
 var runtimeProviderCandidates = new RuntimeProviderCandidate[]
 {

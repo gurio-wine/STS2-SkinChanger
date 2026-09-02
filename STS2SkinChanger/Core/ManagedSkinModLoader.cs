@@ -29,6 +29,8 @@ internal static class ManagedSkinModLoader
         AccessTools.Field(typeof(ModManager), "_circularDependencies");
     private static readonly Dictionary<string, SkinProviderProbe> ProvidersByRoot =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ProviderIds =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderRoots =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> RegisteredProviderAssemblies =
@@ -84,7 +86,11 @@ internal static class ManagedSkinModLoader
 
         try
         {
-            return ProvidersByRoot.ContainsKey(NormalizePath(mod.path));
+            return ManagedProviderDisplayPolicy.IsManaged(
+                mod.manifest?.id,
+                NormalizePath(mod.path),
+                ProvidersByRoot.Keys,
+                ProviderIds);
         }
         catch
         {
@@ -315,6 +321,7 @@ internal static class ManagedSkinModLoader
             }
 
             ProvidersByRoot[NormalizePath(probe.RootPath)] = probe;
+            ProviderIds.Add(probe.Id);
         }
 
         var selfIndex = Array.FindIndex(mods, mod => Entry.IsSelfModId(mod.manifest?.id));
@@ -2632,6 +2639,7 @@ internal static class ManagedSkinModLoader
                     0,
                     false);
                 ProvidersByRoot[root] = provider;
+                ProviderIds.Add(provider.Id);
                 if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(mod.manifest?.id) &&
                     !IsRequiredByAnotherMod(mod, ModManager.Mods))
                 {
@@ -2663,6 +2671,7 @@ internal static class ManagedSkinModLoader
             }
 
             ProvidersByRoot[root] = detected;
+            ProviderIds.Add(detected.Id);
             provider = detected;
             ModLog.Info($"加载时补充识别皮肤提供者：{mod.manifest?.name ?? mod.manifest?.id}。");
             return true;
