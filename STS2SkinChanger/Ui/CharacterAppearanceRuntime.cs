@@ -1078,21 +1078,24 @@ internal static class CharacterAppearanceRuntime
                 ? null
                 : ContextualSkinControls.CanonicalScenePath(
                     "creature_visuals/" + playerCharacter.Id.Entry.ToLowerInvariant());
-            if (playerCharacter != null &&
-                playerGroup != null &&
-                managedScenePath != null &&
-                SkinService.TryInstantiateSelectedCharacterCreatureVisuals(
-                    playerGroup.Id,
-                    managedScenePath,
-                    out newVisuals))
-            {
-                ContextualSkinControls.ApplySelectedProviderVisualPostfix(
-                    playerCharacter.Id.Entry,
-                    playerCharacter.GetType().Name,
-                    playerCharacter,
-                    ref newVisuals);
-            }
-            else
+            var rebuiltWithManagedFactory = playerCharacter != null &&
+                                            playerGroup != null &&
+                                            managedScenePath != null &&
+                                            SkinService.TryInstantiateSelectedCharacterCreatureVisuals(
+                                                playerGroup.Id,
+                                                managedScenePath,
+                                                visuals =>
+                                                {
+                                                    ContextualSkinControls
+                                                        .ApplySelectedProviderVisualPostfix(
+                                                            playerCharacter.Id.Entry,
+                                                            playerCharacter.GetType().Name,
+                                                            playerCharacter,
+                                                            ref visuals);
+                                                    return visuals;
+                                                },
+                                                out newVisuals);
+            if (!rebuiltWithManagedFactory)
             {
                 newVisuals = creature.Entity.CreateVisuals() ??
                              throw new InvalidOperationException("CreateVisuals returned null");

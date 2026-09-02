@@ -60,19 +60,53 @@ Require(
 Require(
     CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
         isBaseSelection: false,
-        hasManagedCombatScene: true),
+        hasManagedCombatScene: true,
+        hasManagedCombatDependencies: false),
     "局内热切换到任何包含战斗场景的角色皮肤时，都必须先通过兼容场景工厂实例化；" +
     "不能只处理带框架契约的皮肤，否则普通资源型与完整 DLL 皮肤会把 Node2D 强转失败。");
 Require(
-    !CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
+    CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
         isBaseSelection: true,
-        hasManagedCombatScene: true),
-    "游戏原皮必须继续使用游戏原生 CreateVisuals 路径。");
+        hasManagedCombatScene: false,
+        hasManagedCombatDependencies: false),
+    "切回游戏原皮也必须从隔离的原版场景和依赖重建，不能复用上一皮肤占用的 Godot 缓存。");
+Require(
+    CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
+        isBaseSelection: false,
+        hasManagedCombatScene: false,
+        hasManagedCombatDependencies: true),
+    "只替换规范骨骼等战斗依赖的皮肤也必须走隔离实例化；否则提供者用 CacheMode.Reuse 时会读到上一皮肤的骨骼。");
+Require(
+    CharacterCombatSceneInstantiationPolicy.HasManagedCombatDependencies(
+        "res://scenes/creature_visuals/ironclad.tscn",
+        ["res://animations/characters/ironclad/ironclad_skel_data.tres"]),
+    "千鹤这类不替换根场景、只替换铁甲战士规范骨骼的皮肤必须被识别为战斗模型皮肤。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.HasManagedCombatDependencies(
+        "res://scenes/creature_visuals/ironclad.tscn",
+        ["res://animations/characters/silent/silent_skel_data.tres"]),
+    "不能把另一名角色的骨骼依赖误判成当前角色的战斗模型资源。");
 Require(
     !CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
         isBaseSelection: false,
-        hasManagedCombatScene: false),
+        hasManagedCombatScene: false,
+        hasManagedCombatDependencies: false),
     "只修改名称、头像或其它素材而没有战斗场景的皮肤不能拦截角色模型创建。");
+Require(
+    CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+        scopedSelection: "remote-skin",
+        configuredSelection: "local-skin"),
+    "为另一名玩家临时实例化皮肤后，必须恢复本机选择对规范资源缓存的所有权。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+        scopedSelection: null,
+        configuredSelection: "local-skin"),
+    "本机普通热切换完成后应保留当前选择的规范资源缓存所有权，供后续动画回调使用。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+        scopedSelection: "local-skin",
+        configuredSelection: "local-skin"),
+    "联机作用域与本机配置相同时仍属于本机选择，不能恢复成旧皮肤缓存。");
 
 var runtimeProviderCandidates = new RuntimeProviderCandidate[]
 {

@@ -16,6 +16,14 @@ internal static class FrameworkCreatureSceneFactory
     {
         ArgumentNullException.ThrowIfNull(scene);
 
+        var instantiated = scene.Instantiate(PackedScene.GenEditState.Disabled);
+        if (instantiated is NCreatureVisuals nativeVisuals)
+        {
+            return nativeVisuals;
+        }
+
+        instantiated.Free();
+
         var factoryType = AppDomain.CurrentDomain.GetAssemblies()
             .Select(assembly => assembly.GetType(FactoryTypeName, throwOnError: false))
             .FirstOrDefault(type => type != null)?

@@ -2825,6 +2825,7 @@ internal static class SkinService
     public static bool TryInstantiateSelectedCharacterCreatureVisuals(
         string groupId,
         string scenePath,
+        Func<NCreatureVisuals, NCreatureVisuals>? configureVisuals,
         out NCreatureVisuals visuals)
     {
         lock (Sync)
@@ -2839,25 +2840,35 @@ internal static class SkinService
                                             .CharacterResources.ContainsKey("CombatVisual") == true ||
                                         option?.Assets.Keys.Any(path =>
                                             path.Equals(scenePath, StringComparison.OrdinalIgnoreCase)) == true;
+            var hasManagedCombatDependencies = option != null &&
+                                               CharacterCombatSceneInstantiationPolicy
+                                                   .HasManagedCombatDependencies(
+                                                       scenePath,
+                                                       option.Assets.Keys);
             var isBaseSelection = option == null || option.Id.Equals(
                 SkinCatalog.BaseOptionId,
                 StringComparison.OrdinalIgnoreCase);
             if (!CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
                     isBaseSelection,
-                    hasManagedCombatScene))
+                    hasManagedCombatScene,
+                    hasManagedCombatDependencies))
             {
                 visuals = null!;
                 return false;
             }
         }
 
-        visuals = InstantiateManagedCharacterCreatureVisuals(groupId, scenePath);
+        visuals = InstantiateManagedCharacterCreatureVisuals(
+            groupId,
+            scenePath,
+            configureVisuals);
         return true;
     }
 
     public static NCreatureVisuals InstantiateManagedCharacterCreatureVisuals(
         string groupId,
-        string scenePath)
+        string scenePath,
+        Func<NCreatureVisuals, NCreatureVisuals>? configureVisuals = null)
     {
         var resourcePaths = RuntimeSceneResourcePaths(groupId, scenePath);
         return WithRuntimeResources(
@@ -2868,9 +2879,11 @@ internal static class SkinService
                 var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
                             throw new InvalidOperationException(
                                 $"角色皮肤资源不是场景：{scenePath}");
-                return FrameworkCreatureSceneFactory.Create(scene);
+                var visuals = FrameworkCreatureSceneFactory.Create(scene);
+                return configureVisuals?.Invoke(visuals) ?? visuals;
             },
-            includeProviderDependencies: true);
+            includeProviderDependencies: true,
+            takeOverCanonicalPaths: true);
     }
 
     /// <summary>
@@ -3764,7 +3777,8 @@ internal static class SkinService
         string groupId,
         IReadOnlyCollection<string> resourcePaths,
         Func<IReadOnlyDictionary<string, Resource>, T> callback,
-        bool includeProviderDependencies = false)
+        bool includeProviderDependencies = false,
+        bool takeOverCanonicalPaths = false)
     {
         ArgumentNullException.ThrowIfNull(callback);
 
@@ -3819,12 +3833,22 @@ internal static class SkinService
             }
 
             T callbackResult;
+            IDisposable? canonicalOwnership = null;
             try
             {
+                if (takeOverCanonicalPaths)
+                {
+                    canonicalOwnership = BeginCanonicalRuntimeResourceOwnership(
+                        groupId,
+                        prepared.ResourcePaths,
+                        resources);
+                }
+
                 callbackResult = callback(resources);
             }
             finally
             {
+                canonicalOwnership?.Dispose();
                 if (prepared.RestoreGroups.Count > 0)
                 {
                     // Binary resources cannot rewrite all of their internal paths. Restore only
@@ -3842,6 +3866,52 @@ internal static class SkinService
                 $"耗时={elapsedMs:F1} ms：{prepared.AliasToken}");
             return callbackResult;
         }
+    }
+
+    private static IDisposable BeginCanonicalRuntimeResourceOwnership(
+        string groupId,
+        IReadOnlyDictionary<string, string> resourcePaths,
+        IReadOnlyDictionary<string, Resource> resources)
+    {
+        var restoreOwnership =
+            CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
+                MultiplayerSkinSync.GetScopedSelection(groupId),
+                Config.GetSelection(groupId));
+        var ownedResources = new List<CanonicalRuntimeResourceOwnershipEntry>(resources.Count);
+        foreach (var pair in resources)
+        {
+            var canonicalPath = pair.Key;
+            var selectedResource = pair.Value;
+            Resource? previousResource = null;
+            if (ResourceLoader.HasCached(canonicalPath))
+            {
+                var cached = ResourceLoader.Load<Resource>(
+                    canonicalPath,
+                    null,
+                    ResourceLoader.CacheMode.Reuse);
+                if (cached != null && !ReferenceEquals(cached, selectedResource))
+                {
+                    previousResource = cached;
+                }
+            }
+
+            var aliasPath = resourcePaths.GetValueOrDefault(canonicalPath);
+            if (string.IsNullOrWhiteSpace(aliasPath))
+            {
+                aliasPath = selectedResource.ResourcePath;
+            }
+
+            selectedResource.TakeOverPath(canonicalPath);
+            ownedResources.Add(new CanonicalRuntimeResourceOwnershipEntry(
+                canonicalPath,
+                aliasPath,
+                selectedResource,
+                previousResource));
+        }
+
+        return restoreOwnership
+            ? new CanonicalRuntimeResourceOwnershipScope(ownedResources)
+            : NoopDisposable.Instance;
     }
 
     private static PreparedRuntimeOverlay GetOrPrepareRuntimeOverlay(
@@ -4169,6 +4239,59 @@ internal static class SkinService
                     ModLog.Error($"恢复临时运行资源覆盖失败：{exception}");
                 }
             }
+        }
+    }
+
+    private sealed record CanonicalRuntimeResourceOwnershipEntry(
+        string CanonicalPath,
+        string AliasPath,
+        Resource SelectedResource,
+        Resource? PreviousResource);
+
+    private sealed class CanonicalRuntimeResourceOwnershipScope(
+        IReadOnlyList<CanonicalRuntimeResourceOwnershipEntry> entries) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            for (var index = entries.Count - 1; index >= 0; index--)
+            {
+                var entry = entries[index];
+                try
+                {
+                    if (GodotObject.IsInstanceValid(entry.SelectedResource))
+                    {
+                        entry.SelectedResource.TakeOverPath(entry.AliasPath);
+                    }
+
+                    if (entry.PreviousResource != null &&
+                        GodotObject.IsInstanceValid(entry.PreviousResource))
+                    {
+                        entry.PreviousResource.TakeOverPath(entry.CanonicalPath);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        $"恢复角色规范资源 {entry.CanonicalPath} 失败：{exception.Message}");
+                }
+            }
+        }
+    }
+
+    private sealed class NoopDisposable : IDisposable
+    {
+        public static NoopDisposable Instance { get; } = new();
+
+        public void Dispose()
+        {
         }
     }
 
