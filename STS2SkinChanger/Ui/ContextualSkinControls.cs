@@ -25,6 +25,8 @@ internal static partial class ContextualSkinControls
     private const string SelectorName = "STS2SkinSelector";
     private const string MultiplayerSkinLoadingToggleName = "MultiplayerSkinLoadingToggle";
     private const string DropdownName = "SkinDropdown";
+    private const string CharacterIconLabelName = "CharacterIconLabel";
+    private const string CharacterIconDropdownName = "CharacterIconDropdown";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
     private const string MonsterScaleLabelName = "MonsterScaleLabel";
@@ -39,6 +41,7 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
+    private static readonly Dictionary<ulong, Action> CharacterIconRefreshActions = [];
     private static readonly ConditionalWeakTable<NCharacterSelectScreen, CharacterBackgroundHostLayout>
         CharacterBackgroundHostLayouts = new();
     private static readonly HashSet<string> LoggedMissingMultiplayerIcons =
@@ -99,6 +102,9 @@ internal static partial class ContextualSkinControls
                 reason: "选角预览");
         }
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
+        RegisterCharacterIconRefresh(
+            selector,
+            group == null ? null : () => RefreshCharacterIcons(screen, character, group.Id));
         Populate(selector, group);
         RefreshMultiplayerSkinLoadingToggle(screen);
         if (group != null)
@@ -191,14 +197,14 @@ internal static partial class ContextualSkinControls
             return existing;
         }
 
-        var selector = BuildSelector();
+        var selector = BuildSelector(includeCharacterIconControls: true);
         selector.AnchorLeft = 0.5f;
         selector.AnchorTop = 0;
         selector.AnchorRight = 0.5f;
         selector.AnchorBottom = 0;
-        selector.OffsetLeft = -122;
+        selector.OffsetLeft = -226;
         selector.OffsetTop = -80;
-        selector.OffsetRight = 122;
+        selector.OffsetRight = 226;
         selector.OffsetBottom = -36;
         infoPanel.AddChild(selector);
         EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
@@ -395,7 +401,7 @@ internal static partial class ContextualSkinControls
             CreateStyleBox(new Color("45104e"), new Color("efc850"), 2));
     }
 
-    private static HBoxContainer BuildSelector()
+    private static HBoxContainer BuildSelector(bool includeCharacterIconControls = false)
     {
         var selector = new HBoxContainer
         {
@@ -415,7 +421,36 @@ internal static partial class ContextualSkinControls
         ApplyGameTheme(dropdown);
         dropdown.ItemSelected += index => ApplyDropdownSelection(selector, dropdown, checked((int)index));
         selector.AddChild(dropdown);
-        selector.TreeExited += () => RefreshActions.Remove(selector.GetInstanceId());
+        if (includeCharacterIconControls)
+        {
+            var iconLabel = BuildCompactLabel(
+                ModLocalization.Get(ModText.CharacterIcon),
+                54);
+            iconLabel.Name = CharacterIconLabelName;
+            selector.AddChild(iconLabel);
+
+            var iconDropdown = new OptionButton
+            {
+                Name = CharacterIconDropdownName,
+                CustomMinimumSize = new Vector2(154, 44),
+                FitToLongestItem = false,
+                ClipText = true,
+                Alignment = HorizontalAlignment.Center
+            };
+            ApplyGameTheme(iconDropdown);
+            iconDropdown.ItemSelected += index => ApplyCharacterIconDropdownSelection(
+                selector,
+                iconDropdown,
+                checked((int)index));
+            selector.AddChild(iconDropdown);
+        }
+
+        selector.TreeExited += () =>
+        {
+            var id = selector.GetInstanceId();
+            RefreshActions.Remove(id);
+            CharacterIconRefreshActions.Remove(id);
+        };
         return selector;
     }
 
@@ -521,43 +556,102 @@ internal static partial class ContextualSkinControls
     private static void Populate(HBoxContainer selector, SkinGroup? group)
     {
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
-        if (group == null || group.Options.Count == 0)
+        var visualOptions = group?.Options
+            .Where(option => !option.IsCharacterIconOnly)
+            .ToArray() ?? [];
+        var characterIconOptions = group == null ||
+                                   selector.GetNodeOrNull<OptionButton>(
+                                       CharacterIconDropdownName) == null
+            ? []
+            : SkinService.GetCharacterIconOptions(group.Id).ToArray();
+        if (group == null ||
+            (visualOptions.Length == 0 && characterIconOptions.Length == 0))
         {
             selector.Visible = false;
             dropdown.Clear();
+            PopulateCharacterIconControls(selector, null, []);
             return;
         }
 
         selector.SetMeta(UpdatingMeta, true);
         selector.SetMeta(GroupMeta, group.Id);
         dropdown.Clear();
-        if (HasMonsterPriorityContext(selector))
+        var hasMonsterPriorityContext = HasMonsterPriorityContext(selector);
+        if (hasMonsterPriorityContext)
         {
             dropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
             dropdown.SetItemMetadata(0, SkinService.InheritMonsterSelectionId);
         }
 
-        var defaultIndex = dropdown.ItemCount;
-        dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
-        dropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
-        foreach (var option in group.Options)
+        if (visualOptions.Length > 0)
+        {
+            var defaultIndex = dropdown.ItemCount;
+            dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
+            dropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
+            foreach (var option in visualOptions)
+            {
+                var index = dropdown.ItemCount;
+                dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
+                dropdown.SetItemMetadata(index, option.Id);
+            }
+        }
+
+        var selected = hasMonsterPriorityContext
+            ? SkinService.GetMonsterOverrideSelection(group.Id)
+            : SkinService.Config.GetSelection(group.Id);
+        if (dropdown.ItemCount > 0)
+        {
+            var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
+                .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
+                    .Equals(selected, StringComparison.OrdinalIgnoreCase));
+            dropdown.Select(selectedIndex);
+        }
+        dropdown.Visible = visualOptions.Length > 0;
+        PopulateCharacterIconControls(selector, group, characterIconOptions);
+        PopulateMonsterScale(selector, group.Id);
+        selector.SetMeta(UpdatingMeta, false);
+        selector.Visible = true;
+        RefreshMonsterPriorityButton(selector);
+    }
+
+    private static void PopulateCharacterIconControls(
+        HBoxContainer selector,
+        SkinGroup? group,
+        IReadOnlyList<SkinOption> iconOptions)
+    {
+        var label = selector.GetNodeOrNull<Label>(CharacterIconLabelName);
+        var dropdown = selector.GetNodeOrNull<OptionButton>(CharacterIconDropdownName);
+        if (label == null || dropdown == null)
+        {
+            return;
+        }
+
+        var visible = group != null && iconOptions.Count > 0;
+        label.Visible = visible;
+        dropdown.Visible = visible;
+        dropdown.Clear();
+        if (!visible || group == null)
+        {
+            return;
+        }
+
+        label.Text = ModLocalization.Get(ModText.CharacterIcon);
+        dropdown.AddItem(ModLocalization.Get(ModText.FollowCharacterSkin));
+        dropdown.SetItemMetadata(0, SkinService.FollowCharacterSkinIconSelectionId);
+        dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
+        dropdown.SetItemMetadata(1, SkinCatalog.BaseOptionId);
+        foreach (var option in iconOptions)
         {
             var index = dropdown.ItemCount;
             dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
             dropdown.SetItemMetadata(index, option.Id);
         }
 
-        var selected = HasMonsterPriorityContext(selector)
-            ? SkinService.GetMonsterOverrideSelection(group.Id)
-            : SkinService.Config.GetSelection(group.Id);
+        var selected = SkinService.GetCharacterIconSelection(group.Id);
         var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
             .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
                 .Equals(selected, StringComparison.OrdinalIgnoreCase));
         dropdown.Select(selectedIndex);
-        PopulateMonsterScale(selector, group.Id);
-        selector.SetMeta(UpdatingMeta, false);
-        selector.Visible = true;
-        RefreshMonsterPriorityButton(selector);
     }
 
     private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
@@ -630,6 +724,39 @@ internal static partial class ContextualSkinControls
         }
 
         ApplyDropdownSelectionNow(selector, dropdown, index, groupId, optionId);
+    }
+
+    private static void ApplyCharacterIconDropdownSelection(
+        HBoxContainer selector,
+        OptionButton dropdown,
+        int index)
+    {
+        if (selector.GetMeta(UpdatingMeta, false).AsBool())
+        {
+            return;
+        }
+
+        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+        var optionId = dropdown.GetItemMetadata(index).AsString();
+        if (!SkinService.ApplyCharacterIconSelection(groupId, optionId))
+        {
+            ModLog.Error($"头像来源切换失败：{SkinService.LastError}");
+            var current = SkinService.GetCharacterIconSelection(groupId);
+            var currentIndex = Enumerable.Range(0, dropdown.ItemCount)
+                .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString()
+                    .Equals(current, StringComparison.OrdinalIgnoreCase));
+            selector.SetMeta(UpdatingMeta, true);
+            dropdown.Select(currentIndex);
+            selector.SetMeta(UpdatingMeta, false);
+            return;
+        }
+
+        if (CharacterIconRefreshActions.TryGetValue(
+                selector.GetInstanceId(),
+                out var refresh))
+        {
+            Callable.From(() => RunRefresh(refresh)).CallDeferred();
+        }
     }
 
     private static void ApplyDropdownSelectionNow(
@@ -934,6 +1061,31 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    private static void RegisterCharacterIconRefresh(
+        HBoxContainer selector,
+        Action? refresh)
+    {
+        var id = selector.GetInstanceId();
+        if (refresh == null)
+        {
+            CharacterIconRefreshActions.Remove(id);
+        }
+        else
+        {
+            CharacterIconRefreshActions[id] = refresh;
+        }
+    }
+
+    private static void RefreshCharacterIcons(
+        NCharacterSelectScreen screen,
+        CharacterModel character,
+        string groupId)
+    {
+        RefreshCharacterButtonIcon(screen, character);
+        RefreshLocalLobbyAvatar(screen);
+        ModLog.Info($"已热重载 {character.Id.Entry} 的独立头像来源。");
+    }
+
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
         // A behavior-driven provider can replace the title/description and hide the original
@@ -996,7 +1148,7 @@ internal static partial class ContextualSkinControls
                 // dependency paths; otherwise a skeleton/animation resource can come from the
                 // previous character skin even though the PackedScene itself loaded correctly.
                 ReplaceCharacterBackground(screen, character, scene, resources);
-                RefreshCharacterButtonIcon(screen, character, characterSelectTextures, resources);
+                RefreshCharacterButtonIcon(screen, character);
                 // CZN and similar complete packs create their own background variant and toolbar
                 // from this callback. Keep the provider overlay mounted while replaying it so
                 // those dynamically loaded scenes/textures resolve to the selected pack rather
@@ -1065,7 +1217,7 @@ internal static partial class ContextualSkinControls
                 // are often resolved at Instantiate(), not at Load(), so loading only the scene
                 // object is insufficient to prevent a previous skin's skeleton/atlas binding.
                 ReplaceCharacterBackground(screen, character, scene, resources);
-                RefreshCharacterButtonIcon(screen, character, texturePaths, resources);
+                RefreshCharacterButtonIcon(screen, character);
                 // Replay provider-owned character-select presentation before WithRuntimeResources
                 // restores canonical paths. This is required for CZN's dynamic preview/background
                 // scenes and keeps their two toolbar controls tied to the selected package.
@@ -1545,9 +1697,7 @@ internal static partial class ContextualSkinControls
 
     private static void RefreshCharacterButtonIcon(
         NCharacterSelectScreen screen,
-        CharacterModel character,
-        IReadOnlyCollection<string> texturePaths,
-        IReadOnlyDictionary<string, Resource> resources)
+        CharacterModel character)
     {
         var button = FindCharacterButton(screen, character);
         if (button == null)
@@ -1555,17 +1705,22 @@ internal static partial class ContextualSkinControls
             return;
         }
 
-        var iconPath = texturePaths.FirstOrDefault(path =>
-            path.Contains("/packed/character_select/", StringComparison.OrdinalIgnoreCase) &&
-            path.EndsWith(button.IsLocked ? "_locked.png" : $"_{character.Id.Entry.ToLowerInvariant()}.png",
-                StringComparison.OrdinalIgnoreCase));
-        if (iconPath == null || !resources.TryGetValue(iconPath, out var resource) || resource is not Texture2D texture)
+        try
         {
-            return;
+            // Use the same CharacterModel property as the game. The final-result Harmony
+            // patch below applies an explicit icon pack, while a code-driven full skin can
+            // still provide its own icon when the setting is "follow character skin".
+            button.GetNode<TextureRect>("%Icon").Texture = button.IsLocked
+                ? character.CharacterSelectLockedIcon
+                : character.CharacterSelectIcon;
+            ModLog.Info($"已刷新 {character.Id.Entry} 的角色列表头像。");
         }
-
-        button.GetNode<TextureRect>("%Icon").Texture = texture;
-        ModLog.Info($"已刷新 {character.Id.Entry} 的角色列表头像。");
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                $"刷新 {character.Id.Entry} 的角色列表头像失败：" +
+                exception.GetBaseException().Message);
+        }
     }
 
     private static NCharacterSelectButton? FindCharacterButton(
@@ -1954,7 +2109,7 @@ internal static partial class ContextualSkinControls
         ref CompressedTexture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
+        if (group == null)
         {
             return;
         }
@@ -1962,10 +2117,17 @@ internal static partial class ContextualSkinControls
         var characterId = character.Id.Entry.ToLowerInvariant();
         var resourcePath = CanonicalImagePath(
             "packed/character_select/char_select_" + characterId + (locked ? "_locked.png" : ".png"));
+        if (SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(
+                group.Id,
+                resourcePath))
+        {
+            return;
+        }
+
         try
         {
-            result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as CompressedTexture2D ??
-                     throw new InvalidOperationException($"独立皮肤资源不是压缩贴图：{resourcePath}");
+            result = SkinService.GetOrLoadCharacterIconResource(group.Id, resourcePath) as CompressedTexture2D ??
+                     throw new InvalidOperationException($"角色头像资源不是压缩贴图：{resourcePath}");
         }
         catch (Exception exception)
         {
@@ -1976,17 +2138,30 @@ internal static partial class ContextualSkinControls
     internal static void ReplaceCharacterIcon(CharacterModel character, ref Control result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
+        if (group == null)
         {
             return;
         }
 
         var characterId = character.Id.Entry.ToLowerInvariant();
         var resourcePath = CanonicalScenePath("ui/character_icons/" + characterId + "_icon");
+        if (SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(
+                group.Id,
+                resourcePath))
+        {
+            return;
+        }
+
         try
         {
-            var replacement = SkinService.GetOrLoadRuntimeScene(group.Id, resourcePath)
-                .Instantiate<Control>(PackedScene.GenEditState.Disabled);
+            var replacement = SkinService.WithCharacterIconResource(
+                group.Id,
+                resourcePath,
+                resource => (resource as PackedScene ??
+                             throw new InvalidOperationException(
+                                 $"角色头像资源不是场景：{resourcePath}"))
+                    .Instantiate<Control>(PackedScene.GenEditState.Disabled),
+                includeProviderDependencies: true);
             ManagedSceneCompatibility.CopyMissingUniqueNodes(result, replacement);
             result?.QueueFree();
             result = replacement;
@@ -2003,15 +2178,18 @@ internal static partial class ContextualSkinControls
         ref Texture2D result)
     {
         var group = FindGroup(character.Id.Entry);
-        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
+        if (group == null ||
+            SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(
+                group.Id,
+                resourcePath))
         {
             return;
         }
 
         try
         {
-            result = SkinService.GetOrLoadRuntimeResource(group.Id, resourcePath) as Texture2D ??
-                     throw new InvalidOperationException($"独立皮肤资源不是贴图：{resourcePath}");
+            result = SkinService.GetOrLoadCharacterIconResource(group.Id, resourcePath) as Texture2D ??
+                     throw new InvalidOperationException($"角色头像资源不是贴图：{resourcePath}");
         }
         catch (Exception exception)
         {
@@ -2120,16 +2298,17 @@ internal static partial class ContextualSkinControls
     {
         var group = FindGroup(character.Id.Entry, character.GetType().Name) ??
                     FindGroup(character.Id.Entry);
-        if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
+        var path = CanonicalImagePath(
+            "ui/top_panel/character_icon_" + character.Id.Entry.ToLowerInvariant() + ".png");
+        if (group == null ||
+            SkinService.ShouldDeferCharacterIconResourceToExternalRuntime(group.Id, path))
         {
             return null;
         }
 
-        var path = CanonicalImagePath(
-            "ui/top_panel/character_icon_" + character.Id.Entry.ToLowerInvariant() + ".png");
         try
         {
-            var resource = SkinService.GetOrLoadRuntimeResource(group.Id, path);
+            var resource = SkinService.GetOrLoadCharacterIconResource(group.Id, path);
             if (resource is Texture2D texture)
             {
                 return texture;

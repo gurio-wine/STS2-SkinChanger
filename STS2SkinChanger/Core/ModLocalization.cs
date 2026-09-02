@@ -68,7 +68,9 @@ internal enum ModText
     FollowModelMovement,
     DirectDragHint,
     DirectDragIntentHint,
-    LoadOtherPlayersCustomSkins
+    LoadOtherPlayersCustomSkins,
+    CharacterIcon,
+    FollowCharacterSkin
 }
 
 internal static class ModLocalization
@@ -936,6 +938,29 @@ internal static class ModLocalization
             ["tur"] = "İki tarafta da yüklü görünümleri göster"
         };
 
+    private sealed record CharacterIconLanguagePack(string CharacterIcon, string FollowCharacterSkin);
+
+    private static readonly IReadOnlyDictionary<string, CharacterIconLanguagePack>
+        CharacterIconPacks =
+            new Dictionary<string, CharacterIconLanguagePack>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["eng"] = new("Avatar", "Follow skin"),
+                ["zhs"] = new("头像", "跟随皮肤"),
+                ["zht"] = new("頭像", "跟隨外觀"),
+                ["deu"] = new("Porträt", "Skin folgen"),
+                ["esp"] = new("Retrato", "Seguir aspecto"),
+                ["fra"] = new("Portrait", "Suivre le skin"),
+                ["ita"] = new("Ritratto", "Segui skin"),
+                ["jpn"] = new("アイコン", "スキンに従う"),
+                ["kor"] = new("초상화", "스킨 따르기"),
+                ["pol"] = new("Portret", "Podążaj za skórką"),
+                ["ptb"] = new("Retrato", "Seguir visual"),
+                ["rus"] = new("Портрет", "Следовать облику"),
+                ["spa"] = new("Retrato", "Seguir aspecto"),
+                ["tha"] = new("รูปตัวละคร", "ตามสกิน"),
+                ["tur"] = new("Portre", "Görünümü izle")
+            };
+
     private sealed record MultiplayerProgressLanguagePack(
         string Preparing,
         string WaitingForReady,
@@ -1114,6 +1139,10 @@ internal static class ModLocalization
     public static string Get(ModText text) =>
         text == ModText.LoadOtherPlayersCustomSkins
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]
+            : text == ModText.CharacterIcon
+                ? CharacterIconPacks[CurrentLanguage].CharacterIcon
+            : text == ModText.FollowCharacterSkin
+                ? CharacterIconPacks[CurrentLanguage].FollowCharacterSkin
             : text == ModText.OtherCompendium
                 ? OtherCompendiumPacks[CurrentLanguage].Title
             : text == ModText.OtherCategoryAncients

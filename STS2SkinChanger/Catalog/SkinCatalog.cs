@@ -92,7 +92,7 @@ internal sealed partial class SkinCatalog : IDisposable
         // A visual provider can also add events, cards or other gameplay text; those tables must
         // remain mounted regardless of which cosmetic option is selected.
         var characterVisualProviderIds = _groups.SelectMany(group => group.Options)
-            .Where(IsCharacterAppearanceOption)
+            .Where(option => !option.IsCharacterIconOnly && IsCharacterAppearanceOption(option))
             .Select(option => option.EffectiveProviderId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var providerLocalizationFiles = cosmeticIndexes
@@ -127,8 +127,10 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(index => index.Mod.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visualGroupsByProvider = _groups
-            .SelectMany(group => group.Options.Select(option =>
-                (GroupId: group.Id, ProviderId: option.EffectiveProviderId)))
+            .SelectMany(group => group.Options
+                .Where(option => !option.IsCharacterIconOnly)
+                .Select(option =>
+                    (GroupId: group.Id, ProviderId: option.EffectiveProviderId)))
             .GroupBy(pair => pair.ProviderId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
@@ -215,7 +217,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 StringComparer.OrdinalIgnoreCase);
 
         static bool OptionOwnsCharacterRuntimeAssets(SkinOption option) =>
-            option.Assets.Keys.Any(path =>
+            !option.IsCharacterIconOnly && option.Assets.Keys.Any(path =>
             {
                 var canonicalPath = NormalizeTakeoverPath(path);
                 return CharacterPathRegex().IsMatch(canonicalPath) ||
@@ -250,6 +252,38 @@ internal sealed partial class SkinCatalog : IDisposable
     public IReadOnlyList<SkinGroup> Groups => _groups;
     public IReadOnlyList<CardSkinGroup> CardGroups => _cardGroups;
     public IReadOnlyList<CardSkinOption> PckCardOptions => _pckCardOptions;
+
+    public IReadOnlyList<SkinOption> GetCharacterIconOptions(string groupId) =>
+        _groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options
+            .Where(option => option.Assets.Keys.Any(path =>
+                CharacterIconPathBelongsToGroup(path, groupId)))
+            .DistinctBy(option => option.Id, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(option => option.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray() ?? [];
+
+    public bool IsCharacterIconOnlyOption(string groupId, string optionId) =>
+        _groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options.Any(option =>
+                option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase) &&
+                option.IsCharacterIconOnly) == true;
+
+    public bool CharacterIconOptionContainsResource(
+        string groupId,
+        string optionId,
+        string resourcePath) =>
+        GetCharacterIconOptions(groupId)
+            .FirstOrDefault(option => option.Id.Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Assets.Keys.Any(path => NormalizeTakeoverPath(path).Equals(
+                NormalizeTakeoverPath(resourcePath),
+                StringComparison.OrdinalIgnoreCase)) == true;
+
     public IReadOnlySet<string> CardProviderRoots => _cardGroups
         .SelectMany(group => group.Options)
         .Select(option => option.ProviderRootPath)
@@ -1857,6 +1891,22 @@ internal sealed partial class SkinCatalog : IDisposable
             CharacterUiTextureRegex().IsMatch(path) ||
             CharacterIconSceneRegex().IsMatch(path) ||
             CharacterMapMarkerRegex().IsMatch(path));
+
+    private static bool IsCharacterIconSourcePath(string sourcePath) =>
+        TryGetCharacterIconGroup(NormalizeTakeoverPath(sourcePath)) != null;
+
+    private static bool CharacterIconPathBelongsToGroup(
+        string sourcePath,
+        string groupId) =>
+        TryGetCharacterIconGroup(NormalizeTakeoverPath(sourcePath))?.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase) == true;
+
+    private static GroupIdentity? TryGetCharacterIconGroup(string sourcePath) =>
+        TryGetCharacterSelectIconGroup(sourcePath) ??
+        TryGetCharacterUiTextureGroup(sourcePath) ??
+        TryGetCharacterIconSceneGroup(sourcePath) ??
+        TryGetCharacterMapMarkerGroup(sourcePath);
 
     internal static bool IsRelicAtlasSpritePath(string path) =>
         RelicAtlasSpriteRegex().IsMatch(NormalizeTakeoverPath(path));
@@ -3722,7 +3772,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Select(path => TryGetCharacterVisualAnchorGroup(path, knownCharacterGroupIds))
                 .Where(group => group != null)
                 .Cast<GroupIdentity>()
-                .Select(group => group.Id);
+                .Select(group => group.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var eligibleCharacterGroupIds = CharacterGroupEvidencePolicy.ResolveEligibleGroups(
                 detectedPrimaryGroups
                     .Where(group => knownCharacterGroupIds.Contains(group.Id))
@@ -3786,7 +3837,14 @@ internal sealed partial class SkinCatalog : IDisposable
                     groups.Add(identity.Id, group);
                 }
 
-                group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, assets));
+                group.Options.Add(new SkinOption(
+                    index.Mod.Id,
+                    index.Mod.Name,
+                    assets,
+                    IsCharacterIconOnly:
+                        knownCharacterGroupIds.Contains(identity.Id) &&
+                        !anchoredCharacterGroupIds.Contains(identity.Id) &&
+                        assets.Keys.Any(IsCharacterIconSourcePath)));
             }
         }
 
@@ -3850,7 +3908,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 {
                     group.Options[existingIndex] = group.Options[existingIndex] with
                     {
-                        IsRuntimeProvider = true
+                        IsRuntimeProvider = true,
+                        IsCharacterIconOnly = false
                     };
                     continue;
                 }
@@ -5434,7 +5493,9 @@ internal sealed partial class SkinCatalog : IDisposable
                     group.Options[existingIndex] = existing with
                     {
                         Assets = mergedAssets,
-                        IsRuntimeProvider = true
+                        IsRuntimeProvider = true,
+                        IsCharacterIconOnly = existing.IsCharacterIconOnly &&
+                                              mappedAssets.Keys.All(IsCharacterIconSourcePath)
                     };
                     continue;
                 }
@@ -6598,7 +6659,8 @@ internal sealed record SkinOption(
     RuntimeMonsterVisualMode? RuntimeMonsterVisualMode = null,
     string? ProviderId = null,
     bool IsManagedMonsterRuntimeProfile = false,
-    FrameworkCharacterSkinContract? FrameworkContract = null)
+    FrameworkCharacterSkinContract? FrameworkContract = null,
+    bool IsCharacterIconOnly = false)
 {
     public string EffectiveProviderId =>
         ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;

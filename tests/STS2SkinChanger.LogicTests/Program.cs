@@ -143,6 +143,48 @@ Require(
         [new AliasedDependencyReference(true, ["res://images/unmapped_atlas.png"])],
         ["res://images/card_atlas.png"]),
     "存在未复制的公共依赖时不能启用依赖复用。");
+
+var iconOptions = new HashSet<string>(["SilentIcons"], StringComparer.OrdinalIgnoreCase);
+Require(
+    CharacterIconSelectionPolicy.ResolveResourceSelection(
+        CharacterIconSelectionPolicy.FollowCharacterSkinOptionId,
+        "TreessaSkin",
+        "__base__",
+        iconOptions,
+        configuredSourceContainsResource: false) == "TreessaSkin",
+    "头像设为跟随皮肤时必须使用当前角色皮肤的头像。");
+Require(
+    CharacterIconSelectionPolicy.ResolveResourceSelection(
+        "SilentIcons",
+        "TreessaSkin",
+        "__base__",
+        iconOptions,
+        configuredSourceContainsResource: true) == "SilentIcons",
+    "独立头像包提供当前资源时必须优先于整套角色皮肤。");
+Require(
+    CharacterIconSelectionPolicy.ResolveResourceSelection(
+        "SilentIcons",
+        "TreessaSkin",
+        "__base__",
+        iconOptions,
+        configuredSourceContainsResource: false) == "TreessaSkin",
+    "独立头像包没有覆盖某类头像时应回退到当前角色皮肤，不能丢失资源。");
+Require(
+    CharacterIconSelectionPolicy.ResolveResourceSelection(
+        "__base__",
+        "TreessaSkin",
+        "__base__",
+        iconOptions,
+        configuredSourceContainsResource: false) == "__base__",
+    "玩家明确选择游戏原版头像时不得再回退到角色皮肤。");
+Require(
+    CharacterIconSelectionPolicy.ResolveResourceSelection(
+        "RemovedIconPack",
+        "TreessaSkin",
+        "__base__",
+        iconOptions,
+        configuredSourceContainsResource: true) == "TreessaSkin",
+    "已卸载的头像来源必须安全回退到跟随皮肤。");
 Require(
     ManagedProviderDisplayPolicy.IsManaged(
         "KaguyaSilentRavenSkin",

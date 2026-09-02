@@ -71,6 +71,11 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    // Kept separate from the full character appearance so a lightweight icon pack can be
+    // combined with any model/animation skin. Missing icon kinds fall back to that skin.
+    public Dictionary<string, string> CharacterIconSelections { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public List<string> VisualProviderPriority { get; set; } = [];
 
     public int VisualSelectionDefaultsVersion { get; set; }
@@ -183,6 +188,15 @@ internal sealed class SkinConfig
         config.Selections = new Dictionary<string, string>(
             config.Selections,
             StringComparer.OrdinalIgnoreCase);
+        config.CharacterIconSelections ??=
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        config.CharacterIconSelections = config.CharacterIconSelections
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) &&
+                           !string.IsNullOrWhiteSpace(pair.Value))
+            .ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.OrdinalIgnoreCase);
         config.VisualProviderPriority ??= [];
         config.VisualProviderPriority = config.VisualProviderPriority
             .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
@@ -305,4 +319,9 @@ internal sealed class SkinConfig
 
     public string GetSelection(string groupId) =>
         Selections.GetValueOrDefault(groupId, Catalog.SkinCatalog.BaseOptionId);
+
+    public string GetCharacterIconSelection(string groupId) =>
+        CharacterIconSelections.GetValueOrDefault(
+            groupId,
+            CharacterIconSelectionPolicy.FollowCharacterSkinOptionId);
 }

@@ -27,6 +27,8 @@ internal static class SkinService
     public const float CharacterOffsetStep = 1f;
     public const string InheritCardSelectionId = "__inherit__";
     public const string InheritMonsterSelectionId = "__monster_category__";
+    public const string FollowCharacterSkinIconSelectionId =
+        CharacterIconSelectionPolicy.FollowCharacterSkinOptionId;
     public const int CardSkinPresetNameMaxLength = 40;
     private const long DirectRuntimeProviderPackThresholdBytes = 64L * 1024L * 1024L;
 
@@ -124,6 +126,27 @@ internal static class SkinService
 
     private static string GetVisualSelection(string groupId) =>
         MultiplayerSkinSync.GetScopedSelection(groupId) ?? Config.GetSelection(groupId);
+
+    private static string ResolveCharacterIconResourceSelection(
+        string groupId,
+        string resourcePath)
+    {
+        var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        var configured = Config.GetCharacterIconSelection(groupId);
+        var iconOptions = catalog.GetCharacterIconOptions(groupId);
+        var availableOptionIds = iconOptions
+            .Select(option => option.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return CharacterIconSelectionPolicy.ResolveResourceSelection(
+            configured,
+            GetVisualSelection(groupId),
+            SkinCatalog.BaseOptionId,
+            availableOptionIds,
+            catalog.CharacterIconOptionContainsResource(
+                groupId,
+                configured,
+                resourcePath));
+    }
 
     private static IReadOnlyDictionary<string, string> GetVisualSelections()
     {
@@ -937,7 +960,9 @@ internal static class SkinService
                 group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
             if (group == null ||
                 (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-                 group.Options.All(option => !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
+                 group.Options.All(option =>
+                     option.IsCharacterIconOnly ||
+                     !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
             {
                 LastError = $"未知的皮肤选择：{groupId}/{optionId}";
                 return false;
@@ -997,6 +1022,71 @@ internal static class SkinService
                 TryRestoreOverlay(affectedGroups, cardOverlay: false);
                 LastError = exception.Message;
                 ModLog.Error($"切换 {groupId} 失败：{exception}");
+                return false;
+            }
+        }
+    }
+
+    public static IReadOnlyList<SkinOption> GetCharacterIconOptions(string groupId)
+    {
+        lock (Sync)
+        {
+            return Catalog?.GetCharacterIconOptions(groupId) ?? [];
+        }
+    }
+
+    public static string GetCharacterIconSelection(string groupId)
+    {
+        lock (Sync)
+        {
+            return Config.GetCharacterIconSelection(groupId);
+        }
+    }
+
+    public static bool ApplyCharacterIconSelection(string groupId, string optionId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            var validOption = optionId.Equals(
+                                  FollowCharacterSkinIconSelectionId,
+                                  StringComparison.OrdinalIgnoreCase) ||
+                              optionId.Equals(
+                                  SkinCatalog.BaseOptionId,
+                                  StringComparison.OrdinalIgnoreCase) ||
+                              catalog?.GetCharacterIconOptions(groupId).Any(option =>
+                                  option.Id.Equals(
+                                      optionId,
+                                      StringComparison.OrdinalIgnoreCase)) == true;
+            if (catalog == null || !validOption)
+            {
+                LastError = $"未知的角色头像选择：{groupId}/{optionId}";
+                return false;
+            }
+
+            var hadPrevious = Config.CharacterIconSelections.TryGetValue(
+                groupId,
+                out var previous);
+            try
+            {
+                Config.CharacterIconSelections[groupId] = optionId;
+                Config.Save(ConfigPath);
+                LastError = null;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                if (hadPrevious && previous != null)
+                {
+                    Config.CharacterIconSelections[groupId] = previous;
+                }
+                else
+                {
+                    Config.CharacterIconSelections.Remove(groupId);
+                }
+
+                LastError = exception.Message;
+                ModLog.Error($"切换 {groupId} 的头像来源失败：{exception}");
                 return false;
             }
         }
@@ -3181,6 +3271,50 @@ internal static class SkinService
         }
     }
 
+    public static Resource GetOrLoadCharacterIconResource(
+        string groupId,
+        string resourcePath,
+        bool includeProviderDependencies = false)
+    {
+        lock (Sync)
+        {
+            var selection = ResolveCharacterIconResourceSelection(groupId, resourcePath);
+            var cacheKey = RuntimeResourceKey(groupId, selection, resourcePath);
+            if (RuntimeResourceCache.TryGetValue(cacheKey, out var cached) &&
+                GodotObject.IsInstanceValid(cached))
+            {
+                return cached;
+            }
+
+            RuntimeResourceCache.Remove(cacheKey);
+            return LoadRuntimeResourcesForSelection(
+                groupId,
+                selection,
+                [resourcePath],
+                includeProviderDependencies)[resourcePath];
+        }
+    }
+
+    public static T WithCharacterIconResource<T>(
+        string groupId,
+        string resourcePath,
+        Func<Resource, T> callback,
+        bool includeProviderDependencies = false)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        lock (Sync)
+        {
+            var selection = ResolveCharacterIconResourceSelection(groupId, resourcePath);
+            return WithRuntimeResourcesForSelection(
+                groupId,
+                selection,
+                [resourcePath],
+                resources => callback(resources[resourcePath]),
+                includeProviderDependencies,
+                takeOverCanonicalPaths: false);
+        }
+    }
+
     public static Texture2D? GetRelicIconOverride(string resourcePath)
     {
         lock (Sync)
@@ -3549,6 +3683,30 @@ internal static class SkinService
             return Catalog.IsRuntimeProviderOption(groupId, selection) &&
                    !Catalog.IsResourceBackedOption(groupId, selection) &&
                    Catalog.GetRuntimeImagePath(groupId, selection) != null;
+        }
+    }
+
+    public static bool ShouldDeferCharacterIconResourceToExternalRuntime(
+        string groupId,
+        string resourcePath)
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return false;
+            }
+
+            var visualSelection = GetVisualSelection(groupId);
+            var iconSelection = ResolveCharacterIconResourceSelection(
+                groupId,
+                resourcePath);
+            return iconSelection.Equals(
+                       visualSelection,
+                       StringComparison.OrdinalIgnoreCase) &&
+                   Catalog.IsRuntimeProviderOption(groupId, visualSelection) &&
+                   !Catalog.IsResourceBackedOption(groupId, visualSelection) &&
+                   Catalog.GetRuntimeImagePath(groupId, visualSelection) != null;
         }
     }
 
@@ -3941,21 +4099,40 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            _ = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-            if (TryGetCachedRuntimeResources(groupId, resourcePaths, out var cached))
-            {
-                return cached;
-            }
-
-            // Keep the fast cache path above, but do the first load through the callback form so
-            // callers that need to instantiate a PackedScene can run that instantiation while
-            // the temporary dependency pack is still mounted.
-            return WithRuntimeResources(
+            return LoadRuntimeResourcesForSelection(
                 groupId,
+                GetVisualSelection(groupId),
                 resourcePaths,
-                resources => resources,
                 includeProviderDependencies);
         }
+    }
+
+    private static IReadOnlyDictionary<string, Resource> LoadRuntimeResourcesForSelection(
+        string groupId,
+        string selection,
+        IReadOnlyCollection<string> resourcePaths,
+        bool includeProviderDependencies)
+    {
+        _ = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        if (TryGetCachedRuntimeResources(
+                groupId,
+                selection,
+                resourcePaths,
+                out var cached))
+        {
+            return cached;
+        }
+
+        // Keep the fast cache path above, but do the first load through the callback form so
+        // callers that need to instantiate a PackedScene can run that instantiation while
+        // the temporary dependency pack is still mounted.
+        return WithRuntimeResourcesForSelection(
+            groupId,
+            selection,
+            resourcePaths,
+            resources => resources,
+            includeProviderDependencies,
+            takeOverCanonicalPaths: false);
     }
 
     /// <summary>
@@ -3977,88 +4154,106 @@ internal static class SkinService
 
         lock (Sync)
         {
-            var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-            var loadStarted = Stopwatch.GetTimestamp();
             var selection = GetVisualSelection(groupId);
-            var prepared = GetOrPrepareRuntimeOverlay(
-                catalog,
+            return WithRuntimeResourcesForSelection(
                 groupId,
                 selection,
                 resourcePaths,
-                includeProviderDependencies);
-            if (prepared.OverlayPath != null &&
-                !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
-            {
-                throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
-            }
-
-            if (prepared.CanonicalDependencyPaths.Count > 0)
-            {
-                if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
-                {
-                    trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
-                }
-
-                trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
-            }
-
-            var reused = TryGetRuntimeResourceBundle(prepared.Key, out var resources);
-            if (!reused)
-            {
-                resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
-                foreach (var pair in prepared.ResourcePaths)
-                {
-                    var resource = ResourceLoader.Load<Resource>(
-                        pair.Value,
-                        null,
-                        ResourceLoader.CacheMode.IgnoreDeep);
-                    if (resource == null)
-                    {
-                        throw new InvalidOperationException($"无法加载独立皮肤资源：{pair.Value}");
-                    }
-
-                    resources[pair.Key] = resource;
-                    RuntimeResourceCache[RuntimeResourceKey(groupId, pair.Key)] = resource;
-                }
-
-                RuntimeResourceBundles[prepared.Key] = new RuntimeResourceBundleState(resources);
-            }
-
-            T callbackResult;
-            IDisposable? canonicalOwnership = null;
-            try
-            {
-                if (takeOverCanonicalPaths)
-                {
-                    canonicalOwnership = BeginCanonicalRuntimeResourceOwnership(
-                        groupId,
-                        prepared.ResourcePaths,
-                        resources);
-                }
-
-                callbackResult = callback(resources);
-            }
-            finally
-            {
-                canonicalOwnership?.Dispose();
-                if (prepared.RestoreGroups.Count > 0)
-                {
-                    // Binary resources cannot rewrite all of their internal paths. Restore only
-                    // the other catalog groups that the temporary dependency pack actually
-                    // touched; rebuilding every skin group here caused a full localization reload
-                    // on the first character click.
-                    MountOverlay(prepared.RestoreGroups);
-                }
-            }
-
-            var elapsedMs = Stopwatch.GetElapsedTime(loadStarted).TotalMilliseconds;
-            ModLog.Info(
-                $"已{(reused ? "复用" : "加载")} {groupId} 的 {resources.Count} 个独立资源；" +
-                $"运行包={prepared.FileCount} 个文件/{prepared.FileSize / 1024d:F1} KiB，" +
-                $"耗时={elapsedMs:F1} ms：{prepared.AliasToken}");
-            return callbackResult;
+                callback,
+                includeProviderDependencies,
+                takeOverCanonicalPaths);
         }
+    }
+
+    private static T WithRuntimeResourcesForSelection<T>(
+        string groupId,
+        string selection,
+        IReadOnlyCollection<string> resourcePaths,
+        Func<IReadOnlyDictionary<string, Resource>, T> callback,
+        bool includeProviderDependencies,
+        bool takeOverCanonicalPaths)
+    {
+        var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        var loadStarted = Stopwatch.GetTimestamp();
+        var prepared = GetOrPrepareRuntimeOverlay(
+            catalog,
+            groupId,
+            selection,
+            resourcePaths,
+            includeProviderDependencies);
+        if (prepared.OverlayPath != null &&
+            !ProjectSettings.LoadResourcePack(prepared.OverlayPath, replaceFiles: true))
+        {
+            throw new InvalidOperationException("Godot 拒绝加载已准备的独立皮肤场景资源包。");
+        }
+
+        if (prepared.CanonicalDependencyPaths.Count > 0)
+        {
+            if (!RuntimeCanonicalDependencyPaths.TryGetValue(groupId, out var trackedPaths))
+            {
+                trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                RuntimeCanonicalDependencyPaths[groupId] = trackedPaths;
+            }
+
+            trackedPaths.UnionWith(prepared.CanonicalDependencyPaths);
+        }
+
+        var reused = TryGetRuntimeResourceBundle(prepared.Key, out var resources);
+        if (!reused)
+        {
+            resources = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in prepared.ResourcePaths)
+            {
+                var resource = ResourceLoader.Load<Resource>(
+                    pair.Value,
+                    null,
+                    ResourceLoader.CacheMode.IgnoreDeep);
+                if (resource == null)
+                {
+                    throw new InvalidOperationException($"无法加载独立皮肤资源：{pair.Value}");
+                }
+
+                resources[pair.Key] = resource;
+                RuntimeResourceCache[
+                    RuntimeResourceKey(groupId, selection, pair.Key)] = resource;
+            }
+
+            RuntimeResourceBundles[prepared.Key] = new RuntimeResourceBundleState(resources);
+        }
+
+        T callbackResult;
+        IDisposable? canonicalOwnership = null;
+        try
+        {
+            if (takeOverCanonicalPaths)
+            {
+                canonicalOwnership = BeginCanonicalRuntimeResourceOwnership(
+                    groupId,
+                    prepared.ResourcePaths,
+                    resources);
+            }
+
+            callbackResult = callback(resources);
+        }
+        finally
+        {
+            canonicalOwnership?.Dispose();
+            if (prepared.RestoreGroups.Count > 0)
+            {
+                // Binary resources cannot rewrite all of their internal paths. Restore only
+                // the other catalog groups that the temporary dependency pack actually
+                // touched; rebuilding every skin group here caused a full localization reload
+                // on the first character click.
+                MountOverlay(prepared.RestoreGroups);
+            }
+        }
+
+        var elapsedMs = Stopwatch.GetElapsedTime(loadStarted).TotalMilliseconds;
+        ModLog.Info(
+            $"已{(reused ? "复用" : "加载")} {groupId} 的 {resources.Count} 个独立资源；" +
+            $"运行包={prepared.FileCount} 个文件/{prepared.FileSize / 1024d:F1} KiB，" +
+            $"耗时={elapsedMs:F1} ms：{prepared.AliasToken}");
+        return callbackResult;
     }
 
     private static IDisposable BeginCanonicalRuntimeResourceOwnership(
@@ -4205,13 +4400,14 @@ internal static class SkinService
 
     private static bool TryGetCachedRuntimeResources(
         string groupId,
+        string selection,
         IReadOnlyCollection<string> resourcePaths,
         out IReadOnlyDictionary<string, Resource> resources)
     {
         var loaded = new Dictionary<string, Resource>(StringComparer.OrdinalIgnoreCase);
         foreach (var resourcePath in resourcePaths)
         {
-            var cacheKey = RuntimeResourceKey(groupId, resourcePath);
+            var cacheKey = RuntimeResourceKey(groupId, selection, resourcePath);
             if (!RuntimeResourceCache.TryGetValue(cacheKey, out var cached) ||
                 !GodotObject.IsInstanceValid(cached))
             {
@@ -5282,7 +5478,13 @@ internal static class SkinService
     }
 
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
-        groupId + "\n" + GetVisualSelection(groupId) + "\n" + resourcePath;
+        RuntimeResourceKey(groupId, GetVisualSelection(groupId), resourcePath);
+
+    private static string RuntimeResourceKey(
+        string groupId,
+        string selection,
+        string resourcePath) =>
+        groupId + "\n" + selection + "\n" + resourcePath;
 
     private static string RuntimeOverlayKey(
         string groupId,
@@ -5368,6 +5570,42 @@ internal static class SkinService
             {
                 Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
             }
+
+            var selected = Config.GetSelection(group.Id);
+            if (!Catalog.IsCharacterIconOnlyOption(group.Id, selected))
+            {
+                continue;
+            }
+
+            if (!Config.CharacterIconSelections.TryGetValue(group.Id, out var iconSelection) ||
+                iconSelection.Equals(
+                    FollowCharacterSkinIconSelectionId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                Config.CharacterIconSelections[group.Id] = selected;
+            }
+
+            Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
+            ModLog.Info(
+                $"已将 {group.DisplayName} 的旧版纯头像选择迁移到独立头像来源。");
+        }
+
+        foreach (var pair in Config.CharacterIconSelections.ToArray())
+        {
+            if (pair.Value.Equals(
+                    FollowCharacterSkinIconSelectionId,
+                    StringComparison.OrdinalIgnoreCase) ||
+                pair.Value.Equals(
+                    SkinCatalog.BaseOptionId,
+                    StringComparison.OrdinalIgnoreCase) ||
+                Catalog.GetCharacterIconOptions(pair.Key).Any(option =>
+                    option.Id.Equals(pair.Value, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            Config.CharacterIconSelections.Remove(pair.Key);
+            ModLog.Info($"头像来源 {pair.Key}/{pair.Value} 已不存在，已恢复为跟随角色皮肤。");
         }
 
         SanitizeMonsterSkinPriorities();

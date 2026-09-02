@@ -190,6 +190,7 @@ foreach (var group in catalog.Groups)
         var modeResources = option.RuntimeMonsterVisualMode?.ResourcePaths.Count ?? 0;
         Console.WriteLine(
             $"  {option.Id}\t{option.Name}\t{option.Assets.Count} assets" +
+            (option.IsCharacterIconOnly ? ", icon-only" : string.Empty) +
             (option.RuntimeMonsterVisualMode == null
                 ? string.Empty
                 : $", mode={option.RuntimeMonsterVisualMode.ModeName}, {modeResources} mode resources"));
