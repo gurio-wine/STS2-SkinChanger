@@ -31,6 +31,8 @@
              Link="DirectCharacterRuntimeTargetPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/BoundedLruCache.cs"
              Link="BoundedLruCache.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/AliasedDependencyCachePolicy.cs"
+             Link="AliasedDependencyCachePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedProviderDisplayPolicy.cs"
              Link="ManagedProviderDisplayPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedCharacterAssetRegistrationPolicy.cs"

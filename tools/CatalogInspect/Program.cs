@@ -2501,6 +2501,46 @@ static void RunCardExportSelfTest(string gamePckPath)
             throw new InvalidOperationException("batched exported portrait isolation failed");
         }
 
+        const string baselineStrike =
+            "res://images/atlases/card_atlas.sprites/ironclad/strike_ironclad.tres";
+        var baselineOverlay = catalog.BuildIsolatedCardResource(
+            "ironclad",
+            SkinCatalog.BaseOptionId,
+            baselineStrike,
+            useSelectedProvider: false,
+            "self-test/baseline-atlas");
+        if (!baselineOverlay.CanReuseExternalDependencies ||
+            !baselineOverlay.SourceAliases.Keys.Any(path =>
+                path.StartsWith(
+                    "res://images/atlases/card_atlas_",
+                    StringComparison.OrdinalIgnoreCase) &&
+                path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "baseline card atlas was not isolated for shared dependency reuse");
+        }
+
+        var sharedAtlasPath = baselineOverlay.SourceAliases.Keys.Single(path =>
+            path.StartsWith(
+                "res://images/atlases/card_atlas_",
+                StringComparison.OrdinalIgnoreCase) &&
+            path.EndsWith(".png", StringComparison.OrdinalIgnoreCase));
+        var sharedAtlasAlias = baselineOverlay.SourceAliases[sharedAtlasPath];
+        var nextBaselineOverlay = catalog.BuildIsolatedCardResources(
+            "ironclad",
+            SkinCatalog.BaseOptionId,
+            ["res://images/atlases/card_atlas.sprites/ironclad/bash.tres"],
+            useSelectedProvider: false,
+            "self-test/baseline-atlas",
+            baselineOverlay.ResourcePaths);
+        if (!nextBaselineOverlay.CanReuseExternalDependencies ||
+            nextBaselineOverlay.SourceAliases.GetValueOrDefault(sharedAtlasPath) != sharedAtlasAlias ||
+            nextBaselineOverlay.Files.ContainsKey(sharedAtlasAlias))
+        {
+            throw new InvalidOperationException(
+                "later card batches did not reuse the already mounted private atlas");
+        }
+
         Console.WriteLine(
             "card export self-test passed: static, BOM-framed, animation fallback, " +
             "CardPortraitsCore modes, unique shared-pool routing and batched isolation");

@@ -127,6 +127,22 @@ Require(
     portraitCache.ContainsKey("C") &&
     !portraitCache.ContainsKey("B"),
     "卡图缓存达到上限后必须只逐出最久未使用项，避免浏览多个分类后 GPU 资源无限累积。");
+
+Require(
+    AliasedDependencyCachePolicy.CanReuseExternalDependencies(
+        [new AliasedDependencyReference(true, ["res://images/card_atlas.png"])],
+        ["res://images/card_atlas.png"]),
+    "文本卡牌资源的全部依赖都已复制到唯一别名时，应复用同一图集而不是为每张牌深度重载。");
+Require(
+    !AliasedDependencyCachePolicy.CanReuseExternalDependencies(
+        [new AliasedDependencyReference(false, ["res://images/card_atlas.png"])],
+        ["res://images/card_atlas.png"]),
+    "仍在二进制资源中引用公共路径时必须保持深度隔离，避免不同皮肤串用缓存。");
+Require(
+    !AliasedDependencyCachePolicy.CanReuseExternalDependencies(
+        [new AliasedDependencyReference(true, ["res://images/unmapped_atlas.png"])],
+        ["res://images/card_atlas.png"]),
+    "存在未复制的公共依赖时不能启用依赖复用。");
 Require(
     ManagedProviderDisplayPolicy.IsManaged(
         "KaguyaSilentRavenSkin",

@@ -1977,7 +1977,9 @@ internal static class SkinService
                             resource = ResourceLoader.Load<T>(
                                 isolatedPath,
                                 null,
-                                ResourceLoader.CacheMode.IgnoreDeep);
+                                overlay.CanReuseExternalDependencies
+                                    ? ResourceLoader.CacheMode.Ignore
+                                    : ResourceLoader.CacheMode.IgnoreDeep);
                         }
                     }
                     catch
@@ -2550,7 +2552,9 @@ internal static class SkinService
         var loaded = ResourceLoader.Load<Texture2D>(
             isolatedPath,
             null,
-            ResourceLoader.CacheMode.IgnoreDeep);
+            overlay.CanReuseExternalDependencies
+                ? ResourceLoader.CacheMode.Ignore
+                : ResourceLoader.CacheMode.IgnoreDeep);
         if (loaded != null)
         {
             return loaded;
@@ -2613,7 +2617,12 @@ internal static class SkinService
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
         var sourceName = useSelectedProvider ? "provider" : "base";
-        var cacheKey = $"{groupId}\n{selection}\n{sourceName}";
+        // Every unskinned card comes from the same game resource set. Share one baseline
+        // namespace across card groups so switching categories does not upload another copy of
+        // the game's giant card atlas to the GPU.
+        var cacheKey = useSelectedProvider
+            ? $"{groupId}\n{selection}\n{sourceName}"
+            : $"{SkinCatalog.BaseOptionId}\n{sourceName}";
         if (!IsolatedCardOverlayCache.TryGetValue(cacheKey, out var state))
         {
             state = new IsolatedCardOverlayState(cacheKey);
@@ -2638,22 +2647,37 @@ internal static class SkinService
         try
         {
             var generation = ++_overlayGeneration;
+            state.AliasToken ??=
+                $"{_sessionId}/{generation:D3}_card_{sourceName}";
             overlay = catalog.BuildIsolatedCardResources(
                 groupId,
                 selection,
                 missingPaths,
                 useSelectedProvider,
-                $"{_sessionId}/{generation:D3}_card_{sourceName}");
+                state.AliasToken,
+                state.ResourcePaths);
+            var newFiles = overlay.Files
+                .Where(pair => !state.MountedFilePaths.Contains(pair.Key))
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+            if (newFiles.Count == 0)
+            {
+                throw new InvalidOperationException("独立卡牌资源包没有产生新的可挂载文件。");
+            }
             var overlayPath = System.IO.Path.Combine(
                 OS.GetUserDataDir(),
                 $"sts2_skin_overlay_{_sessionId}_{generation:D3}_card_{sourceName}.pck");
-            PckArchive.Write(overlayPath, overlay.Files);
+            PckArchive.Write(overlayPath, newFiles);
             if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
             {
                 throw new InvalidOperationException("Godot 拒绝加载批量独立卡牌资源包。");
             }
             state.OverlayPaths.Add(overlayPath);
+            state.MountedFilePaths.UnionWith(newFiles.Keys);
             state.CanonicalRedirectPaths.UnionWith(overlay.CanonicalDependencyPaths);
+            state.CanReuseExternalDependencies &= overlay.CanReuseExternalDependencies;
             CardCanonicalResourceOwners.MarkActivated(
                 state.OwnerId,
                 overlay.CanonicalDependencyPaths);
@@ -4895,13 +4919,17 @@ internal static class SkinService
     private sealed class IsolatedCardOverlayState(string ownerId)
     {
         public string OwnerId { get; } = ownerId;
+        public string? AliasToken { get; set; }
         public Dictionary<string, string> ResourcePaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> UnavailablePaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
         public List<string> OverlayPaths { get; } = [];
+        public HashSet<string> MountedFilePaths { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> CanonicalRedirectPaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
+        public bool CanReuseExternalDependencies { get; set; } = true;
     }
 
     private sealed record LocalizationCacheState(

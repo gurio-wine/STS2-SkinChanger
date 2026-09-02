@@ -2871,7 +2871,8 @@ internal sealed partial class SkinCatalog : IDisposable
     private void IncludeAliasedDependencyChain(
         SkinOption? selected,
         List<RuntimeResource> resources,
-        bool reuseMountedPrivateDependencies = false)
+        bool reuseMountedPrivateDependencies = false,
+        IReadOnlySet<string>? availableSourcePaths = null)
     {
         var selectedIndexes = selected == null
             ? []
@@ -2881,9 +2882,13 @@ internal sealed partial class SkinCatalog : IDisposable
                     StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
-        var discoveredResourcesByPath = resources.ToDictionary(
-            resource => resource.SourcePath,
-            StringComparer.OrdinalIgnoreCase);
+        var discoveredResourcePaths = resources
+            .Select(resource => resource.SourcePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (availableSourcePaths != null)
+        {
+            discoveredResourcePaths.UnionWith(availableSourcePaths);
+        }
         var queue = new Queue<RuntimeResource>(resources);
         var selectableProviderFiles = reuseMountedPrivateDependencies
             ? Groups
@@ -2924,7 +2929,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 var allowImportedPayloadAlias = IsRewritableTextResource(dependencyFile.Path);
                 foreach (var sourcePath in EnumerateDependencyPaths(dependencyFile))
                 {
-                    if (discoveredResourcesByPath.ContainsKey(sourcePath) ||
+                    if (discoveredResourcePaths.Contains(sourcePath) ||
                         !CanAliasDependency(sourcePath, allowImportedPayloadAlias))
                     {
                         continue;
@@ -2953,7 +2958,7 @@ internal sealed partial class SkinCatalog : IDisposable
             PckResourceIndex? index,
             bool requiresAliasedLocation = false)
         {
-            if (discoveredResourcesByPath.ContainsKey(sourcePath))
+            if (discoveredResourcePaths.Contains(sourcePath))
             {
                 return;
             }
@@ -2964,7 +2969,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 return;
             }
 
-            discoveredResourcesByPath[sourcePath] = runtimeResource;
+            discoveredResourcePaths.Add(sourcePath);
             queue.Enqueue(runtimeResource);
 
             // The globally mounted visual overlay already exposes the selected provider's
@@ -3344,7 +3349,8 @@ internal sealed partial class SkinCatalog : IDisposable
         string selectionId,
         IEnumerable<string> resourcePaths,
         bool useSelectedProvider,
-        string aliasToken)
+        string aliasToken,
+        IReadOnlyDictionary<string, string>? existingResourcePaths = null)
     {
         CardSkinOption? option = null;
         if (useSelectedProvider)
@@ -3382,26 +3388,26 @@ internal sealed partial class SkinCatalog : IDisposable
             throw new InvalidOperationException("找不到任何可隔离的卡牌资源。");
         }
 
-        if (useSelectedProvider && option != null)
-        {
-            // Exported AtlasTexture .res files keep their source atlas page as an external
-            // resource (often under a provider-private ArtWorks/Atlas directory). The card slice
-            // alone therefore loads successfully but renders blank unless its shared PNG/imported
-            // payload joins the same isolated overlay. Reuse the full resource dependency walker
-            // so custom materials and other nested card resources are covered as well.
-            IncludeAliasedDependencyChain(
-                new SkinOption(
+        // Include the complete dependency chain for both selected and baseline portraits. The
+        // baseline AtlasTexture files share a large game atlas; without aliasing that atlas first,
+        // IgnoreDeep decodes and uploads a separate copy for every visible card.
+        IncludeAliasedDependencyChain(
+            useSelectedProvider && option != null
+                ? new SkinOption(
                     option.Id,
                     option.Name,
                     option.Assets,
-                    ProviderId: option.ProviderId),
-                resources);
-        }
+                    ProviderId: option.ProviderId)
+                : null,
+            resources,
+            availableSourcePaths: existingResourcePaths?.Keys.ToHashSet(
+                StringComparer.OrdinalIgnoreCase));
 
         return BuildAliasedResourceOverlay(
             resources,
             resources.Select(resource => resource.SourcePath).ToArray(),
-            aliasToken);
+            aliasToken,
+            existingSourceAliases: existingResourcePaths);
     }
 
     private ResourceAsset? ResolveCardProviderAsset(CardSkinOption option, string resourcePath)
@@ -3436,12 +3442,18 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyCollection<RuntimeResource> resources,
         IReadOnlyCollection<string> resourcePaths,
         string aliasToken,
-        bool redirectDirectScenesAtCanonicalPath = false)
+        bool redirectDirectScenesAtCanonicalPath = false,
+        IReadOnlyDictionary<string, string>? existingSourceAliases = null)
     {
-        var sourceAliases = resources.ToDictionary(
-            resource => resource.SourcePath,
-            resource => BuildRuntimeSourceAlias(resource, aliasToken),
-            StringComparer.OrdinalIgnoreCase);
+        var sourceAliases = existingSourceAliases == null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(
+                existingSourceAliases,
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var resource in resources)
+        {
+            sourceAliases[resource.SourcePath] = BuildRuntimeSourceAlias(resource, aliasToken);
+        }
         var payloadAliases = resources
             .SelectMany(resource => resource.PayloadFiles)
             .DistinctBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
@@ -3449,6 +3461,20 @@ internal sealed partial class SkinCatalog : IDisposable
                 file => file.Path,
                 file => $"res://sts2_skin_runtime/{aliasToken}/_payload/{file.Path[6..]}",
                 StringComparer.OrdinalIgnoreCase);
+        var canReuseExternalDependencies =
+            AliasedDependencyCachePolicy.CanReuseExternalDependencies(
+                resources
+                    .SelectMany(resource => new[] { resource.DirectFile, resource.RemapFile }
+                        .Where(file => file != null)
+                        .Cast<ResourceFile>()
+                        .Concat(resource.PayloadFiles))
+                    .DistinctBy(
+                        file => file.Archive.Path + "\n" + file.Path,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(file => new AliasedDependencyReference(
+                        IsRewritableTextResource(file.Path),
+                        EnumerateDependencyPaths(file).ToArray())),
+                sourceAliases.Keys.Concat(payloadAliases.Keys));
 
         var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var canonicalRedirectPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3534,7 +3560,9 @@ internal sealed partial class SkinCatalog : IDisposable
         // before a hot-swapped node enters the tree. Binary PackedScenes cannot have those paths
         // rewritten safely in-place.
         var aliasedResourcePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var resourcePath in sourceAliases.Keys)
+        foreach (var resourcePath in resources
+                     .Select(resource => resource.SourcePath)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!sourceAliases.TryGetValue(resourcePath, out var aliasedResourcePath) ||
                 (!files.ContainsKey(aliasedResourcePath) &&
@@ -3552,7 +3580,8 @@ internal sealed partial class SkinCatalog : IDisposable
             files,
             sourceAliases,
             payloadAliases,
-            canonicalRedirectPaths);
+            canonicalRedirectPaths,
+            canReuseExternalDependencies);
     }
 
     internal static byte[] RewriteAliasedResourceBytes(
@@ -6797,7 +6826,8 @@ internal sealed record RuntimeResourceOverlay(
     IReadOnlyDictionary<string, byte[]> Files,
     IReadOnlyDictionary<string, string> SourceAliases,
     IReadOnlyDictionary<string, string> PayloadAliases,
-    IReadOnlySet<string> CanonicalDependencyPaths);
+    IReadOnlySet<string> CanonicalDependencyPaths,
+    bool CanReuseExternalDependencies = false);
 
 internal readonly record struct RelicTextureRect(float X, float Y, float Width, float Height);
 
