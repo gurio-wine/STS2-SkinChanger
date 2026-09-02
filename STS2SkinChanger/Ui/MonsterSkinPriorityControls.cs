@@ -432,6 +432,10 @@ internal static partial class ContextualSkinControls
                 Populate(selector, group);
             }
 
+            CharacterAppearanceRuntime.RefreshRunMonsterSelection(
+                MonsterCategoryGroupCache.GetValueOrDefault(categoryId) ?? [],
+                "局内怪物地区优先级");
+
             BuildMonsterPriorityOverlay(screen, selector, overlay);
             RefreshMonsterPriorityButton(selector);
             if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))

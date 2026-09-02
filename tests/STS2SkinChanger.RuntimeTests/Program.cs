@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
@@ -90,12 +91,78 @@ var focusRuntimeProviders = skinServiceType.GetMethod(
     "FocusRuntimeProviderBehaviorsOnGroups",
     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
     binder: null,
-    types: [typeof(IEnumerable<string>), typeof(bool), typeof(string)],
+    types: [typeof(IEnumerable<string>), typeof(IReadOnlyCollection<string>), typeof(string)],
     modifiers: null);
 if (focusRuntimeProviders == null)
 {
     throw new InvalidOperationException(
-        "缺少按可见分组收窄运行期提供者的方法；角色专用范围仍会让商人、先古和怪物代码常驻。");
+        "缺少按可见分组与地区环境授权分别收窄运行期提供者的方法；" +
+        "否则单只怪物皮肤仍会错误启用整局背景和音乐。");
+}
+
+var managedLoaderType = typeof(Entry).Assembly.GetType(
+                            "STS2SkinChanger.Core.ManagedSkinModLoader") ??
+                        throw new InvalidOperationException("找不到托管皮肤提供者加载器。");
+var configureRunEnvironment = managedLoaderType.GetMethod(
+    "ConfigureRunEnvironmentProviders",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: [typeof(IEnumerable<string>)],
+    modifiers: null);
+if (configureRunEnvironment == null)
+{
+    throw new InvalidOperationException(
+        "托管皮肤提供者缺少独立的地区环境行为开关，无法隔离背景、地图音乐和战斗 BGM。");
+}
+
+var inRunScopePatch = RequirePatchType(
+    "STS2SkinChanger.Ui.InRunCharacterAppearanceRuntimePatch",
+    "缺少进入对局时的皮肤运行期范围补丁。");
+var inRunScopePrefix = RequirePatchMethod(inRunScopePatch, "Prefix");
+if (inRunScopePrefix.ReturnType != typeof(void) ||
+    inRunScopePrefix.GetParameters() is not [{ ParameterType: var runType }] ||
+    runType.FullName != "MegaCrit.Sts2.Core.Nodes.NRun")
+{
+    throw new InvalidOperationException(
+        "地区环境范围必须在 NRun._Ready 原方法播放地图音乐之前建立，不能留到后置阶段。");
+}
+
+var appearanceRuntimeType = typeof(Entry).Assembly.GetType(
+                                "STS2SkinChanger.Ui.CharacterAppearanceRuntime") ??
+                            throw new InvalidOperationException("找不到局内外观运行时。");
+var bossPresentationRefresh = appearanceRuntimeType.GetMethod(
+    "RefreshCurrentBossPresentation",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+if (bossPresentationRefresh == null ||
+    bossPresentationRefresh.GetParameters() is not [{ ParameterType: var affectedGroupsType }] ||
+    affectedGroupsType != typeof(IReadOnlySet<string>))
+{
+    throw new InvalidOperationException(
+        "局内修改本阶段 Boss 皮肤后必须有统一刷新地图大图标、顶部图标和悬浮名称的入口。");
+}
+
+var bossMapPointPresentationPatch = RequirePatchType(
+    "STS2SkinChanger.Ui.BossMapPointSkinPresentationPatch",
+    "缺少 Boss 地图大图标的托管初始化补丁；新生成的地图节点不会应用当前皮肤。");
+var bossMapPointPostfix = RequirePatchMethod(bossMapPointPresentationPatch, "Postfix");
+if (bossMapPointPostfix.GetParameters() is not [{ ParameterType: var bossMapPointType }] ||
+    bossMapPointType != typeof(NBossMapPoint))
+{
+    throw new InvalidOperationException(
+        "Boss 地图大图标初始化必须把当前 NBossMapPoint 交给统一的可逆皮肤流程。");
+}
+
+var managedBossReadyTarget = managedLoaderType.GetMethod(
+    "IsNodeReadyPresentationTarget",
+    BindingFlags.Static | BindingFlags.NonPublic) ??
+    throw new InvalidOperationException("找不到第三方场景初始化隔离判定。");
+var bossReady = AccessTools.Method(typeof(NBossMapPoint), nameof(NBossMapPoint._Ready)) ??
+                throw new InvalidOperationException("当前游戏版本缺少 NBossMapPoint._Ready。");
+if (managedBossReadyTarget.Invoke(null, [bossReady]) is not true)
+{
+    throw new InvalidOperationException(
+        "第三方 Boss 地图 _Ready 补丁必须由 Skin Changer 隔离并可逆重放；" +
+        "否则切离 CZN 后会残留其地图大图标。");
 }
 
 var multiplayerMerchantPatch = RequirePatchType(

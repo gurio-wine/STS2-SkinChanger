@@ -94,7 +94,7 @@ internal static partial class ContextualSkinControls
         {
             SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                 [group.Id],
-                includeRunWideMonsterProviders: false,
+                runEnvironmentProviderIds: [],
                 reason: "选角预览");
         }
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
@@ -155,10 +155,19 @@ internal static partial class ContextualSkinControls
         var group = monster == null
             ? null
             : FindGroup(monster.Id.Entry, monster.GetType().Name);
-        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
-            group == null ? [] : [group.Id],
-            includeRunWideMonsterProviders: false,
-            reason: "怪物图鉴");
+        if (NRun.Instance != null)
+        {
+            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+                group == null ? [] : [group.Id],
+                reason: "局内怪物图鉴");
+        }
+        else
+        {
+            SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                group == null ? [] : [group.Id],
+                runEnvironmentProviderIds: [],
+                reason: "怪物图鉴");
+        }
         RegisterRefresh(
             selector,
             group == null || monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster, group.Id));
@@ -654,6 +663,9 @@ internal static partial class ContextualSkinControls
         // This method is shared by several selectors. The multiplayer sync method verifies that
         // groupId belongs to the current local character, so non-character selectors are ignored.
         MultiplayerSkinSync.OnLocalCharacterSelectionChanged(groupId);
+        CharacterAppearanceRuntime.RefreshRunMonsterSelection(
+            [groupId],
+            "局内怪物图鉴");
 
         if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
         {
@@ -2337,11 +2349,20 @@ internal static class BestiarySelectionSkinPatch
 internal static class BestiaryRuntimeProviderScopePatch
 {
     [HarmonyPostfix]
-    private static void Postfix() =>
+    private static void Postfix()
+    {
+        if (NRun.Instance != null)
+        {
+            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+                reason: "关闭局内怪物图鉴");
+            return;
+        }
+
         SkinService.FocusRuntimeProviderBehaviorsOnGroups(
             [],
-            includeRunWideMonsterProviders: false,
+            runEnvironmentProviderIds: [],
             reason: "关闭怪物图鉴");
+    }
 }
 
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]

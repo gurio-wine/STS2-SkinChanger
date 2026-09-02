@@ -7,10 +7,10 @@
     <RootNamespace>STS2SkinChanger</RootNamespace>
     <!-- Internal test marker. Keep SkinChanger.json's three-part public version for the game's
          SemanticVersion parser; the four-part marker is emitted by Entry at startup. -->
-    <Version>0.9.130.3</Version>
-    <AssemblyVersion>0.9.130.3</AssemblyVersion>
-    <FileVersion>0.9.130.3</FileVersion>
-    <InformationalVersion>0.9.130.3</InformationalVersion>
+    <Version>0.9.130.4</Version>
+    <AssemblyVersion>0.9.130.4</AssemblyVersion>
+    <FileVersion>0.9.130.4</FileVersion>
+    <InformationalVersion>0.9.130.4</InformationalVersion>
     <!-- Keep the managed Mod architecture-neutral so the same Workshop DLL loads in both
          Windows x64 and macOS Apple Silicon game processes. -->
     <PlatformTarget>AnyCPU</PlatformTarget>

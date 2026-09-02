@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.Orbs;
 using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
@@ -199,13 +200,14 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
-    internal static void FocusRuntimeProviderBehaviorsOnRunCharacters()
-        => FocusRuntimeProviderBehaviorsOnRunContext(reason: "对局角色");
+    internal static void FocusRuntimeProviderBehaviorsOnRunCharacters(NRun? run = null)
+        => FocusRuntimeProviderBehaviorsOnRunContext(reason: "对局角色", run: run);
 
     internal static long FocusRuntimeProviderBehaviorsOnRunContext(
         IEnumerable<string>? additionalGroupIds = null,
         string reason = "对局",
-        long? expectedScopeLease = null)
+        long? expectedScopeLease = null,
+        NRun? run = null)
     {
         try
         {
@@ -213,7 +215,8 @@ internal static class CharacterAppearanceRuntime
                 .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase) ??
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (RunStateField?.GetValue(NRun.Instance) is IRunState runState)
+            var activeRun = run ?? NRun.Instance;
+            if (activeRun != null && RunStateField?.GetValue(activeRun) is IRunState runState)
             {
                 groupIds.UnionWith(runState.Players
                     .Select(player => ContextualSkinControls.FindGroup(
@@ -221,6 +224,28 @@ internal static class CharacterAppearanceRuntime
                         player.Character.GetType().Name)?.Id)
                     .Where(groupId => groupId != null)
                     .Cast<string>());
+                var actMonsterGroupIds = ResolveMonsterGroupIds(runState.Act.AllMonsters);
+                groupIds.UnionWith(ResolveCurrentBossGroupIds(runState));
+                var runEnvironmentProviders = SkinService.GetMonsterRunEnvironmentProviders(
+                    "act:" + runState.Act.Id.Entry.ToLowerInvariant(),
+                    actMonsterGroupIds);
+
+                if (expectedScopeLease.HasValue)
+                {
+                    return SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                        expectedScopeLease.Value,
+                        groupIds,
+                        runEnvironmentProviders,
+                        reason,
+                        out var scopeLease)
+                        ? scopeLease
+                        : 0;
+                }
+
+                return SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                    groupIds,
+                    runEnvironmentProviders,
+                    reason);
             }
 
             if (expectedScopeLease.HasValue)
@@ -228,7 +253,7 @@ internal static class CharacterAppearanceRuntime
                 return SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
                     expectedScopeLease.Value,
                     groupIds,
-                    includeRunWideMonsterProviders: NRun.Instance != null,
+                    runEnvironmentProviderIds: [],
                     reason,
                     out var scopeLease)
                     ? scopeLease
@@ -237,7 +262,7 @@ internal static class CharacterAppearanceRuntime
 
             return SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                 groupIds,
-                includeRunWideMonsterProviders: NRun.Instance != null,
+                runEnvironmentProviderIds: [],
                 reason);
         }
         catch (Exception exception)
@@ -245,6 +270,27 @@ internal static class CharacterAppearanceRuntime
             ModLog.Warn("收窄当前场景皮肤行为失败：" + exception.GetBaseException().Message);
             return 0;
         }
+    }
+
+    private static HashSet<string> ResolveMonsterGroupIds(IEnumerable<MonsterModel> monsters) =>
+        monsters
+            .Select(monster => ContextualSkinControls.FindGroup(
+                monster.Id.Entry,
+                monster.GetType().Name)?.Id)
+            .Where(groupId => groupId != null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static HashSet<string> ResolveCurrentBossGroupIds(IRunState runState)
+    {
+        var encounters = new[]
+        {
+            runState.Act.BossEncounter,
+            runState.Act.SecondBossEncounter
+        };
+        return ResolveMonsterGroupIds(encounters
+            .Where(encounter => encounter != null)
+            .SelectMany(encounter => encounter!.AllPossibleMonsters));
     }
 
     internal static void FocusRuntimeProviderBehaviorsOnCombatRoom(ICombatRoomVisuals visuals)
@@ -299,6 +345,22 @@ internal static class CharacterAppearanceRuntime
                 reason: "对局角色",
                 expectedScopeLease: combatScopeLease);
         }
+    }
+
+    internal static void RefreshRunMonsterSelection(
+        IEnumerable<string> affectedGroupIds,
+        string reason)
+    {
+        if (NRun.Instance == null)
+        {
+            return;
+        }
+
+        var affected = affectedGroupIds
+            .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        FocusRuntimeProviderBehaviorsOnRunContext(affected, reason);
+        RefreshCurrentBossPresentation(affected);
     }
 
     internal static NCreature? GetCurrentCreature(Player? player)
@@ -846,6 +908,7 @@ internal static class CharacterAppearanceRuntime
 
             var refreshErrors = RefreshLiveCreatures(affectedGroups);
             RefreshCurrentCharacterUi();
+            RefreshCurrentBossPresentation(affectedGroups);
             MultiplayerSkinSync.OnLocalCharacterSelectionChanged(groupId);
             if (refreshErrors.Count > 0)
             {
@@ -1615,6 +1678,79 @@ internal static class CharacterAppearanceRuntime
         RefreshCurrentEnergyCounter(player);
     }
 
+    internal static void RefreshCurrentBossPresentation(IReadOnlySet<string> affectedGroups)
+    {
+        var run = NRun.Instance;
+        if (run == null || RunStateField?.GetValue(run) is not IRunState runState)
+        {
+            return;
+        }
+
+        var bossGroupIds = ResolveCurrentBossGroupIds(runState);
+        if (!bossGroupIds.Overlaps(affectedGroups))
+        {
+            return;
+        }
+
+        try
+        {
+            var selectedProviders = bossGroupIds
+                .Select(SkinService.GetSelectedRuntimeProvider)
+                .Where(providerId => providerId != null)
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (NMapScreen.Instance is { } mapScreen)
+            {
+                foreach (var bossPoint in EnumerateDescendants<NBossMapPoint>(mapScreen))
+                {
+                    RefreshBossMapPointPresentation(bossPoint, selectedProviders);
+                }
+            }
+
+            var topBarBossIcon = run.GlobalUi.TopBar.BossIcon;
+            topBarBossIcon.RefreshBossIcon();
+            NHoverTipSet.Remove(topBarBossIcon);
+            ModLog.Info(
+                $"已刷新当前阶段 Boss 的地图图标、顶部图标和名称；" +
+                $"受影响外观组={string.Join(",", bossGroupIds.Intersect(affectedGroups))}。");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn(
+                "刷新当前阶段 Boss 地图/顶部外观失败：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
+    internal static void RefreshBossMapPointPresentation(NBossMapPoint bossPoint)
+    {
+        var run = NRun.Instance;
+        if (run == null || RunStateField?.GetValue(run) is not IRunState runState)
+        {
+            return;
+        }
+
+        var selectedProviders = ResolveCurrentBossGroupIds(runState)
+            .Select(SkinService.GetSelectedRuntimeProvider)
+            .Where(providerId => providerId != null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        RefreshBossMapPointPresentation(bossPoint, selectedProviders);
+    }
+
+    private static void RefreshBossMapPointPresentation(
+        NBossMapPoint bossPoint,
+        IEnumerable<string> selectedProviders)
+    {
+        ManagedSkinModLoader.RestoreAllNodeReadyBehaviors(bossPoint);
+        foreach (var providerId in selectedProviders)
+        {
+            ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, bossPoint);
+        }
+    }
+
     private static void RefreshVisibleRelicIcons(NRun run)
     {
         foreach (var relic in EnumerateDescendants<NRelic>(run))
@@ -1742,9 +1878,13 @@ internal partial class CharacterAppearanceRuntimeNode : Node
 [HarmonyPatch(typeof(NRun), nameof(NRun._Ready))]
 internal static class InRunCharacterAppearanceRuntimePatch
 {
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NRun __instance) =>
+        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters(__instance);
+
     private static void Postfix(NRun __instance)
     {
-        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
         // Children added from an NRun._Ready postfix are not guaranteed to receive their own
         // _Ready callback in every Godot build. Attach explicitly; the node below still owns
         // per-frame ticking and teardown once the run is live.
@@ -1758,6 +1898,15 @@ internal static class InRunCharacterAppearanceRuntimePatch
             });
         }
     }
+}
+
+[HarmonyPatch(typeof(NBossMapPoint), nameof(NBossMapPoint._Ready))]
+internal static class BossMapPointSkinPresentationPatch
+{
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NBossMapPoint __instance) =>
+        CharacterAppearanceRuntime.RefreshBossMapPointPresentation(__instance);
 }
 
 [HarmonyPatch(typeof(NCreature), nameof(NCreature._Ready))]

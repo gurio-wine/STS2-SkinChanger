@@ -656,10 +656,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         ClearPreview();
         _otherActionSelector.Visible = false;
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
-        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
-            [],
-            includeRunWideMonsterProviders: false,
-            reason: "关闭其它图鉴");
+        FocusPreviewRuntimeProviderBehaviors(null, "关闭其它图鉴");
         base.OnSubmenuClosed();
     }
 
@@ -1744,10 +1741,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         RebuildOtherActionButtons(OtherCreatureCatalog.Find(entry.Id));
         var group = FindOtherGroup(entry);
-        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
-            group == null ? [] : [group.Id],
-            includeRunWideMonsterProviders: false,
-            reason: "其它图鉴预览");
+        FocusPreviewRuntimeProviderBehaviors(group, "其它图鉴预览");
         PopulateSkinDropdown(group);
         RebuildOtherPreview(entry);
         RefreshAuxiliaryPreviewControls();
@@ -1817,13 +1811,28 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         var group = AncientCompendiumEntry.FindGroup(ancient.Id.Entry);
-        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
-            group == null ? [] : [group.Id],
-            includeRunWideMonsterProviders: false,
-            reason: "先古图鉴预览");
+        FocusPreviewRuntimeProviderBehaviors(group, "先古图鉴预览");
         PopulateSkinDropdown(group);
         RebuildPreview(ancient);
         RefreshAuxiliaryPreviewControls();
+    }
+
+    private static void FocusPreviewRuntimeProviderBehaviors(
+        SkinGroup? group,
+        string reason)
+    {
+        if (NRun.Instance != null)
+        {
+            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+                group == null ? [] : [group.Id],
+                reason);
+            return;
+        }
+
+        SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            group == null ? [] : [group.Id],
+            runEnvironmentProviderIds: [],
+            reason);
     }
 
     private void PopulateSkinDropdown(SkinGroup? group)

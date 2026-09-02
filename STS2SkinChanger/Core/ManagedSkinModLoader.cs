@@ -5,9 +5,11 @@ using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Nodes.Audio;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Pck;
 using System.Collections.Concurrent;
@@ -52,10 +54,15 @@ internal static class ManagedSkinModLoader
     private static readonly HashSet<Assembly> ActivatingProviderAssemblies = [];
     private static readonly HashSet<MethodBase> ScopedMonsterIsEnabledMethods = [];
     private static readonly HashSet<MethodBase> ScopedMonsterSetEnabledMethods = [];
+    private static readonly HashSet<MethodBase> RunEnvironmentCallbackMethods = [];
+    private static readonly HashSet<string> RunEnvironmentProviderIds =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<MethodBase, Func<object, string?>>
         ScopedMonsterIdAccessors = new();
     private static readonly Harmony ScopedMonsterSelectionHarmony =
         new($"{Entry.ModId}.scoped-monster-selection");
+    private static readonly Harmony RunEnvironmentCallbackHarmony =
+        new($"{Entry.ModId}.run-environment-callbacks");
     // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
     // remove the provider's patches when it is deselected, but it cannot undo a direct C# event
     // subscription. Remember successful initializers so a hot re-selection does not register the
@@ -100,6 +107,79 @@ internal static class ManagedSkinModLoader
 
     public static bool IsProviderAssemblyActive(Assembly assembly) =>
         ActiveProviderRuntimes.Values.Any(runtime => ReferenceEquals(runtime.Assembly, assembly));
+
+    public static void ConfigureRunEnvironmentProviders(IEnumerable<string> providerIds)
+    {
+        var next = providerIds
+            .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (RunEnvironmentProviderIds.SetEquals(next))
+        {
+            return;
+        }
+
+        var runtimesToDisable = ActiveProviderRuntimes
+            .Where(pair => pair.Value.RunEnvironmentEnabled && !next.Contains(pair.Key))
+            .Select(pair => pair.Value)
+            .ToArray();
+        // Invoke a provider's own stop/reset callback while its authorization guard still allows
+        // the call. This clears state such as "combat active" as well as its audio node, so
+        // re-enabling the same region provider after combat cannot remain stuck in the old room.
+        foreach (var runtime in runtimesToDisable)
+        {
+            ResetRunEnvironmentControllers(runtime.RunEnvironmentControllers);
+        }
+
+        RunEnvironmentProviderIds.Clear();
+        RunEnvironmentProviderIds.UnionWith(next);
+        var refreshNativeMusic = false;
+        var restoreNativeMusic = runtimesToDisable.Length > 0;
+        foreach (var pair in ActiveProviderRuntimes.ToArray())
+        {
+            var shouldEnable = next.Contains(pair.Key);
+            if (pair.Value.RunEnvironmentEnabled == shouldEnable)
+            {
+                continue;
+            }
+
+            if (shouldEnable)
+            {
+                PatchProviderCallbacks(pair.Value.RunEnvironmentPatches);
+            }
+            else
+            {
+                UnpatchProviderCallbacks(pair.Value.RunEnvironmentPatches);
+                StopRunEnvironmentControllers(pair.Value.RunEnvironmentControllers);
+            }
+
+            pair.Value.RunEnvironmentEnabled = shouldEnable;
+            refreshNativeMusic = true;
+            ModLog.Info(
+                $"已{(shouldEnable ? "启用" : "停用")} {pair.Key} 的地区背景与音乐行为；" +
+                "怪物模型、动作和 Boss 图标仍按各自皮肤选择独立生效。");
+        }
+
+        if (refreshNativeMusic && NRunMusicController.Instance is { } musicController)
+        {
+            try
+            {
+                if (restoreNativeMusic)
+                {
+                    musicController.StopCustomMusic();
+                }
+
+                musicController.UpdateMusic();
+                musicController.UpdateTrack();
+                musicController.UpdateAmbience();
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    "恢复当前地区原生音乐失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+    }
 
     public static void EnsureScopedMonsterSelectionRouter(string providerId)
     {
@@ -560,6 +640,8 @@ internal static class ManagedSkinModLoader
     private static void ActivateProvider(string providerId, ProviderAssembly provider)
     {
         Assembly? assembly = null;
+        IReadOnlyList<object> runEnvironmentControllers = [];
+        var runEnvironmentEnabled = RunEnvironmentProviderIds.Contains(providerId);
         var activationStarted = Stopwatch.GetTimestamp();
         var assemblyLoadedAt = activationStarted;
         var initializedAt = activationStarted;
@@ -642,7 +724,8 @@ internal static class ManagedSkinModLoader
                 {
                     if (ProviderRuntimeBlueprints.TryGetValue(providerId, out var blueprint))
                     {
-                        PatchProviderCallbacks(blueprint.BehaviorPatches);
+                        PatchProviderCallbacks(blueprint.BehaviorPatches.Where(patch =>
+                            runEnvironmentEnabled || !IsRunEnvironmentPatch(patch)));
                     }
                     else
                     {
@@ -671,7 +754,29 @@ internal static class ManagedSkinModLoader
                     IsManagedCharacterPresentationPatch(patch) ||
                     IsManagedNodeReadyPresentationPatch(patch))
                 .ToArray();
+            IReadOnlyList<ProviderPatch> behaviorPatches = installedPatches
+                .Where(patch =>
+                    !IsManagedResourceOwnershipPatch(patch) &&
+                    !IsManagedCharacterPresentationPatch(patch) &&
+                    !IsManagedNodeReadyPresentationPatch(patch))
+                .ToArray();
+            if (skippedInitializer &&
+                ProviderRuntimeBlueprints.TryGetValue(providerId, out var behaviorBlueprint))
+            {
+                behaviorPatches = behaviorBlueprint.BehaviorPatches;
+            }
+
+            var isRunWideMonsterProvider =
+                ScopedMonsterProviderAssemblies.TryGetValue(assembly, out var scopedProviderId) &&
+                scopedProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase);
+            var runEnvironmentPatches = isRunWideMonsterProvider
+                ? behaviorPatches.Where(IsRunEnvironmentPatch).ToArray()
+                : [];
             UnpatchProviderCallbacks(managedPatches);
+            if (!runEnvironmentEnabled)
+            {
+                UnpatchProviderCallbacks(runEnvironmentPatches);
+            }
 
             var leakedManagedPatches = CaptureProviderPatches(assembly)
                 .Where(patch =>
@@ -685,7 +790,16 @@ internal static class ManagedSkinModLoader
                     $"仍有 {leakedManagedPatches.Length} 个资源/选角呈现补丁未能隔离");
             }
 
-            var behaviorPatches = CaptureProviderPatches(assembly);
+            if (isRunWideMonsterProvider)
+            {
+                EnsureRunEnvironmentCallbackGuards(providerId, assembly);
+                runEnvironmentControllers = DiscoverRunEnvironmentControllers(assembly);
+                if (!runEnvironmentEnabled)
+                {
+                    StopRunEnvironmentControllers(runEnvironmentControllers);
+                }
+            }
+
             if (!ProviderRuntimeBlueprints.ContainsKey(providerId))
             {
                 ProviderRuntimeBlueprints[providerId] = new ProviderRuntimeBlueprint(
@@ -705,11 +819,16 @@ internal static class ManagedSkinModLoader
                 assembly,
                 behaviorPatches,
                 presentationPatches,
-                nodeReadyPresentationPatches);
+                nodeReadyPresentationPatches,
+                runEnvironmentPatches,
+                runEnvironmentControllers,
+                runEnvironmentEnabled);
             ModLog.Info(
                 $"已按当前选择启用 {provider.Name} 的完整视觉会话：" +
                 $"所需资源已由本 Mod 挂载，{managedPatches.Length} 个资源/选角呈现入口已交由本 Mod 接管，" +
-                $"保留 {behaviorPatches.Count} 个原作者动画/场景行为补丁；" +
+                $"保留 {behaviorPatches.Count - (runEnvironmentEnabled ? 0 : runEnvironmentPatches.Length)} " +
+                $"个原作者动画/场景行为补丁，地区环境行为=" +
+                $"{(runEnvironmentEnabled ? "启用" : "停用")}；" +
                 "切换离开后会自动卸载行为补丁。");
         }
         catch (Exception exception)
@@ -776,6 +895,7 @@ internal static class ManagedSkinModLoader
         RestoreNodeReadyBehaviors(runtime);
         RestoreCharacterPresentations(runtime);
         UnpatchProviderCallbacks(runtime.Patches);
+        StopRunEnvironmentControllers(runtime.RunEnvironmentControllers);
         if (!IsProviderAssemblyActive(runtime.Assembly))
         {
             SuspendProviderNodes(runtime.Assembly);
@@ -994,6 +1114,7 @@ internal static class ManagedSkinModLoader
         (typeof(NCreature).IsAssignableFrom(target.DeclaringType) ||
          typeof(NMerchantRoom).IsAssignableFrom(target.DeclaringType) ||
          typeof(NRestSiteRoom).IsAssignableFrom(target.DeclaringType) ||
+         typeof(NBossMapPoint).IsAssignableFrom(target.DeclaringType) ||
          // Merchant skin DLLs usually put their visual override on the button/hand/inventory
          // node itself. Keep these checks name-based so both formal and beta game assemblies
          // remain compatible even when one build moves a merchant node to another namespace.
@@ -1645,6 +1766,20 @@ internal static class ManagedSkinModLoader
         }
     }
 
+    public static void RestoreAllNodeReadyBehaviors(Node node)
+    {
+        if (!GodotObject.IsInstanceValid(node))
+        {
+            return;
+        }
+
+        var nodeId = node.GetInstanceId();
+        foreach (var runtime in ActiveProviderRuntimes.Values.ToArray())
+        {
+            RestoreNodeReadyMutation(runtime, nodeId);
+        }
+    }
+
     private static NodeReadyMutation? BuildNodeReadyMutation(
         Node node,
         NodeReadyBaseline baseline)
@@ -2073,6 +2208,151 @@ internal static class ManagedSkinModLoader
         }
 
         return true;
+    }
+
+    private static bool IsRunEnvironmentPatch(ProviderPatch patch) =>
+        RuntimeProviderScopePolicy.IsRunEnvironmentPatchTarget(
+            patch.Target.DeclaringType?.Name ?? string.Empty,
+            patch.Target.Name);
+
+    private static void EnsureRunEnvironmentCallbackGuards(
+        string providerId,
+        Assembly assembly)
+    {
+        var prefix = new HarmonyMethod(AccessTools.Method(
+            typeof(ManagedSkinModLoader),
+            nameof(RunEnvironmentCallbackPrefix)));
+        var patched = 0;
+        foreach (var method in GetLoadableTypes(assembly)
+                     .Where(type => RuntimeProviderScopePolicy.IsRunEnvironmentControllerType(
+                         type.Name))
+                     .SelectMany(type => type.GetMethods(
+                         BindingFlags.Instance | BindingFlags.Static |
+                         BindingFlags.Public | BindingFlags.NonPublic |
+                         BindingFlags.DeclaredOnly))
+                     .Where(method => method.ReturnType == typeof(void) &&
+                                      !method.IsAbstract &&
+                                      !method.ContainsGenericParameters &&
+                                      method.GetMethodBody() != null &&
+                                      RuntimeProviderScopePolicy.IsRunEnvironmentCallback(
+                                          method.DeclaringType?.Name ?? string.Empty,
+                                          method.Name)))
+        {
+            if (!RunEnvironmentCallbackMethods.Add(method))
+            {
+                continue;
+            }
+
+            RunEnvironmentCallbackHarmony.Patch(method, prefix: prefix);
+            patched++;
+        }
+
+        if (patched > 0)
+        {
+            ModLog.Info(
+                $"已为 {providerId} 的 {patched} 个背景/音乐直接回调安装地区授权保护。 ");
+        }
+    }
+
+    private static bool RunEnvironmentCallbackPrefix(MethodBase __originalMethod)
+    {
+        var assembly = __originalMethod.DeclaringType?.Assembly;
+        return assembly != null &&
+               ProviderIdsByAssembly.TryGetValue(assembly, out var providerIds) &&
+               providerIds.Any(providerId =>
+                   RunEnvironmentProviderIds.Contains(providerId) &&
+                   ActiveProviderRuntimes.ContainsKey(providerId));
+    }
+
+    private static IReadOnlyList<object> DiscoverRunEnvironmentControllers(Assembly assembly)
+    {
+        var controllers = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var field in GetLoadableTypes(assembly)
+                     .SelectMany(type => type.GetFields(
+                         BindingFlags.Static | BindingFlags.Public |
+                         BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                     .Where(field => RuntimeProviderScopePolicy.IsRunEnvironmentControllerType(
+                         field.FieldType.Name)))
+        {
+            try
+            {
+                if (field.GetValue(null) is { } controller)
+                {
+                    controllers.Add(controller);
+                }
+            }
+            catch
+            {
+                // Optional provider state may not be initialized on every supported game version.
+            }
+        }
+
+        return controllers.ToArray();
+    }
+
+    private static void StopRunEnvironmentControllers(IEnumerable<object> controllers)
+    {
+        foreach (var controller in controllers)
+        {
+            for (var type = controller.GetType(); type != null; type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(
+                             BindingFlags.Instance | BindingFlags.Public |
+                             BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    try
+                    {
+                        if (field.GetValue(controller) is not AudioStreamPlayer player)
+                        {
+                            continue;
+                        }
+
+                        if (GodotObject.IsInstanceValid(player))
+                        {
+                            player.Stop();
+                            player.QueueFree();
+                        }
+
+                        if (!field.IsInitOnly)
+                        {
+                            field.SetValue(controller, null);
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        ModLog.Warn(
+                            $"停止第三方地区音乐节点失败：{type.FullName}.{field.Name}：" +
+                            exception.GetBaseException().Message);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ResetRunEnvironmentControllers(IEnumerable<object> controllers)
+    {
+        foreach (var controller in controllers)
+        {
+            try
+            {
+                var reset = controller.GetType().GetMethod(
+                    "OnNativeStopRequested",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    binder: null,
+                    types: Type.EmptyTypes,
+                    modifiers: null);
+                if (reset?.ReturnType == typeof(void))
+                {
+                    reset.Invoke(controller, null);
+                }
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"重置第三方地区音乐状态失败：{controller.GetType().FullName}：" +
+                    exception.GetBaseException().Message);
+            }
+        }
     }
 
     private static void UnpatchProviderCallbacks(IEnumerable<ProviderPatch> patches)
@@ -2840,8 +3120,12 @@ internal static class ManagedSkinModLoader
         Assembly Assembly,
         IReadOnlyList<ProviderPatch> Patches,
         IReadOnlyList<ProviderPatch> CharacterPresentationPatches,
-        IReadOnlyList<ProviderPatch> NodeReadyPresentationPatches)
+        IReadOnlyList<ProviderPatch> NodeReadyPresentationPatches,
+        IReadOnlyList<ProviderPatch> RunEnvironmentPatches,
+        IReadOnlyList<object> RunEnvironmentControllers,
+        bool InitialRunEnvironmentEnabled)
     {
+        public bool RunEnvironmentEnabled { get; set; } = InitialRunEnvironmentEnabled;
         public Dictionary<ulong, CharacterPresentationMutation> CharacterPresentationMutations { get; } = [];
         public Dictionary<ulong, NodeReadyMutation> NodeReadyMutations { get; } = [];
         public Dictionary<ulong, NodeReadyBaseline> PendingNodeReadyBaselines { get; } = [];

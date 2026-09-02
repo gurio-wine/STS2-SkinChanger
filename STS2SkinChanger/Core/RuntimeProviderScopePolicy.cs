@@ -9,7 +9,12 @@ internal sealed record RuntimeProviderCandidate(
 
 internal sealed record RuntimeProviderScope(
     IReadOnlyCollection<string> VisibleGroupIds,
-    bool IncludeRunWideMonsterProviders);
+    IReadOnlyCollection<string> RunEnvironmentProviderIds);
+
+internal sealed record RuntimeProviderPriorityCandidate(
+    string ProviderId,
+    bool Enabled,
+    bool IsRunWideMonsterProvider);
 
 internal static class RuntimeProviderScopePolicy
 {
@@ -32,13 +37,45 @@ internal static class RuntimeProviderScopePolicy
         }
 
         var visibleGroups = scope.VisibleGroupIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var runEnvironmentProviders = scope.RunEnvironmentProviderIds.ToHashSet(
+            StringComparer.OrdinalIgnoreCase);
         return available
             .Where(candidate =>
-                (scope.IncludeRunWideMonsterProviders && candidate.IsRunWideMonsterProvider) ||
-                candidate.GroupIds.Any(visibleGroups.Contains))
+                candidate.GroupIds.Any(visibleGroups.Contains) ||
+                (candidate.IsRunWideMonsterProvider &&
+                 runEnvironmentProviders.Contains(candidate.ProviderId)))
             .Select(candidate => candidate.ProviderId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
+
+    public static IReadOnlySet<string> SelectRunEnvironmentProviders(
+        IEnumerable<RuntimeProviderPriorityCandidate> priorities)
+    {
+        var selected = priorities.FirstOrDefault(candidate =>
+            candidate.Enabled && candidate.IsRunWideMonsterProvider);
+        return selected == null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>([selected.ProviderId], StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static bool IsRunEnvironmentPatchTarget(string typeName, string methodName) =>
+        IsRunEnvironmentIdentifier(typeName) || IsRunEnvironmentIdentifier(methodName);
+
+    public static bool IsRunEnvironmentCallback(string typeName, string methodName) =>
+        (methodName.StartsWith("On", StringComparison.Ordinal) ||
+         methodName.StartsWith("Set", StringComparison.Ordinal) ||
+         methodName.StartsWith("Update", StringComparison.Ordinal) ||
+         methodName.StartsWith("Play", StringComparison.Ordinal)) &&
+        (IsRunEnvironmentIdentifier(typeName) || IsRunEnvironmentIdentifier(methodName));
+
+    public static bool IsRunEnvironmentControllerType(string typeName) =>
+        IsRunEnvironmentIdentifier(typeName);
+
+    private static bool IsRunEnvironmentIdentifier(string value) =>
+        value.Contains("music", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("bgm", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("background", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("battlefield", StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed class ScopedMonsterSelectionSnapshot

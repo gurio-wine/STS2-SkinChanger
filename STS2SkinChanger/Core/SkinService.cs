@@ -667,12 +667,12 @@ internal static class SkinService
     public static void FocusRuntimeProviderBehaviorsOnCharacters(IEnumerable<string> groupIds)
         => FocusRuntimeProviderBehaviorsOnGroups(
             groupIds,
-            includeRunWideMonsterProviders: false,
+            runEnvironmentProviderIds: [],
             reason: "角色预览");
 
     public static long FocusRuntimeProviderBehaviorsOnGroups(
         IEnumerable<string> groupIds,
-        bool includeRunWideMonsterProviders,
+        IReadOnlyCollection<string> runEnvironmentProviderIds,
         string reason)
     {
         lock (Sync)
@@ -680,8 +680,12 @@ internal static class SkinService
             var nextScope = groupIds
                 .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var nextRunEnvironmentProviders = runEnvironmentProviderIds
+                .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (_runtimeProviderBehaviorScope is { } currentScope &&
-                currentScope.IncludeRunWideMonsterProviders == includeRunWideMonsterProviders &&
+                currentScope.RunEnvironmentProviderIds.ToHashSet(
+                    StringComparer.OrdinalIgnoreCase).SetEquals(nextRunEnvironmentProviders) &&
                 currentScope.VisibleGroupIds.ToHashSet(
                     StringComparer.OrdinalIgnoreCase).SetEquals(nextScope))
             {
@@ -690,7 +694,7 @@ internal static class SkinService
 
             _runtimeProviderBehaviorScope = new RuntimeProviderScope(
                 nextScope,
-                includeRunWideMonsterProviders);
+                nextRunEnvironmentProviders);
             var scopeLease = RuntimeProviderScopeLeases.Claim();
             var catalog = Catalog;
             if (catalog == null)
@@ -699,6 +703,7 @@ internal static class SkinService
             }
 
             var activeProviders = GetActiveRuntimeProviders(catalog);
+            ManagedSkinModLoader.ConfigureRunEnvironmentProviders(nextRunEnvironmentProviders);
             ManagedSkinModLoader.DeactivateProvidersExcept(activeProviders);
             EnsureScopedRuntimeProviderResourcesMounted(catalog, activeProviders);
             foreach (var providerId in activeProviders.Where(
@@ -727,7 +732,7 @@ internal static class SkinService
     public static bool TryFocusRuntimeProviderBehaviorsOnGroups(
         long expectedScopeLease,
         IEnumerable<string> groupIds,
-        bool includeRunWideMonsterProviders,
+        IReadOnlyCollection<string> runEnvironmentProviderIds,
         string reason,
         out long scopeLease)
     {
@@ -741,7 +746,7 @@ internal static class SkinService
 
             scopeLease = FocusRuntimeProviderBehaviorsOnGroups(
                 groupIds,
-                includeRunWideMonsterProviders,
+                runEnvironmentProviderIds,
                 reason);
             return true;
         }
@@ -1527,6 +1532,57 @@ internal static class SkinService
                         option.TotalMonsters);
                 })
                 .ToArray();
+        }
+    }
+
+    public static IReadOnlySet<string> GetMonsterRunEnvironmentProviders(
+        string categoryId,
+        IEnumerable<string> groupIds)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null)
+            {
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var groups = groupIds
+                .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(groupId => catalog.Groups.FirstOrDefault(group =>
+                    group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase)))
+                .Where(group => group != null)
+                .Cast<SkinGroup>()
+                .ToArray();
+            var options = groups
+                .SelectMany(group => group.Options)
+                .DistinctBy(option => option.Id, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var knownOptionIds = options
+                .Select(option => option.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var priorities = Config.MonsterSkinPriorities.TryGetValue(categoryId, out var configured)
+                ? configured
+                    .Where(entry => knownOptionIds.Contains(entry.OptionId))
+                    .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+                : [];
+            foreach (var option in options.Where(option => priorities.All(entry =>
+                         !entry.OptionId.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
+            {
+                priorities.Add(new MonsterSkinPriorityEntry(option.Id, Enabled: true));
+            }
+
+            var candidates = priorities.Select(entry =>
+            {
+                var providerId = catalog.ResolveVisualProviderId(entry.OptionId);
+                return new RuntimeProviderPriorityCandidate(
+                    providerId,
+                    entry.Enabled,
+                    catalog.ProviderUsesScopedMonsterRuntime(providerId));
+            });
+            return RuntimeProviderScopePolicy.SelectRunEnvironmentProviders(candidates);
         }
     }
 
@@ -3234,6 +3290,24 @@ internal static class SkinService
         }
     }
 
+    public static string? GetSelectedRuntimeProvider(string groupId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null)
+            {
+                return null;
+            }
+
+            var selection = GetVisualSelection(groupId);
+            return catalog.IsRuntimeProviderOption(groupId, selection) &&
+                   catalog.TryGetVisualProviderId(groupId, selection, out var providerId)
+                ? providerId
+                : null;
+        }
+    }
+
     public static void ApplySelectedVisualPostfix(
         string groupId,
         object model,
@@ -4078,6 +4152,8 @@ internal static class SkinService
         RefreshScopedMonsterSelectionSnapshot(catalog);
         FrameworkCompatibilityLayer.SynchronizeSelections(catalog, GetVisualSelections());
         var activeRuntimeProviders = GetActiveRuntimeProviders(catalog);
+        ManagedSkinModLoader.ConfigureRunEnvironmentProviders(
+            _runtimeProviderBehaviorScope?.RunEnvironmentProviderIds ?? []);
         // Provider callbacks must be gone before a baseline replacement pack is mounted. Otherwise
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
@@ -4453,6 +4529,10 @@ internal static class SkinService
             selectedProviders.UnionWith(catalog.GetFullySelectedFullRuntimeProviders(selections));
             selectedProviders.UnionWith(catalog.GetSelectedInteractiveRuntimeProviders(selections));
             selectedProviders.UnionWith(catalog.GetSelectedScopedMonsterRuntimeProviders(selections));
+        }
+        if (_runtimeProviderBehaviorScope is { } scope)
+        {
+            selectedProviders.UnionWith(scope.RunEnvironmentProviderIds);
         }
         var candidates = selectedProviders.Select(providerId => new RuntimeProviderCandidate(
             providerId,

@@ -125,26 +125,82 @@ Require(
 Require(
     RuntimeProviderScopePolicy.SelectActiveProviders(
         runtimeProviderCandidates,
-        new RuntimeProviderScope([], IncludeRunWideMonsterProviders: false)).Count == 0,
+        new RuntimeProviderScope([], RunEnvironmentProviderIds: [])).Count == 0,
     "启动阶段没有可见外观分组时，不得提前执行任何第三方皮肤初始化器。");
 Require(
     RuntimeProviderScopePolicy.SelectActiveProviders(
             runtimeProviderCandidates,
-            new RuntimeProviderScope(["WATCHER"], IncludeRunWideMonsterProviders: false))
+            new RuntimeProviderScope(["WATCHER"], RunEnvironmentProviderIds: []))
         .SetEquals(["MeirinWatcherSkin"]),
     "选角界面只能激活当前预览角色，不能同时保留商人、先古或怪物皮肤代码。");
 Require(
     RuntimeProviderScopePolicy.SelectActiveProviders(
             runtimeProviderCandidates,
-            new RuntimeProviderScope(["pael"], IncludeRunWideMonsterProviders: false))
+            new RuntimeProviderScope(["pael"], RunEnvironmentProviderIds: []))
         .SetEquals(["AncientWaifus_Beta"]),
     "其它图鉴只应激活当前预览实体所属的交互提供者。");
 Require(
     RuntimeProviderScopePolicy.SelectActiveProviders(
             runtimeProviderCandidates,
-            new RuntimeProviderScope(["watcher"], IncludeRunWideMonsterProviders: true))
+            new RuntimeProviderScope(["watcher"], RunEnvironmentProviderIds: []))
+        .SetEquals(["MeirinWatcherSkin"]),
+    "进入对局不能因为某个怪物提供者拥有整局行为，就无条件启用它的地图、背景和音乐；" +
+    "这些环境行为必须由当前地区的皮肤优先级另行授权。");
+Require(
+    RuntimeProviderScopePolicy.SelectActiveProviders(
+            runtimeProviderCandidates,
+            new RuntimeProviderScope(
+                ["watcher"],
+                RunEnvironmentProviderIds: ["cznenemyskin"]))
         .SetEquals(["MeirinWatcherSkin", "CznEnemySkin"]),
-    "进入对局后应保留当前角色，并允许负责地图、背景和音乐的整局怪物提供者运行。");
+    "当前地区优先级明确选中的整局怪物提供者应获得地图、背景和音乐环境权。");
+Require(
+    RuntimeProviderScopePolicy.SelectActiveProviders(
+            runtimeProviderCandidates,
+            new RuntimeProviderScope(
+                ["watcher"],
+                RunEnvironmentProviderIds: ["Merchant2CuteII"]))
+        .SetEquals(["MeirinWatcherSkin"]),
+    "地区环境授权不得误激活不具备整局怪物环境能力的角色或商人提供者。");
+
+var environmentPriorityCandidates = new RuntimeProviderPriorityCandidate[]
+{
+    new("DisabledMonsterPack", Enabled: false, IsRunWideMonsterProvider: true),
+    new("TextureOnlyPack", Enabled: true, IsRunWideMonsterProvider: false),
+    new("CznEnemySkin", Enabled: true, IsRunWideMonsterProvider: true),
+    new("LaterEnvironmentPack", Enabled: true, IsRunWideMonsterProvider: true)
+};
+Require(
+    RuntimeProviderScopePolicy.SelectRunEnvironmentProviders(environmentPriorityCandidates)
+        .SetEquals(["CznEnemySkin"]),
+    "地区环境只能采用优先级最高且已启用的整局怪物提供者，不能叠加多个背景或音乐来源。");
+Require(
+    RuntimeProviderScopePolicy.IsRunEnvironmentPatchTarget(
+        "EncounterModel",
+        "CreateBackground") &&
+    RuntimeProviderScopePolicy.IsRunEnvironmentPatchTarget(
+        "NRunMusicController",
+        "UpdateMusic"),
+    "战斗背景与局内音乐补丁必须归入地区环境行为，不能随单只怪物皮肤一起启用。");
+Require(
+    !RuntimeProviderScopePolicy.IsRunEnvironmentPatchTarget(
+        "NBossMapPoint",
+        "_Ready") &&
+    !RuntimeProviderScopePolicy.IsRunEnvironmentPatchTarget(
+        "MonsterModel",
+        "CreateVisuals"),
+    "Boss 图标和怪物模型仍属于具体怪物皮肤，不能被地区环境开关一并屏蔽。");
+Require(
+    RuntimeProviderScopePolicy.IsRunEnvironmentCallback(
+        "RunMusicRuntime",
+        "OnCombatBegan") &&
+    RuntimeProviderScopePolicy.IsRunEnvironmentCallback(
+        "RunMusicRuntime",
+        "SetBossMusicPhase") &&
+    !RuntimeProviderScopePolicy.IsRunEnvironmentCallback(
+        "EnemyActionPresentationRuntime",
+        "OnMoveStarted"),
+    "提供者直接订阅的音乐回调必须受地区环境授权保护，而怪物动作回调不能被误伤。");
 
 var scopedMonsterSnapshotType = typeof(RuntimeProviderScopePolicy).Assembly.GetType(
     "STS2SkinChanger.Core.ScopedMonsterSelectionSnapshot");
