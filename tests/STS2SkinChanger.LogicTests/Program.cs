@@ -12,6 +12,42 @@ static void Require(bool condition, string message)
     }
 }
 
+var cardOverlayOwners = new CanonicalResourceOwnershipTracker();
+string[] sharedCardDependencies =
+[
+    "res://images/atlases/card_atlas.sprites/silent/neutralize.tres.remap",
+    "res://images/packed/card_portraits/silent/neutralize.png.import"
+];
+Require(
+    cardOverlayOwners.RequiresActivation("silent-skin-a", sharedCardDependencies),
+    "首次使用二进制卡图皮肤时必须激活它的规范依赖桥。");
+cardOverlayOwners.MarkActivated("silent-skin-a", sharedCardDependencies);
+Require(
+    !cardOverlayOwners.RequiresActivation("silent-skin-a", sharedCardDependencies),
+    "同一皮肤连续加载多张卡牌时不能反复重挂同一个资源包。");
+cardOverlayOwners.MarkActivated("silent-skin-b", sharedCardDependencies);
+Require(
+    cardOverlayOwners.RequiresActivation("silent-skin-a", sharedCardDependencies),
+    "切到另一套卡图后再切回时，旧皮肤必须重新取得共享依赖路径；" +
+    "否则导出的 AtlasTexture 会继续显示后一套卡图或原图。");
+cardOverlayOwners.MarkActivated(
+    "token-skin",
+    ["res://images/packed/card_portraits/token/shiv.png.import"]);
+Require(
+    cardOverlayOwners.RequiresActivation("silent-skin-a", sharedCardDependencies),
+    "无关卡牌的资源包不能伪装成已恢复了被覆盖的猎手卡图依赖。");
+cardOverlayOwners.MarkActivated("silent-skin-a", sharedCardDependencies);
+cardOverlayOwners.MarkActivated(
+    "token-skin",
+    ["res://images/packed/card_portraits/token/shiv.png.import"]);
+Require(
+    !cardOverlayOwners.RequiresActivation("silent-skin-a", sharedCardDependencies),
+    "挂载不相交的卡牌资源不应让已有皮肤重复重挂。");
+cardOverlayOwners.Reset();
+Require(
+    cardOverlayOwners.RequiresActivation("silent-skin-a", sharedCardDependencies),
+    "全局卡牌覆盖恢复原版后，所有隔离卡图必须在下次使用时重新取得依赖所有权。");
+
 Require(
     ManagedModListNamePolicy.Format("Treessa Silent Skin", isManagedProvider: true) ==
     "[SC] Treessa Silent Skin",

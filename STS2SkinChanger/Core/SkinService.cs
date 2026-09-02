@@ -52,6 +52,7 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IsolatedCardOverlayState> IsolatedCardOverlayCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly CanonicalResourceOwnershipTracker CardCanonicalResourceOwners = new();
     private static readonly Dictionary<string, string> CardPreviewSelections =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, System.Reflection.MethodInfo> AncientStyleMethods =
@@ -433,6 +434,7 @@ internal static class SkinService
                 BaselineRelicIconCache.Clear();
                 FailedCardPortraitRequests.Clear();
                 IsolatedCardOverlayCache.Clear();
+                CardCanonicalResourceOwners.Reset();
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
                 AncientStyleMethods.Clear();
                 MissingAncientStyleMethods.Clear();
@@ -2567,9 +2569,11 @@ internal static class SkinService
         var cacheKey = $"{groupId}\n{selection}\n{sourceName}";
         if (!IsolatedCardOverlayCache.TryGetValue(cacheKey, out var state))
         {
-            state = new IsolatedCardOverlayState();
+            state = new IsolatedCardOverlayState(cacheKey);
             IsolatedCardOverlayCache.Add(cacheKey, state);
         }
+
+        ReactivateIsolatedCardOverlayIfNeeded(state);
 
         var missingPaths = resourcePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -2601,6 +2605,11 @@ internal static class SkinService
             {
                 throw new InvalidOperationException("Godot 拒绝加载批量独立卡牌资源包。");
             }
+            state.OverlayPaths.Add(overlayPath);
+            state.CanonicalRedirectPaths.UnionWith(overlay.CanonicalDependencyPaths);
+            CardCanonicalResourceOwners.MarkActivated(
+                state.OwnerId,
+                overlay.CanonicalDependencyPaths);
             stopwatch.Stop();
             if (missingPaths.Length > 1 || stopwatch.ElapsedMilliseconds >= 100)
             {
@@ -2629,6 +2638,31 @@ internal static class SkinService
         }
 
         return state;
+    }
+
+    private static void ReactivateIsolatedCardOverlayIfNeeded(IsolatedCardOverlayState state)
+    {
+        if (state.OverlayPaths.Count == 0 ||
+            !CardCanonicalResourceOwners.RequiresActivation(
+                state.OwnerId,
+                state.CanonicalRedirectPaths))
+        {
+            return;
+        }
+
+        foreach (var overlayPath in state.OverlayPaths)
+        {
+            if (!File.Exists(overlayPath) ||
+                !ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
+            {
+                throw new InvalidOperationException(
+                    "Godot 拒绝重新激活已缓存的独立卡牌资源包。");
+            }
+        }
+
+        CardCanonicalResourceOwners.MarkActivated(
+            state.OwnerId,
+            state.CanonicalRedirectPaths);
     }
 
     private static string? SelectProviderCardPath(
@@ -4683,6 +4717,10 @@ internal static class SkinService
         }
 
         MountArchiveOverlay(files, "cards", "Godot 拒绝加载生成的卡牌皮肤资源包。");
+        // The baseline card pack intentionally reclaims canonical source/import/remap paths.
+        // Cached binary AtlasTexture overlays must therefore reacquire only the bridge paths
+        // they actually depend on when the corresponding skin is requested again.
+        CardCanonicalResourceOwners.Reset();
     }
 
     private static void MountArchiveOverlay(
@@ -4807,11 +4845,15 @@ internal static class SkinService
     private sealed record RuntimeResourceBundleState(
         Dictionary<string, Resource> Resources);
 
-    private sealed class IsolatedCardOverlayState
+    private sealed class IsolatedCardOverlayState(string ownerId)
     {
+        public string OwnerId { get; } = ownerId;
         public Dictionary<string, string> ResourcePaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> UnavailablePaths { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
+        public List<string> OverlayPaths { get; } = [];
+        public HashSet<string> CanonicalRedirectPaths { get; } =
             new(StringComparer.OrdinalIgnoreCase);
     }
 
