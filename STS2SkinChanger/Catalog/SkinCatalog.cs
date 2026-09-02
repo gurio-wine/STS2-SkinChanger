@@ -4056,6 +4056,18 @@ internal sealed partial class SkinCatalog : IDisposable
                         continue;
                     }
 
+                    // CardPortraitsCore treats differential and Ancient entries as optional,
+                    // per-card modes. The PCK option builder below exposes those modes as
+                    // independent SkinChanger sources. Letting this legacy path also fold the
+                    // Ancient entry into the base provider would force its portrait/layout back
+                    // onto the normal source when FinalizeCardGroups merges matching IDs.
+                    if (config.AncientReplacements.Count > 0 ||
+                        config.NormalReplacements.Any(entry =>
+                            !string.IsNullOrWhiteSpace(entry.DifferentialPortrait)))
+                    {
+                        continue;
+                    }
+
                     var groupIds = config.NormalReplacements
                         .Select(entry => TryGetCardPortraitGroup(entry.PortraitPath))
                         .Concat(config.AncientReplacements.SelectMany(entry => new[]
@@ -4194,12 +4206,23 @@ internal sealed partial class SkinCatalog : IDisposable
                     normalPortraits[pair.Key] = pair.Value;
                 }
             }
-            var presentations = LoadCardPresentations(
+            var detectedPresentations = LoadCardPresentations(
                 index,
                 providerBehavior.Presentations,
                 normalPortraits.Keys
                     .Concat(exportedPortraits.Ancient.Keys)
+                    .Concat(exportedPortraits.Modes.SelectMany(mode => mode.Portraits.Keys))
                     .Distinct(StringComparer.OrdinalIgnoreCase));
+            var optionalAncientCards = exportedPortraits.Modes
+                .Where(mode => mode.UseAncientLayout)
+                .SelectMany(mode => mode.Portraits.Keys)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var presentations = detectedPresentations.ToDictionary(
+                pair => pair.Key,
+                pair => optionalAncientCards.Contains(pair.Key)
+                    ? pair.Value with { UseAncientLayout = false }
+                    : pair.Value,
+                StringComparer.OrdinalIgnoreCase);
             var standardAssets = index.Assets.Values
                 .Where(asset => IsCardArtSourcePath(asset.SourcePath))
                 .ToArray();
@@ -4219,7 +4242,8 @@ internal sealed partial class SkinCatalog : IDisposable
             if (changedAssets.Length == 0 &&
                 presentations.Count == 0 &&
                 normalPortraits.Count == 0 &&
-                exportedPortraits.Ancient.Count == 0)
+                exportedPortraits.Ancient.Count == 0 &&
+                exportedPortraits.Modes.Count == 0)
             {
                 continue;
             }
@@ -4297,6 +4321,50 @@ internal sealed partial class SkinCatalog : IDisposable
                             pair => pair.Key,
                             pair => pair.Value,
                             StringComparer.OrdinalIgnoreCase)));
+            }
+
+            foreach (var mode in exportedPortraits.Modes)
+            {
+                var modePresentations = new Dictionary<string, CardPresentationDefinition>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var cardType in mode.Portraits.Keys)
+                {
+                    if (detectedPresentations.TryGetValue(cardType, out var detected))
+                    {
+                        modePresentations[cardType] = detected with
+                        {
+                            UseAncientLayout = mode.UseAncientLayout
+                        };
+                    }
+                    else if (mode.UseAncientLayout)
+                    {
+                        modePresentations[cardType] = new CardPresentationDefinition(
+                            UseAncientLayout: true);
+                    }
+                }
+
+                var modeAssets = new Dictionary<string, ResourceAsset>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var portraitPath in mode.Portraits.Values)
+                {
+                    if (index.TryBuildAsset(portraitPath) is { } asset)
+                    {
+                        modeAssets[asset.SourcePath] = asset;
+                    }
+                }
+
+                options.Add(new CardSkinOption(
+                    index.Mod.Id + "::portrait-mode:" + mode.IdSuffix,
+                    index.Mod.Name + " · " + mode.NameMarker,
+                    new Dictionary<string, string>(
+                        mode.Portraits,
+                        StringComparer.OrdinalIgnoreCase),
+                    new Dictionary<string, AncientCardPortrait>(
+                        StringComparer.OrdinalIgnoreCase),
+                    modeAssets,
+                    index.Mod.RootPath,
+                    index.Mod.Id,
+                    Presentations: modePresentations));
             }
         }
 
@@ -4478,6 +4546,9 @@ internal sealed partial class SkinCatalog : IDisposable
         var normalPortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var ancientPortraits = new Dictionary<string, AncientCardPortrait>(
             StringComparer.OrdinalIgnoreCase);
+        var differentialPortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ancientStylePortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ancientDifferentialPortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var configPath in index.Archive.Paths.Where(path =>
                      path.EndsWith("/card_replacements.json", StringComparison.OrdinalIgnoreCase)))
@@ -4491,6 +4562,13 @@ internal sealed partial class SkinCatalog : IDisposable
                 ["ancientImage", "ancientPortrait"],
                 requireStaticKind: true,
                 overwrite: true);
+            ReadCardPortraitsCoreEntries(
+                index,
+                configPath,
+                normalPortraits,
+                differentialPortraits,
+                ancientStylePortraits,
+                ancientDifferentialPortraits);
         }
 
         foreach (var configPath in index.Archive.Paths.Where(path =>
@@ -4523,7 +4601,121 @@ internal sealed partial class SkinCatalog : IDisposable
                 overwrite: false);
         }
 
-        return new ExportedCardPortraits(normalPortraits, ancientPortraits);
+        var modes = new List<ExportedCardPortraitMode>();
+        if (differentialPortraits.Count > 0)
+        {
+            modes.Add(new ExportedCardPortraitMode(
+                "differential",
+                "{skin-changer-differential}",
+                differentialPortraits,
+                UseAncientLayout: false));
+        }
+        if (ancientStylePortraits.Count > 0)
+        {
+            modes.Add(new ExportedCardPortraitMode(
+                "ancient",
+                "{skin-changer-ancient-style}",
+                ancientStylePortraits,
+                UseAncientLayout: true));
+        }
+        if (ancientDifferentialPortraits.Count > 0)
+        {
+            modes.Add(new ExportedCardPortraitMode(
+                "ancient-differential",
+                "{skin-changer-ancient-differential}",
+                ancientDifferentialPortraits,
+                UseAncientLayout: true));
+        }
+
+        return new ExportedCardPortraits(normalPortraits, ancientPortraits, modes);
+    }
+
+    private static void ReadCardPortraitsCoreEntries(
+        PckResourceIndex index,
+        string configPath,
+        IDictionary<string, string> normalPortraits,
+        IDictionary<string, string> differentialPortraits,
+        IDictionary<string, string> ancientStylePortraits,
+        IDictionary<string, string> ancientDifferentialPortraits)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(StripUtf8Bom(
+                index.Archive.ReadFile(configPath)));
+            if (TryGetJsonProperty(document.RootElement, "normalReplacements", out var normalEntries) &&
+                normalEntries.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in normalEntries.EnumerateArray())
+                {
+                    var cardId = TryGetJsonString(entry, "cardType");
+                    if (string.IsNullOrWhiteSpace(cardId))
+                    {
+                        continue;
+                    }
+
+                    var cardType = NormalizeCardPresentationType(cardId);
+                    AddOwnedPortrait(index, entry, "portraitPath", cardType, normalPortraits);
+                    AddOwnedPortrait(index, entry, "differentialPortrait", cardType, differentialPortraits);
+                }
+            }
+
+            if (!TryGetJsonProperty(document.RootElement, "ancientReplacements", out var ancientEntries) ||
+                ancientEntries.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (var entry in ancientEntries.EnumerateArray())
+            {
+                var cardId = TryGetJsonString(entry, "cardType");
+                if (string.IsNullOrWhiteSpace(cardId))
+                {
+                    continue;
+                }
+
+                var cardType = NormalizeCardPresentationType(cardId);
+                AddOwnedPortrait(index, entry, "normalPortrait", cardType, normalPortraits);
+                var hasAncientPortrait = AddOwnedPortrait(
+                    index,
+                    entry,
+                    "ancientPortrait",
+                    cardType,
+                    ancientStylePortraits);
+                if (hasAncientPortrait)
+                {
+                    AddOwnedPortrait(
+                        index,
+                        entry,
+                        "differentialPortrait",
+                        cardType,
+                        ancientDifferentialPortraits);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"无法读取 CardPortraitsCore 配置 {configPath}: {exception.Message}");
+        }
+
+        static bool AddOwnedPortrait(
+            PckResourceIndex index,
+            JsonElement entry,
+            string property,
+            string cardType,
+            IDictionary<string, string> portraits)
+        {
+            var path = TryGetJsonString(entry, property);
+            if (string.IsNullOrWhiteSpace(path) ||
+                !path.StartsWith("res://", StringComparison.OrdinalIgnoreCase) ||
+                index.TryBuildAsset(path) == null)
+            {
+                return false;
+            }
+
+            portraits[cardType] = path;
+            return true;
+        }
     }
 
     private static void ReadExportedPortraitEntries(
@@ -6338,7 +6530,14 @@ internal sealed record AncientCardPortrait(string? NormalPortrait, string? Ancie
 
 internal sealed record ExportedCardPortraits(
     IReadOnlyDictionary<string, string> Normal,
-    IReadOnlyDictionary<string, AncientCardPortrait> Ancient);
+    IReadOnlyDictionary<string, AncientCardPortrait> Ancient,
+    IReadOnlyList<ExportedCardPortraitMode> Modes);
+
+internal sealed record ExportedCardPortraitMode(
+    string IdSuffix,
+    string NameMarker,
+    IReadOnlyDictionary<string, string> Portraits,
+    bool UseAncientLayout);
 
 internal sealed record CardPresentationDefinition(
     bool UseAncientLayout = false,
@@ -6436,6 +6635,7 @@ internal sealed class NormalCardReplacement
 {
     public string CardType { get; set; } = string.Empty;
     public string PortraitPath { get; set; } = string.Empty;
+    public string? DifferentialPortrait { get; set; }
 }
 
 internal sealed class AncientCardReplacement
@@ -6443,6 +6643,7 @@ internal sealed class AncientCardReplacement
     public string CardType { get; set; } = string.Empty;
     public string? NormalPortrait { get; set; }
     public string? AncientPortrait { get; set; }
+    public string? DifferentialPortrait { get; set; }
     public string? ConfigKey { get; set; }
     public string? PathForGrouping =>
         !string.IsNullOrWhiteSpace(AncientPortrait) ? AncientPortrait : NormalPortrait;

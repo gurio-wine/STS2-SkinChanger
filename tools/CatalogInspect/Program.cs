@@ -2222,6 +2222,25 @@ static void RunCardExportSelfTest(string gamePckPath)
                   {"cardId":"Tests.ExportCard","kind":"image","image":"res://generated/export.png"}
                 ]}
                 """),
+            ["res://card_core/card_replacements.json"] = Encoding.UTF8.GetBytes(
+                """
+                {
+                  "normalReplacements":[
+                    {"cardType":"Tests.DifferentialCard",
+                     "portraitPath":"res://card_core/card_portraits/tests/differential_normal.png",
+                     "differentialPortrait":"res://card_core/card_portraits/tests/differential_alt.png"},
+                    {"cardType":"Tests.AncientToggleCard",
+                     "portraitPath":"res://card_core/card_portraits/tests/ancient_normal.png"}
+                  ],
+                  "ancientReplacements":[
+                    {"cardType":"Tests.AncientToggleCard",
+                     "normalPortrait":"res://card_core/card_portraits/tests/ancient_normal.png",
+                     "ancientPortrait":"res://card_core/card_portraits/tests/ancient.png",
+                     "differentialPortrait":"res://card_core/card_portraits/tests/ancient_alt.png",
+                     "configKey":"TestsAncientStyle"}
+                  ]
+                }
+                """),
             ["res://generated/framed_card_project.json"] = Encoding.UTF8.Preamble.ToArray().Concat(
                 Encoding.UTF8.GetBytes(
                     """
@@ -2239,6 +2258,11 @@ static void RunCardExportSelfTest(string gamePckPath)
             ["res://generated/export.png"] = [1, 2, 3],
             ["res://generated/framed.png"] = [4, 5, 6],
             ["res://generated/fallback.png"] = [7, 8, 9],
+            ["res://card_core/card_portraits/tests/differential_normal.png"] = [21, 22, 23],
+            ["res://card_core/card_portraits/tests/differential_alt.png"] = [24, 25, 26],
+            ["res://card_core/card_portraits/tests/ancient_normal.png"] = [27, 28, 29],
+            ["res://card_core/card_portraits/tests/ancient.png"] = [30, 31, 32],
+            ["res://card_core/card_portraits/tests/ancient_alt.png"] = [33, 34, 35],
             ["res://generated/frame.tres"] = Encoding.UTF8.GetBytes(
                 "[gd_resource type=\"StyleBoxFlat\" format=3]\n"),
             ["res://Tests.ExportedCardSkin/images/cards/card_sel.png"] = [9, 9, 9],
@@ -2279,7 +2303,9 @@ static void RunCardExportSelfTest(string gamePckPath)
         {
             ["ExportCard"] = "res://generated/export.png",
             ["FramedCard"] = "res://generated/framed.png",
-            ["AnimatedCard"] = "res://generated/fallback.png"
+            ["AnimatedCard"] = "res://generated/fallback.png",
+            ["DifferentialCard"] = "res://card_core/card_portraits/tests/differential_normal.png",
+            ["AncientToggleCard"] = "res://card_core/card_portraits/tests/ancient_normal.png"
         };
         foreach (var expected in expectedPortraits)
         {
@@ -2294,6 +2320,47 @@ static void RunCardExportSelfTest(string gamePckPath)
             !string.Equals(framed.Frame, "res://generated/frame.tres", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("framed export presentation mapping failed");
+        }
+
+        var differentialOption = catalog.PckCardOptions.Single(option => option.Id.Equals(
+            "Tests.ExportedCardSkin::portrait-mode:differential",
+            StringComparison.OrdinalIgnoreCase));
+        if (differentialOption.NormalPortraits.Count != 1 ||
+            !differentialOption.NormalPortraits.TryGetValue("DifferentialCard", out var differentialPath) ||
+            !differentialPath.Equals(
+                "res://card_core/card_portraits/tests/differential_alt.png",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("CardPortraitsCore differential mapping failed");
+        }
+
+        var ancientOption = catalog.PckCardOptions.Single(option => option.Id.Equals(
+            "Tests.ExportedCardSkin::portrait-mode:ancient",
+            StringComparison.OrdinalIgnoreCase));
+        if (ancientOption.NormalPortraits.Count != 1 ||
+            !ancientOption.NormalPortraits.TryGetValue("AncientToggleCard", out var ancientPath) ||
+            !ancientPath.Equals(
+                "res://card_core/card_portraits/tests/ancient.png",
+                StringComparison.OrdinalIgnoreCase) ||
+            ancientOption.CardPresentations.GetValueOrDefault("AncientToggleCard")?.UseAncientLayout != true)
+        {
+            throw new InvalidOperationException("CardPortraitsCore Ancient-style mapping failed");
+        }
+
+        var ancientDifferentialOption = catalog.PckCardOptions.Single(option => option.Id.Equals(
+            "Tests.ExportedCardSkin::portrait-mode:ancient-differential",
+            StringComparison.OrdinalIgnoreCase));
+        if (ancientDifferentialOption.NormalPortraits.Count != 1 ||
+            !ancientDifferentialOption.NormalPortraits.TryGetValue(
+                "AncientToggleCard",
+                out var ancientDifferentialPath) ||
+            !ancientDifferentialPath.Equals(
+                "res://card_core/card_portraits/tests/ancient_alt.png",
+                StringComparison.OrdinalIgnoreCase) ||
+            ancientDifferentialOption.CardPresentations
+                .GetValueOrDefault("AncientToggleCard")?.UseAncientLayout != true)
+        {
+            throw new InvalidOperationException("CardPortraitsCore Ancient differential mapping failed");
         }
 
         var cards = expectedPortraits.Keys.Select(cardType => new CardCatalogEntry(
@@ -2347,6 +2414,12 @@ static void RunCardExportSelfTest(string gamePckPath)
             .Options.Single(option => option.Id.Equals(
                 sourceOption.Id,
                 StringComparison.OrdinalIgnoreCase));
+        if (catalog.CardGroups.Single(group => group.Id == "misc").Options.Any(option =>
+                option.Id.Contains("::portrait-mode:", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "declarative portrait mode leaked into an unrelated card group");
+        }
         if (!miscOption.NormalPortraits.TryGetValue("Shiv", out var routedShiv) ||
             !routedShiv.Equals(sharedPoolShiv, StringComparison.OrdinalIgnoreCase))
         {
@@ -2415,7 +2488,7 @@ static void RunCardExportSelfTest(string gamePckPath)
 
         Console.WriteLine(
             "card export self-test passed: static, BOM-framed, animation fallback, " +
-            "unique shared-pool routing and batched isolation");
+            "CardPortraitsCore modes, unique shared-pool routing and batched isolation");
     }
     finally
     {

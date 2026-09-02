@@ -74,6 +74,9 @@ internal enum ModText
 internal static class ModLocalization
 {
     public const string DefaultVariantMarker = "{skin-changer-default}";
+    public const string DifferentialVariantMarker = "{skin-changer-differential}";
+    public const string AncientStyleVariantMarker = "{skin-changer-ancient-style}";
+    public const string AncientDifferentialVariantMarker = "{skin-changer-ancient-differential}";
 
     private sealed record LanguagePack(
         string AncientCompendium,
@@ -887,6 +890,32 @@ internal static class ModLocalization
         }
     }
 
+    private sealed record CardPortraitModeLanguagePack(
+        string Differential,
+        string AncientStyle,
+        string AncientDifferential);
+
+    private static readonly IReadOnlyDictionary<string, CardPortraitModeLanguagePack>
+        CardPortraitModePacks =
+            new Dictionary<string, CardPortraitModeLanguagePack>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["eng"] = new("Differential", "Ancient style", "Ancient differential"),
+                ["zhs"] = new("差分", "先古样式", "先古差分"),
+                ["zht"] = new("差分", "先古樣式", "先古差分"),
+                ["deu"] = new("Differenzbild", "Ahnenstil", "Ahnen-Differenzbild"),
+                ["esp"] = new("Diferencial", "Estilo ancestral", "Diferencial ancestral"),
+                ["fra"] = new("Variante", "Style ancestral", "Variante ancestrale"),
+                ["ita"] = new("Differenziale", "Stile ancestrale", "Differenziale ancestrale"),
+                ["jpn"] = new("差分", "古代様式", "古代差分"),
+                ["kor"] = new("차분", "고대 양식", "고대 차분"),
+                ["pol"] = new("Wariant", "Styl starożytny", "Starożytny wariant"),
+                ["ptb"] = new("Variante", "Estilo ancestral", "Variante ancestral"),
+                ["rus"] = new("Вариант", "Древний стиль", "Древний вариант"),
+                ["spa"] = new("Diferencial", "Estilo ancestral", "Diferencial ancestral"),
+                ["tha"] = new("ภาพต่าง", "รูปแบบโบราณ", "ภาพต่างแบบโบราณ"),
+                ["tur"] = new("Varyant", "Kadim stil", "Kadim varyant")
+            };
+
     private static readonly IReadOnlyDictionary<string, string> MultiplayerSkinLoadingTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -1105,10 +1134,20 @@ internal static class ModLocalization
 
     public static string DisplayOptionName(string name)
     {
-        var suffix = " · " + DefaultVariantMarker;
-        return name.EndsWith(suffix, StringComparison.Ordinal)
-            ? name[..^suffix.Length] + " · " + Get(ModText.DefaultVariant)
-            : name;
+        var labels = CardPortraitModePacks[CurrentLanguage];
+        return ReplaceSuffix(name, DefaultVariantMarker, Get(ModText.DefaultVariant))
+            ?? ReplaceSuffix(name, DifferentialVariantMarker, labels.Differential)
+            ?? ReplaceSuffix(name, AncientStyleVariantMarker, labels.AncientStyle)
+            ?? ReplaceSuffix(name, AncientDifferentialVariantMarker, labels.AncientDifferential)
+            ?? name;
+
+        static string? ReplaceSuffix(string name, string marker, string replacement)
+        {
+            var suffix = " · " + marker;
+            return name.EndsWith(suffix, StringComparison.Ordinal)
+                ? name[..^suffix.Length] + " · " + replacement
+                : null;
+        }
     }
 
     public static void Bind(Node owner, Action refresh)
