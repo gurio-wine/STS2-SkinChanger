@@ -73,6 +73,7 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim RuntimePackWarmGate = new(1, 1);
     private static RuntimeProviderScope? _runtimeProviderBehaviorScope;
+    private static readonly RuntimeProviderScopeLeaseTracker RuntimeProviderScopeLeases = new();
     private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LocalizationCacheState> LocalizationStateCache =
@@ -442,6 +443,7 @@ internal static class SkinService
                 WarmingRuntimeProviderPacks.Clear();
                 _runtimePackWarmGeneration++;
                 _runtimeProviderBehaviorScope = null;
+                RuntimeProviderScopeLeases.Reset();
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
                 _mountedLocalizationSignature = null;
@@ -662,7 +664,7 @@ internal static class SkinService
             includeRunWideMonsterProviders: false,
             reason: "角色预览");
 
-    public static void FocusRuntimeProviderBehaviorsOnGroups(
+    public static long FocusRuntimeProviderBehaviorsOnGroups(
         IEnumerable<string> groupIds,
         bool includeRunWideMonsterProviders,
         string reason)
@@ -677,16 +679,17 @@ internal static class SkinService
                 currentScope.VisibleGroupIds.ToHashSet(
                     StringComparer.OrdinalIgnoreCase).SetEquals(nextScope))
             {
-                return;
+                return RuntimeProviderScopeLeases.Current;
             }
 
             _runtimeProviderBehaviorScope = new RuntimeProviderScope(
                 nextScope,
                 includeRunWideMonsterProviders);
+            var scopeLease = RuntimeProviderScopeLeases.Claim();
             var catalog = Catalog;
             if (catalog == null)
             {
-                return;
+                return scopeLease;
             }
 
             var activeProviders = GetActiveRuntimeProviders(catalog);
@@ -707,6 +710,30 @@ internal static class SkinService
             ModLog.Info(
                 $"已按{reason}将皮肤代码行为收窄到 {nextScope.Count} 个可见外观组；" +
                 $"保留 {activeProviders.Count} 个当前场景需要的 DLL 皮肤提供者。");
+            return scopeLease;
+        }
+    }
+
+    public static bool TryFocusRuntimeProviderBehaviorsOnGroups(
+        long expectedScopeLease,
+        IEnumerable<string> groupIds,
+        bool includeRunWideMonsterProviders,
+        string reason,
+        out long scopeLease)
+    {
+        lock (Sync)
+        {
+            if (!RuntimeProviderScopeLeases.IsCurrent(expectedScopeLease))
+            {
+                scopeLease = RuntimeProviderScopeLeases.Current;
+                return false;
+            }
+
+            scopeLease = FocusRuntimeProviderBehaviorsOnGroups(
+                groupIds,
+                includeRunWideMonsterProviders,
+                reason);
+            return true;
         }
     }
 

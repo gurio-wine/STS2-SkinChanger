@@ -63,6 +63,21 @@ Require(
         .SetEquals(["MeirinWatcherSkin", "CznEnemySkin"]),
     "进入对局后应保留当前角色，并允许负责地图、背景和音乐的整局怪物提供者运行。");
 
+var runtimeScopeLeases = new RuntimeProviderScopeLeaseTracker();
+var combatScopeLease = runtimeScopeLeases.Claim();
+var merchantScopeLease = runtimeScopeLeases.Claim();
+Require(
+    !runtimeScopeLeases.IsCurrent(combatScopeLease),
+    "商店已取得新的皮肤运行范围后，旧战斗房间退出时不能再把范围退回仅对局角色；" +
+    "否则商人提供者会在 MerchantButton._Ready 前被停用。");
+Require(
+    runtimeScopeLeases.IsCurrent(merchantScopeLease),
+    "当前商店房间必须持有可释放的最新运行范围租约。");
+runtimeScopeLeases.Reset();
+Require(
+    !runtimeScopeLeases.IsCurrent(merchantScopeLease),
+    "服务重置后，旧场景留下的运行范围租约必须全部失效。");
+
 Require(
     RuntimePackWarmPolicy.ShouldWarm(32L * 1024L * 1024L, alreadyWarmed: false),
     "当前皮肤的 32 MiB 资源包应允许后台预读。");

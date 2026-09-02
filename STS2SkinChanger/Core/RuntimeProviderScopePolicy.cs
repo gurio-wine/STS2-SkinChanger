@@ -38,3 +38,25 @@ internal static class RuntimeProviderScopePolicy
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 }
+
+internal sealed class RuntimeProviderScopeLeaseTracker
+{
+    private long _current;
+
+    public long Current => _current;
+
+    public long Claim()
+    {
+        _current++;
+        if (_current == 0)
+        {
+            _current++;
+        }
+
+        return _current;
+    }
+
+    public bool IsCurrent(long lease) => lease != 0 && lease == _current;
+
+    public void Reset() => _current = 0;
+}

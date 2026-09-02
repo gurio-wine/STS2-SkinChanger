@@ -104,6 +104,7 @@ internal static class CharacterAppearanceRuntime
     private static WeakReference<NCombatRoom>? _playerLayoutRoom;
     private static readonly HashSet<string> CombatRuntimeGroupIds =
         new(StringComparer.OrdinalIgnoreCase);
+    private static long _combatRuntimeScopeLease;
     private static float _playerLayoutScaling = 1f;
     private static bool _fullyCenterPlayers;
 
@@ -199,9 +200,10 @@ internal static class CharacterAppearanceRuntime
     internal static void FocusRuntimeProviderBehaviorsOnRunCharacters()
         => FocusRuntimeProviderBehaviorsOnRunContext(reason: "对局角色");
 
-    internal static void FocusRuntimeProviderBehaviorsOnRunContext(
+    internal static long FocusRuntimeProviderBehaviorsOnRunContext(
         IEnumerable<string>? additionalGroupIds = null,
-        string reason = "对局")
+        string reason = "对局",
+        long? expectedScopeLease = null)
     {
         try
         {
@@ -219,7 +221,19 @@ internal static class CharacterAppearanceRuntime
                     .Cast<string>());
             }
 
-            SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            if (expectedScopeLease.HasValue)
+            {
+                return SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                    expectedScopeLease.Value,
+                    groupIds,
+                    includeRunWideMonsterProviders: NRun.Instance != null,
+                    reason,
+                    out var scopeLease)
+                    ? scopeLease
+                    : 0;
+            }
+
+            return SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                 groupIds,
                 includeRunWideMonsterProviders: NRun.Instance != null,
                 reason);
@@ -227,6 +241,7 @@ internal static class CharacterAppearanceRuntime
         catch (Exception exception)
         {
             ModLog.Warn("收窄当前场景皮肤行为失败：" + exception.GetBaseException().Message);
+            return 0;
         }
     }
 
@@ -244,7 +259,9 @@ internal static class CharacterAppearanceRuntime
             }
         }
 
-        FocusRuntimeProviderBehaviorsOnRunContext(CombatRuntimeGroupIds, "战斗场景");
+        _combatRuntimeScopeLease = FocusRuntimeProviderBehaviorsOnRunContext(
+            CombatRuntimeGroupIds,
+            "战斗场景");
     }
 
     internal static void AddVisibleCombatRuntimeGroup(string groupId)
@@ -254,13 +271,22 @@ internal static class CharacterAppearanceRuntime
             return;
         }
 
-        FocusRuntimeProviderBehaviorsOnRunContext(CombatRuntimeGroupIds, "战斗召唤");
+        _combatRuntimeScopeLease = FocusRuntimeProviderBehaviorsOnRunContext(
+            CombatRuntimeGroupIds,
+            "战斗召唤");
     }
 
     internal static void ClearCombatRuntimeGroups()
     {
+        var combatScopeLease = _combatRuntimeScopeLease;
+        _combatRuntimeScopeLease = 0;
         CombatRuntimeGroupIds.Clear();
-        FocusRuntimeProviderBehaviorsOnRunCharacters();
+        if (combatScopeLease != 0)
+        {
+            FocusRuntimeProviderBehaviorsOnRunContext(
+                reason: "对局角色",
+                expectedScopeLease: combatScopeLease);
+        }
     }
 
     internal static NCreature? GetCurrentCreature(Player? player)
