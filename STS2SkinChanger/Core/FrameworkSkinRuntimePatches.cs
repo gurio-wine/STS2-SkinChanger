@@ -188,7 +188,7 @@ internal static class FrameworkCombatVisualPatch
 
         var canonicalPath =
             $"res://scenes/creature_visuals/{__instance.Id.Entry.ToLowerInvariant()}.tscn";
-        __result = SkinService.InstantiateFrameworkCreatureVisuals(groupId, canonicalPath);
+        __result = SkinService.InstantiateManagedCharacterCreatureVisuals(groupId, canonicalPath);
         return false;
     }
 }

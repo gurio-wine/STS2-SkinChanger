@@ -57,6 +57,23 @@ Require(
         managedCharacterAssetProviders),
     "普通 UI 或玩法 Mod 的 RitsuLib 注册不能被皮肤接管策略误拦截。");
 
+Require(
+    CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
+        isBaseSelection: false,
+        hasManagedCombatScene: true),
+    "局内热切换到任何包含战斗场景的角色皮肤时，都必须先通过兼容场景工厂实例化；" +
+    "不能只处理带框架契约的皮肤，否则普通资源型与完整 DLL 皮肤会把 Node2D 强转失败。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
+        isBaseSelection: true,
+        hasManagedCombatScene: true),
+    "游戏原皮必须继续使用游戏原生 CreateVisuals 路径。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
+        isBaseSelection: false,
+        hasManagedCombatScene: false),
+    "只修改名称、头像或其它素材而没有战斗场景的皮肤不能拦截角色模型创建。");
+
 var runtimeProviderCandidates = new RuntimeProviderCandidate[]
 {
     new("MeirinWatcherSkin", ["watcher"], IsRunWideMonsterProvider: false),

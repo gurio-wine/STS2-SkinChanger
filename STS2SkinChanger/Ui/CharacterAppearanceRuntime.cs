@@ -1068,8 +1068,41 @@ internal static class CharacterAppearanceRuntime
         var movedFormChildren = new List<Node>();
         try
         {
-            newVisuals = creature.Entity.CreateVisuals() ??
-                         throw new InvalidOperationException("CreateVisuals returned null");
+            var playerCharacter = creature.Entity.Player?.Character;
+            var playerGroup = playerCharacter == null
+                ? null
+                : ContextualSkinControls.FindGroup(
+                    playerCharacter.Id.Entry,
+                    playerCharacter.GetType().Name);
+            var managedScenePath = playerCharacter == null
+                ? null
+                : ContextualSkinControls.CanonicalScenePath(
+                    "creature_visuals/" + playerCharacter.Id.Entry.ToLowerInvariant());
+            if (playerCharacter != null &&
+                playerGroup != null &&
+                managedScenePath != null &&
+                SkinService.TryInstantiateSelectedCharacterCreatureVisuals(
+                    playerGroup.Id,
+                    managedScenePath,
+                    out newVisuals))
+            {
+                ContextualSkinControls.ApplySelectedProviderVisualPostfix(
+                    playerCharacter.Id.Entry,
+                    playerCharacter.GetType().Name,
+                    playerCharacter,
+                    ref newVisuals);
+            }
+            else
+            {
+                newVisuals = creature.Entity.CreateVisuals() ??
+                             throw new InvalidOperationException("CreateVisuals returned null");
+            }
+
+            if (newVisuals == null)
+            {
+                throw new InvalidOperationException(
+                    "selected character visual factory returned null");
+            }
             newVisuals.Name = oldVisuals.Name;
             newVisuals.Position = Vector2.Zero;
             newVisuals.Visible = oldVisuals.Visible;

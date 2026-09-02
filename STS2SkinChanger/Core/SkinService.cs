@@ -2822,7 +2822,40 @@ internal static class SkinService
             includeProviderDependencies: true);
     }
 
-    public static NCreatureVisuals InstantiateFrameworkCreatureVisuals(
+    public static bool TryInstantiateSelectedCharacterCreatureVisuals(
+        string groupId,
+        string scenePath,
+        out NCreatureVisuals visuals)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            var selection = GetVisualSelection(groupId);
+            var option = catalog?.Groups.FirstOrDefault(group =>
+                    group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+                .Options.FirstOrDefault(candidate =>
+                    candidate.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            var hasManagedCombatScene = option?.FrameworkContract?
+                                            .CharacterResources.ContainsKey("CombatVisual") == true ||
+                                        option?.Assets.Keys.Any(path =>
+                                            path.Equals(scenePath, StringComparison.OrdinalIgnoreCase)) == true;
+            var isBaseSelection = option == null || option.Id.Equals(
+                SkinCatalog.BaseOptionId,
+                StringComparison.OrdinalIgnoreCase);
+            if (!CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
+                    isBaseSelection,
+                    hasManagedCombatScene))
+            {
+                visuals = null!;
+                return false;
+            }
+        }
+
+        visuals = InstantiateManagedCharacterCreatureVisuals(groupId, scenePath);
+        return true;
+    }
+
+    public static NCreatureVisuals InstantiateManagedCharacterCreatureVisuals(
         string groupId,
         string scenePath)
     {
@@ -2834,7 +2867,7 @@ internal static class SkinService
             {
                 var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
                             throw new InvalidOperationException(
-                                $"框架角色资源不是场景：{scenePath}");
+                                $"角色皮肤资源不是场景：{scenePath}");
                 return FrameworkCreatureSceneFactory.Create(scene);
             },
             includeProviderDependencies: true);
