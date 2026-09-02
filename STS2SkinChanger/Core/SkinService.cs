@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -2812,6 +2813,24 @@ internal static class SkinService
                 var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
                             throw new InvalidOperationException($"独立皮肤资源不是场景：{scenePath}");
                 return scene.Instantiate<T>(PackedScene.GenEditState.Disabled);
+            },
+            includeProviderDependencies: true);
+    }
+
+    public static NCreatureVisuals InstantiateFrameworkCreatureVisuals(
+        string groupId,
+        string scenePath)
+    {
+        var resourcePaths = RuntimeSceneResourcePaths(groupId, scenePath);
+        return WithRuntimeResources(
+            groupId,
+            resourcePaths,
+            resources =>
+            {
+                var scene = resources.GetValueOrDefault(scenePath) as PackedScene ??
+                            throw new InvalidOperationException(
+                                $"框架角色资源不是场景：{scenePath}");
+                return FrameworkCreatureSceneFactory.Create(scene);
             },
             includeProviderDependencies: true);
     }

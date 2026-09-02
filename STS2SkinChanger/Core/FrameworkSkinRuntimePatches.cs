@@ -13,6 +13,15 @@ namespace STS2SkinChanger.Core;
 
 internal static class FrameworkSkinRuntime
 {
+    public static bool TryGetCharacterContract(
+        CharacterModel model,
+        out string groupId,
+        out FrameworkCharacterSkinContract contract)
+    {
+        groupId = NormalizeToken(model.Id.Entry);
+        return SkinService.TryGetSelectedFrameworkContract(groupId, out contract);
+    }
+
     public static bool TryGetCharacterResource(
         CharacterModel model,
         string propertyName,
@@ -137,9 +146,7 @@ internal static class FrameworkSkinRuntime
     private static bool TryGetCharacterContract(
         CharacterModel model,
         out FrameworkCharacterSkinContract contract) =>
-        SkinService.TryGetSelectedFrameworkContract(
-            NormalizeToken(model.Id.Entry),
-            out contract);
+        TryGetCharacterContract(model, out _, out contract);
 
     private static bool TryParseColor(string value, out Color color)
     {
@@ -153,6 +160,36 @@ internal static class FrameworkSkinRuntime
             color = default;
             return false;
         }
+    }
+}
+
+/// <summary>
+/// The thunninoi/BaseLib skin contract deliberately allows CombatVisual to point at a plain
+/// Node2D scene. Its original manager converts that scene through
+/// NodeFactory&lt;NCreatureVisuals&gt; before returning it to the game. A global resource redirect
+/// alone cannot preserve that contract because CharacterModel.CreateVisuals instantiates the
+/// scene directly as NCreatureVisuals and throws before a postfix can repair it.
+/// </summary>
+[HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]
+internal static class FrameworkCombatVisualPatch
+{
+    [HarmonyPrefix]
+    [HarmonyPriority(Priority.First)]
+    private static bool Prefix(CharacterModel __instance, ref NCreatureVisuals __result)
+    {
+        if (!FrameworkSkinRuntime.TryGetCharacterContract(
+                __instance,
+                out var groupId,
+                out var contract) ||
+            !contract.CharacterResources.ContainsKey("CombatVisual"))
+        {
+            return true;
+        }
+
+        var canonicalPath =
+            $"res://scenes/creature_visuals/{__instance.Id.Entry.ToLowerInvariant()}.tscn";
+        __result = SkinService.InstantiateFrameworkCreatureVisuals(groupId, canonicalPath);
+        return false;
     }
 }
 

@@ -1,5 +1,6 @@
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
@@ -39,6 +40,32 @@ if (!targets.Contains(baseGetter))
 {
     throw new InvalidOperationException(
         "框架遗物路径补丁漏掉了 RelicModel 基类 getter；继承原版路径的遗物会被通用后置补丁恢复成原图。");
+}
+
+var frameworkCombatPatchType = typeof(Entry).Assembly.GetType(
+                                   "STS2SkinChanger.Core.FrameworkCombatVisualPatch") ??
+                               throw new InvalidOperationException(
+                                   "找不到框架角色战斗场景工厂补丁；Node2D 皮肤场景会被游戏原方法直接转换成 NCreatureVisuals 并中断战斗。");
+var frameworkCombatPrefix = frameworkCombatPatchType.GetMethod(
+                                "Prefix",
+                                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ??
+                            throw new InvalidOperationException("找不到框架角色战斗场景工厂前置补丁。");
+var frameworkCombatParameters = frameworkCombatPrefix.GetParameters();
+if (frameworkCombatPrefix.ReturnType != typeof(bool) ||
+    frameworkCombatParameters.Length != 2 ||
+    frameworkCombatParameters[0].ParameterType != typeof(CharacterModel) ||
+    frameworkCombatParameters[1].ParameterType != typeof(NCreatureVisuals).MakeByRefType())
+{
+    throw new InvalidOperationException(
+        "框架角色战斗场景必须在 CharacterModel.CreateVisuals 原方法之前经场景工厂转换，不能依赖执行不到的后置替换。");
+}
+var frameworkCombatPriority = frameworkCombatPrefix.GetCustomAttributesData()
+    .FirstOrDefault(attribute => attribute.AttributeType == typeof(HarmonyPriority))?
+    .ConstructorArguments.FirstOrDefault().Value;
+if (frameworkCombatPriority is not int combatPriority || combatPriority != Priority.First)
+{
+    throw new InvalidOperationException(
+        "框架角色战斗场景工厂补丁必须最先执行，避免游戏先把允许为 Node2D 的框架场景强制转换成 NCreatureVisuals。");
 }
 
 var combatRoomCreate = typeof(NCombatRoom).GetMethod(

@@ -1652,6 +1652,14 @@ internal static partial class ContextualSkinControls
             return;
         }
 
+        // Framework CombatVisual scenes are already converted by FrameworkCombatVisualPatch
+        // through the same BaseLib NodeFactory contract as their original manager. Replacing the
+        // result a second time here would instantiate a permitted plain Node2D as NCreatureVisuals.
+        if (SkinService.TryGetSelectedFrameworkContract(group.Id, out _))
+        {
+            return;
+        }
+
         try
         {
             // Instantiate while the selected player's temporary overlay is mounted. Binary
