@@ -65,6 +65,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     private Button _healthBarResetButton = null!;
     private Button _intentResetButton = null!;
     private Button _selectionReticleResetButton = null!;
+    private Button _restorePlayerButton = null!;
     private Label _title = null!;
     private Label _skinLabel = null!;
     private Label _modelSectionLabel = null!;
@@ -276,6 +277,23 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _selectionHint.AddThemeColorOverride("font_outline_color", new Color("241d12"));
         _selectionHint.AddThemeConstantOverride("outline_size", 7);
         _hintLayer.AddChild(_selectionHint);
+
+        _restorePlayerButton = BuildButton(string.Empty);
+        _restorePlayerButton.Name = "RestorePlayerPosition";
+        _restorePlayerButton.AnchorLeft = 0.5f;
+        _restorePlayerButton.AnchorTop = 0f;
+        _restorePlayerButton.AnchorRight = 0.5f;
+        _restorePlayerButton.AnchorBottom = 0f;
+        _restorePlayerButton.OffsetLeft = -145f;
+        _restorePlayerButton.OffsetTop = 102f;
+        _restorePlayerButton.OffsetRight = 145f;
+        _restorePlayerButton.OffsetBottom = 148f;
+        _restorePlayerButton.MouseFilter = MouseFilterEnum.Stop;
+        _restorePlayerButton.ProcessMode = ProcessModeEnum.Always;
+        _restorePlayerButton.ZIndex = 1;
+        _restorePlayerButton.Visible = false;
+        _restorePlayerButton.Pressed += RestoreLocalPlayerModelTransform;
+        _hintLayer.AddChild(_restorePlayerButton);
 
         // The hints are animated with native Godot tweens instead of a managed Label _Process
         // callback.  This keeps the animation alive while the game is paused and makes the
@@ -661,6 +679,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _healthBarResetButton.Text = ModLocalization.Get(ModText.Reset);
         _intentResetButton.Text = ModLocalization.Get(ModText.Reset);
         _selectionReticleResetButton.Text = ModLocalization.Get(ModText.Reset);
+        _restorePlayerButton.Text = ModLocalization.Get(ModText.RestorePlayerPosition);
         RefreshDragHint();
         _selectionHint.Text = ModLocalization.Get(ModText.SelectAppearanceTarget);
         PopulateSkinDropdown();
@@ -1544,14 +1563,49 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         EndComparison();
-        var value = ReadTransformControls() with
-        {
-            Scale = 1f,
-            OffsetX = 0f,
-            OffsetY = 0f
-        };
+        var value = CharacterTransformResetPolicy.ResetModel(ReadTransformControls());
         SetTransformControlValues(value);
         OnTransformChanged();
+    }
+
+    private void RestoreLocalPlayerModelTransform()
+    {
+        FinishDrag(save: true);
+        var creature = CharacterAppearanceRuntime.GetCurrentCreature(_player);
+        if (creature != null && GodotObject.IsInstanceValid(creature))
+        {
+            var current = CharacterAppearanceRuntime.GetCreatureCombatTransform(creature);
+            CharacterAppearanceRuntime.SetCreatureCombatTransform(
+                creature,
+                CharacterTransformResetPolicy.ResetModel(current));
+            CharacterAppearanceRuntime.ApplyStoredTransform(creature);
+            UpdateDragSurfaceCreature();
+            return;
+        }
+
+        var visual = MerchantRuntimeAppearance.GetLocalPlayerVisual();
+        if (_player == null || visual == null || !GodotObject.IsInstanceValid(visual))
+        {
+            UpdateDragSurfaceCreature();
+            return;
+        }
+
+        var group = ContextualSkinControls.FindGroup(
+            _player.Character.Id.Entry,
+            _player.Character.GetType().Name);
+        if (group == null)
+        {
+            UpdateDragSurfaceCreature();
+            return;
+        }
+
+        var restored = MerchantRuntimeAppearance.SetLocalPlayerTransform(
+            group.Id,
+            CharacterTransformResetPolicy.ResetModel(
+                MerchantRuntimeAppearance.GetLocalPlayerTransform(group.Id)),
+            save: true);
+        MerchantRuntimeAppearance.ApplyLocalPlayerTransform(visual, group.Id, restored);
+        UpdateDragSurfaceCreature();
     }
 
     private void ResetHealthBarTransform()
@@ -1716,10 +1770,33 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         var showDragHint = _canEditTransform && (creature != null || shopPlayer != null);
         _selectionHint.Visible = showSelectionHint;
         _hint.Visible = showDragHint;
+        _restorePlayerButton.Visible = _selectionMode && CanRestoreLocalPlayerModelTransform();
         RefreshHintPulse(_selectionHint, showSelectionHint, ref _selectionHintPulseTween);
         RefreshHintPulse(_hint, showDragHint, ref _hintPulseTween);
         _compareButton.Disabled = creature == null;
         RefreshDragHint();
+    }
+
+    private bool CanRestoreLocalPlayerModelTransform()
+    {
+        var creature = CharacterAppearanceRuntime.GetCurrentCreature(_player);
+        if (creature != null && GodotObject.IsInstanceValid(creature))
+        {
+            return CharacterTransformResetPolicy.NeedsModelReset(
+                CharacterAppearanceRuntime.GetCreatureCombatTransform(creature));
+        }
+
+        var visual = MerchantRuntimeAppearance.GetLocalPlayerVisual();
+        if (_player == null || visual == null || !GodotObject.IsInstanceValid(visual))
+        {
+            return false;
+        }
+
+        var group = ContextualSkinControls.FindGroup(
+            _player.Character.Id.Entry,
+            _player.Character.GetType().Name);
+        return group != null && CharacterTransformResetPolicy.NeedsModelReset(
+            MerchantRuntimeAppearance.GetLocalPlayerTransform(group.Id));
     }
 
     private void StopHintPulseAnimations()

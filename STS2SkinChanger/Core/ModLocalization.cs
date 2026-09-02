@@ -70,7 +70,8 @@ internal enum ModText
     DirectDragIntentHint,
     LoadOtherPlayersCustomSkins,
     CharacterIcon,
-    FollowCharacterSkin
+    FollowCharacterSkin,
+    RestorePlayerPosition
 }
 
 internal static class ModLocalization
@@ -961,6 +962,26 @@ internal static class ModLocalization
                 ["tur"] = new("Portre", "Görünümü izle")
             };
 
+    private static readonly IReadOnlyDictionary<string, string> RestorePlayerPositionTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "Restore player position",
+            ["zhs"] = "恢复角色位置",
+            ["zht"] = "恢復角色位置",
+            ["deu"] = "Figur zurücksetzen",
+            ["esp"] = "Restaurar personaje",
+            ["fra"] = "Replacer le personnage",
+            ["ita"] = "Ripristina personaggio",
+            ["jpn"] = "キャラクター位置を戻す",
+            ["kor"] = "캐릭터 위치 복원",
+            ["pol"] = "Przywróć postać",
+            ["ptb"] = "Restaurar personagem",
+            ["rus"] = "Вернуть персонажа",
+            ["spa"] = "Restaurar personaje",
+            ["tha"] = "คืนตำแหน่งตัวละคร",
+            ["tur"] = "Karakteri geri getir"
+        };
+
     private sealed record MultiplayerProgressLanguagePack(
         string Preparing,
         string WaitingForReady,
@@ -1143,6 +1164,8 @@ internal static class ModLocalization
                 ? CharacterIconPacks[CurrentLanguage].CharacterIcon
             : text == ModText.FollowCharacterSkin
                 ? CharacterIconPacks[CurrentLanguage].FollowCharacterSkin
+            : text == ModText.RestorePlayerPosition
+                ? RestorePlayerPositionTexts[CurrentLanguage]
             : text == ModText.OtherCompendium
                 ? OtherCompendiumPacks[CurrentLanguage].Title
             : text == ModText.OtherCategoryAncients

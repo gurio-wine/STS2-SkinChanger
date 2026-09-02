@@ -185,6 +185,41 @@ Require(
         iconOptions,
         configuredSourceContainsResource: true) == "TreessaSkin",
     "已卸载的头像来源必须安全回退到跟随皮肤。");
+
+var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
+{
+    HealthBarScale = 1.35f,
+    HealthBarOffsetX = 14f,
+    HealthBarOffsetY = -22f,
+    HealthBarFollowsModelMovement = false,
+    IntentScale = 0.8f,
+    IntentOffsetX = 31f,
+    SelectionReticleScale = 1.6f,
+    SelectionReticleOffsetY = 42f
+};
+Require(
+    CharacterTransformResetPolicy.NeedsModelReset(offscreenTransform),
+    "角色模型被缩放或移出屏幕时必须显示无需点中模型的恢复入口。");
+var restoredTransform = CharacterTransformResetPolicy.ResetModel(offscreenTransform);
+Require(
+    restoredTransform.Scale == 1f &&
+    restoredTransform.OffsetX == 0f &&
+    restoredTransform.OffsetY == 0f,
+    "恢复入口必须把模型大小和位置恢复到默认值。");
+Require(
+    restoredTransform.HealthBarScale == offscreenTransform.HealthBarScale &&
+    restoredTransform.HealthBarOffsetX == offscreenTransform.HealthBarOffsetX &&
+    restoredTransform.HealthBarOffsetY == offscreenTransform.HealthBarOffsetY &&
+    restoredTransform.HealthBarFollowsModelMovement ==
+        offscreenTransform.HealthBarFollowsModelMovement &&
+    restoredTransform.IntentScale == offscreenTransform.IntentScale &&
+    restoredTransform.IntentOffsetX == offscreenTransform.IntentOffsetX &&
+    restoredTransform.SelectionReticleScale == offscreenTransform.SelectionReticleScale &&
+    restoredTransform.SelectionReticleOffsetY == offscreenTransform.SelectionReticleOffsetY,
+    "恢复模型位置不能顺带覆盖玩家单独设置的血条、意图或选择框。");
+Require(
+    !CharacterTransformResetPolicy.NeedsModelReset(restoredTransform),
+    "模型恢复后不应继续显示紧急恢复入口。");
 Require(
     ManagedProviderDisplayPolicy.IsManaged(
         "KaguyaSilentRavenSkin",
