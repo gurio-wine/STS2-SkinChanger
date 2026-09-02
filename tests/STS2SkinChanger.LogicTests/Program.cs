@@ -222,6 +222,15 @@ Require(
         .SetEquals(["watcher", "watcher:relic", "watcher:portrait"]),
     "切换或关闭悬浮预览时必须同时恢复上一预览和下一预览涉及的全部外观分组。");
 
+Require(
+    PauseMenuAppearanceEntryPolicy.Resolve(showEntry: false, buttonExists: true) ==
+    new PauseMenuAppearanceEntryDecision(CreateButton: false, ShowButton: false),
+    "玩家关闭局内外观入口后，已经建立的暂停菜单按钮也必须隐藏。");
+Require(
+    PauseMenuAppearanceEntryPolicy.Resolve(showEntry: true, buttonExists: false) ==
+    new PauseMenuAppearanceEntryDecision(CreateButton: true, ShowButton: true),
+    "玩家重新启用局内外观入口后，下一次打开暂停菜单必须重新建立按钮。");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

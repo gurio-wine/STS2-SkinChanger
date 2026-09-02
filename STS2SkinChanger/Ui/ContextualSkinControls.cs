@@ -24,6 +24,7 @@ internal static partial class ContextualSkinControls
 {
     private const string SelectorName = "STS2SkinSelector";
     private const string MultiplayerSkinLoadingToggleName = "MultiplayerSkinLoadingToggle";
+    private const string InRunAppearanceEntryToggleName = "InRunAppearanceEntryToggle";
     private const string DropdownName = "SkinDropdown";
     private const string CharacterIconLabelName = "CharacterIconLabel";
     private const string CharacterIconDropdownName = "CharacterIconDropdown";
@@ -199,6 +200,7 @@ internal static partial class ContextualSkinControls
         if (existing != null)
         {
             EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
+            EnsureInRunAppearanceEntryToggle(infoPanel);
             return existing;
         }
 
@@ -213,8 +215,54 @@ internal static partial class ContextualSkinControls
         selector.OffsetBottom = -36;
         infoPanel.AddChild(selector);
         EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
+        EnsureInRunAppearanceEntryToggle(infoPanel);
         ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
         return selector;
+    }
+
+    private static void EnsureInRunAppearanceEntryToggle(Control infoPanel)
+    {
+        var toggle = infoPanel.GetNodeOrNull<CheckButton>(InRunAppearanceEntryToggleName);
+        if (toggle == null)
+        {
+            toggle = new CheckButton
+            {
+                Name = InRunAppearanceEntryToggleName,
+                AnchorLeft = 0.5f,
+                AnchorTop = 0f,
+                AnchorRight = 0.5f,
+                AnchorBottom = 0f,
+                OffsetLeft = -210f,
+                OffsetTop = -176f,
+                OffsetRight = 210f,
+                OffsetBottom = -132f,
+                Alignment = HorizontalAlignment.Center,
+                MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
+            };
+            toggle.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            toggle.AddThemeColorOverride("font_hover_color", Colors.White);
+            toggle.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
+            toggle.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+            toggle.AddThemeConstantOverride("outline_size", 3);
+            toggle.AddThemeFontSizeOverride("font_size", 18);
+            if (GameFont != null)
+            {
+                toggle.AddThemeFontOverride("font", GameFont);
+            }
+
+            toggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
+            toggle.Toggled += SkinService.SetShowInRunAppearanceEntry;
+            infoPanel.AddChild(toggle);
+            ModLocalization.Bind(toggle, () =>
+            {
+                toggle.Text = ModLocalization.Get(ModText.ShowInRunAppearanceEntry);
+                toggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
+            });
+        }
+
+        toggle.Visible = true;
+        toggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
     }
 
     private static void EnsureMultiplayerSkinLoadingToggle(
@@ -539,6 +587,13 @@ internal static partial class ContextualSkinControls
         if (toggle != null)
         {
             toggle.Visible = false;
+        }
+
+        var appearanceEntryToggle = screen.GetNodeOrNull<Control>(
+            $"InfoPanel/{InRunAppearanceEntryToggleName}");
+        if (appearanceEntryToggle != null)
+        {
+            appearanceEntryToggle.Visible = false;
         }
     }
 

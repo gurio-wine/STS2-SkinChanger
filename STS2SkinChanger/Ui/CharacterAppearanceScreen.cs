@@ -2406,7 +2406,18 @@ internal static class CharacterAppearancePauseMenu
         try
         {
             var container = pauseMenu.GetNode<Control>("%ButtonContainer");
-            if (container.GetNodeOrNull<NPauseMenuButton>(ButtonName) != null)
+            var existing = container.GetNodeOrNull<NPauseMenuButton>(ButtonName);
+            var visibility = PauseMenuAppearanceEntryPolicy.Resolve(
+                SkinService.ShouldShowInRunAppearanceEntry(),
+                existing != null);
+            if (existing != null)
+            {
+                existing.Visible = visibility.ShowButton;
+                RebuildFocusNeighbors(container);
+                return;
+            }
+
+            if (!visibility.CreateButton)
             {
                 return;
             }

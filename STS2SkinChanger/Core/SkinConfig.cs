@@ -90,6 +90,8 @@ internal sealed class SkinConfig
 
     public bool LoadOtherPlayersCustomSkins { get; set; } = true;
 
+    public bool ShowInRunAppearanceEntry { get; set; } = true;
+
     public static SkinConfig Load(string path)
     {
         var backupPath = path + ".bak";

@@ -69,6 +69,7 @@ internal enum ModText
     DirectDragHint,
     DirectDragIntentHint,
     LoadOtherPlayersCustomSkins,
+    ShowInRunAppearanceEntry,
     CharacterIcon,
     FollowCharacterSkin,
     RestorePlayerPosition
@@ -939,6 +940,26 @@ internal static class ModLocalization
             ["tur"] = "İki tarafta da yüklü görünümleri göster"
         };
 
+    private static readonly IReadOnlyDictionary<string, string> InRunAppearanceEntryTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "Show Appearance in pause menu",
+            ["zhs"] = "暂停菜单显示“外观”",
+            ["zht"] = "暫停選單顯示「外觀」",
+            ["deu"] = "„Aussehen“ im Pausenmenü anzeigen",
+            ["esp"] = "Mostrar «Aspecto» en el menú de pausa",
+            ["fra"] = "Afficher « Apparence » dans le menu pause",
+            ["ita"] = "Mostra «Aspetto» nel menu di pausa",
+            ["jpn"] = "ポーズメニューに「外見」を表示",
+            ["kor"] = "일시정지 메뉴에 ‘외형’ 표시",
+            ["pol"] = "Pokaż „Wygląd” w menu pauzy",
+            ["ptb"] = "Mostrar “Visual” no menu de pausa",
+            ["rus"] = "Показывать «Облик» в меню паузы",
+            ["spa"] = "Mostrar «Aspecto» en el menú de pausa",
+            ["tha"] = "แสดง “รูปลักษณ์” ในเมนูหยุดเกม",
+            ["tur"] = "Duraklatma menüsünde “Görünüm”ü göster"
+        };
+
     private sealed record CharacterIconLanguagePack(string CharacterIcon, string FollowCharacterSkin);
 
     private static readonly IReadOnlyDictionary<string, CharacterIconLanguagePack>
@@ -1160,6 +1181,8 @@ internal static class ModLocalization
     public static string Get(ModText text) =>
         text == ModText.LoadOtherPlayersCustomSkins
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]
+            : text == ModText.ShowInRunAppearanceEntry
+                ? InRunAppearanceEntryTexts[CurrentLanguage]
             : text == ModText.CharacterIcon
                 ? CharacterIconPacks[CurrentLanguage].CharacterIcon
             : text == ModText.FollowCharacterSkin

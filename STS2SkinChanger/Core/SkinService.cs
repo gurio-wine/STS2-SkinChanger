@@ -457,6 +457,30 @@ internal static class SkinService
         }
     }
 
+    public static bool ShouldShowInRunAppearanceEntry()
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            return Config.ShowInRunAppearanceEntry;
+        }
+    }
+
+    public static void SetShowInRunAppearanceEntry(bool enabled)
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            if (Config.ShowInRunAppearanceEntry == enabled)
+            {
+                return;
+            }
+
+            Config.ShowInRunAppearanceEntry = enabled;
+            Config.Save(ConfigPath);
+        }
+    }
+
     public static bool ShouldShowLoadOrderWarning(bool isBeforeAllSkinMods)
     {
         lock (Sync)
