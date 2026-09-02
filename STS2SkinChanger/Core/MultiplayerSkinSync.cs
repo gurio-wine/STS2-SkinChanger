@@ -4,6 +4,7 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
+using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer;
@@ -437,6 +438,40 @@ internal static class MultiplayerSkinSync
         _selectionScopes ??= new Stack<IReadOnlyDictionary<string, string>>();
         _selectionScopes.Push(selections);
         return new SelectionScope();
+    }
+
+    /// <summary>
+    /// Keeps both a player's selected option map and that option's private Godot resource overlay
+    /// active while a non-combat character scene is loaded and attached to the tree. Merchant and
+    /// rest-site visuals are created from a shared CharacterModel, so selection-only scoping is not
+    /// enough for skins with their own skeleton dependencies or managed Godot scripts.
+    /// </summary>
+    internal static IDisposable? BeginPlayerRuntimeScope(Player player, string scenePath)
+    {
+        var selectionScope = BeginPlayerSelectionScope(player.NetId);
+        if (selectionScope == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var group = ContextualSkinControls.FindGroup(
+                player.Character.Id.Entry,
+                player.Character.GetType().Name);
+            if (group == null)
+            {
+                return selectionScope;
+            }
+
+            var resourceScope = SkinService.BeginRuntimeResourceScope(group.Id, scenePath);
+            return new CombinedScope(selectionScope, resourceScope);
+        }
+        catch
+        {
+            selectionScope.Dispose();
+            throw;
+        }
     }
 
     private static bool TryGetPlayerSelectionMap(

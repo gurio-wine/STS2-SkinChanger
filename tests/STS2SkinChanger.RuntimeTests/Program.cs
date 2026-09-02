@@ -1,7 +1,10 @@
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
@@ -95,4 +98,91 @@ if (focusRuntimeProviders == null)
         "缺少按可见分组收窄运行期提供者的方法；角色专用范围仍会让商人、先古和怪物代码常驻。");
 }
 
+var multiplayerMerchantPatch = RequirePatchType(
+    "STS2SkinChanger.Core.MultiplayerMerchantPlayerVisualIsolationPatch",
+    "缺少商店多人角色外观隔离补丁；同角色玩家会全部显示本机选择的皮肤。");
+var merchantTarget = (MethodBase?)RequirePatchMethod(multiplayerMerchantPatch, "TargetMethod")
+    .Invoke(null, null);
+if (merchantTarget?.DeclaringType != typeof(NMerchantRoom) ||
+    merchantTarget.Name != "AfterRoomIsLoaded")
+{
+    throw new InvalidOperationException(
+        "商店多人隔离必须接管 NMerchantRoom.AfterRoomIsLoaded 的逐玩家创建过程。");
+}
+var merchantIsolationPrefix = RequirePatchMethod(multiplayerMerchantPatch, "Prefix");
+var merchantIsolationParameters = merchantIsolationPrefix.GetParameters();
+if (merchantIsolationPrefix.ReturnType != typeof(bool) ||
+    merchantIsolationParameters.Length != 3 ||
+    merchantIsolationParameters.Any(parameter =>
+        parameter.Name == null ||
+        !parameter.Name.StartsWith("___", StringComparison.Ordinal) ||
+        AccessTools.Field(typeof(NMerchantRoom), parameter.Name[3..])?.FieldType !=
+        parameter.ParameterType))
+{
+    throw new InvalidOperationException(
+        "商店多人隔离必须完整替代原创建循环，并保留玩家、容器和可视列表三个原字段。");
+}
+
+var restCreatePatch = RequirePatchType(
+    "STS2SkinChanger.Core.MultiplayerRestSiteCreateScopePatch",
+    "缺少休息点角色创建隔离补丁；远端玩家会复用本机角色皮肤。");
+RequirePlayerScopePatch(restCreatePatch, typeof(Player));
+
+var restReadyPatch = RequirePatchType(
+    "STS2SkinChanger.Core.MultiplayerRestSiteReadyScopePatch",
+    "缺少休息点角色初始化隔离补丁；延迟加载的骨骼和素材会窜用本机皮肤。");
+RequirePlayerScopePatch(restReadyPatch, typeof(NRestSiteCharacter));
+
+var handReadyPatch = RequirePatchType(
+    "STS2SkinChanger.Core.MultiplayerTreasureHandReadyScopePatch",
+    "缺少遗物宝箱手部初始贴图隔离补丁；远端玩家会显示本机皮肤的手。");
+RequirePlayerScopePatch(handReadyPatch, typeof(NHandImage));
+
+var handMovePatch = RequirePatchType(
+    "STS2SkinChanger.Core.MultiplayerTreasureHandMoveScopePatch",
+    "缺少遗物争夺动作贴图隔离补丁；石头剪刀布动作会重新窜回本机皮肤。");
+var handMoveTarget = (MethodBase?)RequirePatchMethod(handMovePatch, "TargetMethod")
+    .Invoke(null, null);
+if (handMoveTarget?.DeclaringType != typeof(NHandImage) ||
+    handMoveTarget.Name != "SetTextureToFightMove")
+{
+    throw new InvalidOperationException(
+        "遗物争夺动作隔离必须覆盖 NHandImage.SetTextureToFightMove。");
+}
+RequirePlayerScopePatch(handMovePatch, typeof(NHandImage));
+
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
+
+static Type RequirePatchType(string name, string error) =>
+    typeof(Entry).Assembly.GetType(name) ?? throw new InvalidOperationException(error);
+
+static MethodInfo RequirePatchMethod(Type patchType, string methodName) =>
+    patchType.GetMethod(
+        methodName,
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ??
+    throw new InvalidOperationException($"找不到 {patchType.Name}.{methodName}。");
+
+static void RequirePlayerScopePatch(Type patchType, Type ownerType)
+{
+    var prefix = RequirePatchMethod(patchType, "Prefix");
+    var prefixParameters = prefix.GetParameters();
+    if (prefix.ReturnType != typeof(void) ||
+        prefixParameters.Length != 2 ||
+        prefixParameters[0].ParameterType != ownerType ||
+        prefixParameters[1].ParameterType != typeof(IDisposable).MakeByRefType())
+    {
+        throw new InvalidOperationException(
+            $"{patchType.Name} 必须在整个调用期间保存对应玩家的皮肤上下文。");
+    }
+
+    var finalizer = RequirePatchMethod(patchType, "Finalizer");
+    var finalizerParameters = finalizer.GetParameters();
+    if (finalizer.ReturnType != typeof(Exception) ||
+        finalizerParameters.Length != 2 ||
+        finalizerParameters[0].ParameterType != typeof(Exception) ||
+        finalizerParameters[1].ParameterType != typeof(IDisposable))
+    {
+        throw new InvalidOperationException(
+            $"{patchType.Name} 必须用 Harmony finalizer 在成功和异常路径都释放皮肤上下文。");
+    }
+}
