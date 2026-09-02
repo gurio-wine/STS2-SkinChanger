@@ -885,6 +885,25 @@ Require(
     paelsLegion.Actions.All(action => action.SfxPath == null),
     "游戏没有为佩尔的士兵动作注册独立音效时，不应伪造音效。");
 
+var fontLoadCount = 0;
+var firstFont = new CachedResourceFixture(IsValid: true, Name: "first");
+var secondFont = new CachedResourceFixture(IsValid: true, Name: "second");
+var fontCache = new ReloadingReferenceCache<CachedResourceFixture>();
+CachedResourceFixture? LoadFont() => ++fontLoadCount == 1 ? firstFont : secondFont;
+
+Require(
+    ReferenceEquals(fontCache.Get(LoadFont, font => font.IsValid), firstFont),
+    "字体缓存第一次访问时必须加载游戏字体。");
+Require(
+    ReferenceEquals(fontCache.Get(LoadFont, font => font.IsValid), firstFont) &&
+    fontLoadCount == 1,
+    "仍然有效的游戏字体必须复用，不能在每次绘制控件时重复加载。");
+firstFont.IsValid = false;
+Require(
+    ReferenceEquals(fontCache.Get(LoadFont, font => font.IsValid), secondFont) &&
+    fontLoadCount == 2,
+    "返回选角界面后若旧 FontVariation 已释放，必须丢弃静态缓存并重新加载；否则再次套用主题会白屏。");
+
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
 internal static class ForeignCardProvider
@@ -914,4 +933,10 @@ internal sealed class NonPublicScopedMonsterProfileFixture(string monsterId)
 internal sealed class NonPublicScopedMonsterTargetFixture(string monsterId)
 {
     internal string MonsterId { get; } = monsterId;
+}
+
+internal sealed class CachedResourceFixture(bool IsValid, string Name)
+{
+    internal bool IsValid { get; set; } = IsValid;
+    internal string Name { get; } = Name;
 }

@@ -44,12 +44,13 @@ internal static partial class ContextualSkinControls
     private static readonly HashSet<string> LoggedMissingMultiplayerIcons =
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _refreshingMonsterDisplay;
-    private static Font? _gameFont;
+    private static readonly ReloadingReferenceCache<Font> GameFontCache = new();
 
     internal static bool IsRefreshingMonsterDisplay => _refreshingMonsterDisplay;
 
-    internal static Font? GameFont =>
-        _gameFont ??= ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres");
+    internal static Font? GameFont => GameFontCache.Get(
+        static () => ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres"),
+        static font => GodotObject.IsInstanceValid(font));
 
     private static readonly System.Reflection.FieldInfo BestiarySelectedEntryField =
         AccessTools.Field(typeof(NBestiary), "_selectedEntry");

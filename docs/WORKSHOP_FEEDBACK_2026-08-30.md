@@ -1,10 +1,10 @@
-# Steam 工坊反馈待办（更新于 2026-09-02）
+# Steam 工坊反馈待办（更新于 2026-09-03）
 
-采集时间：2026-09-02 03:13（北京时间）
+采集时间：2026-09-03 03:48（北京时间）
 
 工坊物品：[皮肤切换器 - Skin Changer（3787302680）](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680)
 
-采集范围：当前公开可见的 87 条[工坊留言](https://steamcommunity.com/sharedfiles/filedetails/comments/3787302680)，以及“建议”“新问题”“旧问题”三个[讨论帖](https://steamcommunity.com/sharedfiles/filedetails/discussions/3787302680)。三个讨论帖当前分别有 3、7、2 条回复。
+采集范围：当前公开可见的 101 条[工坊留言](https://steamcommunity.com/sharedfiles/filedetails/comments/3787302680)，以及“新问题”“建议”“旧问题”三个[讨论帖](https://steamcommunity.com/sharedfiles/filedetails/discussions/3787302680)。三个讨论帖当前分别有 4、2、0 条回复。
 
 本表只保留仍需处理、仍待玩家复测或能转化为明确功能工作的内容。已经发布且没有新的同类反馈、只有作者进度说明、纯夸奖、已删除或已被新问题覆盖的条目不再保留。
 
@@ -19,34 +19,35 @@
 
 | 时间（北京时间） | 类型 | 问题或需求 | 当前判断 | 来源 |
 |---|---|---|---|---|
-| 08-25 14:16 | 角色显示 | 亡灵契约师和猎手的图片错位。 | **信息不足**：没有具体皮肤 Mod、出现界面、游戏版本和日志；如没有后续材料，只作为同类错位问题的补充证据。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_580554442217370878) |
 | 08-27 11:16；09-02 01:42 | 独立头像 | 角色皮肤与独立头像 Mod（例：`Silent Icons addon`）不能组合；储君和亡灵契约师的独立图标也会被角色皮肤来源覆盖。 | **未解决**：头像仍随整套角色皮肤应用，需要独立的头像来源选择和优先级，不能继续按单个 Mod 特判。 | [早期留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511665457) · [最新留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310751669067954) |
 | 08-27 13:25 | 界面建议 | 可隐藏局内“外观”入口；选角皮肤按钮可放到右上角；悬浮角色皮肤名称时预览。 | **建议评估**：三项均未完整实现。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511671928) |
-| 08-28 12:42 | 性能 | 打开卡牌奖励时卡顿。 | **未解决**：现有优化主要覆盖图鉴、选角和皮肤列表，没有针对卡牌奖励生成路径做采样。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511770586) |
-| 08-28 13:54 | 稳定性 | Save & Quit 或 Give Up 返回选角界面后白屏卡死，旧日志指向已释放的 `Godot.FontVariation`。 | **信息不足**：作者和反馈者后来都未复现，仍缺最新版本日志和完整 Mod 列表。 | [旧讨论回复](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045961806) |
+| 08-28 12:42；09-02 21:03 | 性能 | 打开卡牌奖励、首次进入卡牌图鉴、切换分类或多人队友出牌时卡顿；安装的卡图来源越多越明显。 | **未解决**：图鉴已有延迟加载，但奖励和多人出牌路径尚未采样；最新反馈说明首次分类浏览仍会同步做大量工作。 | [早期留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310164511770586) · [最新留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310798376870318) |
+| 08-28 13:54 | 稳定性 | Save & Quit 或 Give Up 返回选角界面后白屏卡死，旧日志指向已释放的 `Godot.FontVariation`。 | **已处理待复测（0.9.131.1）**：静态游戏字体缓存现在会验证 Godot 实例，资源已释放时重新加载；原问题后来未复现，仍需真实返回流程验证。 | [旧讨论回复](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318585/#c592939664045961806) |
 | 08-29 13:09 | Card Art Editor | 多卡面环境中部分切换没有变化，而且无法悬浮预览。 | **未解决**：需要单独检查编辑器动态生成资源的注册、缓存失效和预览生命周期。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621060618) |
-| 08-29 14:42；08-31 16:07 | 选角热切换 | `Nekobinder` 切换后出现衣服碎片；切走 `Moe-Necrobinder` 后小手残留；A 大骨妹的黑火会遮住人物；`3747942752` 与阿洛娜皮肤互切时会按上次退出时的选择单向触发碎片或图层残留。 | **未解决**：这是同一类骨骼、附件、特效层和退出回滚不完整问题；已有通用隔离修复，但最新讨论仍提供了可复现组合和对照图，需要按该组合复测。 | [Nekobinder](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061850) · [Moe-Necrobinder](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061952) · [新问题讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592939955001664624/) |
-| 08-30 12:06 | 崩溃 | 进入下一个房间时闪退。 | **信息不足**：缺角色、皮肤 Mod、前后房间类型、游戏版本和日志。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621141150) |
-| 08-30 22:52 | 猎手皮肤 | 同时安装猫娘阿塔与劣人 TV 时无法切出劣人 TV。 | **已处理待复测**：当前本机和多人测试中劣人 TV 能加载，原留言者没有确认该组合在最新版恢复。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621182905) |
+| 08-29 14:42；08-31 16:07 | 选角热切换 | `Nekobinder` 切换后出现衣服碎片；切走 `Moe-Necrobinder` 后小手残留；A 大骨妹的黑火会遮住人物；`3747942752` 与阿洛娜皮肤互切时会按上次退出时的选择单向触发碎片或图层残留。 | **已处理待复测（0.9.131）**：角色场景、规范骨骼依赖和缓存所有权已改为按选择隔离并双向恢复；保留该组合供本轮最终实机回归。 | [Nekobinder](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061850) · [Moe-Necrobinder](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621061952) · [新问题讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592939955001664624/) |
 | 08-31 05:07 | 外观调整 UX | 把 500% 角色拖到屏幕外后缩小并关闭菜单，角色无法找回。 | **建议评估**：需要不依赖点击目标的“恢复当前角色位置”入口或快捷键。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621212090) |
-| 08-31 08:02 | 选角界面 | 选中角色后尝试返回选角界面，画面不切换，只继续播放音乐。 | **信息不足（高影响）**：缺单人/多人、返回操作、游戏版本、角色和日志。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621222655) |
-| 09-01 07:48 | 加载顺序 | 每次启用 Skin Changer 都提示若干皮肤 Mod 排在它前面，但玩家称工坊和 Mod Loader 中这些 Mod 实际都在后面。涉及 `Watcher Beautified`、`RegentCardsAnimeRework`、`AncientWaifus_Beta`、`LieRenTVmod`、`Crimson Blade Valkyrie`。 | **信息不足**：作者使用同组 Mod 未复现；保留为独立的加载顺序误判问题。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621317137) |
+| 09-01 07:48 | 稳定性 / 加载顺序 | 玩家称每次启动游戏后的第二局必黑屏；同时每次启用 Skin Changer 都提示五个实际排在其后的皮肤 Mod。涉及 `Watcher Beautified`、`RegentCardsAnimeRework`、`AncientWaifus_Beta`、`LieRenTVmod`、`Crimson Blade Valkyrie`。 | **未解决**：作者同组未复现且已一次性询问系统与日志；仍可从第二局的静态缓存、场景退出和排序索引两条路径做代码审计。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310457621317137) |
 | 09-01 13:23 | 卡牌差分 | 二次元猎人卡图的背包等卡图差分、蛇咬的“是否先古样式”等原 Mod 选项被 Skin Changer 隔离后消失。 | **未解决**：需要把提供者声明的差分作为 Skin Changer 自己的可选变体接管，或保留不会污染其他来源的原生控件。 | [新问题讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592939955001664624/) |
 | 09-01 16:27；20:12 | 同 ID 差分 | 多个差分包使用同一个 Mod ID，希望能同时加载并热切换；玩家称 `0.9.112` 曾意外做到、现版本不行。 | **建议评估**：需要按来源目录或包指纹区分，同时规避程序集、资源路径和注册项冲突；旧版本表现不视为稳定实现。 | [建议讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/591813130434318558/) · [补充留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310751669037949) |
 | 09-01 23:54 | 卡牌界面 / 应用一致性 | 希望“跟随分类”按钮可移动并记忆位置；另有卡图悬浮预览正常，但选择后跳成其他图或原图。 | **建议评估 + 信息不足**：按钮位置可独立优化；应用跳变需要具体卡图 Mod、卡牌和分类才能定位。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310751669056226) |
+| 09-02 10:22 | 角色分组 | 机器人皮肤列表里出现储君皮肤，选择后仍是机器人原皮。 | **信息不足**：反馈只给出非工坊下载页，无法安全取得样本；先审计角色分组证据是否错误地依赖资源路径中的宽泛词。 | [新问题讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592939955001664624/) |
+| 09-02 14:01 | 渡鸦疫医差分 | 在选角界面用头骨按钮切换差分后，进入战斗仍是有头骨差分且播放濒死动画。 | **已处理待复测**：作者未复现并已在讨论内一次性请其用新版本复测；不再追问，代码侧检查差分状态是否跨场景保留。 | [新问题讨论](https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592939955001664624/) |
+| 09-02 22:51 | 爱丽丝卡图 | 鸡煲的独立爱丽丝卡图包未被接管，启用 Skin Changer 后无法看到该来源。 | **未解决**：疑似 `【临战爱丽丝】Alice Defect Card Art Pack`，尚未得到反馈者确认；先尝试从工坊定位并检查纯卡图包的识别。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310798376879495) |
+| 09-03 01:52 | 猎手卡图 | `NSFW-猎人卡面-SilentCards` 被列为来源，但选择后显示原版卡图。 | **未解决**：本机已安装该 Mod，可直接检查它的 PCK 路径、卡牌键和最终赢家。 | [留言](https://steamcommunity.com/sharedfiles/filedetails/?id=3787302680#comment_587310798376893912) |
 
 ## 按紧急程度的处理顺序
 
 | 顺序 | 级别 | 待办 | 排序理由 / 下一步 |
 |---:|---|---|---|
-| 1 | P1 | 返回选角无响应与 `FontVariation` 白屏 | 都涉及界面返回和资源释放生命周期；先补齐新版日志，再检查是否能并入同一轮场景退出审计。 |
-| 2 | P1 | 选角热切换的骨骼、附件和特效层残留 | 使用 `3747942752`、阿洛娜、Nekobinder、Moe-Necrobinder 和 A 大骨妹组成最小复现组，验证双向切换而不是只测一种进入顺序。 |
-| 3 | P1 | 卡牌差分控件被隔离 | 先以二次元猎人卡图的背包差分和蛇咬先古样式为样本，确认变体数据来源，再决定统一转成 Skin Changer 选项还是安全保留原控件。 |
-| 4 | P1 | Card Art Editor 多卡面与“预览正常、应用跳变” | 先向最新留言者补问具体 Mod 和卡牌；随后统一检查预览临时选择、保存选择和最终资源赢家是否一致。 |
-| 5 | P1 | 加载顺序反复误报 | 用反馈列出的五个 Mod 保存一次顺序后重启，记录 Skin Changer 判断到的索引和真实 Mod Loader 索引；避免自动排序反过来破坏依赖。 |
-| 6 | P2 | 卡牌奖励界面卡顿 | 对奖励生成路径单独采样，不再用卡牌图鉴优化结果替代；确认是当前选中卡图加载还是全来源扫描。 |
-| 7 | P2 | 独立头像来源 | 设计为独立于角色整套皮肤的头像来源和优先级，并覆盖选角按钮、多人头像、左上角头像与地图图标。 |
-| 8 | P2 | 角色拖出屏幕后无法恢复 | 增加无需点击目标即可恢复当前玩家模型变换的入口或快捷键。 |
-| 9 | P2 | 亡灵契约师/猎手错位、劣人 TV 组合 | 前者继续等具体 Mod 和日志；后者等原留言者复测，出现新证据再提升优先级。 |
-| 10 | P3 | 局内入口开关、选角按钮位置、角色悬浮预览、“跟随分类”按钮位置 | 都是可用性增强，合并为一轮界面设置，不抢占崩溃、串皮和资源回滚问题。 |
-| 11 | P3 | 同 ID 差分包同时加载 | 涉及 Mod 身份、程序集和同路径资源冲突，成本与回归风险最高，最后单独设计。 |
+| 1 | P1 | 第二局黑屏、返回流程与失效字体资源 | 已先修失效字体缓存；继续审计第二局残留的静态资源、运行期作用域和场景退出清理，无法复现的分支不做猜测式大改。 |
+| 2 | P1 | 选角热切换的骨骼、附件和特效层残留 | 0.9.131 已做通用双向隔离；最终实机回归使用 `3747942752`、阿洛娜、Nekobinder、Moe-Necrobinder 和 A 大骨妹。 |
+| 3 | P1 | `SilentCards` 选中仍为原图 | 样本已安装，优先从 PCK 实际路径与卡牌键验证通用卡图匹配和最终赢家。 |
+| 4 | P1 | 卡牌差分控件与渡鸦疫医状态被隔离 | 检查提供者自己的变体状态能否被安全转换成 Skin Changer 变体，并保证选角状态进入战斗。 |
+| 5 | P1 | Card Art Editor、爱丽丝卡图和“预览正确、应用跳变” | 统一检查动态/纯资源卡图的发现、临时预览、持久选择和最终资源赢家，避免为单个 Mod 特判。 |
+| 6 | P1 | 角色皮肤跨分组 | 审计角色归属证据；没有安全样本的第三方下载页不直接执行，只加固能由代码证明的宽泛匹配。 |
+| 7 | P1 | 加载顺序反复误报 | 用反馈列出的五个 Mod 对照持久化顺序和运行时顺序，确认自动前移后的索引是否仍读取旧快照。 |
+| 8 | P2 | 卡牌奖励、图鉴首次浏览与多人出牌卡顿 | 分别采样三个入口；只预热即将可见的当前皮肤，不扫描或实例化全部来源。 |
+| 9 | P2 | 独立头像来源 | 设计为独立于角色整套皮肤的头像来源和优先级，并覆盖选角按钮、多人头像、左上角头像与地图图标。 |
+| 10 | P2 | 角色拖出屏幕后无法恢复 | 增加无需点击目标即可恢复当前玩家模型变换的入口或快捷键。 |
+| 11 | P3 | 局内入口开关、选角按钮位置、角色悬浮预览、“跟随分类”按钮位置 | 合并为一轮界面设置，不抢占崩溃、串皮、资源回滚和性能问题。 |
+| 12 | P3 | 同 ID 差分包同时加载 | 涉及 Mod 身份、程序集和同路径资源冲突，成本与回归风险最高，最后单独设计。 |

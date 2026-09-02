@@ -51,6 +51,8 @@
              Link="ManagedModListNamePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/CardPresentationLayoutPolicy.cs"
              Link="CardPresentationLayoutPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/ReloadingReferenceCache.cs"
+             Link="ReloadingReferenceCache.cs" />
   </ItemGroup>
 
   <Target Name="CopyFrameworkCompatibilityFixture" AfterTargets="Build">
