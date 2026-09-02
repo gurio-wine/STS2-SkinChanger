@@ -23,6 +23,12 @@ if (args.Length == 2 && args[1].Equals("--self-test-card-export", StringComparis
     return;
 }
 
+if (args.Length == 2 && args[1].Equals("--self-test-runtime-alias", StringComparison.OrdinalIgnoreCase))
+{
+    RunRuntimeAliasSelfTest(args[0]);
+    return;
+}
+
 if (args.Length == 2 && args[1].Equals("--self-test-localization", StringComparison.OrdinalIgnoreCase))
 {
     RunLocalizationOwnershipSelfTest(args[0]);
@@ -1590,6 +1596,95 @@ static void RunGamePackLocatorSelfTest()
         {
             Directory.Delete(testRoot, recursive: true);
         }
+    }
+}
+
+static void RunRuntimeAliasSelfTest(string gamePckPath)
+{
+    var testRoot = Path.Combine(
+        Path.GetTempPath(),
+        "Gurio.SkinChanger.RuntimeAlias." + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(testRoot);
+    try
+    {
+        const string providerId = "Tests.CaseSensitiveSpine";
+        const string skeletonData =
+            "res://animations/characters/defect/defect_skel_data.tres";
+        const string atlasSource =
+            "res://animations/characters/defect/Defect.atlas";
+        const string atlasPayload =
+            "res://.godot/imported/Defect.atlas-test.spatlas";
+        const string textureSource =
+            "res://animations/characters/defect/Defect.png";
+        const string textureDirect =
+            "res://animations/characters/defect/defect.png";
+        const string texturePayload =
+            "res://.godot/imported/Defect.png-test.ctex";
+        var providerPck = Path.Combine(testRoot, providerId + ".pck");
+        PckArchive.Write(
+            providerPck,
+            new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                [skeletonData] = Encoding.UTF8.GetBytes(
+                    "[gd_resource type=\"SpineSkeletonDataResource\" load_steps=2 format=3]\n" +
+                    $"[ext_resource type=\"SpineAtlasResource\" path=\"{atlasSource}\" id=\"1\"]\n"),
+                [atlasSource + ".import"] = Encoding.UTF8.GetBytes(
+                    "[remap]\n" +
+                    $"path=\"{atlasPayload}\"\n" +
+                    "[deps]\n" +
+                    $"source_file=\"{atlasSource}\"\n" +
+                    $"dest_files=[\"{atlasPayload}\"]\n"),
+                [atlasPayload] = Encoding.UTF8.GetBytes(
+                    "{\"atlas_data\":\"Defect.png\\nsize:1,1\\n\"," +
+                    $"\"source_path\":\"{atlasSource}\"}}"),
+                [textureDirect] = [1, 2, 3],
+                [textureSource + ".import"] = Encoding.UTF8.GetBytes(
+                    "[remap]\n" +
+                    $"path=\"{texturePayload}\"\n" +
+                    "[deps]\n" +
+                    $"source_file=\"{textureSource}\"\n" +
+                    $"dest_files=[\"{texturePayload}\"]\n"),
+                [texturePayload] = [4, 5, 6]
+            });
+
+        using var catalog = SkinCatalog.Build(
+            gamePckPath,
+            [new SkinModDescriptor(
+                providerId,
+                "Case-sensitive Spine fixture",
+                providerPck,
+                AffectsGameplay: false,
+                RootPath: testRoot,
+                HasDll: false)]);
+        var defectGroup = catalog.Groups.Single(group =>
+            group.Id.Equals("defect", StringComparison.OrdinalIgnoreCase));
+        var option = defectGroup.Options.Single(candidate =>
+            candidate.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase));
+        var overlay = catalog.BuildRuntimeResourceOverlay(
+            defectGroup.Id,
+            option.Id,
+            [skeletonData],
+            "case-sensitive-spine/001");
+        var expectedTextureAlias =
+            "res://sts2_skin_runtime/case-sensitive-spine/001/animations/characters/defect/Defect.png";
+        if (!overlay.Files.Keys.Contains(expectedTextureAlias, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Spine 图集声明的 Defect.png 必须以完全相同的大小写写入独立资源包；" +
+                "仅写入包内原文件名 defect.png 会让 Godot 原生 Spine 加载器找不到贴图并在战斗中崩溃。");
+        }
+
+        if (!overlay.Files.Keys.Contains(expectedTextureAlias + ".import", StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Spine 贴图的 .import 重定向也必须与图集声明保持完全相同的大小写。");
+        }
+
+        Console.WriteLine("runtime alias self-test passed: imported Spine texture casing");
+    }
+    finally
+    {
+        Directory.Delete(testRoot, recursive: true);
     }
 }
 

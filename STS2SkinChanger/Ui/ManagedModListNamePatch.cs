@@ -9,7 +9,7 @@ namespace STS2SkinChanger.Ui;
 internal static class ManagedModListNamePatch
 {
     [HarmonyPostfix]
-    [HarmonyPriority(Priority.Last)]
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(NModMenuRow __instance)
     {
         if (!ManagedSkinModLoader.IsManagedProviderForDisplay(__instance.Mod))

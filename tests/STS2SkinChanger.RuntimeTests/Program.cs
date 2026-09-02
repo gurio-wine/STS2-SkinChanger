@@ -5,6 +5,22 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+var managedModListPatchType = typeof(Entry).Assembly.GetType(
+                                  "STS2SkinChanger.Ui.ManagedModListNamePatch") ??
+                              throw new InvalidOperationException("找不到 Mod 列表 [SC] 标记补丁类型。");
+var managedModListPostfix = managedModListPatchType.GetMethod(
+                                "Postfix",
+                                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ??
+                            throw new InvalidOperationException("找不到 Mod 列表 [SC] 标记后置补丁。");
+var managedModListPriority = managedModListPostfix.GetCustomAttributesData()
+    .FirstOrDefault(attribute => attribute.AttributeType == typeof(HarmonyPriority))?
+    .ConstructorArguments.FirstOrDefault().Value;
+if (managedModListPriority is not int priority || priority != Priority.First)
+{
+    throw new InvalidOperationException(
+        "[SC] 标记必须作为最先执行的后置补丁写入 Mod 行；否则正式版中不兼容的第三方列表补丁抛错后，所有标记都会消失。");
+}
+
 var patchType = typeof(Entry).Assembly.GetType(
                     "STS2SkinChanger.Core.FrameworkRelicPackedIconPatch") ??
                 throw new InvalidOperationException("找不到框架遗物路径补丁类型。");

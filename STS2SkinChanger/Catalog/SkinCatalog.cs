@@ -3573,15 +3573,14 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static string BuildRuntimeSourceAlias(RuntimeResource resource, string aliasToken)
     {
-        // Text resources may reference the same PCK entry with different casing (Defect.atlas
-        // versus the exported defect.atlas.import). Godot's PCK lookup is case-sensitive even on
-        // Windows, and Spine resolves texture page names relative to the atlas path. Preserve the
-        // concrete exported path's casing so the atlas and its page use the exact names requested
-        // by the native Spine loader.
-        var concretePath = resource.DirectFile != null
-            ? NormalizeTakeoverPath(resource.DirectFile.Path)
-            : resource.RemapFile != null
-                ? StripResourceRedirectSuffix(NormalizeTakeoverPath(resource.RemapFile.Path))
+        // Imported resources can contain both a raw source file and a .import redirect whose
+        // casing differs (Defect.png.import beside defect.png). Godot/Spine resolves the logical
+        // imported path case-sensitively, so the redirect path is authoritative whenever present.
+        // Plain direct resources still retain their concrete exported casing.
+        var concretePath = resource.RemapFile != null
+            ? StripResourceRedirectSuffix(NormalizeTakeoverPath(resource.RemapFile.Path))
+            : resource.DirectFile != null
+                ? NormalizeTakeoverPath(resource.DirectFile.Path)
                 : resource.SourcePath;
         if (!concretePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
         {
