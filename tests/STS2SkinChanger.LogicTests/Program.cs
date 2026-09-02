@@ -34,6 +34,13 @@ var runtimeProviderCandidates = new RuntimeProviderCandidate[]
 };
 Require(
     RuntimeProviderScopePolicy.SelectActiveProviders(
+            runtimeProviderCandidates,
+            scope: null)
+        .SetEquals(runtimeProviderCandidates.Select(candidate => candidate.ProviderId)),
+    "游戏资源初始化前尚未建立可见范围时，必须先完成所有已选完整皮肤的一次性初始化；" +
+    "否则延迟加载的自定义场景会被缓存成没有脚本类型的普通 Node2D。");
+Require(
+    RuntimeProviderScopePolicy.SelectActiveProviders(
         runtimeProviderCandidates,
         new RuntimeProviderScope([], IncludeRunWideMonsterProviders: false)).Count == 0,
     "启动阶段没有可见外观分组时，不得提前执行任何第三方皮肤初始化器。");

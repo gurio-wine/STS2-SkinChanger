@@ -72,7 +72,7 @@ internal static class SkinService
     private static readonly HashSet<string> WarmingRuntimeProviderPacks =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim RuntimePackWarmGate = new(1, 1);
-    private static RuntimeProviderScope _runtimeProviderBehaviorScope = new([], false);
+    private static RuntimeProviderScope? _runtimeProviderBehaviorScope;
     private static readonly Dictionary<string, ResourceFile> MountedLocalizationFiles =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, LocalizationCacheState> LocalizationStateCache =
@@ -441,7 +441,7 @@ internal static class SkinService
                 WarmedRuntimeProviderPacks.Clear();
                 WarmingRuntimeProviderPacks.Clear();
                 _runtimePackWarmGeneration++;
-                _runtimeProviderBehaviorScope = new RuntimeProviderScope([], false);
+                _runtimeProviderBehaviorScope = null;
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
                 _mountedLocalizationSignature = null;
@@ -672,9 +672,9 @@ internal static class SkinService
             var nextScope = groupIds
                 .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (_runtimeProviderBehaviorScope.IncludeRunWideMonsterProviders ==
-                    includeRunWideMonsterProviders &&
-                _runtimeProviderBehaviorScope.VisibleGroupIds.ToHashSet(
+            if (_runtimeProviderBehaviorScope is { } currentScope &&
+                currentScope.IncludeRunWideMonsterProviders == includeRunWideMonsterProviders &&
+                currentScope.VisibleGroupIds.ToHashSet(
                     StringComparer.OrdinalIgnoreCase).SetEquals(nextScope))
             {
                 return;
