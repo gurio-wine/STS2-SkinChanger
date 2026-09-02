@@ -27,6 +27,8 @@
              Link="ExternalCardProviderIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterGroupEvidencePolicy.cs"
              Link="CharacterGroupEvidencePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs"
+             Link="DirectCharacterRuntimeTargetPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedProviderDisplayPolicy.cs"
              Link="ManagedProviderDisplayPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedCharacterAssetRegistrationPolicy.cs"
@@ -45,6 +47,8 @@
              Link="FrameworkRelicVisualPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs"
              Link="FrameworkSkinContractScanner.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/DirectCharacterRuntimeTargetScanner.cs"
+             Link="DirectCharacterRuntimeTargetScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/OtherCreatureCatalog.cs"
              Link="OtherCreatureCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantProviderReadyPolicy.cs"

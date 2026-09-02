@@ -80,6 +80,38 @@ Require(
             ["regent", "defect"])
         .SetEquals(["regent", "defect"]),
     "真正同时提供两名角色完整模型的合集必须保留两个角色选项。");
+
+Require(
+    DirectCharacterRuntimeTargetPolicy.ResolveTargets(
+            [("TargetCharacterId", "REGENT")],
+            ["ironclad", "silent", "regent", "defect"])
+        .SetEquals(["regent"]),
+    "通过私有场景动态替换角色的 DLL 必须按明确的目标角色字段进入对应皮肤列表。");
+Require(
+    DirectCharacterRuntimeTargetPolicy.ResolveTargets(
+            [("TargetCharacterId", "REGENT"), ("DefaultCharacterId", "DEFECT")],
+            ["regent", "defect"])
+        .SetEquals(["regent"]),
+    "普通默认值或兼容字段中的其他角色 ID 不能把完整皮肤串进另一角色列表。");
+Require(
+    DirectCharacterRuntimeTargetPolicy.ResolveTargets(
+            [("TargetCharacterIds", "REGENT"), ("TargetCharacterIds", "DEFECT")],
+            ["regent", "defect"])
+        .SetEquals(["regent", "defect"]),
+    "明确声明多个目标角色的完整运行合集必须保留全部真实角色归属。");
+Require(
+    DirectCharacterRuntimeTargetPolicy.ResolveTargets(
+            [("TargetCharacterId", "UNKNOWN_CHARACTER")],
+            ["regent", "defect"])
+        .Count == 0,
+    "未由游戏或玩法 Mod 定义的角色 ID 不能生成幽灵皮肤分组。");
+var directRuntimeFixtureAssembly = Assembly.GetExecutingAssembly().Location;
+Require(
+    DirectCharacterRuntimeTargetScanner.ScanAssembly(
+            directRuntimeFixtureAssembly,
+            ["regent", "defect"])
+        .SetEquals(["regent"]),
+    "完整运行皮肤扫描器必须能从实际 DLL 元数据读取目标角色常量，不能依赖 Mod 名称或私有资源目录名。");
 Require(
     ManagedProviderDisplayPolicy.IsManaged(
         "KaguyaSilentRavenSkin",
@@ -1044,6 +1076,12 @@ Require(
     "返回选角界面后若旧 FontVariation 已释放，必须丢弃静态缓存并重新加载；否则再次套用主题会白屏。");
 
 Console.WriteLine("Skin Changer logic policy tests passed.");
+
+internal static class DirectCharacterRuntimeFixture
+{
+    public const string TargetCharacterId = "REGENT";
+    public const string DefaultCharacterId = "DEFECT";
+}
 
 internal static class ForeignCardProvider
 {

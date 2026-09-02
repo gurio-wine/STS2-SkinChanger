@@ -3763,6 +3763,10 @@ internal sealed partial class SkinCatalog : IDisposable
 
         MergeCharacterSelectIconPacks(indexes, groups);
         AddPckRuntimeProviderOptions(indexes, baselines, groups, knownGroupIds);
+        AddDirectCharacterRuntimeProviderOptions(
+            indexes,
+            groups,
+            knownCharacterGroupIds);
         AddManagedMonsterSceneOptions(indexes, groups, knownGroupIds);
         AddRuntimeMonsterVisualModeOptions(indexes, groups);
 
@@ -3775,6 +3779,65 @@ internal sealed partial class SkinCatalog : IDisposable
             .OrderBy(group => GroupSortOrder(group.Id))
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
+
+    private static void AddDirectCharacterRuntimeProviderOptions(
+        IReadOnlyCollection<PckResourceIndex> indexes,
+        IDictionary<string, SkinGroup> groups,
+        IReadOnlySet<string> knownCharacterGroupIds)
+    {
+        foreach (var index in indexes.Where(index => index.Mod.HasDll && index.Mod.RootPath != null))
+        {
+            var primaryAssembly = System.IO.Path.Combine(
+                index.Mod.RootPath!,
+                index.Mod.Id + ".dll");
+            var assemblyPaths = File.Exists(primaryAssembly)
+                ? [primaryAssembly]
+                : Directory.EnumerateFiles(
+                        index.Mod.RootPath!,
+                        "*.dll",
+                        SearchOption.TopDirectoryOnly)
+                    .ToArray();
+            if (!assemblyPaths.Any(HasDirectVisualHarmonyPatch))
+            {
+                continue;
+            }
+
+            var targetGroupIds = DirectCharacterRuntimeTargetScanner.Scan(
+                index.Mod.RootPath,
+                index.Mod.Id,
+                knownCharacterGroupIds);
+            foreach (var targetGroupId in targetGroupIds)
+            {
+                if (!groups.TryGetValue(targetGroupId, out var group))
+                {
+                    group = new SkinGroup(targetGroupId, DisplayName(targetGroupId));
+                    groups.Add(targetGroupId, group);
+                }
+
+                var existingIndex = group.Options.FindIndex(option =>
+                    option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
+                if (existingIndex >= 0)
+                {
+                    group.Options[existingIndex] = group.Options[existingIndex] with
+                    {
+                        IsRuntimeProvider = true
+                    };
+                    continue;
+                }
+
+                // Some full character skins never replace a canonical game resource. Their DLL
+                // hides the stock model and instantiates a private scene in combat, character
+                // select, shops and rest sites. Keep an explicit zero-asset option so selection
+                // still mounts the complete provider PCK and activates its original presentation
+                // callbacks only for the declared target character.
+                group.Options.Add(new SkinOption(
+                    index.Mod.Id,
+                    index.Mod.Name,
+                    new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                    IsRuntimeProvider: true));
+            }
+        }
     }
 
     private static IReadOnlyDictionary<string, GroupIdentity> BuildManagedMonsterAssetGroups(

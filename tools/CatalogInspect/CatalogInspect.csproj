@@ -10,12 +10,14 @@
     <Compile Include="../../STS2SkinChanger/Core/RuntimeDependencyIsolationPolicy.cs" Link="RuntimeDependencyIsolationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/OptionalSkinFrameworkPolicy.cs" Link="OptionalSkinFrameworkPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterGroupEvidencePolicy.cs" Link="CharacterGroupEvidencePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs" Link="DirectCharacterRuntimeTargetPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Pck/PckArchive.cs" Link="PckArchive.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/SkinCatalog.cs" Link="SkinCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPresentationScanner.cs" Link="ManagedCardPresentationScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPortraitReplacementScanner.cs" Link="ManagedCardPortraitReplacementScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ProviderCardBehaviorScanner.cs" Link="ProviderCardBehaviorScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCharacterAssetReplacementScanner.cs" Link="ManagedCharacterAssetReplacementScanner.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/DirectCharacterRuntimeTargetScanner.cs" Link="DirectCharacterRuntimeTargetScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs" Link="FrameworkSkinContractScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedMonsterSceneScanner.cs" Link="ManagedMonsterSceneScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/RuntimeMonsterVisualModeScanner.cs" Link="RuntimeMonsterVisualModeScanner.cs" />
