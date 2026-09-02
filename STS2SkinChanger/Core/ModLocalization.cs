@@ -71,6 +71,7 @@ internal enum ModText
     LoadOtherPlayersCustomSkins,
     ShowInRunAppearanceEntry,
     CharacterSelectorTopRight,
+    CardSkinSelectorDragHint,
     CharacterIcon,
     FollowCharacterSkin,
     RestorePlayerPosition
@@ -981,6 +982,26 @@ internal static class ModLocalization
             ["tur"] = "Görünüm seçenekleri sağ üstte"
         };
 
+    private static readonly IReadOnlyDictionary<string, string> CardSkinSelectorDragHintTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "Drag to move; right-click to reset",
+            ["zhs"] = "拖动移动；右键重置",
+            ["zht"] = "拖曳移動；右鍵重設",
+            ["deu"] = "Ziehen zum Verschieben; Rechtsklick zum Zurücksetzen",
+            ["esp"] = "Arrastra para mover; clic derecho para restablecer",
+            ["fra"] = "Faire glisser pour déplacer ; clic droit pour réinitialiser",
+            ["ita"] = "Trascina per spostare; clic destro per ripristinare",
+            ["jpn"] = "ドラッグで移動、右クリックでリセット",
+            ["kor"] = "드래그하여 이동, 오른쪽 클릭으로 초기화",
+            ["pol"] = "Przeciągnij, aby przesunąć; prawy klik resetuje",
+            ["ptb"] = "Arraste para mover; clique direito para redefinir",
+            ["rus"] = "Перетащите для перемещения; ПКМ — сброс",
+            ["spa"] = "Arrastra para mover; clic derecho para restablecer",
+            ["tha"] = "ลากเพื่อย้าย; คลิกขวาเพื่อรีเซ็ต",
+            ["tur"] = "Taşımak için sürükle; sıfırlamak için sağ tıkla"
+        };
+
     private sealed record CharacterIconLanguagePack(string CharacterIcon, string FollowCharacterSkin);
 
     private static readonly IReadOnlyDictionary<string, CharacterIconLanguagePack>
@@ -1206,6 +1227,8 @@ internal static class ModLocalization
                 ? InRunAppearanceEntryTexts[CurrentLanguage]
             : text == ModText.CharacterSelectorTopRight
                 ? CharacterSelectorTopRightTexts[CurrentLanguage]
+            : text == ModText.CardSkinSelectorDragHint
+                ? CardSkinSelectorDragHintTexts[CurrentLanguage]
             : text == ModText.CharacterIcon
                 ? CharacterIconPacks[CurrentLanguage].CharacterIcon
             : text == ModText.FollowCharacterSkin

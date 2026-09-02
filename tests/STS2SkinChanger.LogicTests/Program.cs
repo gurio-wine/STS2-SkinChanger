@@ -246,6 +246,24 @@ Require(
     topRightPlacement.OffsetTop > 77f,
     "右上角布局必须相对整个选角屏幕锚定，并避开原版右上角的章节选择器。");
 
+var defaultCardSelectorPosition = CardSkinSelectorPlacementPolicy.ResolveStored(
+    storedX: null,
+    storedY: null);
+Require(
+    defaultCardSelectorPosition == CardSkinSelectorPlacementPolicy.DefaultPosition,
+    "未移动过单卡皮肤控件时必须保持原来的顶部居中位置。");
+var clampedCardSelectorPosition = CardSkinSelectorPlacementPolicy.ClampNormalized(
+    requestedX: -2f,
+    requestedY: 3f,
+    viewportWidth: 2560f,
+    viewportHeight: 1200f);
+Require(
+    clampedCardSelectorPosition.X >=
+        CardSkinSelectorPlacementPolicy.SelectorWidth / 2f / 2560f &&
+    clampedCardSelectorPosition.Y <=
+        1f - CardSkinSelectorPlacementPolicy.SelectorHeight / 2f / 1200f,
+    "拖动单卡皮肤控件时必须限制在屏幕内，避免保存后再也无法找回。");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

@@ -75,6 +75,8 @@
              Link="PauseMenuAppearanceEntryPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/CharacterSelectorPlacementPolicy.cs"
              Link="CharacterSelectorPlacementPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/CardSkinSelectorPlacementPolicy.cs"
+             Link="CardSkinSelectorPlacementPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/CardPresentationLayoutPolicy.cs"
              Link="CardPresentationLayoutPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/ReloadingReferenceCache.cs"

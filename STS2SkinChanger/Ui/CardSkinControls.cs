@@ -1783,6 +1783,7 @@ internal static class CardSkinControls
 internal static class CardInspectSkinControls
 {
     private const string SelectorName = "STS2IndividualCardSkinSelector";
+    private const string DragHandleName = "IndividualCardSkinDragHandle";
     private const string DropdownName = "IndividualCardSkinDropdown";
     private const string UpdatingMeta = "sts2_individual_card_skin_updating";
     private const string OptionsCardMeta = "sts2_individual_card_skin_options_card";
@@ -1805,15 +1806,27 @@ internal static class CardInspectSkinControls
             AnchorTop = 0.5f,
             AnchorRight = 0.5f,
             AnchorBottom = 0.5f,
-            OffsetLeft = -154f,
+            OffsetLeft = -CardSkinSelectorPlacementPolicy.SelectorWidth / 2f,
             OffsetTop = -526f,
-            OffsetRight = 154f,
+            OffsetRight = CardSkinSelectorPlacementPolicy.SelectorWidth / 2f,
             OffsetBottom = -478f,
             GrowHorizontal = Control.GrowDirection.Both,
             MouseFilter = Control.MouseFilterEnum.Stop,
             ZIndex = 20,
             Visible = false
         };
+        selector.AddThemeConstantOverride("separation", 4);
+        var dragHandle = new Button
+        {
+            Name = DragHandleName,
+            Text = "⋮",
+            CustomMinimumSize = new Vector2(24, 48),
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            MouseDefaultCursorShape = Control.CursorShape.Move
+        };
+        ContextualSkinControls.ApplyGameTheme(dragHandle);
+        dragHandle.AddThemeFontSizeOverride("font_size", 22);
         var dropdown = new OptionButton
         {
             Name = DropdownName,
@@ -1857,9 +1870,139 @@ internal static class CardInspectSkinControls
             selector,
             dropdown,
             checked((int)index));
+        var dragging = false;
+        var dragOffset = Vector2.Zero;
+        dragHandle.GuiInput += inputEvent =>
+        {
+            if (inputEvent is InputEventMouseButton mouseButton)
+            {
+                if (mouseButton.ButtonIndex == MouseButton.Right && mouseButton.Pressed)
+                {
+                    dragging = false;
+                    SkinService.ResetIndividualCardSkinSelectorPosition();
+                    ApplyDefaultSelectorPosition(selector);
+                    dragHandle.AcceptEvent();
+                    return;
+                }
+
+                if (mouseButton.ButtonIndex != MouseButton.Left)
+                {
+                    return;
+                }
+
+                if (mouseButton.Pressed)
+                {
+                    dragging = true;
+                    dragOffset = screen.GetLocalMousePosition() -
+                                 (selector.Position + selector.Size / 2f);
+                    dragHandle.GrabClickFocus();
+                }
+                else if (dragging)
+                {
+                    dragging = false;
+                    SaveSelectorPosition(screen, selector);
+                }
+
+                dragHandle.AcceptEvent();
+                return;
+            }
+
+            if (inputEvent is not InputEventMouseMotion || !dragging)
+            {
+                return;
+            }
+
+            MoveSelector(
+                screen,
+                selector,
+                screen.GetLocalMousePosition() - dragOffset);
+            dragHandle.AcceptEvent();
+        };
+        selector.AddChild(dragHandle);
         selector.AddChild(dropdown);
         screen.AddChild(selector);
-        ModLocalization.Bind(screen, () => Sync(screen));
+        ApplyStoredSelectorPosition(screen, selector);
+        ModLocalization.Bind(screen, () =>
+        {
+            dragHandle.TooltipText = ModLocalization.Get(ModText.CardSkinSelectorDragHint);
+            Sync(screen);
+        });
+        dragHandle.TooltipText = ModLocalization.Get(ModText.CardSkinSelectorDragHint);
+    }
+
+    private static void ApplyStoredSelectorPosition(
+        NInspectCardScreen screen,
+        HBoxContainer selector)
+    {
+        if (!SkinService.TryGetIndividualCardSkinSelectorPosition(out var x, out var y))
+        {
+            ApplyDefaultSelectorPosition(selector);
+            return;
+        }
+
+        var size = screen.Size;
+        var stored = CardSkinSelectorPlacementPolicy.ClampNormalized(x, y, size.X, size.Y);
+        ApplyNormalizedSelectorPosition(selector, stored);
+    }
+
+    private static void ApplyDefaultSelectorPosition(HBoxContainer selector)
+    {
+        selector.AnchorLeft = 0.5f;
+        selector.AnchorTop = 0.5f;
+        selector.AnchorRight = 0.5f;
+        selector.AnchorBottom = 0.5f;
+        selector.OffsetLeft = -CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetTop = -526f;
+        selector.OffsetRight = CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetBottom = -478f;
+    }
+
+    private static void MoveSelector(
+        NInspectCardScreen screen,
+        HBoxContainer selector,
+        Vector2 requestedCenter)
+    {
+        var size = screen.Size;
+        var clamped = CardSkinSelectorPlacementPolicy.ClampNormalized(
+            requestedCenter.X / Math.Max(1f, size.X),
+            requestedCenter.Y / Math.Max(1f, size.Y),
+            size.X,
+            size.Y);
+        ApplyNormalizedSelectorPosition(selector, clamped);
+    }
+
+    private static void ApplyNormalizedSelectorPosition(
+        HBoxContainer selector,
+        NormalizedControlPosition position)
+    {
+        selector.AnchorLeft = position.X;
+        selector.AnchorTop = position.Y;
+        selector.AnchorRight = position.X;
+        selector.AnchorBottom = position.Y;
+        selector.OffsetLeft = -CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetTop = -CardSkinSelectorPlacementPolicy.SelectorHeight / 2f;
+        selector.OffsetRight = CardSkinSelectorPlacementPolicy.SelectorWidth / 2f;
+        selector.OffsetBottom = CardSkinSelectorPlacementPolicy.SelectorHeight / 2f;
+    }
+
+    private static void SaveSelectorPosition(
+        NInspectCardScreen screen,
+        HBoxContainer selector)
+    {
+        var size = screen.Size;
+        if (size.X <= 0f || size.Y <= 0f)
+        {
+            return;
+        }
+
+        var center = selector.Position + selector.Size / 2f;
+        var normalized = CardSkinSelectorPlacementPolicy.ClampNormalized(
+            center.X / size.X,
+            center.Y / size.Y,
+            size.X,
+            size.Y);
+        ApplyNormalizedSelectorPosition(selector, normalized);
+        SkinService.SetIndividualCardSkinSelectorPosition(normalized.X, normalized.Y);
     }
 
     public static void Sync(NInspectCardScreen screen)

@@ -505,6 +505,60 @@ internal static class SkinService
         }
     }
 
+    public static bool TryGetIndividualCardSkinSelectorPosition(out float x, out float y)
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            if (Config.IndividualCardSkinSelectorX is { } storedX &&
+                Config.IndividualCardSkinSelectorY is { } storedY &&
+                float.IsFinite(storedX) &&
+                float.IsFinite(storedY))
+            {
+                x = Math.Clamp(storedX, 0f, 1f);
+                y = Math.Clamp(storedY, 0f, 1f);
+                return true;
+            }
+
+            x = 0f;
+            y = 0f;
+            return false;
+        }
+    }
+
+    public static void SetIndividualCardSkinSelectorPosition(float x, float y)
+    {
+        if (!float.IsFinite(x) || !float.IsFinite(y))
+        {
+            return;
+        }
+
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            Config.IndividualCardSkinSelectorX = Math.Clamp(x, 0f, 1f);
+            Config.IndividualCardSkinSelectorY = Math.Clamp(y, 0f, 1f);
+            Config.Save(ConfigPath);
+        }
+    }
+
+    public static void ResetIndividualCardSkinSelectorPosition()
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            if (Config.IndividualCardSkinSelectorX == null &&
+                Config.IndividualCardSkinSelectorY == null)
+            {
+                return;
+            }
+
+            Config.IndividualCardSkinSelectorX = null;
+            Config.IndividualCardSkinSelectorY = null;
+            Config.Save(ConfigPath);
+        }
+    }
+
     public static bool ShouldShowLoadOrderWarning(bool isBeforeAllSkinMods)
     {
         lock (Sync)

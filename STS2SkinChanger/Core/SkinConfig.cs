@@ -94,6 +94,10 @@ internal sealed class SkinConfig
 
     public bool CharacterSelectorTopRight { get; set; }
 
+    public float? IndividualCardSkinSelectorX { get; set; }
+
+    public float? IndividualCardSkinSelectorY { get; set; }
+
     public static SkinConfig Load(string path)
     {
         var backupPath = path + ".bak";
