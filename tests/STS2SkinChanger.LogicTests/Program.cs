@@ -60,6 +60,26 @@ Require(
     ManagedModListNamePolicy.Format("[SC] Existing Prefix", isManagedProvider: true) ==
     "[SC] Existing Prefix",
     "Mod 列表反复刷新时不能重复叠加 [SC] 前缀。");
+
+Require(
+    CharacterGroupEvidencePolicy.ResolveEligibleGroups(
+            ["regent", "defect"],
+            ["regent"])
+        .SetEquals(["regent"]),
+    "一个完整储君皮肤即使捎带机器人头像，也不能出现在机器人皮肤列表；" +
+    "弱头像证据不能创建第二个角色皮肤归属。");
+Require(
+    CharacterGroupEvidencePolicy.ResolveEligibleGroups(
+            ["silent", "necrobinder"],
+            [])
+        .SetEquals(["silent", "necrobinder"]),
+    "纯头像包没有模型锚点时必须保留它声明的全部角色，不能破坏独立头像 Mod。");
+Require(
+    CharacterGroupEvidencePolicy.ResolveEligibleGroups(
+            ["regent", "defect"],
+            ["regent", "defect"])
+        .SetEquals(["regent", "defect"]),
+    "真正同时提供两名角色完整模型的合集必须保留两个角色选项。");
 Require(
     ManagedProviderDisplayPolicy.IsManaged(
         "KaguyaSilentRavenSkin",

@@ -3665,10 +3665,17 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(group => group.Id)
             .Concat(managedMonsterAssetGroups.Values.Select(group => group.Id))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var knownCharacterGroupIds = baselines
+            .SelectMany(index => index.Assets.Keys)
+            .Select(TryGetUnambiguousCharacterGroup)
+            .Where(group => group != null)
+            .Cast<GroupIdentity>()
+            .Select(group => group.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var groups = new Dictionary<string, SkinGroup>(StringComparer.OrdinalIgnoreCase);
         foreach (var index in indexes)
         {
-            var primaryGroups = index.Assets.Keys
+            var detectedPrimaryGroups = index.Assets.Keys
                 .Select(path => TryGetPrimaryGroup(path) ??
                                 managedMonsterAssetGroups.GetValueOrDefault(
                                     NormalizeTakeoverPath(path)))
@@ -3681,6 +3688,21 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(group => group != null && knownGroupIds.Contains(group.Id))
                 .Cast<GroupIdentity>()
                 .DistinctBy(group => group.Id)
+                .ToArray();
+            var anchoredCharacterGroupIds = index.Assets.Keys
+                .Select(path => TryGetCharacterVisualAnchorGroup(path, knownCharacterGroupIds))
+                .Where(group => group != null)
+                .Cast<GroupIdentity>()
+                .Select(group => group.Id);
+            var eligibleCharacterGroupIds = CharacterGroupEvidencePolicy.ResolveEligibleGroups(
+                detectedPrimaryGroups
+                    .Where(group => knownCharacterGroupIds.Contains(group.Id))
+                    .Select(group => group.Id),
+                anchoredCharacterGroupIds);
+            var primaryGroups = detectedPrimaryGroups
+                .Where(group =>
+                    !knownCharacterGroupIds.Contains(group.Id) ||
+                    eligibleCharacterGroupIds.Contains(group.Id))
                 .ToArray();
 
             if (primaryGroups.Length == 0)
@@ -5987,6 +6009,64 @@ internal sealed partial class SkinCatalog : IDisposable
         // 自身的代码补丁）。不识别 merchant 分组后，纯商人 Mod 不会被当作
         // 皮肤提供者，走游戏原加载器，表现与未安装本 Mod 时一致。
         return null;
+    }
+
+    private static GroupIdentity? TryGetUnambiguousCharacterGroup(string sourcePath)
+    {
+        var character = CharacterPathRegex().Match(sourcePath);
+        if (character.Success)
+        {
+            var id = character.Groups[1].Value.ToLowerInvariant();
+            foreach (var suffix in new[] { "_rest_site", "_merchant", "_character_select" })
+            {
+                if (id.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    id = id[..^suffix.Length];
+                    break;
+                }
+            }
+
+            return new GroupIdentity(id, DisplayName(id));
+        }
+
+        foreach (var sceneRegex in new[]
+                 {
+                     CharacterSelectSceneRegex(),
+                     MerchantCharacterSceneRegex(),
+                     RestSiteCharacterSceneRegex()
+                 })
+        {
+            var scene = sceneRegex.Match(sourcePath);
+            if (scene.Success)
+            {
+                var id = scene.Groups[1].Value.ToLowerInvariant();
+                return new GroupIdentity(id, DisplayName(id));
+            }
+        }
+
+        return null;
+    }
+
+    private static GroupIdentity? TryGetCharacterVisualAnchorGroup(
+        string sourcePath,
+        IReadOnlySet<string> knownCharacterGroupIds)
+    {
+        var direct = TryGetUnambiguousCharacterGroup(sourcePath);
+        if (direct != null && knownCharacterGroupIds.Contains(direct.Id))
+        {
+            return direct;
+        }
+
+        var creatureScene = CreatureVisualSceneRegex().Match(sourcePath);
+        if (!creatureScene.Success)
+        {
+            return null;
+        }
+
+        var id = creatureScene.Groups[1].Value.ToLowerInvariant();
+        return knownCharacterGroupIds.Contains(id)
+            ? new GroupIdentity(id, DisplayName(id))
+            : null;
     }
 
     private static GroupIdentity? TryGetCharacterSelectIconGroup(string sourcePath)
