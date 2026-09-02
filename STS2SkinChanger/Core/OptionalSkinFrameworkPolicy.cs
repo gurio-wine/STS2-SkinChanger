@@ -8,6 +8,13 @@ namespace STS2SkinChanger.Core;
 /// </summary>
 internal static class OptionalSkinFrameworkPolicy
 {
+    public static bool ShouldTreatAsGameplayBaseline(
+        bool manifestAffectsGameplay,
+        bool requiredByAnotherMod,
+        bool exposesSelectableCosmetics) =>
+        manifestAffectsGameplay ||
+        (requiredByAnotherMod && !exposesSelectableCosmetics);
+
     public static bool CanSatisfyMissingDependency(
         OptionalSkinFrameworkEvidence evidence,
         IReadOnlyCollection<string> compatibilityAssemblyNames) =>

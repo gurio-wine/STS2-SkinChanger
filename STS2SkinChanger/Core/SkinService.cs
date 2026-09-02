@@ -39,6 +39,8 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> CardPortraitCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> ExternalCardProviderIdentityPaths =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> BaselineRelicAtlasCache =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> BaselineRelicIconCache =
@@ -430,6 +432,7 @@ internal static class SkinService
                 PreparedRuntimeOverlays.Clear();
                 RuntimeResourceBundles.Clear();
                 CardPortraitCache.Clear();
+                ExternalCardProviderIdentityPaths.Clear();
                 BaselineRelicAtlasCache.Clear();
                 BaselineRelicIconCache.Clear();
                 FailedCardPortraitRequests.Clear();
@@ -473,8 +476,7 @@ internal static class SkinService
                         mod.manifest.hasPck
                             ? System.IO.Path.Combine(mod.path, mod.manifest.id + ".pck")
                             : null,
-                        mod.manifest.affectsGameplay ||
-                        ManagedSkinModLoader.IsRequiredByAnotherMod(mod, loadedMods),
+                        ManagedSkinModLoader.ShouldTreatAsGameplayBaseline(mod, loadedMods),
                         mod.path,
                         mod.manifest.hasDll))
                     .ToArray();
@@ -2072,6 +2074,44 @@ internal static class SkinService
             {
                 result = portrait;
             }
+        }
+    }
+
+    public static bool TryAssignExternalCardProviderIdentity(
+        CardModel card,
+        Texture2D texture)
+    {
+        lock (Sync)
+        {
+            var request = ResolveCardPortraitRequest(card);
+            if (request == null ||
+                !CardPortraitCache.TryGetValue(request.CacheKey, out var managedTexture) ||
+                !GodotObject.IsInstanceValid(managedTexture) ||
+                managedTexture.GetInstanceId() != texture.GetInstanceId())
+            {
+                return false;
+            }
+
+            if (ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
+                    managerAvailable: true,
+                    isManagedTexture: true,
+                    texture.ResourcePath))
+            {
+                if (!ExternalCardProviderIdentityPaths.TryGetValue(
+                        request.CacheKey,
+                        out var providerPath))
+                {
+                    providerPath = ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+                        card.Id.ToString(),
+                        request.CacheKey);
+                    ExternalCardProviderIdentityPaths[request.CacheKey] = providerPath;
+                }
+
+                texture.ResourcePath = providerPath;
+                return !string.IsNullOrWhiteSpace(texture.ResourcePath);
+            }
+
+            return false;
         }
     }
 
@@ -4952,6 +4992,7 @@ internal static class SkinService
                      .ToArray())
         {
             CardPortraitCache.Remove(key);
+            ExternalCardProviderIdentityPaths.Remove(key);
         }
 
         FailedCardPortraitRequests.RemoveWhere(key =>

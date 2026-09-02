@@ -36,6 +36,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderRoots =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, bool> SelectableCosmeticProbeResults =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> RegisteredProviderAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, ProviderAssembly> ProviderAssemblies =
@@ -3059,16 +3061,81 @@ internal static class ManagedSkinModLoader
     private static SkinModDescriptor ToDescriptor(Mod mod)
     {
         var manifest = mod.manifest!;
+        var requiredByAnotherMod = IsRequiredByAnotherMod(mod, ModManager.Mods);
+        var exposesSelectableCosmetics = requiredByAnotherMod &&
+                                         ExposesSelectableCosmetics(mod);
         return new SkinModDescriptor(
             manifest.id!,
             manifest.name ?? manifest.id!,
             manifest.hasPck
                 ? Path.Combine(mod.path, manifest.id + ".pck")
                 : null,
-            manifest.affectsGameplay || IsRequiredByAnotherMod(mod, ModManager.Mods),
+            OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+                manifest.affectsGameplay,
+                requiredByAnotherMod,
+                exposesSelectableCosmetics),
             mod.path,
             manifest.hasDll);
     }
+
+    public static bool ShouldTreatAsGameplayBaseline(Mod mod, IEnumerable<Mod> mods)
+    {
+        var manifest = mod.manifest;
+        if (manifest?.id == null)
+        {
+            return true;
+        }
+
+        var requiredByAnotherMod = IsRequiredByAnotherMod(mod, mods);
+        return OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+            manifest.affectsGameplay,
+            requiredByAnotherMod,
+            requiredByAnotherMod && ExposesSelectableCosmetics(mod));
+    }
+
+    private static bool ExposesSelectableCosmetics(Mod mod)
+    {
+        var manifest = mod.manifest;
+        if (manifest?.id == null || !manifest.hasPck)
+        {
+            return false;
+        }
+
+        var root = NormalizePath(mod.path);
+        if (ProvidersByRoot.TryGetValue(root, out var known))
+        {
+            return HasSelectableCosmetics(known);
+        }
+        if (SelectableCosmeticProbeResults.TryGetValue(root, out var cached))
+        {
+            return cached;
+        }
+
+        var pckPath = Path.Combine(mod.path, manifest.id + ".pck");
+        if (!File.Exists(pckPath))
+        {
+            return false;
+        }
+
+        var probe = SkinCatalog.ProbeSkinProviders(
+                [new SkinModDescriptor(
+                    manifest.id,
+                    manifest.name ?? manifest.id,
+                    pckPath,
+                    AffectsGameplay: false,
+                    mod.path,
+                    manifest.hasDll)])
+            .FirstOrDefault(candidate => candidate.RootPath != null);
+        var result = probe != null && HasSelectableCosmetics(probe);
+        SelectableCosmeticProbeResults[root] = result;
+        return result;
+    }
+
+    private static bool HasSelectableCosmetics(SkinProviderProbe probe) =>
+        probe.VisualGroupCount > 0 ||
+        probe.CardAssetCount > 0 ||
+        probe.CardPresentationCount > 0 ||
+        probe.RuntimeImageCount > 0;
 
     public static bool IsRequiredByAnotherMod(Mod mod, IEnumerable<Mod> mods)
     {

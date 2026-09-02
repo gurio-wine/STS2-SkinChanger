@@ -119,13 +119,28 @@ var requiredIds = manifests
     .SelectMany(manifest => manifest.Dependencies)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 var descriptors = manifests
-    .Select(manifest => new SkinModDescriptor(
-        manifest.Id,
-        manifest.Name,
-        manifest.PckPath,
-        manifest.AffectsGameplay || requiredIds.Contains(manifest.Id),
-        manifest.RootPath,
-        manifest.HasDll))
+    .Select(manifest =>
+    {
+        var cosmeticCandidate = new SkinModDescriptor(
+            manifest.Id,
+            manifest.Name,
+            manifest.PckPath,
+            AffectsGameplay: false,
+            manifest.RootPath,
+            manifest.HasDll);
+        var requiredByAnotherMod = requiredIds.Contains(manifest.Id);
+        var exposesSelectableCosmetics = requiredByAnotherMod &&
+                                         ExposesSelectableCosmetics(
+                                             cosmeticCandidate,
+                                             args[0]);
+        return cosmeticCandidate with
+        {
+            AffectsGameplay = OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+                manifest.AffectsGameplay,
+                requiredByAnotherMod,
+                exposesSelectableCosmetics)
+        };
+    })
     .ToList();
 
 using var catalog = SkinCatalog.Build(args[0], descriptors);
@@ -2517,6 +2532,32 @@ static bool IsProviderNamespaceFile(string path, string providerId)
     return providerToken.Length > 0 &&
            (topLevelToken.Equals(providerToken, StringComparison.OrdinalIgnoreCase) ||
             topLevelToken.StartsWith(providerToken, StringComparison.OrdinalIgnoreCase));
+}
+
+static bool ExposesSelectableCosmetics(
+    SkinModDescriptor descriptor,
+    string gamePckPath)
+{
+    if (descriptor.PckPath == null || !File.Exists(descriptor.PckPath))
+    {
+        return false;
+    }
+
+    var probe = SkinCatalog.ProbeSkinProviders([descriptor], gamePckPath)
+        .FirstOrDefault(candidate => candidate.RootPath != null);
+    return probe is
+    {
+        VisualGroupCount: > 0
+    } or
+    {
+        CardAssetCount: > 0
+    } or
+    {
+        CardPresentationCount: > 0
+    } or
+    {
+        RuntimeImageCount: > 0
+    };
 }
 
 static bool IsProviderProjectControlFile(string path)

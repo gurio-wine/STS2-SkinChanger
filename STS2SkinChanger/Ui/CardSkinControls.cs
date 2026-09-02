@@ -377,7 +377,8 @@ internal static class CardSkinControls
             // v0.111 refreshes the portrait again while cards enter and execute from the play
             // queue. Reassert the exact per-card selection after that queue-owned refresh so a
             // pooled TextureRect cannot keep another card's art.
-            ApplySelectedPortraitToNode(card, ExternalCardVisualBridge.GetOwnership(card.Model));
+            ApplySelectedPortraitToNode(card, ExternalCardVisualBridge.GetOwnership(card));
+            ExternalCardVisualBridge.SynchronizeProvider(card);
         }
     }
 
@@ -2239,11 +2240,10 @@ internal static class CardLayoutFinalPatch
     {
         // 基线已在 Priority.First 的 Postfix 中捕获，避免把其他 Mod 后置
         // 修改过的卡框误当成原版。这里最后只做当前所有者的呈现。
-        var externalOwnership = __instance.Model == null
-            ? default
-            : ExternalCardVisualBridge.GetOwnership(__instance.Model);
+        var externalOwnership = ExternalCardVisualBridge.GetOwnership(__instance);
         CardSkinControls.ApplySelectedPresentation(__instance, externalOwnership);
         CardSkinControls.ApplySelectedPortraitToNode(__instance, externalOwnership);
+        ExternalCardVisualBridge.SynchronizeProvider(__instance);
         CardSkinControls.UpdateLibrarySourceIndicators(__instance);
     }
 }

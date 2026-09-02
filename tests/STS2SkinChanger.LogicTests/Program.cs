@@ -511,6 +511,89 @@ Require(
         }],
         originalFrameworkHostAvailable: true),
     "原框架已启用且仍有无法安全接管的依赖者时，不能抢占原框架程序集身份。");
+Require(
+    !OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+        manifestAffectsGameplay: false,
+        requiredByAnotherMod: true,
+        exposesSelectableCosmetics: true),
+    "被兼容补丁依赖的纯卡图包仍必须进入皮肤目录；依赖关系只要求保留其 DLL，" +
+    "不能把已明确导出的卡图误当成玩法基线。");
+Require(
+    OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+        manifestAffectsGameplay: false,
+        requiredByAnotherMod: true,
+        exposesSelectableCosmetics: false),
+    "没有任何可选择外观的被依赖库仍应保守地作为玩法基线，避免隔离未知前置资源。");
+Require(
+    OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
+        manifestAffectsGameplay: true,
+        requiredByAnotherMod: false,
+        exposesSelectableCosmetics: true),
+    "manifest 明确声明影响玩法时，不能因碰巧包含图片而降级成皮肤包。");
+
+var editorStaticOwnership = ExternalCardProviderIdentityPolicy.ResolveEditorOwnership(
+    hasOverride: true,
+    fullArt: false,
+    ancientTextOutside: false);
+Require(
+    editorStaticOwnership == new ExternalCardVisualOwnershipState(true, false, false),
+    "外部编辑器只替换普通卡图时，应只拥有卡图层，不能顺带抢走卡框和文字层。");
+var editorFullArtOwnership = ExternalCardProviderIdentityPolicy.ResolveEditorOwnership(
+    hasOverride: true,
+    fullArt: true,
+    ancientTextOutside: false);
+Require(
+    editorFullArtOwnership == new ExternalCardVisualOwnershipState(true, true, true),
+    "外部编辑器启用全卡图时，必须完整保留它的卡图、卡框和文字布局。");
+var editorAncientTextOwnership = ExternalCardProviderIdentityPolicy.ResolveEditorOwnership(
+    hasOverride: true,
+    fullArt: false,
+    ancientTextOutside: true);
+Require(
+    editorAncientTextOwnership == new ExternalCardVisualOwnershipState(true, false, true),
+    "外部编辑器只把先古文字移到卡图外时，不应阻止 Skin Changer 恢复卡框。");
+Require(
+    ExternalCardProviderIdentityPolicy.ResolveEditorOwnership(
+        hasOverride: false,
+        fullArt: true,
+        ancientTextOutside: true) == default,
+    "没有实际卡图覆盖时，编辑器的残留显示设置不能伪造视觉所有权。");
+
+Require(
+    ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
+        managerAvailable: true,
+        isManagedTexture: true,
+        resourcePath: string.Empty),
+    "动态卡图管理器存在时，Skin Changer 生成的无路径贴图需要稳定资源身份，避免旧缓存写回。");
+Require(
+    !ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
+        managerAvailable: false,
+        isManagedTexture: true,
+        resourcePath: string.Empty) &&
+    !ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
+        managerAvailable: true,
+        isManagedTexture: false,
+        resourcePath: string.Empty) &&
+    !ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
+        managerAvailable: true,
+        isManagedTexture: true,
+        resourcePath: "res://already_named.png"),
+    "没有管理器、不是本 Mod 贴图或已有真实路径时，不能篡改资源身份。");
+var providerPath = ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+    "ZAP",
+    "defect\nprovider-a\nres://zap.png");
+Require(
+    providerPath.StartsWith("user://skin_changer/card_provider/zap_", StringComparison.Ordinal) &&
+    providerPath.EndsWith(".png", StringComparison.Ordinal),
+    "合成资源路径必须保留卡牌身份，供能力型卡图管理器正确归属缓存。");
+Require(
+    providerPath == ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+        "ZAP",
+        "defect\nprovider-a\nres://zap.png") &&
+    providerPath != ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+        "ZAP",
+        "defect\nprovider-b\nres://zap.png"),
+    "相同来源的资源身份必须稳定，不同皮肤来源必须分离。");
 
 Require(
     FrameworkEntryAnimationPolicy.Resolve(

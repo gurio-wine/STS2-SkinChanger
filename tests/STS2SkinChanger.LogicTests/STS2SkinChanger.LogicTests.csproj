@@ -23,6 +23,8 @@
              Link="RuntimePackWarmPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/OptionalSkinFrameworkPolicy.cs"
              Link="OptionalSkinFrameworkPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/ExternalCardProviderIdentityPolicy.cs"
+             Link="ExternalCardProviderIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedProviderDisplayPolicy.cs"
              Link="ManagedProviderDisplayPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedCharacterAssetRegistrationPolicy.cs"

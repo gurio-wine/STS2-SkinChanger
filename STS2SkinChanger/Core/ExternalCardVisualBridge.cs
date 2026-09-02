@@ -1,3 +1,4 @@
+using Godot;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using System.Reflection;
@@ -16,6 +17,9 @@ internal static class ExternalCardVisualBridge
     private static readonly HashSet<string> LoggedFailures = new(StringComparer.Ordinal);
     private static ICardVisualOwnershipAdapter[] _adapterSnapshot = [];
     private static volatile bool _discoveryDirty = true;
+    private static WeakReference<Node>? _scriptedManagerReference;
+    private static ulong _nextScriptedManagerProbeTicks;
+    private static bool _scriptedManagerLogged;
 
     static ExternalCardVisualBridge()
     {
@@ -32,7 +36,54 @@ internal static class ExternalCardVisualBridge
         return ownership;
     }
 
+    public static ExternalCardVisualOwnership GetOwnership(NCard card)
+    {
+        var ownership = card.Model == null
+            ? default
+            : GetOwnership(card.Model);
+        return ownership.Merge(GetScriptedManagerOwnership(card));
+    }
+
     public static void WarmUp() => EnumerateAdapters();
+
+    /// <summary>
+    /// Lets a scripted card-art manager capture the final visual winner after every provider has
+    /// run.  Some managers intentionally refresh on the next idle frame; without this handshake
+    /// they cache the stock portrait before Skin Changer's Priority.Last postfix and restore that
+    /// stale texture over both hover previews and persistent selections.
+    /// </summary>
+    public static void SynchronizeProvider(NCard card)
+    {
+        var manager = GetScriptedManager();
+        if (manager == null || card.Model == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var temporaryProviderPaths = PrepareManagedProviderIdentity(card);
+            try
+            {
+                manager.Call("capture_card_provider_after_visual_update", card, true);
+            }
+            finally
+            {
+                foreach (var texture in temporaryProviderPaths)
+                {
+                    if (GodotObject.IsInstanceValid(texture))
+                    {
+                        texture.ResourcePath = string.Empty;
+                    }
+                }
+            }
+            manager.Call("apply_card_override_after_visual_update", card);
+        }
+        catch (Exception exception)
+        {
+            LogScriptedFailure(manager, "最终卡图同步", exception);
+        }
+    }
 
     private static ICardVisualOwnershipAdapter[] EnumerateAdapters()
     {
@@ -121,6 +172,104 @@ internal static class ExternalCardVisualBridge
         }
 
         _adapterSnapshot = Adapters.ToArray();
+    }
+
+    private static ExternalCardVisualOwnership GetScriptedManagerOwnership(NCard card)
+    {
+        var manager = GetScriptedManager();
+        if (manager == null)
+        {
+            return default;
+        }
+
+        try
+        {
+            var sourcePath = manager.Call("get_source_path_for_card_node", card).AsString();
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                return default;
+            }
+
+            var state = ExternalCardProviderIdentityPolicy.ResolveEditorOwnership(
+                manager.Call("has_override", sourcePath).AsBool(),
+                manager.Call("is_full_art_mode", sourcePath).AsBool(),
+                manager.Call("is_ancient_text_outside_enabled", sourcePath).AsBool());
+            return new ExternalCardVisualOwnership(state.Portrait, state.Frame, state.Text);
+        }
+        catch (Exception exception)
+        {
+            LogScriptedFailure(manager, "视觉所有权读取", exception);
+            return default;
+        }
+    }
+
+    private static Node? GetScriptedManager()
+    {
+        if (_scriptedManagerReference?.TryGetTarget(out var cached) == true &&
+            GodotObject.IsInstanceValid(cached) &&
+            HasScriptedManagerCapabilities(cached))
+        {
+            return cached;
+        }
+
+        var now = Time.GetTicksMsec();
+        if (now < _nextScriptedManagerProbeTicks)
+        {
+            return null;
+        }
+        _nextScriptedManagerProbeTicks = now + 1_000;
+
+        if (Engine.GetMainLoop() is not SceneTree tree ||
+            tree.Root == null ||
+            !GodotObject.IsInstanceValid(tree.Root))
+        {
+            return null;
+        }
+
+        foreach (var candidate in tree.Root.GetChildren().OfType<Node>())
+        {
+            if (!GodotObject.IsInstanceValid(candidate) ||
+                !HasScriptedManagerCapabilities(candidate))
+            {
+                continue;
+            }
+
+            _scriptedManagerReference = new WeakReference<Node>(candidate);
+            if (!_scriptedManagerLogged)
+            {
+                _scriptedManagerLogged = true;
+                ModLog.Info(
+                    $"检测到脚本型卡牌视觉管理器 {candidate.Name}；" +
+                    "将按其公开能力同步最终卡图与编辑器覆盖层。");
+            }
+            return candidate;
+        }
+
+        return null;
+    }
+
+    private static bool HasScriptedManagerCapabilities(Node candidate) =>
+        candidate.HasMethod("get_source_path_for_card_node") &&
+        candidate.HasMethod("has_override") &&
+        candidate.HasMethod("is_full_art_mode") &&
+        candidate.HasMethod("is_ancient_text_outside_enabled") &&
+        candidate.HasMethod("capture_card_provider_after_visual_update") &&
+        candidate.HasMethod("apply_card_override_after_visual_update");
+
+    private static List<Texture2D> PrepareManagedProviderIdentity(NCard card)
+    {
+        var temporaryPaths = new List<Texture2D>(2);
+        foreach (var path in new[] { "%Portrait", "%AncientPortrait" })
+        {
+            var portrait = card.GetNodeOrNull<TextureRect>(path);
+            if (portrait?.Texture != null &&
+                SkinService.TryAssignExternalCardProviderIdentity(card.Model!, portrait.Texture))
+            {
+                temporaryPaths.Add(portrait.Texture);
+            }
+        }
+
+        return temporaryPaths;
     }
 
     private static FullCardPresentationAdapter? CreateFullCardPresentationAdapter(
@@ -249,6 +398,23 @@ internal static class ExternalCardVisualBridge
 
         ModLog.Warn(
             $"外部卡牌视觉管理器 {assembly.GetName().Name} 的{operation}失败，将由皮肤切换器继续呈现：" +
+            exception.GetBaseException().Message);
+    }
+
+    private static void LogScriptedFailure(Node manager, string operation, Exception exception)
+    {
+        var key = $"scripted:{manager.GetInstanceId()}\n{operation}\n{exception.GetType().FullName}";
+        lock (Sync)
+        {
+            if (!LoggedFailures.Add(key))
+            {
+                return;
+            }
+        }
+
+        ModLog.Warn(
+            $"脚本型卡牌视觉管理器 {manager.Name} 的{operation}失败，" +
+            "将保留 Skin Changer 的当前显示：" +
             exception.GetBaseException().Message);
     }
 

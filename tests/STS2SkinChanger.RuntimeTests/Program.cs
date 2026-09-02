@@ -105,6 +105,27 @@ if (focusRuntimeProviders == null)
 var managedLoaderType = typeof(Entry).Assembly.GetType(
                             "STS2SkinChanger.Core.ManagedSkinModLoader") ??
                         throw new InvalidOperationException("找不到托管皮肤提供者加载器。");
+var externalCardVisualBridge = typeof(Entry).Assembly.GetType(
+                                   "STS2SkinChanger.Core.ExternalCardVisualBridge") ??
+                               throw new InvalidOperationException("找不到外部卡牌视觉管理器兼容桥。");
+var nodeOwnershipProbe = externalCardVisualBridge.GetMethod(
+    "GetOwnership",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: [typeof(MegaCrit.Sts2.Core.Nodes.Cards.NCard)],
+    modifiers: null);
+var providerSynchronizer = externalCardVisualBridge.GetMethod(
+    "SynchronizeProvider",
+    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    types: [typeof(MegaCrit.Sts2.Core.Nodes.Cards.NCard)],
+    modifiers: null);
+if (nodeOwnershipProbe == null || providerSynchronizer?.ReturnType != typeof(void))
+{
+    throw new InvalidOperationException(
+        "动态卡图编辑器兼容必须按实际 NCard 读取覆盖状态，并在最终呈现后同步提供者缓存；" +
+        "仅按 CardModel 探测会漏掉脚本管理器维护的节点元数据。");
+}
 var configureRunEnvironment = managedLoaderType.GetMethod(
     "ConfigureRunEnvironmentProviders",
     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
