@@ -112,6 +112,21 @@ Require(
             ["regent", "defect"])
         .SetEquals(["regent"]),
     "完整运行皮肤扫描器必须能从实际 DLL 元数据读取目标角色常量，不能依赖 Mod 名称或私有资源目录名。");
+
+var portraitCache = new BoundedLruCache<string, string>(2, StringComparer.OrdinalIgnoreCase);
+Require(!portraitCache.Set("A", "portrait-a", out _), "未达到上限时不应逐出卡图缓存。");
+Require(!portraitCache.Set("B", "portrait-b", out _), "刚好达到上限时不应逐出卡图缓存。");
+Require(
+    portraitCache.TryGetValue("A", out var touchedPortrait) && touchedPortrait == "portrait-a",
+    "读取卡图缓存必须返回原值并刷新最近使用顺序。");
+Require(
+    portraitCache.Set("C", "portrait-c", out var evictedPortrait) &&
+    evictedPortrait.Key == "B" &&
+    evictedPortrait.Value == "portrait-b" &&
+    portraitCache.ContainsKey("A") &&
+    portraitCache.ContainsKey("C") &&
+    !portraitCache.ContainsKey("B"),
+    "卡图缓存达到上限后必须只逐出最久未使用项，避免浏览多个分类后 GPU 资源无限累积。");
 Require(
     ManagedProviderDisplayPolicy.IsManaged(
         "KaguyaSilentRavenSkin",

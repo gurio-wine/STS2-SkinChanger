@@ -37,8 +37,9 @@ internal static class SkinService
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, RuntimeResourceBundleState> RuntimeResourceBundles =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, Texture2D> CardPortraitCache =
-        new(StringComparer.OrdinalIgnoreCase);
+    private const int MaxCardPortraitCacheEntries = 64;
+    private static readonly BoundedLruCache<string, Texture2D> CardPortraitCache =
+        new(MaxCardPortraitCacheEntries, StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, string> ExternalCardProviderIdentityPaths =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Texture2D> BaselineRelicAtlasCache =
@@ -2266,7 +2267,13 @@ internal static class SkinService
                     Region = new Rect2(0, 0, loaded.GetWidth(), loaded.GetHeight())
                 }
                 : loaded;
-            CardPortraitCache[request.CacheKey] = portrait;
+            if (CardPortraitCache.Set(request.CacheKey, portrait, out var evicted))
+            {
+                // Existing NCard nodes keep their own texture reference. Dropping only the cache
+                // reference lets Godot release high-resolution portraits after those nodes leave
+                // the tree, instead of retaining every card ever viewed for the whole session.
+                ExternalCardProviderIdentityPaths.Remove(evicted.Key);
+            }
             return portrait;
         }
         catch (Exception exception)
