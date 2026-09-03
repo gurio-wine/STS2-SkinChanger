@@ -12,6 +12,18 @@ static void Require(bool condition, string message)
     }
 }
 
+var malformedProviderTypeWasExamined = false;
+var malformedProviderType = ProviderRuntimeTypeLookupPolicy.TryResolve(
+    "System.Collections.Generic.IEnumerator`1<System.ValueTuple`2<System.String,System.String>>",
+    _ =>
+    {
+        malformedProviderTypeWasExamined = true;
+        throw new FileLoadException("The given assembly name was invalid.");
+    });
+Require(
+    malformedProviderTypeWasExamined && malformedProviderType == null,
+    "一个 Cecil 泛型类型名无法由运行时解析时，只能跳过这一项，不能中断整份皮肤 DLL 的跨版本扫描。");
+
 var cardOverlayOwners = new CanonicalResourceOwnershipTracker();
 string[] sharedCardDependencies =
 [

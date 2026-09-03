@@ -284,7 +284,9 @@ internal static class ProviderAssemblyCompatibility
             return false;
         }
 
-        var runtimeType = AccessTools.TypeByName(receiverTypeName.Replace('/', '+'));
+        var runtimeType = ProviderRuntimeTypeLookupPolicy.TryResolve(
+            receiverTypeName,
+            AccessTools.TypeByName);
         if (runtimeType == null || typeof(IDisposable).IsAssignableFrom(runtimeType))
         {
             return false;
