@@ -510,6 +510,31 @@ foreach (var methodName in new[]
     }
 }
 
+var buildSelectorMethod = contextualControlsType.GetMethod(
+                              "BuildSelector",
+                              BindingFlags.Static | BindingFlags.NonPublic) ??
+                          throw new InvalidOperationException("找不到皮肤下拉框构建方法。");
+if (buildSelectorMethod.GetParameters().Length != 0)
+{
+    throw new InvalidOperationException(
+        "角色皮肤选择器不能再保留独立头像控件参数；头像必须与普通皮肤走同一选择。");
+}
+
+foreach (var removedMethodName in new[]
+         {
+             "GetCharacterIconSelection",
+             "ApplyCharacterIconSelection"
+         })
+{
+    if (skinServiceType.GetMethod(
+            removedMethodName,
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) != null)
+    {
+        throw new InvalidOperationException(
+            $"独立头像写入 API {removedMethodName} 仍然存在，会让头像与角色皮肤再次分叉。");
+    }
+}
+
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 
 static Type RequirePatchType(string name, string error) =>

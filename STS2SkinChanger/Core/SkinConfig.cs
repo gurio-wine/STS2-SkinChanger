@@ -298,8 +298,4 @@ internal sealed class SkinConfig
     public string GetSelection(string groupId) =>
         Selections.GetValueOrDefault(groupId, Catalog.SkinCatalog.BaseOptionId);
 
-    public string GetCharacterIconSelection(string groupId) =>
-        CharacterIconSelections.GetValueOrDefault(
-            groupId,
-            CharacterIconSelectionPolicy.FollowCharacterSkinOptionId);
 }

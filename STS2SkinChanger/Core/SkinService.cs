@@ -27,8 +27,7 @@ internal static class SkinService
     public const float CharacterOffsetStep = 1f;
     public const string InheritCardSelectionId = "__inherit__";
     public const string InheritMonsterSelectionId = "__monster_category__";
-    public const string FollowCharacterSkinIconSelectionId =
-        CharacterIconSelectionPolicy.FollowCharacterSkinOptionId;
+    private const string LegacyFollowCharacterSkinIconSelectionId = "__follow_character_skin__";
     public const int CardSkinPresetNameMaxLength = 40;
     private const long DirectRuntimeProviderPackThresholdBytes = 64L * 1024L * 1024L;
 
@@ -130,27 +129,6 @@ internal static class SkinService
         MultiplayerSkinSync.GetScopedSelection(groupId) ??
         CharacterPreviewSelections.GetValueOrDefault(groupId) ??
         Config.GetSelection(groupId);
-
-    private static string ResolveCharacterIconResourceSelection(
-        string groupId,
-        string resourcePath)
-    {
-        var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-        var configured = Config.GetCharacterIconSelection(groupId);
-        var iconOptions = catalog.GetCharacterIconOptions(groupId);
-        var availableOptionIds = iconOptions
-            .Select(option => option.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return CharacterIconSelectionPolicy.ResolveResourceSelection(
-            configured,
-            GetVisualSelection(groupId),
-            SkinCatalog.BaseOptionId,
-            availableOptionIds,
-            catalog.CharacterIconOptionContainsResource(
-                groupId,
-                configured,
-                resourcePath));
-    }
 
     private static IReadOnlyDictionary<string, string> GetVisualSelections()
     {
@@ -1499,71 +1477,6 @@ internal static class SkinService
                 TryRestoreOverlay(affectedGroups, cardOverlay: false);
                 LastError = exception.Message;
                 ModLog.Error($"切换 {groupId} 失败：{exception}");
-                return false;
-            }
-        }
-    }
-
-    public static IReadOnlyList<SkinOption> GetCharacterIconOptions(string groupId)
-    {
-        lock (Sync)
-        {
-            return Catalog?.GetCharacterIconOptions(groupId) ?? [];
-        }
-    }
-
-    public static string GetCharacterIconSelection(string groupId)
-    {
-        lock (Sync)
-        {
-            return Config.GetCharacterIconSelection(groupId);
-        }
-    }
-
-    public static bool ApplyCharacterIconSelection(string groupId, string optionId)
-    {
-        lock (Sync)
-        {
-            var catalog = Catalog;
-            var validOption = optionId.Equals(
-                                  FollowCharacterSkinIconSelectionId,
-                                  StringComparison.OrdinalIgnoreCase) ||
-                              optionId.Equals(
-                                  SkinCatalog.BaseOptionId,
-                                  StringComparison.OrdinalIgnoreCase) ||
-                              catalog?.GetCharacterIconOptions(groupId).Any(option =>
-                                  option.Id.Equals(
-                                      optionId,
-                                      StringComparison.OrdinalIgnoreCase)) == true;
-            if (catalog == null || !validOption)
-            {
-                LastError = $"未知的角色头像选择：{groupId}/{optionId}";
-                return false;
-            }
-
-            var hadPrevious = Config.CharacterIconSelections.TryGetValue(
-                groupId,
-                out var previous);
-            try
-            {
-                Config.CharacterIconSelections[groupId] = optionId;
-                Config.Save(ConfigPath);
-                LastError = null;
-                return true;
-            }
-            catch (Exception exception)
-            {
-                if (hadPrevious && previous != null)
-                {
-                    Config.CharacterIconSelections[groupId] = previous;
-                }
-                else
-                {
-                    Config.CharacterIconSelections.Remove(groupId);
-                }
-
-                LastError = exception.Message;
-                ModLog.Error($"切换 {groupId} 的头像来源失败：{exception}");
                 return false;
             }
         }
@@ -3755,7 +3668,7 @@ internal static class SkinService
     {
         lock (Sync)
         {
-            var selection = ResolveCharacterIconResourceSelection(groupId, resourcePath);
+            var selection = GetVisualSelection(groupId);
             var cacheKey = RuntimeResourceKey(groupId, selection, resourcePath);
             if (RuntimeResourceCache.TryGetValue(cacheKey, out var cached) &&
                 GodotObject.IsInstanceValid(cached))
@@ -3781,7 +3694,7 @@ internal static class SkinService
         ArgumentNullException.ThrowIfNull(callback);
         lock (Sync)
         {
-            var selection = ResolveCharacterIconResourceSelection(groupId, resourcePath);
+            var selection = GetVisualSelection(groupId);
             return WithRuntimeResourcesForSelection(
                 groupId,
                 selection,
@@ -4175,13 +4088,7 @@ internal static class SkinService
             }
 
             var visualSelection = GetVisualSelection(groupId);
-            var iconSelection = ResolveCharacterIconResourceSelection(
-                groupId,
-                resourcePath);
-            return iconSelection.Equals(
-                       visualSelection,
-                       StringComparison.OrdinalIgnoreCase) &&
-                   Catalog.IsRuntimeProviderOption(groupId, visualSelection) &&
+            return Catalog.IsRuntimeProviderOption(groupId, visualSelection) &&
                    !Catalog.IsResourceBackedOption(groupId, visualSelection) &&
                    Catalog.GetRuntimeImagePath(groupId, visualSelection) != null;
         }
@@ -6030,7 +5937,7 @@ internal static class SkinService
         {
             Config.CharacterIconSelections.Remove(pair.Key);
             if (pair.Value.Equals(
-                    FollowCharacterSkinIconSelectionId,
+                    LegacyFollowCharacterSkinIconSelectionId,
                     StringComparison.OrdinalIgnoreCase) ||
                 pair.Value.Equals(
                     SkinCatalog.BaseOptionId,

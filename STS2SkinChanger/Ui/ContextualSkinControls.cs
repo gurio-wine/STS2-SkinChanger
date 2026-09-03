@@ -28,8 +28,6 @@ internal static partial class ContextualSkinControls
     private const string InRunAppearanceEntryToggleName = "InRunAppearanceEntryToggle";
     private const string CharacterSelectorTopRightToggleName = "CharacterSelectorTopRightToggle";
     private const string DropdownName = "SkinDropdown";
-    private const string CharacterIconLabelName = "CharacterIconLabel";
-    private const string CharacterIconDropdownName = "CharacterIconDropdown";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
     private const string MonsterScaleLabelName = "MonsterScaleLabel";
@@ -49,7 +47,6 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
-    private static readonly Dictionary<ulong, Action> CharacterIconRefreshActions = [];
     private static readonly ConditionalWeakTable<NCharacterSelectScreen, CharacterBackgroundHostLayout>
         CharacterBackgroundHostLayouts = new();
     private static readonly HashSet<string> LoggedMissingMultiplayerIcons =
@@ -110,9 +107,6 @@ internal static partial class ContextualSkinControls
                 reason: "选角预览");
         }
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
-        RegisterCharacterIconRefresh(
-            selector,
-            group == null ? null : () => RefreshCharacterIcons(screen, character, group.Id));
         Populate(selector, group);
         RefreshMultiplayerSkinLoadingToggle(screen);
         if (group != null)
@@ -208,7 +202,10 @@ internal static partial class ContextualSkinControls
             return existing;
         }
 
-        var selector = BuildSelector(includeCharacterIconControls: true);
+        var selector = BuildSelector();
+        ConfigureCharacterDropdownPreview(
+            selector,
+            selector.GetNode<OptionButton>(DropdownName));
         infoPanel.AddChild(selector);
         ApplyCharacterSelectorPlacement(screen, infoPanel, selector);
         EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
@@ -605,7 +602,7 @@ internal static partial class ContextualSkinControls
             CreateStyleBox(new Color("45104e"), new Color("efc850"), 2));
     }
 
-    private static HBoxContainer BuildSelector(bool includeCharacterIconControls = false)
+    private static HBoxContainer BuildSelector()
     {
         var selector = new HBoxContainer
         {
@@ -623,41 +620,13 @@ internal static partial class ContextualSkinControls
             Alignment = HorizontalAlignment.Center
         };
         ApplyGameTheme(dropdown);
-        if (includeCharacterIconControls)
-        {
-            ConfigureCharacterDropdownPreview(selector, dropdown);
-        }
         dropdown.ItemSelected += index => ApplyDropdownSelection(selector, dropdown, checked((int)index));
         selector.AddChild(dropdown);
-        if (includeCharacterIconControls)
-        {
-            var iconLabel = BuildCompactLabel(
-                ModLocalization.Get(ModText.CharacterIcon),
-                54);
-            iconLabel.Name = CharacterIconLabelName;
-            selector.AddChild(iconLabel);
-
-            var iconDropdown = new OptionButton
-            {
-                Name = CharacterIconDropdownName,
-                CustomMinimumSize = new Vector2(154, 44),
-                FitToLongestItem = false,
-                ClipText = true,
-                Alignment = HorizontalAlignment.Center
-            };
-            ApplyGameTheme(iconDropdown);
-            iconDropdown.ItemSelected += index => ApplyCharacterIconDropdownSelection(
-                selector,
-                iconDropdown,
-                checked((int)index));
-            selector.AddChild(iconDropdown);
-        }
 
         selector.TreeExited += () =>
         {
             var id = selector.GetInstanceId();
             RefreshActions.Remove(id);
-            CharacterIconRefreshActions.Remove(id);
         };
         return selector;
     }
@@ -790,20 +759,15 @@ internal static partial class ContextualSkinControls
     private static void Populate(HBoxContainer selector, SkinGroup? group)
     {
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
-        var visualOptions = group?.Options
-            .Where(option => !option.IsCharacterIconOnly)
-            .ToArray() ?? [];
-        var characterIconOptions = group == null ||
-                                   selector.GetNodeOrNull<OptionButton>(
-                                       CharacterIconDropdownName) == null
+        var visualOptions = group == null
             ? []
-            : SkinService.GetCharacterIconOptions(group.Id).ToArray();
-        if (group == null ||
-            (visualOptions.Length == 0 && characterIconOptions.Length == 0))
+            : SkinService.Catalog?.IsCharacterAppearanceGroup(group.Id) == true
+                ? SkinService.GetCharacterSkinOptions(group.Id).ToArray()
+                : group.Options.ToArray();
+        if (group == null || visualOptions.Length == 0)
         {
             selector.Visible = false;
             dropdown.Clear();
-            PopulateCharacterIconControls(selector, null, []);
             return;
         }
 
@@ -817,17 +781,14 @@ internal static partial class ContextualSkinControls
             dropdown.SetItemMetadata(0, SkinService.InheritMonsterSelectionId);
         }
 
-        if (visualOptions.Length > 0)
+        var defaultIndex = dropdown.ItemCount;
+        dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
+        dropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
+        foreach (var option in visualOptions)
         {
-            var defaultIndex = dropdown.ItemCount;
-            dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
-            dropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
-            foreach (var option in visualOptions)
-            {
-                var index = dropdown.ItemCount;
-                dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
-                dropdown.SetItemMetadata(index, option.Id);
-            }
+            var index = dropdown.ItemCount;
+            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
+            dropdown.SetItemMetadata(index, option.Id);
         }
 
         var selected = hasMonsterPriorityContext
@@ -840,52 +801,11 @@ internal static partial class ContextualSkinControls
                     .Equals(selected, StringComparison.OrdinalIgnoreCase));
             dropdown.Select(selectedIndex);
         }
-        dropdown.Visible = visualOptions.Length > 0;
-        PopulateCharacterIconControls(selector, group, characterIconOptions);
+        dropdown.Visible = true;
         PopulateMonsterScale(selector, group.Id);
         selector.SetMeta(UpdatingMeta, false);
         selector.Visible = true;
         RefreshMonsterPriorityButton(selector);
-    }
-
-    private static void PopulateCharacterIconControls(
-        HBoxContainer selector,
-        SkinGroup? group,
-        IReadOnlyList<SkinOption> iconOptions)
-    {
-        var label = selector.GetNodeOrNull<Label>(CharacterIconLabelName);
-        var dropdown = selector.GetNodeOrNull<OptionButton>(CharacterIconDropdownName);
-        if (label == null || dropdown == null)
-        {
-            return;
-        }
-
-        var visible = group != null && iconOptions.Count > 0;
-        label.Visible = visible;
-        dropdown.Visible = visible;
-        dropdown.Clear();
-        if (!visible || group == null)
-        {
-            return;
-        }
-
-        label.Text = ModLocalization.Get(ModText.CharacterIcon);
-        dropdown.AddItem(ModLocalization.Get(ModText.FollowCharacterSkin));
-        dropdown.SetItemMetadata(0, SkinService.FollowCharacterSkinIconSelectionId);
-        dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
-        dropdown.SetItemMetadata(1, SkinCatalog.BaseOptionId);
-        foreach (var option in iconOptions)
-        {
-            var index = dropdown.ItemCount;
-            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
-            dropdown.SetItemMetadata(index, option.Id);
-        }
-
-        var selected = SkinService.GetCharacterIconSelection(group.Id);
-        var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
-            .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
-                .Equals(selected, StringComparison.OrdinalIgnoreCase));
-        dropdown.Select(selectedIndex);
     }
 
     private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
@@ -977,39 +897,6 @@ internal static partial class ContextualSkinControls
         }
 
         ApplyDropdownSelectionNow(selector, dropdown, index, groupId, optionId);
-    }
-
-    private static void ApplyCharacterIconDropdownSelection(
-        HBoxContainer selector,
-        OptionButton dropdown,
-        int index)
-    {
-        if (selector.GetMeta(UpdatingMeta, false).AsBool())
-        {
-            return;
-        }
-
-        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
-        var optionId = dropdown.GetItemMetadata(index).AsString();
-        if (!SkinService.ApplyCharacterIconSelection(groupId, optionId))
-        {
-            ModLog.Error($"头像来源切换失败：{SkinService.LastError}");
-            var current = SkinService.GetCharacterIconSelection(groupId);
-            var currentIndex = Enumerable.Range(0, dropdown.ItemCount)
-                .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString()
-                    .Equals(current, StringComparison.OrdinalIgnoreCase));
-            selector.SetMeta(UpdatingMeta, true);
-            dropdown.Select(currentIndex);
-            selector.SetMeta(UpdatingMeta, false);
-            return;
-        }
-
-        if (CharacterIconRefreshActions.TryGetValue(
-                selector.GetInstanceId(),
-                out var refresh))
-        {
-            Callable.From(() => RunRefresh(refresh)).CallDeferred();
-        }
     }
 
     private static void ApplyDropdownSelectionNow(
@@ -1500,31 +1387,6 @@ internal static partial class ContextualSkinControls
         {
             RefreshActions[id] = refresh;
         }
-    }
-
-    private static void RegisterCharacterIconRefresh(
-        HBoxContainer selector,
-        Action? refresh)
-    {
-        var id = selector.GetInstanceId();
-        if (refresh == null)
-        {
-            CharacterIconRefreshActions.Remove(id);
-        }
-        else
-        {
-            CharacterIconRefreshActions[id] = refresh;
-        }
-    }
-
-    private static void RefreshCharacterIcons(
-        NCharacterSelectScreen screen,
-        CharacterModel character,
-        string groupId)
-    {
-        RefreshCharacterButtonIcon(screen, character);
-        RefreshLocalLobbyAvatar(screen);
-        ModLog.Info($"已热重载 {character.Id.Entry} 的独立头像来源。");
     }
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)

@@ -178,23 +178,23 @@ git commit -m "feat: resolve composed character skins"
 - Removes: `GetCharacterIconOptions`, `GetCharacterIconSelection`, `ApplyCharacterIconSelection`, avatar dropdown metadata/callbacks, and resource-specific selection policy.
 - Preserves: the icon texture/scene Harmony patches, now loading the ordinary selected option so local, preview, map, top-panel, and remote-player scopes stay unified.
 
-- [ ] **Step 1: Write failing tests for the unified icon contract**
+- [x] **Step 1: Write failing tests for the unified icon contract**
 
 Update logic tests to assert an icon-only source is a valid one-source skin and remove old independent-resolution assertions. Add runtime checks that `BuildSelector` has no icon-control parameter and `SkinService` no longer exposes the independent write API.
 
-- [ ] **Step 2: Run both test projects and verify RED**
+- [x] **Step 2: Run both test projects and verify RED**
 
 Expected: the old selector/API shape is still present.
 
-- [ ] **Step 3: Remove the separate controls and selection branch**
+- [x] **Step 3: Remove the separate controls and selection branch**
 
 Build one character skin dropdown, include pure icon options and virtual compositions, and make character icon loading use `GetVisualSelection(groupId)` directly. Keep all existing icon refresh hooks so a normal skin switch still rebuilds already-created character buttons and multiplayer avatars.
 
-- [ ] **Step 4: Run both test projects and verify GREEN**
+- [x] **Step 4: Run both test projects and verify GREEN**
 
 Expected: both suites pass and no source references `CharacterIconSelectionPolicy`.
 
-- [ ] **Step 5: Bump internal version and commit**
+- [x] **Step 5: Bump internal version and commit**
 
 Set version to `0.9.132.7` and commit:
 

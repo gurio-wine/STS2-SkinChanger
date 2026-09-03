@@ -711,7 +711,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _skinDropdown.Disabled = false;
         _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         _skinDropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
-        foreach (var option in _group.Options)
+        var options = SkinService.Catalog?.IsCharacterAppearanceGroup(_group.Id) == true
+            ? SkinService.GetCharacterSkinOptions(_group.Id)
+            : _group.Options;
+        foreach (var option in options)
         {
             var index = _skinDropdown.ItemCount;
             _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
