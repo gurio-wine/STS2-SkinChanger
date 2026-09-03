@@ -136,6 +136,37 @@ internal static class CharacterAppearanceRuntime
 
     internal static event Action<string, bool, string?>? QueuedSelectionFinished;
 
+    private static bool TryGetRunState(NRun? run, out IRunState runState)
+    {
+        runState = null!;
+        if (run is null ||
+            !GodotObject.IsInstanceValid(run) ||
+            RunStateField is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (RunStateField.GetValue(run) is not IRunState value)
+            {
+                return false;
+            }
+
+            runState = value;
+            return true;
+        }
+        catch (TargetException)
+        {
+            // NRun.Instance can be cleared while a deferred UI callback is executing.
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
     internal static AppearanceSelectionRequestResult RequestSelection(string groupId, string optionId)
     {
         if (!CanApplySelectionNow())
@@ -160,7 +191,7 @@ internal static class CharacterAppearanceRuntime
     {
         try
         {
-            return RunStateField?.GetValue(NRun.Instance) is IRunState runState
+            return TryGetRunState(NRun.Instance, out var runState)
                 ? LocalContext.GetMe(runState)
                 : null;
         }
@@ -175,7 +206,7 @@ internal static class CharacterAppearanceRuntime
     {
         try
         {
-            if (RunStateField?.GetValue(NRun.Instance) is IRunState runState &&
+            if (TryGetRunState(NRun.Instance, out var runState) &&
                 runState.Players.FirstOrDefault(player => player.NetId == playerNetId)
                     is { } player)
             {
@@ -199,7 +230,7 @@ internal static class CharacterAppearanceRuntime
     {
         try
         {
-            if (RunStateField?.GetValue(NRun.Instance) is not IRunState runState)
+            if (!TryGetRunState(NRun.Instance, out var runState))
             {
                 return false;
             }
@@ -239,7 +270,7 @@ internal static class CharacterAppearanceRuntime
                     CombatRuntimeGroupIds)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var activeRun = run ?? NRun.Instance;
-            if (activeRun != null && RunStateField?.GetValue(activeRun) is IRunState runState)
+            if (TryGetRunState(activeRun, out var runState))
             {
                 groupIds.UnionWith(runState.Players
                     .Select(player => ContextualSkinControls.FindGroup(
@@ -294,7 +325,7 @@ internal static class CharacterAppearanceRuntime
         }
         catch (Exception exception)
         {
-            ModLog.Warn("收窄当前场景皮肤行为失败：" + exception.GetBaseException().Message);
+            ModLog.Warn("收窄当前场景皮肤行为失败：" + exception);
             return 0;
         }
     }
@@ -356,7 +387,7 @@ internal static class CharacterAppearanceRuntime
         title = string.Empty;
         try
         {
-            if (RunStateField?.GetValue(NRun.Instance) is not IRunState runState)
+            if (!TryGetRunState(NRun.Instance, out var runState))
             {
                 return false;
             }
@@ -1923,7 +1954,7 @@ internal static class CharacterAppearanceRuntime
     internal static void RefreshCurrentBossPresentation(IReadOnlySet<string> affectedGroups)
     {
         var run = NRun.Instance;
-        if (run == null || RunStateField?.GetValue(run) is not IRunState runState)
+        if (run is null || !TryGetRunState(run, out var runState))
         {
             return;
         }
@@ -1973,7 +2004,7 @@ internal static class CharacterAppearanceRuntime
         try
         {
             var run = NRun.Instance;
-            if (run == null || RunStateField?.GetValue(run) is not IRunState runState)
+            if (!TryGetRunState(run, out var runState))
             {
                 return;
             }
@@ -2007,7 +2038,7 @@ internal static class CharacterAppearanceRuntime
     {
         ManagedSkinModLoader.RestoreAllNodeReadyBehaviors(bossPoint);
         if (refreshNativePresentation &&
-            RunStateField?.GetValue(NRun.Instance) is IRunState runState)
+            TryGetRunState(NRun.Instance, out var runState))
         {
             RefreshNativeBossMapPoint(bossPoint, runState);
         }

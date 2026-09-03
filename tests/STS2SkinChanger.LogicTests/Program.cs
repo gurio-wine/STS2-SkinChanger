@@ -1358,6 +1358,26 @@ Require(
     fontLoadCount == 2,
     "返回选角界面后若旧 FontVariation 已释放，必须丢弃静态缓存并重新加载；否则再次套用主题会白屏。");
 
+var cleanupOrder = new List<string>();
+var cleanupFailures = FailureIsolatedActionRunner.Run(
+[
+    ("restore nodes", () => cleanupOrder.Add("restore nodes")),
+    ("restore presentation", () =>
+    {
+        cleanupOrder.Add("restore presentation");
+        throw new InvalidOperationException("fixture failure");
+    }),
+    ("unpatch callbacks", () => cleanupOrder.Add("unpatch callbacks"))
+]);
+Require(
+    cleanupOrder.SequenceEqual(["restore nodes", "restore presentation", "unpatch callbacks"]),
+    "停用皮肤提供者时，一个恢复步骤失败也必须继续执行后续补丁卸载。");
+Require(
+    cleanupFailures.Count == 1 &&
+    cleanupFailures[0].Stage == "restore presentation" &&
+    cleanupFailures[0].Exception.Message == "fixture failure",
+    "分阶段清理必须保留准确的失败阶段与异常，供日志定位而不能吞掉原因。");
+
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
 internal static class DirectCharacterRuntimeFixture

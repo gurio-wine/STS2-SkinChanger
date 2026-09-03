@@ -995,15 +995,31 @@ internal static class ManagedSkinModLoader
             return;
         }
 
-        RestoreNodeReadyBehaviors(runtime);
-        RestoreCharacterPresentations(runtime);
-        UnpatchProviderCallbacks(runtime.Patches);
-        StopRunEnvironmentControllers(runtime.RunEnvironmentControllers);
-        if (!IsProviderAssemblyActive(runtime.Assembly))
+        var failures = FailureIsolatedActionRunner.Run(
+        [
+            ("恢复场景节点", () => RestoreNodeReadyBehaviors(runtime)),
+            ("恢复角色呈现", () => RestoreCharacterPresentations(runtime)),
+            ("卸载行为补丁", () => UnpatchProviderCallbacks(runtime.Patches)),
+            ("停止地区控制器", () =>
+                StopRunEnvironmentControllers(runtime.RunEnvironmentControllers)),
+            ("停用提供者节点", () =>
+            {
+                if (!IsProviderAssemblyActive(runtime.Assembly))
+                {
+                    SuspendProviderNodes(runtime.Assembly);
+                }
+            })
+        ]);
+        foreach (var failure in failures)
         {
-            SuspendProviderNodes(runtime.Assembly);
+            ModLog.Warn(
+                $"停用皮肤提供者 {providerId} 的“{failure.Stage}”阶段失败；" +
+                "其余清理阶段已继续执行：" + failure.Exception);
         }
-        ModLog.Info($"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁。");
+
+        ModLog.Info(
+            $"已停用未选中皮肤提供者 {providerId} 的 {runtime.Patches.Count} 个行为补丁" +
+            (failures.Count == 0 ? "。" : $"；{failures.Count} 个清理阶段失败并已记录。"));
     }
 
     private static void RegisterProviderAssembly(string providerId, Assembly assembly)

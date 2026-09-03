@@ -53,6 +53,8 @@
              Link="FrameworkSelectionSynchronizer.cs" />
     <Compile Include="../../STS2SkinChanger/Core/DeferredRegistrationQueue.cs"
              Link="DeferredRegistrationQueue.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/FailureIsolatedActionRunner.cs"
+             Link="FailureIsolatedActionRunner.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkEntryAnimationPolicy.cs"
              Link="FrameworkEntryAnimationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkRelicVisualPolicy.cs"
