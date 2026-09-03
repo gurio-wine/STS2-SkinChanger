@@ -20,6 +20,7 @@ if (args.Length == 1 && args[0].Equals("--self-test-provider-probe", StringCompa
 if (args.Length == 2 && args[1].Equals("--self-test-card-export", StringComparison.OrdinalIgnoreCase))
 {
     RunCardExportSelfTest(args[0]);
+    CardLayoutVariantTests.Run(args[0]);
     return;
 }
 

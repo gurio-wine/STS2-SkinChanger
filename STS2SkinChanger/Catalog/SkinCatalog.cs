@@ -4847,7 +4847,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     namedVariant,
                     namedVariant == null ? ++unnamedOptionOrdinal : 0,
                     optionCount);
-                options.Add(new CardSkinOption(
+                var option = new CardSkinOption(
                     variantId,
                     variantName,
                     new Dictionary<string, string>(
@@ -4874,7 +4874,8 @@ internal sealed partial class SkinCatalog : IDisposable
                         .ToDictionary(
                             pair => pair.Key,
                             pair => pair.Value,
-                            StringComparer.OrdinalIgnoreCase)));
+                            StringComparer.OrdinalIgnoreCase));
+                options.AddRange(CardLayoutVariantPolicy.Expand(option, index.Mod.ResourceNamespaceId));
             }
 
             foreach (var mode in exportedPortraits.Modes)
@@ -7186,6 +7187,10 @@ internal sealed record CardSkinOption(
         PckAssets ?? new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, CardPresentationDefinition> CardPresentations { get; init; } =
         Presentations ?? new Dictionary<string, CardPresentationDefinition>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, string> CardNames { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    public string GetNameForCard(string cardType) => CardNames.GetValueOrDefault(cardType) ?? Name;
 
     public CardSkinOption Merge(CardSkinOption other)
     {
@@ -7213,6 +7218,11 @@ internal sealed record CardSkinOption(
         {
             presentations[pair.Key] = pair.Value;
         }
+        var names = new Dictionary<string, string>(CardNames, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in other.CardNames)
+        {
+            names[pair.Key] = pair.Value;
+        }
 
         return this with
         {
@@ -7220,6 +7230,7 @@ internal sealed record CardSkinOption(
             AncientPortraits = ancient,
             Assets = assets,
             CardPresentations = presentations,
+            CardNames = names,
             ProviderRootPath = ProviderRootPath ?? other.ProviderRootPath,
             ProviderId = ProviderId ?? other.ProviderId
         };

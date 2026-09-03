@@ -3008,6 +3008,11 @@ internal static class SkinService
         CardModel card)
     {
         var cardType = card.GetType().Name;
+        var name = option.GetNameForCard(cardType);
+        if (!name.Equals(option.Name, StringComparison.Ordinal))
+        {
+            option = option with { Name = name };
+        }
         if (option.NormalPortraits.ContainsKey(cardType) ||
             option.AncientPortraits.ContainsKey(cardType))
         {

@@ -12,9 +12,11 @@
     <Compile Include="../../STS2SkinChanger/Core/CharacterGroupEvidencePolicy.cs" Link="CharacterGroupEvidencePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs" Link="DirectCharacterRuntimeTargetPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/AliasedDependencyCachePolicy.cs" Link="AliasedDependencyCachePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/CharacterSkinCompositionPolicy.cs" Link="CharacterSkinCompositionPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Pck/PckArchive.cs" Link="PckArchive.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/SkinCatalog.cs" Link="SkinCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/CardSkinOptionNamingPolicy.cs" Link="CardSkinOptionNamingPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/CardLayoutVariantPolicy.cs" Link="CardLayoutVariantPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPresentationScanner.cs" Link="ManagedCardPresentationScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPortraitReplacementScanner.cs" Link="ManagedCardPortraitReplacementScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ProviderCardBehaviorScanner.cs" Link="ProviderCardBehaviorScanner.cs" />

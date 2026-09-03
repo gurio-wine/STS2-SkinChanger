@@ -784,6 +784,24 @@ foreach (System.Collections.DictionaryEntry pack in compositionPacks)
     }
 }
 
+var cardModePacks = modLocalizationType.GetField(
+    "CardPortraitModePacks", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null)
+    as System.Collections.IDictionary ?? throw new InvalidOperationException("缺少卡面样式文本包。");
+if (cardModePacks.Count != 15)
+{
+    throw new InvalidOperationException("异画卡的有无先古特效选项必须覆盖 15 种语言。");
+}
+foreach (System.Collections.DictionaryEntry pack in cardModePacks)
+{
+    var without = pack.Value!.GetType().GetProperty("ExpandedWithoutEffects")?.GetValue(pack.Value) as string;
+    var with = pack.Value.GetType().GetProperty("ExpandedWithEffects")?.GetValue(pack.Value) as string;
+    if (string.IsNullOrWhiteSpace(without) || string.IsNullOrWhiteSpace(with) || without == with ||
+        !without.StartsWith("1 · ", StringComparison.Ordinal) || !with.StartsWith("2 · ", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException($"语言 {pack.Key} 的异画特效选项缺少编号或区分文本。");
+    }
+}
+
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 
 static Type RequirePatchType(string name, string error) =>
