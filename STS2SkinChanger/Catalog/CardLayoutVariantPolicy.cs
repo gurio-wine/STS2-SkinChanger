@@ -6,9 +6,6 @@ namespace STS2SkinChanger.Catalog;
 /// </summary>
 internal static class CardLayoutVariantPolicy
 {
-    public const string WithoutEffectsMarker = "{skin-changer-expanded-without-effects}";
-    public const string WithEffectsMarker = "{skin-changer-expanded-with-effects}";
-
     private sealed record Request(string ProviderNamespace, string CardType, string PortraitPath);
 
     private static readonly Request[] Requests =
@@ -41,14 +38,14 @@ internal static class CardLayoutVariantPolicy
             };
             var names = new Dictionary<string, string>(primary.CardNames, StringComparer.OrdinalIgnoreCase)
             {
-                [request.CardType] = source.Name + " · " + WithoutEffectsMarker
+                [request.CardType] = CardSkinOptionNamingPolicy.Build(source.Name, null, 1, 2)
             };
             // Keep the original ID and the rest of the pack unchanged, including existing
             // per-card selections, category priority, presets and normal card labels.
             primary = primary with { CardPresentations = presentations, CardNames = names };
             variants.Add(new CardSkinOption(
                 source.Id + "::card-layout:" + request.CardType.ToLowerInvariant() + ":ancient",
-                source.Name + " · " + WithEffectsMarker,
+                CardSkinOptionNamingPolicy.Build(source.Name, null, 2, 2),
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [request.CardType] = portrait },
                 new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
                 source.Assets.Where(pair => pair.Key.Equals(portrait, StringComparison.OrdinalIgnoreCase))

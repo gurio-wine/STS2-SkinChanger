@@ -1,6 +1,5 @@
 using Godot;
 using MegaCrit.Sts2.Core.Localization;
-using STS2SkinChanger.Catalog;
 
 namespace STS2SkinChanger.Core;
 
@@ -909,29 +908,27 @@ internal static class ModLocalization
     private sealed record CardPortraitModeLanguagePack(
         string Differential,
         string AncientStyle,
-        string AncientDifferential,
-        string ExpandedWithoutEffects,
-        string ExpandedWithEffects);
+        string AncientDifferential);
 
     private static readonly IReadOnlyDictionary<string, CardPortraitModeLanguagePack>
         CardPortraitModePacks =
             new Dictionary<string, CardPortraitModeLanguagePack>(StringComparer.OrdinalIgnoreCase)
             {
-                ["eng"] = new("Differential", "Ancient style", "Ancient differential", "1 · Alt art (no Ancient effects)", "2 · Alt art (Ancient effects)"),
-                ["zhs"] = new("差分", "先古样式", "先古差分", "1 · 异画（无先古特效）", "2 · 异画（有先古特效）"),
-                ["zht"] = new("差分", "先古樣式", "先古差分", "1 · 異畫（無先古特效）", "2 · 異畫（有先古特效）"),
-                ["deu"] = new("Differenzbild", "Ahnenstil", "Ahnen-Differenzbild", "1 · Alternativbild (ohne Ahneneffekte)", "2 · Alternativbild (mit Ahneneffekten)"),
-                ["esp"] = new("Diferencial", "Estilo ancestral", "Diferencial ancestral", "1 · Arte alternativo (sin efectos ancestrales)", "2 · Arte alternativo (con efectos ancestrales)"),
-                ["fra"] = new("Variante", "Style ancestral", "Variante ancestrale", "1 · Illustration alternative (sans effets ancestraux)", "2 · Illustration alternative (avec effets ancestraux)"),
-                ["ita"] = new("Differenziale", "Stile ancestrale", "Differenziale ancestrale", "1 · Illustrazione alternativa (senza effetti ancestrali)", "2 · Illustrazione alternativa (con effetti ancestrali)"),
-                ["jpn"] = new("差分", "古代様式", "古代差分", "1 · 別イラスト（古代エフェクトなし）", "2 · 別イラスト（古代エフェクトあり）"),
-                ["kor"] = new("차분", "고대 양식", "고대 차분", "1 · 대체 일러스트 (고대 효과 없음)", "2 · 대체 일러스트 (고대 효과 있음)"),
-                ["pol"] = new("Wariant", "Styl starożytny", "Starożytny wariant", "1 · Alternatywna grafika (bez starożytnych efektów)", "2 · Alternatywna grafika (ze starożytnymi efektami)"),
-                ["ptb"] = new("Variante", "Estilo ancestral", "Variante ancestral", "1 · Arte alternativa (sem efeitos ancestrais)", "2 · Arte alternativa (com efeitos ancestrais)"),
-                ["rus"] = new("Вариант", "Древний стиль", "Древний вариант", "1 · Альтернативный рисунок (без древних эффектов)", "2 · Альтернативный рисунок (с древними эффектами)"),
-                ["spa"] = new("Diferencial", "Estilo ancestral", "Diferencial ancestral", "1 · Arte alternativo (sin efectos ancestrales)", "2 · Arte alternativo (con efectos ancestrales)"),
-                ["tha"] = new("ภาพต่าง", "รูปแบบโบราณ", "ภาพต่างแบบโบราณ", "1 · ภาพทางเลือก (ไม่มีเอฟเฟกต์โบราณ)", "2 · ภาพทางเลือก (มีเอฟเฟกต์โบราณ)"),
-                ["tur"] = new("Varyant", "Kadim stil", "Kadim varyant", "1 · Alternatif çizim (kadim efektler yok)", "2 · Alternatif çizim (kadim efektler var)")
+                ["eng"] = new("Differential", "Ancient style", "Ancient differential"),
+                ["zhs"] = new("差分", "先古样式", "先古差分"),
+                ["zht"] = new("差分", "先古樣式", "先古差分"),
+                ["deu"] = new("Differenzbild", "Ahnenstil", "Ahnen-Differenzbild"),
+                ["esp"] = new("Diferencial", "Estilo ancestral", "Diferencial ancestral"),
+                ["fra"] = new("Variante", "Style ancestral", "Variante ancestrale"),
+                ["ita"] = new("Differenziale", "Stile ancestrale", "Differenziale ancestrale"),
+                ["jpn"] = new("差分", "古代様式", "古代差分"),
+                ["kor"] = new("차분", "고대 양식", "고대 차분"),
+                ["pol"] = new("Wariant", "Styl starożytny", "Starożytny wariant"),
+                ["ptb"] = new("Variante", "Estilo ancestral", "Variante ancestral"),
+                ["rus"] = new("Вариант", "Древний стиль", "Древний вариант"),
+                ["spa"] = new("Diferencial", "Estilo ancestral", "Diferencial ancestral"),
+                ["tha"] = new("ภาพต่าง", "รูปแบบโบราณ", "ภาพต่างแบบโบราณ"),
+                ["tur"] = new("Varyant", "Kadim stil", "Kadim varyant")
             };
 
     private static readonly IReadOnlyDictionary<string, string> MultiplayerSkinLoadingTexts =
@@ -1363,8 +1360,6 @@ internal static class ModLocalization
             ?? ReplaceSuffix(name, DifferentialVariantMarker, labels.Differential)
             ?? ReplaceSuffix(name, AncientStyleVariantMarker, labels.AncientStyle)
             ?? ReplaceSuffix(name, AncientDifferentialVariantMarker, labels.AncientDifferential)
-            ?? ReplaceSuffix(name, CardLayoutVariantPolicy.WithoutEffectsMarker, labels.ExpandedWithoutEffects)
-            ?? ReplaceSuffix(name, CardLayoutVariantPolicy.WithEffectsMarker, labels.ExpandedWithEffects)
             ?? name;
 
         static string? ReplaceSuffix(string name, string marker, string replacement)

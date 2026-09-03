@@ -44,10 +44,10 @@ internal static class CardLayoutVariantTests
                   effects.NormalPortraits.Count == 1 && effects.CardPresentations.Count == 1 &&
                   effects.AncientPortraits.Count == 0 && effects.Assets.Keys.All(path => path == portrait),
                 "single-card variant leaked other cards or assets");
-            Check(plain.GetNameForCard("EscapePlan").Contains(CardLayoutVariantPolicy.WithoutEffectsMarker) &&
+            Check(plain.GetNameForCard("EscapePlan") == "Test card art · 1" &&
                   plain.GetNameForCard("Acrobatics") == plain.Name &&
-                  effects.GetNameForCard("EscapePlan").Contains(CardLayoutVariantPolicy.WithEffectsMarker),
-                "variant names must distinguish effects only for the affected card");
+                  effects.GetNameForCard("EscapePlan") == "Test card art · 2",
+                "variant names must use only the provider name and ordinal, without descriptive suffixes");
 
             var cards = new[] { "EscapePlan", "Acrobatics" }.Select(type => new CardCatalogEntry(
                 type, $"res://images/card_portraits/silent/{type.ToLowerInvariant()}.png",
