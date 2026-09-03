@@ -228,6 +228,282 @@ internal static class SkinService
         }
     }
 
+    public static bool TryBuildSessionCharacterComposition(
+        string groupId,
+        IReadOnlyList<string> sourceOptionIds,
+        out IReadOnlyDictionary<string, string> selectionOverrides,
+        out string resolvedOptionId)
+    {
+        lock (Sync)
+        {
+            selectionOverrides = null!;
+            resolvedOptionId = SkinCatalog.BaseOptionId;
+            var catalog = Catalog;
+            if (catalog == null || !catalog.IsCharacterAppearanceGroup(groupId))
+            {
+                return false;
+            }
+
+            if (!catalog.TryCreateSessionCharacterComposition(
+                    groupId,
+                    sourceOptionIds,
+                    out resolvedOptionId))
+            {
+                resolvedOptionId = SkinCatalog.BaseOptionId;
+            }
+
+            return TryBuildSessionCharacterSelection(
+                groupId,
+                resolvedOptionId,
+                out selectionOverrides);
+        }
+    }
+
+    public static IReadOnlyList<SkinOption> GetCharacterSkinOptions(string groupId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            var group = catalog?.Groups.FirstOrDefault(candidate => candidate.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase));
+            if (catalog == null || group == null || !catalog.IsCharacterAppearanceGroup(groupId))
+            {
+                return [];
+            }
+
+            var visibleRawIds = CharacterSkinCompositionPolicy.VisibleRawOptionIds(
+                    groupId,
+                    catalog.GetRawCharacterOptions(groupId).Select(option => option.Id),
+                    Config.CharacterSkinCompositions)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return group.Options.Where(option =>
+                    option.IsComposition
+                        ? !option.IsSessionComposition
+                        : visibleRawIds.Contains(option.Id))
+                .ToArray();
+        }
+    }
+
+    public static IReadOnlyList<SkinOption> GetRawCharacterSkinOptions(string groupId)
+    {
+        lock (Sync)
+        {
+            return Catalog?.GetRawCharacterOptions(groupId) ?? [];
+        }
+    }
+
+    public static IReadOnlyList<CharacterSkinComposition> GetCharacterSkinCompositions(
+        string groupId)
+    {
+        lock (Sync)
+        {
+            return Config.CharacterSkinCompositions
+                .Where(composition => composition.GroupId.Equals(
+                    groupId,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(CloneCharacterSkinComposition)
+                .ToArray();
+        }
+    }
+
+    public static IReadOnlyList<string> GetCharacterSelectionSourceIds(
+        string groupId,
+        string optionId)
+    {
+        lock (Sync)
+        {
+            return Catalog?.GetCompositionSourceOptionIds(groupId, optionId) ?? [];
+        }
+    }
+
+    public static bool SaveCharacterSkinComposition(
+        string groupId,
+        string? compositionId,
+        string? name,
+        IReadOnlyList<string> sourceOptionIds,
+        bool hideSources,
+        out string savedId)
+    {
+        lock (Sync)
+        {
+            savedId = string.Empty;
+            var catalog = Catalog;
+            var rawOptions = catalog?.GetRawCharacterOptions(groupId) ?? [];
+            if (catalog == null || rawOptions.Count == 0 ||
+                !catalog.IsCharacterAppearanceGroup(groupId))
+            {
+                LastError = $"找不到角色皮肤分组：{groupId}";
+                return false;
+            }
+
+            var existing = string.IsNullOrWhiteSpace(compositionId)
+                ? null
+                : Config.CharacterSkinCompositions.FirstOrDefault(composition =>
+                    composition.Id.Equals(compositionId, StringComparison.OrdinalIgnoreCase) &&
+                    composition.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(compositionId) && existing == null)
+            {
+                LastError = $"找不到合并皮肤：{compositionId}";
+                return false;
+            }
+
+            var knownRawIds = rawOptions.Select(option => option.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var retainedMissingIds = existing?.SourceOptionIds
+                .Where(optionId => !knownRawIds.Contains(optionId))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ??
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var normalizedSources = sourceOptionIds
+                .Where(optionId => !string.IsNullOrWhiteSpace(optionId))
+                .Select(optionId => optionId.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (normalizedSources.Count == 0 || normalizedSources.Any(optionId =>
+                    !knownRawIds.Contains(optionId) && !retainedMissingIds.Contains(optionId)))
+            {
+                LastError = "合并皮肤至少需要一个当前角色的原始皮肤来源。";
+                return false;
+            }
+
+            var previousCompositions = Config.CharacterSkinCompositions
+                .Select(CloneCharacterSkinComposition)
+                .ToList();
+            var previousSelections = new Dictionary<string, string>(
+                Config.Selections,
+                StringComparer.OrdinalIgnoreCase);
+            var previousProviderPriority = Config.VisualProviderPriority.ToList();
+            var id = existing?.Id ?? CharacterSkinCompositionPolicy.CreateId();
+            var uniqueName = CharacterSkinCompositionPolicy.UniqueName(
+                name,
+                Config.CharacterSkinCompositions
+                    .Where(composition => !composition.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
+                    .Select(composition => composition.Name),
+                "合并皮肤");
+            var updated = new CharacterSkinComposition
+            {
+                Id = id,
+                GroupId = groupId,
+                Name = uniqueName,
+                SourceOptionIds = normalizedSources,
+                HideSources = hideSources
+            };
+            var wasSelected = existing != null && Config.GetSelection(groupId).Equals(
+                existing.Id,
+                StringComparison.OrdinalIgnoreCase);
+
+            try
+            {
+                if (existing == null)
+                {
+                    Config.CharacterSkinCompositions.Add(updated);
+                }
+                else
+                {
+                    var index = Config.CharacterSkinCompositions.IndexOf(existing);
+                    Config.CharacterSkinCompositions[index] = updated;
+                }
+
+                catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
+                if (existing == null || wasSelected)
+                {
+                    if (!ApplySelection(groupId, id))
+                    {
+                        throw new InvalidOperationException(
+                            LastError ?? "应用合并皮肤失败。");
+                    }
+                }
+                else
+                {
+                    Config.Save(ConfigPath);
+                }
+
+                savedId = id;
+                LastError = null;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Config.CharacterSkinCompositions = previousCompositions;
+                Config.Selections = previousSelections;
+                Config.VisualProviderPriority = previousProviderPriority;
+                catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
+                ClearRuntimeResourceCache(groupId);
+                TryRestoreOverlay(
+                    new HashSet<string>([groupId], StringComparer.OrdinalIgnoreCase),
+                    cardOverlay: false);
+                LastError = exception.GetBaseException().Message;
+                ModLog.Error($"保存 {groupId} 的合并皮肤失败：{exception}");
+                return false;
+            }
+        }
+    }
+
+    public static bool DeleteCharacterSkinComposition(string groupId, string compositionId)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            var existing = Config.CharacterSkinCompositions.FirstOrDefault(composition =>
+                composition.Id.Equals(compositionId, StringComparison.OrdinalIgnoreCase) &&
+                composition.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (catalog == null || existing == null)
+            {
+                LastError = $"找不到合并皮肤：{compositionId}";
+                return false;
+            }
+
+            var previousCompositions = Config.CharacterSkinCompositions
+                .Select(CloneCharacterSkinComposition)
+                .ToList();
+            var previousSelections = new Dictionary<string, string>(
+                Config.Selections,
+                StringComparer.OrdinalIgnoreCase);
+            var previousProviderPriority = Config.VisualProviderPriority.ToList();
+            var updates = Config.GetSelection(groupId).Equals(
+                    compositionId,
+                    StringComparison.OrdinalIgnoreCase)
+                ? catalog.BuildVisualSelectionTransaction(
+                    groupId,
+                    SkinCatalog.BaseOptionId,
+                    Config.Selections)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var affectedGroups = updates.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var update in updates)
+                {
+                    Config.Selections[update.Key] = update.Value;
+                    ClearRuntimeResourceCache(update.Key);
+                }
+                Config.CharacterSkinCompositions.Remove(existing);
+                catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
+                if (affectedGroups.Count > 0)
+                {
+                    MountOverlay(affectedGroups);
+                }
+                Config.Save(ConfigPath);
+                LastError = null;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Config.CharacterSkinCompositions = previousCompositions;
+                Config.Selections = previousSelections;
+                Config.VisualProviderPriority = previousProviderPriority;
+                catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
+                foreach (var affectedGroup in affectedGroups)
+                {
+                    ClearRuntimeResourceCache(affectedGroup);
+                }
+                TryRestoreOverlay(affectedGroups, cardOverlay: false);
+                LastError = exception.GetBaseException().Message;
+                ModLog.Error($"删除 {groupId}/{compositionId} 失败：{exception}");
+                return false;
+            }
+        }
+    }
+
     public static bool ApplyCharacterPreviewSelection(string groupId, string optionId)
     {
         lock (Sync)
@@ -238,7 +514,6 @@ internal static class SkinService
             if (catalog == null || group == null || !catalog.IsCharacterAppearanceGroup(group.Id) ||
                 (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  group.Options.All(option =>
-                     option.IsCharacterIconOnly ||
                      !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
             {
                 LastError = $"未知的角色皮肤预览：{groupId}/{optionId}";
@@ -1164,7 +1439,6 @@ internal static class SkinService
             if (group == null ||
                 (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
                  group.Options.All(option =>
-                     option.IsCharacterIconOnly ||
                      !option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))))
             {
                 LastError = $"未知的皮肤选择：{groupId}/{optionId}";
@@ -5734,8 +6008,89 @@ internal static class SkinService
         return config;
     }
 
+    private static CharacterSkinComposition CloneCharacterSkinComposition(
+        CharacterSkinComposition source) =>
+        new()
+        {
+            Id = source.Id,
+            GroupId = source.GroupId,
+            Name = source.Name,
+            SourceOptionIds = source.SourceOptionIds.ToList(),
+            HideSources = source.HideSources
+        };
+
+    private static void MigrateLegacyCharacterIconSelections()
+    {
+        if (Catalog == null || Config.CharacterIconSelections.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var pair in Config.CharacterIconSelections.ToArray())
+        {
+            Config.CharacterIconSelections.Remove(pair.Key);
+            if (pair.Value.Equals(
+                    FollowCharacterSkinIconSelectionId,
+                    StringComparison.OrdinalIgnoreCase) ||
+                pair.Value.Equals(
+                    SkinCatalog.BaseOptionId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var iconOptionId = Catalog.ResolveStoredVisualSelectionId(pair.Key, pair.Value);
+            var rawOptions = Catalog.GetRawCharacterOptions(pair.Key);
+            if (rawOptions.All(option => !option.Id.Equals(
+                    iconOptionId,
+                    StringComparison.OrdinalIgnoreCase)))
+            {
+                ModLog.Info($"旧头像来源 {pair.Key}/{pair.Value} 已不存在，已忽略。 ");
+                continue;
+            }
+
+            var sources = new List<string> { iconOptionId };
+            var selected = Config.GetSelection(pair.Key);
+            if (!selected.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                sources.AddRange(Catalog.GetCompositionSourceOptionIds(pair.Key, selected));
+            }
+            sources = sources.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var sourceNames = sources.Select(sourceId =>
+                    rawOptions.FirstOrDefault(option => option.Id.Equals(
+                        sourceId,
+                        StringComparison.OrdinalIgnoreCase))?.Name)
+                .Where(sourceName => !string.IsNullOrWhiteSpace(sourceName))
+                .Cast<string>();
+            var name = CharacterSkinCompositionPolicy.UniqueName(
+                string.Join(" + ", sourceNames),
+                Config.CharacterSkinCompositions
+                    .Where(composition => composition.GroupId.Equals(
+                        pair.Key,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(composition => composition.Name),
+                "合并皮肤");
+            var composition = new CharacterSkinComposition
+            {
+                Id = CharacterSkinCompositionPolicy.CreateId(),
+                GroupId = pair.Key,
+                Name = name,
+                SourceOptionIds = sources
+            };
+            Config.CharacterSkinCompositions.Add(composition);
+            Config.Selections[pair.Key] = composition.Id;
+            ModLog.Info($"已将 {pair.Key} 的旧头像来源迁移为合并皮肤“{name}”。");
+        }
+    }
+
     private static void SanitizeSelections()
     {
+        Config.CharacterSkinCompositions = CharacterSkinCompositionPolicy.Normalize(
+            Config.CharacterSkinCompositions);
+        Catalog!.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
+        MigrateLegacyCharacterIconSelections();
+        Catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
+
         var migratedVisualSelectionCount = 0;
         foreach (var group in Catalog!.Groups)
         {
@@ -5754,16 +6109,6 @@ internal static class SkinService
 
             Config.Selections[group.Id] = resolvedSelection;
             migratedVisualSelectionCount++;
-        }
-
-        foreach (var pair in Config.CharacterIconSelections.ToArray())
-        {
-            var resolvedSelection = Catalog.ResolveStoredVisualSelectionId(pair.Key, pair.Value);
-            if (!resolvedSelection.Equals(pair.Value, StringComparison.OrdinalIgnoreCase))
-            {
-                Config.CharacterIconSelections[pair.Key] = resolvedSelection;
-                migratedVisualSelectionCount++;
-            }
         }
 
         if (migratedVisualSelectionCount > 0)
@@ -5814,42 +6159,6 @@ internal static class SkinService
             {
                 Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
             }
-
-            var selected = Config.GetSelection(group.Id);
-            if (!Catalog.IsCharacterIconOnlyOption(group.Id, selected))
-            {
-                continue;
-            }
-
-            if (!Config.CharacterIconSelections.TryGetValue(group.Id, out var iconSelection) ||
-                iconSelection.Equals(
-                    FollowCharacterSkinIconSelectionId,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                Config.CharacterIconSelections[group.Id] = selected;
-            }
-
-            Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
-            ModLog.Info(
-                $"已将 {group.DisplayName} 的旧版纯头像选择迁移到独立头像来源。");
-        }
-
-        foreach (var pair in Config.CharacterIconSelections.ToArray())
-        {
-            if (pair.Value.Equals(
-                    FollowCharacterSkinIconSelectionId,
-                    StringComparison.OrdinalIgnoreCase) ||
-                pair.Value.Equals(
-                    SkinCatalog.BaseOptionId,
-                    StringComparison.OrdinalIgnoreCase) ||
-                Catalog.GetCharacterIconOptions(pair.Key).Any(option =>
-                    option.Id.Equals(pair.Value, StringComparison.OrdinalIgnoreCase)))
-            {
-                continue;
-            }
-
-            Config.CharacterIconSelections.Remove(pair.Key);
-            ModLog.Info($"头像来源 {pair.Key}/{pair.Value} 已不存在，已恢复为跟随角色皮肤。");
         }
 
         SanitizeMonsterSkinPriorities();

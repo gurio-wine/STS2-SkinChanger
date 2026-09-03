@@ -110,13 +110,13 @@ git commit -m "feat: persist character skin compositions"
 - Produces: `SkinCatalog.SynchronizeCharacterSkinCompositions`, `GetRawCharacterOptions`, `GetCompositionSourceOptionIds`, and `TryCreateSessionCharacterComposition`.
 - Produces: `SkinService.GetCharacterSkinOptions`, CRUD methods for saved compositions, and a session-composition overload used by multiplayer.
 
-- [ ] **Step 1: Write failing catalog/service boundary tests**
+- [x] **Step 1: Write failing catalog/service boundary tests**
 
 Add runtime reflection checks proving `SkinOption` carries composition sources, the catalog exposes the four composition methods, `SkinService.ApplySelection` no longer rejects icon-only raw options, and the old automatic icon injection call is absent from `BuildGroups` behavior through an extracted policy seam.
 
 Add logic tests for the selection transaction helper: a composition resolves its dynamic provider for linked runtime groups, while a static-only composition affects only the current group.
 
-- [ ] **Step 2: Run both test projects and verify RED**
+- [x] **Step 2: Run both test projects and verify RED**
 
 Run:
 
@@ -127,7 +127,7 @@ dotnet run --project tests/STS2SkinChanger.RuntimeTests/STS2SkinChanger.RuntimeT
 
 Expected: missing composition-aware catalog/service members.
 
-- [ ] **Step 3: Materialize virtual options and remove automatic avatar injection**
+- [x] **Step 3: Materialize virtual options and remove automatic avatar injection**
 
 Stop calling `MergeCharacterSelectIconPacks`. Keep pure icon `SkinOption` entries in the group, mark virtual entries with ordered `CompositionSourceOptionIds`, choose the first source whose option has runtime behavior as `ProviderId`, and merge `ResourceAsset` ownership by normalized takeover path before adding the virtual option.
 
@@ -142,18 +142,18 @@ internal sealed record SkinOption(...)
 Ensure full-runtime checks use `EffectiveProviderId` through `ResolveVisualProviderId`; selected dependencies still come from each winning `ResourceAsset.Files` closure.
 Expose the ordered providers behind a virtual option to localization filtering. Return selected cosmetic localization tables from lowest to highest composition priority so the existing last-table-wins merge leaves the first recipe source authoritative while still allowing later sources to fill absent fields.
 
-- [ ] **Step 4: Add transactional composition CRUD and legacy avatar migration**
+- [x] **Step 4: Add transactional composition CRUD and legacy avatar migration**
 
 At catalog initialization, normalize recipes, migrate each explicit legacy avatar selection to `[avatar, current skin]` (or `[avatar]` over base), synchronize virtual options, resolve stored selections, then clear the legacy field. Saving/editing/deleting a recipe must snapshot config, synchronize options, apply the selection and overlay, save atomically, and restore the snapshot/catalog/overlay on failure.
 
 Expose visible options as base raw options minus the union of hidden sources plus every valid virtual composition. Use this in both the character-select selector and in-run appearance selector.
 Deleting the active composition switches that character to base before removing the virtual option. Editing the active recipe remounts it immediately; editing an inactive recipe only rebuilds list state. Cache materialized options by recipe revision and catalog fingerprint, and invalidate only the affected character when recipes or installed sources change.
 
-- [ ] **Step 5: Run both test projects and verify GREEN**
+- [x] **Step 5: Run both test projects and verify GREEN**
 
 Expected: both console suites print their pass messages.
 
-- [ ] **Step 6: Bump internal version and commit**
+- [x] **Step 6: Bump internal version and commit**
 
 Set version to `0.9.132.6` and commit:
 

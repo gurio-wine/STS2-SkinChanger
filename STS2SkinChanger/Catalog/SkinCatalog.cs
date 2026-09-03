@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -259,6 +260,121 @@ internal sealed partial class SkinCatalog : IDisposable
     public IReadOnlyList<SkinGroup> Groups => _groups;
     public IReadOnlyList<CardSkinGroup> CardGroups => _cardGroups;
     public IReadOnlyList<CardSkinOption> PckCardOptions => _pckCardOptions;
+
+    public IReadOnlyList<SkinOption> GetRawCharacterOptions(string groupId)
+    {
+        var group = _groups.FirstOrDefault(candidate => candidate.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase));
+        return group == null || !IsCharacterAppearanceGroup(groupId)
+            ? []
+            : group.Options.Where(option => !option.IsComposition).ToArray();
+    }
+
+    public IReadOnlyList<string> GetCompositionSourceOptionIds(
+        string groupId,
+        string optionId)
+    {
+        if (optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var option = _groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(candidate => candidate.Id.Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase));
+        return option == null
+            ? []
+            : option.IsComposition
+                ? option.CompositionSourceOptionIds
+                : [option.Id];
+    }
+
+    public void SynchronizeCharacterSkinCompositions(
+        IReadOnlyList<CharacterSkinComposition> compositions)
+    {
+        foreach (var group in _groups)
+        {
+            group.Options.RemoveAll(option => option.IsComposition && !option.IsSessionComposition);
+        }
+
+        foreach (var composition in compositions)
+        {
+            var group = _groups.FirstOrDefault(candidate => candidate.Id.Equals(
+                composition.GroupId,
+                StringComparison.OrdinalIgnoreCase));
+            if (group == null || !IsCharacterAppearanceGroup(group.Id) ||
+                !TryBuildCompositionOption(group, composition, session: false, out var option))
+            {
+                continue;
+            }
+
+            group.Options.Add(option);
+        }
+
+        SortGroupsAndOptions();
+    }
+
+    public bool TryCreateSessionCharacterComposition(
+        string groupId,
+        IReadOnlyList<string> sourceOptionIds,
+        out string optionId)
+    {
+        optionId = BaseOptionId;
+        var group = _groups.FirstOrDefault(candidate => candidate.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase));
+        if (group == null || !IsCharacterAppearanceGroup(group.Id))
+        {
+            return false;
+        }
+
+        var available = CharacterSkinCompositionPolicy.ResolveAvailableSourceIds(
+            sourceOptionIds,
+            GetRawCharacterOptions(groupId).Select(option => option.Id));
+        if (available.Count == 0)
+        {
+            return false;
+        }
+        if (available.Count == 1)
+        {
+            optionId = available[0];
+            return true;
+        }
+
+        var signature = groupId.ToLowerInvariant() + "\n" + string.Join(
+            "\n",
+            available.Select(id => id.ToLowerInvariant()));
+        var sessionOptionId = CharacterSkinCompositionPolicy.IdPrefix + "session:" +
+                              Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signature)))
+                                  .ToLowerInvariant();
+        optionId = sessionOptionId;
+        if (group.Options.Any(option => option.Id.Equals(
+                sessionOptionId,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        var composition = new CharacterSkinComposition
+        {
+            Id = optionId,
+            GroupId = group.Id,
+            Name = "Session composition",
+            SourceOptionIds = available.ToList()
+        };
+        if (!TryBuildCompositionOption(group, composition, session: true, out var sessionOption))
+        {
+            optionId = BaseOptionId;
+            return false;
+        }
+
+        group.Options.Add(sessionOption);
+        return true;
+    }
 
     public IReadOnlyList<SkinOption> GetCharacterIconOptions(string groupId) =>
         _groups.FirstOrDefault(group => group.Id.Equals(
@@ -554,17 +670,45 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public IReadOnlySet<string> GetSelectedLocalizationProviderIds(
         IReadOnlyDictionary<string, string> selections) =>
-        Groups.Select(group =>
-            {
-                selections.TryGetValue(group.Id, out var selectedId);
-                return group.Options.FirstOrDefault(option => option.Id.Equals(
-                    selectedId,
-                    StringComparison.OrdinalIgnoreCase));
-            })
-            .Where(option => option != null &&
-                             _cosmeticLocalizationProviders.Contains(option.EffectiveProviderId))
-            .Select(option => option!.EffectiveProviderId)
+        GetSelectedLocalizationProviderPriority(selections)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyList<string> GetSelectedLocalizationProviderPriority(
+        IReadOnlyDictionary<string, string> selections)
+    {
+        var providers = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in Groups)
+        {
+            selections.TryGetValue(group.Id, out var selectedId);
+            var selected = group.Options.FirstOrDefault(option => option.Id.Equals(
+                selectedId,
+                StringComparison.OrdinalIgnoreCase));
+            if (selected == null)
+            {
+                continue;
+            }
+
+            var sources = selected.IsComposition
+                ? selected.CompositionSourceOptionIds
+                    .Select(sourceId => group.Options.FirstOrDefault(option =>
+                        !option.IsComposition &&
+                        option.Id.Equals(sourceId, StringComparison.OrdinalIgnoreCase)))
+                    .Where(option => option != null)
+                    .Cast<SkinOption>()
+                : [selected];
+            foreach (var source in sources)
+            {
+                if (_cosmeticLocalizationProviders.Contains(source.EffectiveProviderId) &&
+                    seen.Add(source.EffectiveProviderId))
+                {
+                    providers.Add(source.EffectiveProviderId);
+                }
+            }
+        }
+
+        return providers;
+    }
 
     public IReadOnlyList<string> FilterModdedLocalizationTables(
         IEnumerable<string> localizationPaths,
@@ -576,11 +720,24 @@ internal sealed partial class SkinCatalog : IDisposable
             return paths;
         }
 
-        var selectedProviders = GetSelectedLocalizationProviderIds(selections);
-        return paths.Where(path =>
+        var selectedProviderPriority = GetSelectedLocalizationProviderPriority(selections);
+        var selectedProviders = selectedProviderPriority.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var passthrough = paths.Where(path =>
             !_cosmeticLocalizationPaths.Contains(path) ||
-            !TryGetLocalizationProviderId(path, out var providerId) ||
-            selectedProviders.Contains(providerId)).ToArray();
+            !TryGetLocalizationProviderId(path, out _));
+        var selectedCosmetic = selectedProviderPriority
+            .Reverse()
+            .SelectMany(providerId => paths.Where(path =>
+                _cosmeticLocalizationPaths.Contains(path) &&
+                TryGetLocalizationProviderId(path, out var pathProviderId) &&
+                pathProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase)));
+        return passthrough.Concat(selectedCosmetic)
+            .Where(path =>
+                !_cosmeticLocalizationPaths.Contains(path) ||
+                !TryGetLocalizationProviderId(path, out var providerId) ||
+                selectedProviders.Contains(providerId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public bool IsManagedCosmeticLocalizationPath(string path) =>
@@ -3975,7 +4132,6 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
-        MergeCharacterSelectIconPacks(indexes, groups);
         AddPckRuntimeProviderOptions(indexes, baselines, groups, knownGroupIds);
         AddDirectCharacterRuntimeProviderOptions(
             indexes,
@@ -6181,6 +6337,54 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
+    private static bool TryBuildCompositionOption(
+        SkinGroup group,
+        CharacterSkinComposition composition,
+        bool session,
+        out SkinOption option)
+    {
+        option = null!;
+        var rawOptions = group.Options
+            .Where(candidate => !candidate.IsComposition)
+            .ToDictionary(candidate => candidate.Id, StringComparer.OrdinalIgnoreCase);
+        var sources = rawOptions.ToDictionary(
+            pair => pair.Key,
+            pair => new CharacterSkinCompositionSource<ResourceAsset>(
+                pair.Key,
+                pair.Value.IsRuntimeProvider,
+                pair.Value.Assets),
+            StringComparer.OrdinalIgnoreCase);
+        var resolved = CharacterSkinCompositionPolicy.ResolveAssets(
+            composition.SourceOptionIds,
+            sources,
+            NormalizeTakeoverPath);
+        if (resolved.SourceOptionIds.Count == 0)
+        {
+            return false;
+        }
+
+        var dynamicSource = resolved.DynamicSourceId == null
+            ? null
+            : rawOptions[resolved.DynamicSourceId];
+        option = new SkinOption(
+            composition.Id,
+            composition.Name,
+            resolved.Assets,
+            IsRuntimeProvider: dynamicSource?.IsRuntimeProvider == true,
+            RuntimeImagePath: dynamicSource?.RuntimeImagePath,
+            ManagedMonsterScene: dynamicSource?.ManagedMonsterScene,
+            RuntimeMonsterVisualMode: dynamicSource?.RuntimeMonsterVisualMode,
+            ProviderId: dynamicSource?.EffectiveProviderId,
+            IsManagedMonsterRuntimeProfile: dynamicSource?.IsManagedMonsterRuntimeProfile == true,
+            FrameworkContract: dynamicSource?.FrameworkContract,
+            IsCharacterIconOnly: false)
+        {
+            CompositionSourceOptionIds = resolved.SourceOptionIds,
+            IsSessionComposition = session
+        };
+        return true;
+    }
+
     private static GroupIdentity? TryGetDefinedBaselineGroup(string sourcePath)
     {
         var characterDependency = CharacterPathRegex().Match(sourcePath);
@@ -6846,6 +7050,12 @@ internal sealed record SkinOption(
 {
     public string EffectiveProviderId =>
         ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;
+
+    public IReadOnlyList<string> CompositionSourceOptionIds { get; init; } = [];
+
+    public bool IsSessionComposition { get; init; }
+
+    public bool IsComposition => CompositionSourceOptionIds.Count > 0;
 }
 
 internal sealed record RuntimeMonsterVisualMode(

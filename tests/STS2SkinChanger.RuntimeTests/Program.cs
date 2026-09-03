@@ -462,6 +462,54 @@ if (cardRewardPreloadParameters.Length != 1 ||
         "卡牌奖励批量预载必须一次接收整组 CardCreationResult，不能退回逐张建立隔离包。");
 }
 
+var skinCatalogType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Catalog.SkinCatalog") ??
+                      throw new InvalidOperationException("找不到皮肤目录类型。");
+var skinOptionType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Catalog.SkinOption") ??
+                     throw new InvalidOperationException("找不到皮肤选项类型。");
+var compositionSourcesProperty = skinOptionType.GetProperty(
+    "CompositionSourceOptionIds",
+    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+if (compositionSourcesProperty?.PropertyType != typeof(IReadOnlyList<string>))
+{
+    throw new InvalidOperationException(
+        "虚拟合并皮肤必须保留有序原始来源，供头像、动态行为、本地化和多人同步共同解析。");
+}
+
+foreach (var methodName in new[]
+         {
+             "SynchronizeCharacterSkinCompositions",
+             "GetRawCharacterOptions",
+             "GetCompositionSourceOptionIds",
+             "TryCreateSessionCharacterComposition"
+         })
+{
+    if (skinCatalogType.GetMethod(
+            methodName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) == null)
+    {
+        throw new InvalidOperationException($"皮肤目录缺少合并皮肤边界：{methodName}。");
+    }
+}
+
+foreach (var methodName in new[]
+         {
+             "GetCharacterSkinOptions",
+             "GetRawCharacterSkinOptions",
+             "GetCharacterSkinCompositions",
+             "SaveCharacterSkinComposition",
+             "DeleteCharacterSkinComposition",
+             "GetCharacterSelectionSourceIds",
+             "TryBuildSessionCharacterComposition"
+         })
+{
+    if (skinServiceType.GetMethod(
+            methodName,
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) == null)
+    {
+        throw new InvalidOperationException($"皮肤服务缺少合并皮肤边界：{methodName}。");
+    }
+}
+
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 
 static Type RequirePatchType(string name, string error) =>
