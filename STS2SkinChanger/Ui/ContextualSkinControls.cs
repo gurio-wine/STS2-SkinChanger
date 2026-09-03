@@ -34,11 +34,6 @@ internal static partial class ContextualSkinControls
     private const string MonsterScaleResetName = "MonsterScaleReset";
     private const string CharacterRefreshGenerationMeta = "sts2_skin_character_refresh_generation";
     private const string CharacterLoadingGenerationMeta = "sts2_skin_character_loading_generation";
-    private const string CharacterPreviewGenerationMeta = "sts2_skin_character_preview_generation";
-    private const string CharacterPreviewRequestGroupMeta = "sts2_skin_character_preview_request_group";
-    private const string CharacterPreviewRequestOptionMeta = "sts2_skin_character_preview_request_option";
-    private const string CharacterPreviewActiveGroupMeta = "sts2_skin_character_preview_active_group";
-    private const string CharacterPreviewActiveOptionMeta = "sts2_skin_character_preview_active_option";
     private const string CharacterLoadingOverlayName = "STS2CharacterSkinLoadingOverlay";
     private const string CharacterBundlePopupListName = "STS2CharacterBundlePopupList";
     private const string GroupMeta = "sts2_skin_group";
@@ -221,9 +216,6 @@ internal static partial class ContextualSkinControls
         }
 
         var selector = BuildSelector();
-        ConfigureCharacterDropdownPreview(
-            selector,
-            selector.GetNode<OptionButton>(DropdownName));
         screen.AddChild(selector);
         AttachCharacterSelectorDragging(screen, infoPanel, selector);
         EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
@@ -633,11 +625,6 @@ internal static partial class ContextualSkinControls
     {
         CharacterSkinCompositionControls.Hide(screen);
         CharacterSkinBundleControls.Hide(screen);
-        CancelCharacterDropdownPreview(
-            screen,
-            FindCharacterSelector(screen),
-            restoreOverlay: true,
-            restoreDisplay: false);
         var selector = FindCharacterSelector(screen);
         if (selector != null)
         {
@@ -688,6 +675,7 @@ internal static partial class ContextualSkinControls
     private static void Populate(HBoxContainer selector, SkinGroup? group)
     {
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
+        dropdown.GetPopup().Hide();
         var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
         var visualOptions = group == null
             ? []
@@ -701,6 +689,7 @@ internal static partial class ContextualSkinControls
         {
             selector.Visible = false;
             dropdown.Clear();
+            ConfigureCharacterBundlePopupList(selector, dropdown, 0);
             return;
         }
 
@@ -782,12 +771,8 @@ internal static partial class ContextualSkinControls
     {
         var popup = dropdown.GetPopup();
         var list = popup.GetNodeOrNull<ItemList>(CharacterBundlePopupListName);
-        if (bundleCount <= 0)
+        if (bundleCount <= 0 && list == null)
         {
-            if (list != null)
-            {
-                list.Visible = false;
-            }
             return;
         }
 
@@ -841,23 +826,17 @@ internal static partial class ContextualSkinControls
                 popup.Hide();
                 ApplyDropdownSelection(selector, dropdown, (int)activatedIndex);
             };
-            popupList.GuiInput += inputEvent =>
-            {
-                if (inputEvent is InputEventMouseMotion motion)
-                {
-                    PreviewCharacterDropdownSelection(
-                        selector,
-                        dropdown,
-                        popupList.GetItemAtPosition(motion.Position, exact: true));
-                }
-            };
             popup.AboutToPopup += () =>
             {
-                popupList.Visible = true;
-                popupList.Select(dropdown.Selected);
+                // The same selector survives character changes. Always read the current native
+                // entries; an earlier character's colored bundle list must never reappear.
+                if (!RefreshCharacterBundlePopupList(dropdown, popupList))
+                {
+                    return;
+                }
                 Callable.From(() =>
                 {
-                    if (GodotObject.IsInstanceValid(popupList))
+                    if (GodotObject.IsInstanceValid(popupList) && popupList.Visible && popup.Visible)
                     {
                         popupList.Position = Vector2.Zero;
                         popupList.Size = popup.Size;
@@ -867,18 +846,37 @@ internal static partial class ContextualSkinControls
             };
         }
 
+        RefreshCharacterBundlePopupList(dropdown, list);
+    }
+
+    private static bool RefreshCharacterBundlePopupList(OptionButton dropdown, ItemList list)
+    {
         list.Clear();
+        list.Visible = false;
+        var hasBundles = Enumerable.Range(0, dropdown.ItemCount).Any(index =>
+            CharacterSkinBundlePolicy.TryGetSelectionBundleName(
+                dropdown.GetItemMetadata(index).AsString(), out _));
+        if (!hasBundles)
+        {
+            return false;
+        }
+
         var gold = new Color("efc850");
         for (var index = 0; index < dropdown.ItemCount; index++)
         {
             list.AddItem(dropdown.GetItemText(index));
-            if (index < bundleCount)
+            if (CharacterSkinBundlePolicy.TryGetSelectionBundleName(
+                    dropdown.GetItemMetadata(index).AsString(), out _))
             {
                 list.SetItemCustomFgColor(index, gold);
             }
         }
-        list.Select(dropdown.Selected);
+        if (dropdown.Selected >= 0 && dropdown.Selected < list.ItemCount)
+        {
+            list.Select(dropdown.Selected);
+        }
         list.Visible = true;
+        return true;
     }
 
     private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
@@ -942,11 +940,6 @@ internal static partial class ContextualSkinControls
             !HasMonsterPriorityContext(selector) &&
             CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out var bundleName))
         {
-            CancelCharacterDropdownPreview(
-                characterScreen,
-                selector,
-                restoreOverlay: true,
-                restoreDisplay: true);
             var characterOptionId = SkinService.GetCharacterSkinBundleCharacterOption(groupId, bundleName);
             if (characterOptionId == null ||
                 !SkinService.SelectCharacterSkinBundle(groupId, bundleName))
@@ -968,25 +961,6 @@ internal static partial class ContextualSkinControls
         }
         if (characterScreen != null && !HasMonsterPriorityContext(selector))
         {
-            var previewMatchesSelection = characterScreen
-                    .GetMeta(CharacterPreviewActiveGroupMeta, string.Empty)
-                    .AsString()
-                    .Equals(groupId, StringComparison.OrdinalIgnoreCase) &&
-                characterScreen
-                    .GetMeta(CharacterPreviewActiveOptionMeta, string.Empty)
-                    .AsString()
-                    .Equals(optionId, StringComparison.OrdinalIgnoreCase);
-            CancelCharacterDropdownPreview(
-                characterScreen,
-                selector,
-                restoreOverlay: false,
-                restoreDisplay: false);
-            if (previewMatchesSelection)
-            {
-                ApplyDropdownSelectionNow(selector, dropdown, index, groupId, optionId);
-                return;
-            }
-
             BeginCharacterDropdownSelection(
                 characterScreen,
                 selector,
@@ -1162,11 +1136,6 @@ internal static partial class ContextualSkinControls
 
     private static void CancelCharacterDropdownSelection(NCharacterSelectScreen screen)
     {
-        CancelCharacterDropdownPreview(
-            screen,
-            FindCharacterSelector(screen),
-            restoreOverlay: true,
-            restoreDisplay: false);
         var overlay = screen.GetNodeOrNull<PanelContainer>(CharacterLoadingOverlayName);
         if (overlay?.Visible != true)
         {
@@ -1186,204 +1155,6 @@ internal static partial class ContextualSkinControls
             {
                 dropdown.Disabled = false;
             }
-        }
-    }
-
-    private static void ConfigureCharacterDropdownPreview(
-        HBoxContainer selector,
-        OptionButton dropdown)
-    {
-        var popup = dropdown.GetPopup();
-        popup.IdFocused += id => PreviewCharacterDropdownSelection(
-            selector,
-            dropdown,
-            popup.GetItemIndex(checked((int)id)));
-        popup.WindowInput += inputEvent =>
-        {
-            if (inputEvent is not InputEventMouseMotion)
-            {
-                return;
-            }
-
-            if (popup.GetNodeOrNull<ItemList>(CharacterBundlePopupListName)?.Visible == true)
-            {
-                return;
-            }
-
-            // PopupMenu updates its focused item during this input dispatch. Reading it one idle
-            // step later makes mouse hover and keyboard focus use the same preview path.
-            Callable.From(() =>
-            {
-                if (GodotObject.IsInstanceValid(popup) && popup.Visible)
-                {
-                    PreviewCharacterDropdownSelection(
-                        selector,
-                        dropdown,
-                        popup.GetFocusedItem());
-                }
-            }).CallDeferred();
-        };
-        // ItemSelected is emitted during the same input dispatch. Restore one idle step later so
-        // a click can first turn the active preview into the saved selection without flickering
-        // through the old skin.
-        popup.PopupHide += () => Callable.From(() =>
-        {
-            var screen = FindAncestor<NCharacterSelectScreen>(selector);
-            if (screen != null)
-            {
-                CancelCharacterDropdownPreview(
-                    screen,
-                    selector,
-                    restoreOverlay: true,
-                    restoreDisplay: true);
-            }
-        }).CallDeferred();
-    }
-
-    private static void PreviewCharacterDropdownSelection(
-        HBoxContainer selector,
-        OptionButton dropdown,
-        int index)
-    {
-        var screen = FindAncestor<NCharacterSelectScreen>(selector);
-        if (screen == null || index < 0 || index >= dropdown.ItemCount)
-        {
-            if (screen != null)
-            {
-                CancelCharacterDropdownPreview(
-                    screen,
-                    selector,
-                    restoreOverlay: true,
-                    restoreDisplay: true);
-            }
-            return;
-        }
-
-        var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
-        var optionId = dropdown.GetItemMetadata(index).AsString();
-        if (string.IsNullOrWhiteSpace(groupId) || string.IsNullOrWhiteSpace(optionId))
-        {
-            return;
-        }
-
-        if (CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out _))
-        {
-            CancelCharacterDropdownPreview(
-                screen,
-                selector,
-                restoreOverlay: true,
-                restoreDisplay: true);
-            return;
-        }
-
-        if (screen.GetMeta(CharacterPreviewRequestGroupMeta, string.Empty).AsString().Equals(
-                groupId,
-                StringComparison.OrdinalIgnoreCase) &&
-            screen.GetMeta(CharacterPreviewRequestOptionMeta, string.Empty).AsString().Equals(
-                optionId,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        if (optionId.Equals(
-                SkinService.Config.GetSelection(groupId),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            if (!screen.HasMeta(CharacterPreviewRequestOptionMeta) &&
-                !screen.HasMeta(CharacterPreviewActiveOptionMeta))
-            {
-                screen.SetMeta(CharacterPreviewRequestGroupMeta, groupId);
-                screen.SetMeta(CharacterPreviewRequestOptionMeta, optionId);
-                return;
-            }
-
-            CancelCharacterDropdownPreview(
-                screen,
-                selector,
-                restoreOverlay: true,
-                restoreDisplay: true);
-            return;
-        }
-
-        var generation = screen.GetMeta(CharacterPreviewGenerationMeta, 0L).AsInt64() + 1L;
-        screen.SetMeta(CharacterPreviewGenerationMeta, generation);
-        screen.SetMeta(CharacterPreviewRequestGroupMeta, groupId);
-        screen.SetMeta(CharacterPreviewRequestOptionMeta, optionId);
-        var previewAfter = Time.GetTicksMsec() + 120UL;
-        Task? warmTask = null;
-        Action poll = null!;
-        poll = () =>
-        {
-            if (!GodotObject.IsInstanceValid(screen) ||
-                !GodotObject.IsInstanceValid(dropdown) ||
-                !dropdown.GetPopup().Visible ||
-                screen.GetMeta(CharacterPreviewGenerationMeta, 0L).AsInt64() != generation)
-            {
-                return;
-            }
-
-            if (Time.GetTicksMsec() < previewAfter)
-            {
-                ScheduleNextFrame(screen, poll);
-                return;
-            }
-
-            warmTask ??= SkinService.WarmResourcePackFilesAsync(
-                SkinService.GetSelectionResourcePackPaths(groupId, optionId));
-            if (!warmTask.IsCompleted)
-            {
-                ScheduleNextFrame(screen, poll);
-                return;
-            }
-
-            if (warmTask.IsFaulted)
-            {
-                ModLog.Warn(
-                    $"后台预读 {dropdown.GetItemText(index)} 预览资源失败，将直接尝试预览：" +
-                    warmTask.Exception?.GetBaseException().Message);
-            }
-
-            if (!SkinService.ApplyCharacterPreviewSelection(groupId, optionId))
-            {
-                ModLog.Error($"预览角色皮肤失败：{SkinService.LastError}");
-                return;
-            }
-
-            screen.SetMeta(CharacterPreviewActiveGroupMeta, groupId);
-            screen.SetMeta(CharacterPreviewActiveOptionMeta, optionId);
-            if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
-            {
-                RunRefresh(refresh);
-            }
-        };
-
-        ScheduleNextFrame(screen, poll);
-    }
-
-    private static void CancelCharacterDropdownPreview(
-        NCharacterSelectScreen screen,
-        HBoxContainer? selector,
-        bool restoreOverlay,
-        bool restoreDisplay)
-    {
-        screen.SetMeta(
-            CharacterPreviewGenerationMeta,
-            screen.GetMeta(CharacterPreviewGenerationMeta, 0L).AsInt64() + 1L);
-        screen.RemoveMeta(CharacterPreviewRequestGroupMeta);
-        screen.RemoveMeta(CharacterPreviewRequestOptionMeta);
-        screen.RemoveMeta(CharacterPreviewActiveGroupMeta);
-        screen.RemoveMeta(CharacterPreviewActiveOptionMeta);
-        if (!SkinService.ClearCharacterPreviewSelection(restoreOverlay) ||
-            !restoreDisplay ||
-            selector == null)
-        {
-            return;
-        }
-
-        if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
-        {
-            RunRefresh(refresh);
         }
     }
 

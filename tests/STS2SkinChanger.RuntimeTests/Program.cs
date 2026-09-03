@@ -19,6 +19,7 @@ using System.Reflection;
 
 AppearanceControlContractTests.Run();
 CharacterSkinBundleContractTests.Run();
+CharacterSkinPopupContractTests.Run();
 ScrollListRebuildContractTests.Run();
 CardSkinRefreshContractTests.Run();
 CardProviderBridgeContractTests.Run();
