@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardLibrary;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
@@ -2337,6 +2338,19 @@ internal static class CardLibraryRowPortraitPreloadPatch
         int startIndex) =>
         SkinService.PreloadCardPortraits(
             __instance.VisibleCards.Skip(startIndex).Take(row.Count));
+}
+
+[HarmonyPatch]
+internal static class CardRewardPortraitPreloadPatch
+{
+    internal static System.Reflection.MethodBase TargetMethod() =>
+        AccessTools.Method(
+            typeof(NCardRewardSelectionScreen),
+            nameof(NCardRewardSelectionScreen.RefreshOptions));
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(IReadOnlyList<CardCreationResult> options) =>
+        SkinService.PreloadCardPortraits(options.Select(option => option.Card));
 }
 
 [HarmonyPatch(typeof(CardModel), nameof(CardModel.Portrait), MethodType.Getter)]

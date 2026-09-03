@@ -1,11 +1,13 @@
 using HarmonyLib;
 using Godot;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
+using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
@@ -437,6 +439,28 @@ if (handMoveTarget?.DeclaringType != typeof(NHandImage) ||
         "遗物争夺动作隔离必须覆盖 NHandImage.SetTextureToFightMove。");
 }
 RequirePlayerScopePatch(handMovePatch, typeof(NHandImage));
+
+var cardRewardPreloadPatch = RequirePatchType(
+    "STS2SkinChanger.Ui.CardRewardPortraitPreloadPatch",
+    "缺少卡牌奖励批量卡图预载补丁；奖励牌会逐张扩展同一个隔离资源包并造成明显卡顿。");
+var cardRewardPreloadTarget = (MethodBase?)RequirePatchMethod(
+        cardRewardPreloadPatch,
+        "TargetMethod")
+    .Invoke(null, null);
+if (cardRewardPreloadTarget?.DeclaringType != typeof(NCardRewardSelectionScreen) ||
+    cardRewardPreloadTarget.Name != nameof(NCardRewardSelectionScreen.RefreshOptions))
+{
+    throw new InvalidOperationException(
+        "卡牌奖励批量预载必须覆盖 NCardRewardSelectionScreen.RefreshOptions，包含首次打开和刷新奖励两条路径。");
+}
+var cardRewardPreloadPrefix = RequirePatchMethod(cardRewardPreloadPatch, "Prefix");
+var cardRewardPreloadParameters = cardRewardPreloadPrefix.GetParameters();
+if (cardRewardPreloadParameters.Length != 1 ||
+    cardRewardPreloadParameters[0].ParameterType != typeof(IReadOnlyList<CardCreationResult>))
+{
+    throw new InvalidOperationException(
+        "卡牌奖励批量预载必须一次接收整组 CardCreationResult，不能退回逐张建立隔离包。");
+}
 
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 
