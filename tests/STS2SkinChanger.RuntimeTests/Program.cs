@@ -535,6 +535,79 @@ foreach (var removedMethodName in new[]
     }
 }
 
+var compositionControlsType = typeof(Entry).Assembly.GetType(
+                                  "STS2SkinChanger.Ui.CharacterSkinCompositionControls") ??
+                              throw new InvalidOperationException(
+                                  "缺少选角界面的角色皮肤合并编辑器。");
+var compositionShowMethod = compositionControlsType.GetMethod(
+                                "Show",
+                                BindingFlags.Static | BindingFlags.Public |
+                                BindingFlags.NonPublic) ??
+                            throw new InvalidOperationException(
+                                "角色皮肤合并编辑器缺少 Show 入口。");
+if (compositionShowMethod.GetParameters().Length != 3)
+{
+    throw new InvalidOperationException(
+        "角色皮肤合并编辑器 Show 必须接收选角界面、当前角色分组和刷新回调。");
+}
+
+var modTextType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.ModText") ??
+                  throw new InvalidOperationException("找不到 ModText。");
+var compositionTextNames = new[]
+{
+    "CharacterSkinMerge",
+    "NewCharacterSkinMerge",
+    "CharacterSkinMergeName",
+    "HideMergedSkinSources",
+    "SaveCharacterSkinMerge",
+    "DeleteCharacterSkinMerge",
+    "CharacterSkinSourceUnavailable",
+    "CharacterSkinMergeNeedsSource"
+};
+foreach (var textName in compositionTextNames)
+{
+    if (!Enum.GetNames(modTextType).Contains(textName, StringComparer.Ordinal))
+    {
+        throw new InvalidOperationException($"角色皮肤合并缺少本地化键：{textName}。");
+    }
+}
+
+if (Enum.GetNames(modTextType).Contains("CharacterIcon", StringComparer.Ordinal) ||
+    Enum.GetNames(modTextType).Contains("FollowCharacterSkin", StringComparer.Ordinal))
+{
+    throw new InvalidOperationException("独立头像文本仍然存在，头像尚未完全并入角色皮肤。");
+}
+
+var modLocalizationType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.ModLocalization") ??
+                          throw new InvalidOperationException("找不到 ModLocalization。");
+var compositionPacksField = modLocalizationType.GetField(
+                                "CharacterSkinCompositionPacks",
+                                BindingFlags.Static | BindingFlags.NonPublic) ??
+                            throw new InvalidOperationException(
+                                "缺少角色皮肤合并的多语言文本包。");
+var compositionPacks = compositionPacksField.GetValue(null) as System.Collections.IDictionary ??
+                       throw new InvalidOperationException(
+                           "角色皮肤合并的多语言文本包类型无效。");
+if (compositionPacks.Count != 15)
+{
+    throw new InvalidOperationException(
+        $"角色皮肤合并必须覆盖 15 种语言，当前只有 {compositionPacks.Count} 种。");
+}
+
+foreach (System.Collections.DictionaryEntry pack in compositionPacks)
+{
+    var values = pack.Value!.GetType().GetProperties()
+        .Where(property => property.PropertyType == typeof(string))
+        .Select(property => property.GetValue(pack.Value) as string)
+        .ToArray();
+    if (values.Length < compositionTextNames.Length ||
+        values.Any(string.IsNullOrWhiteSpace))
+    {
+        throw new InvalidOperationException(
+            $"角色皮肤合并语言 {pack.Key} 存在空白或缺失文本。");
+    }
+}
+
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 
 static Type RequirePatchType(string name, string error) =>

@@ -216,30 +216,30 @@ git commit -m "refactor: unify character skin and avatar selection"
 - Consumes: composition CRUD and raw/visible option queries from `SkinService`.
 - Produces: `CharacterSkinCompositionControls.Show(NCharacterSelectScreen, SkinGroup?, Action refresh)` and `Hide`.
 
-- [ ] **Step 1: Write failing runtime structure tests**
+- [x] **Step 1: Write failing runtime structure tests**
 
 Require the composition-control type and `Show` method, require the `ModText` keys for merge/create/name/hide/save/delete/unavailable, and verify every supported language returns non-empty text for each key.
 
-- [ ] **Step 2: Run runtime tests and verify RED**
+- [x] **Step 2: Run runtime tests and verify RED**
 
 Expected: missing UI type and localization keys.
 
-- [ ] **Step 3: Build the top-left entry and modal editor**
+- [x] **Step 3: Build the top-left entry and modal editor**
 
 Attach one themed `皮肤合并` button to the character-select screen. Show it only when the current character has a non-base raw option. Open a full-screen non-penetrating mask with a centered original-style panel; list raw options only, put enabled sources first in draft order, provide enable/up/down controls, name field, hide checkbox, save/delete/close, and mark missing retained sources unavailable.
 
 Saving calls the transactional service, immediately selects the result, repopulates the normal dropdown and invokes the existing full character-display refresh. One selected source remains valid.
 Deleting the active entry refreshes to the game original; disabling the hide checkbox immediately returns its raw sources to the ordinary list after save.
 
-- [ ] **Step 4: Add all 15 translations**
+- [x] **Step 4: Add all 15 translations**
 
 Add complete strings for `eng`, `zhs`, `zht`, `deu`, `esp`, `fra`, `ita`, `jpn`, `kor`, `pol`, `ptb`, `rus`, `spa`, `tha`, and `tur`; custom names and numeric order are never translated.
 
-- [ ] **Step 5: Run runtime and logic tests and verify GREEN**
+- [x] **Step 5: Run runtime and logic tests and verify GREEN**
 
 Run both console suites and require both pass messages.
 
-- [ ] **Step 6: Bump internal version and commit**
+- [x] **Step 6: Bump internal version and commit**
 
 Set version to `0.9.132.8` and commit:
 

@@ -73,9 +73,16 @@ internal enum ModText
     ShowInRunAppearanceEntry,
     CharacterSelectorTopRight,
     CardSkinSelectorDragHint,
-    CharacterIcon,
-    FollowCharacterSkin,
-    RestorePlayerPosition
+    RestorePlayerPosition,
+    CharacterSkinMerge,
+    NewCharacterSkinMerge,
+    CharacterSkinMergeName,
+    HideMergedSkinSources,
+    SaveCharacterSkinMerge,
+    DeleteCharacterSkinMerge,
+    CharacterSkinSourceUnavailable,
+    CharacterSkinMergeNeedsSource,
+    CombinedSkinDefaultName
 }
 
 internal static class ModLocalization
@@ -1023,27 +1030,96 @@ internal static class ModLocalization
             ["tur"] = "Taşımak için sürükle; sıfırlamak için sağ tıkla"
         };
 
-    private sealed record CharacterIconLanguagePack(string CharacterIcon, string FollowCharacterSkin);
+    private sealed record CharacterSkinCompositionLanguagePack(
+        string CharacterSkinMerge,
+        string NewCharacterSkinMerge,
+        string CharacterSkinMergeName,
+        string HideMergedSkinSources,
+        string SaveCharacterSkinMerge,
+        string DeleteCharacterSkinMerge,
+        string CharacterSkinSourceUnavailable,
+        string CharacterSkinMergeNeedsSource,
+        string CombinedSkinDefaultName)
+    {
+        public string Get(ModText text) => text switch
+        {
+            ModText.CharacterSkinMerge => CharacterSkinMerge,
+            ModText.NewCharacterSkinMerge => NewCharacterSkinMerge,
+            ModText.CharacterSkinMergeName => CharacterSkinMergeName,
+            ModText.HideMergedSkinSources => HideMergedSkinSources,
+            ModText.SaveCharacterSkinMerge => SaveCharacterSkinMerge,
+            ModText.DeleteCharacterSkinMerge => DeleteCharacterSkinMerge,
+            ModText.CharacterSkinSourceUnavailable => CharacterSkinSourceUnavailable,
+            ModText.CharacterSkinMergeNeedsSource => CharacterSkinMergeNeedsSource,
+            ModText.CombinedSkinDefaultName => CombinedSkinDefaultName,
+            _ => throw new ArgumentOutOfRangeException(nameof(text), text, null)
+        };
+    }
 
-    private static readonly IReadOnlyDictionary<string, CharacterIconLanguagePack>
-        CharacterIconPacks =
-            new Dictionary<string, CharacterIconLanguagePack>(StringComparer.OrdinalIgnoreCase)
+    private static readonly IReadOnlyDictionary<string, CharacterSkinCompositionLanguagePack>
+        CharacterSkinCompositionPacks =
+            new Dictionary<string, CharacterSkinCompositionLanguagePack>(StringComparer.OrdinalIgnoreCase)
             {
-                ["eng"] = new("Avatar", "Follow skin"),
-                ["zhs"] = new("头像", "跟随皮肤"),
-                ["zht"] = new("頭像", "跟隨外觀"),
-                ["deu"] = new("Porträt", "Skin folgen"),
-                ["esp"] = new("Retrato", "Seguir aspecto"),
-                ["fra"] = new("Portrait", "Suivre le skin"),
-                ["ita"] = new("Ritratto", "Segui skin"),
-                ["jpn"] = new("アイコン", "スキンに従う"),
-                ["kor"] = new("초상화", "스킨 따르기"),
-                ["pol"] = new("Portret", "Podążaj za skórką"),
-                ["ptb"] = new("Retrato", "Seguir visual"),
-                ["rus"] = new("Портрет", "Следовать облику"),
-                ["spa"] = new("Retrato", "Seguir aspecto"),
-                ["tha"] = new("รูปตัวละคร", "ตามสกิน"),
-                ["tur"] = new("Portre", "Görünümü izle")
+                ["eng"] = new(
+                    "Merge skins", "New merge", "Merged skin name",
+                    "Hide source skins from the skin list", "Save", "Delete",
+                    "Unavailable", "Select at least one skin", "Combined Skin"),
+                ["zhs"] = new(
+                    "皮肤合并", "新建合并", "合并皮肤名称",
+                    "在皮肤列表中隐藏参与合并的皮肤", "保存", "删除",
+                    "不可用", "请至少选择一个皮肤", "合并皮肤"),
+                ["zht"] = new(
+                    "外觀合併", "新增合併", "合併外觀名稱",
+                    "在外觀列表中隱藏參與合併的外觀", "儲存", "刪除",
+                    "無法使用", "請至少選擇一個外觀", "合併外觀"),
+                ["deu"] = new(
+                    "Skins kombinieren", "Neue Kombination", "Name der Kombination",
+                    "Quell-Skins in der Skin-Liste ausblenden", "Speichern", "Löschen",
+                    "Nicht verfügbar", "Wähle mindestens einen Skin", "Kombinierter Skin"),
+                ["esp"] = new(
+                    "Combinar aspectos", "Nueva combinación", "Nombre del aspecto combinado",
+                    "Ocultar los aspectos de origen en la lista", "Guardar", "Eliminar",
+                    "No disponible", "Selecciona al menos un aspecto", "Aspecto combinado"),
+                ["fra"] = new(
+                    "Fusionner les skins", "Nouvelle fusion", "Nom du skin fusionné",
+                    "Masquer les skins sources dans la liste", "Enregistrer", "Supprimer",
+                    "Indisponible", "Sélectionnez au moins un skin", "Skin fusionné"),
+                ["ita"] = new(
+                    "Combina skin", "Nuova combinazione", "Nome della skin combinata",
+                    "Nascondi le skin sorgente dall’elenco", "Salva", "Elimina",
+                    "Non disponibile", "Seleziona almeno una skin", "Skin combinata"),
+                ["jpn"] = new(
+                    "スキン合成", "新しい合成", "合成スキン名",
+                    "素材スキンを一覧から隠す", "保存", "削除",
+                    "利用不可", "スキンを1つ以上選択してください", "合成スキン"),
+                ["kor"] = new(
+                    "스킨 합치기", "새 합치기", "합친 스킨 이름",
+                    "스킨 목록에서 원본 스킨 숨기기", "저장", "삭제",
+                    "사용 불가", "스킨을 하나 이상 선택하세요", "합친 스킨"),
+                ["pol"] = new(
+                    "Połącz skórki", "Nowe połączenie", "Nazwa połączonej skórki",
+                    "Ukryj skórki źródłowe na liście", "Zapisz", "Usuń",
+                    "Niedostępne", "Wybierz co najmniej jedną skórkę", "Połączona skórka"),
+                ["ptb"] = new(
+                    "Combinar visuais", "Nova combinação", "Nome do visual combinado",
+                    "Ocultar visuais de origem da lista", "Salvar", "Excluir",
+                    "Indisponível", "Selecione pelo menos um visual", "Visual combinado"),
+                ["rus"] = new(
+                    "Объединить облики", "Новое объединение", "Название объединённого облика",
+                    "Скрыть исходные облики из списка", "Сохранить", "Удалить",
+                    "Недоступно", "Выберите хотя бы один облик", "Объединённый облик"),
+                ["spa"] = new(
+                    "Combinar aspectos", "Nueva combinación", "Nombre del aspecto combinado",
+                    "Ocultar los aspectos de origen en la lista", "Guardar", "Eliminar",
+                    "No disponible", "Selecciona al menos un aspecto", "Aspecto combinado"),
+                ["tha"] = new(
+                    "รวมสกิน", "สร้างการรวมใหม่", "ชื่อสกินที่รวมแล้ว",
+                    "ซ่อนสกินต้นทางจากรายการ", "บันทึก", "ลบ",
+                    "ใช้ไม่ได้", "เลือกสกินอย่างน้อยหนึ่งรายการ", "สกินรวม"),
+                ["tur"] = new(
+                    "Görünümleri birleştir", "Yeni birleştirme", "Birleşik görünüm adı",
+                    "Kaynak görünümleri listede gizle", "Kaydet", "Sil",
+                    "Kullanılamıyor", "En az bir görünüm seçin", "Birleşik görünüm")
             };
 
     private static readonly IReadOnlyDictionary<string, string> RestorePlayerPositionTexts =
@@ -1252,10 +1328,6 @@ internal static class ModLocalization
                 ? CharacterSelectorTopRightTexts[CurrentLanguage]
             : text == ModText.CardSkinSelectorDragHint
                 ? CardSkinSelectorDragHintTexts[CurrentLanguage]
-            : text == ModText.CharacterIcon
-                ? CharacterIconPacks[CurrentLanguage].CharacterIcon
-            : text == ModText.FollowCharacterSkin
-                ? CharacterIconPacks[CurrentLanguage].FollowCharacterSkin
             : text == ModText.RestorePlayerPosition
                 ? RestorePlayerPositionTexts[CurrentLanguage]
             : text == ModText.OtherCompendium
@@ -1266,6 +1338,8 @@ internal static class ModLocalization
                 ? OtherCompendiumPacks[CurrentLanguage].Merchants
             : text == ModText.OtherCategoryCreatures
                 ? OtherCompendiumPacks[CurrentLanguage].Creatures
+            : text >= ModText.CharacterSkinMerge
+                ? CharacterSkinCompositionPacks[CurrentLanguage].Get(text)
             : text >= ModText.ModelTransform
             ? AdjustmentPacks[CurrentLanguage].Get(text)
             : text >= ModText.CharacterAppearance

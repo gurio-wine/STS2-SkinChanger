@@ -357,7 +357,7 @@ internal static class SkinService
                 Config.CharacterSkinCompositions
                     .Where(composition => !composition.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
                     .Select(composition => composition.Name),
-                "合并皮肤");
+                ModLocalization.Get(ModText.CombinedSkinDefaultName));
             var updated = new CharacterSkinComposition
             {
                 Id = id,
@@ -366,10 +366,6 @@ internal static class SkinService
                 SourceOptionIds = normalizedSources,
                 HideSources = hideSources
             };
-            var wasSelected = existing != null && Config.GetSelection(groupId).Equals(
-                existing.Id,
-                StringComparison.OrdinalIgnoreCase);
-
             try
             {
                 if (existing == null)
@@ -383,17 +379,10 @@ internal static class SkinService
                 }
 
                 catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
-                if (existing == null || wasSelected)
+                if (!ApplySelection(groupId, id))
                 {
-                    if (!ApplySelection(groupId, id))
-                    {
-                        throw new InvalidOperationException(
-                            LastError ?? "应用合并皮肤失败。");
-                    }
-                }
-                else
-                {
-                    Config.Save(ConfigPath);
+                    throw new InvalidOperationException(
+                        LastError ?? "应用合并皮肤失败。");
                 }
 
                 savedId = id;
