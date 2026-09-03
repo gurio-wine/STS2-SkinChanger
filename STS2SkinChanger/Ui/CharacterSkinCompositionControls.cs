@@ -224,11 +224,7 @@ internal static class CharacterSkinCompositionControls
 
         var content = state.Overlay.GetNode<VBoxContainer>(
             $"{PanelName}/{MarginName}/{ContentName}");
-        foreach (var child in content.GetChildren())
-        {
-            content.RemoveChild(child);
-            child.QueueFree();
-        }
+        var scroll = ScrollListRebuild.Begin(content, group.Id);
 
         state.Rebuilding = true;
         var title = CreateLabel(
@@ -303,13 +299,10 @@ internal static class CharacterSkinCompositionControls
         nameEdit.TextChanged += text => state.DraftName = text;
         content.AddChild(nameEdit);
 
-        var scroll = new ScrollContainer
-        {
-            CustomMinimumSize = new Vector2(808f, 300f),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill
-        };
-        content.AddChild(scroll);
+        scroll.CustomMinimumSize = new Vector2(808f, 300f);
+        scroll.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
         var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         rows.AddThemeConstantOverride("separation", 6);
         scroll.AddChild(rows);

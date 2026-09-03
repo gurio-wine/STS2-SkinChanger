@@ -300,11 +300,7 @@ internal static partial class ContextualSkinControls
         var categoryName = selector.GetMeta(MonsterCategoryNameMeta, string.Empty).AsString();
         var content = overlay.GetNode<VBoxContainer>(
             $"{MonsterPriorityPanelName}/{MonsterPriorityMarginName}/{MonsterPriorityContentName}");
-        foreach (var child in content.GetChildren())
-        {
-            content.RemoveChild(child);
-            child.QueueFree();
-        }
+        var scroll = ScrollListRebuild.Begin(content, categoryId);
 
         var options = SkinService.GetMonsterPriorityOptions(categoryId);
         if (string.IsNullOrWhiteSpace(categoryId) || options.Count == 0)
@@ -327,12 +323,9 @@ internal static partial class ContextualSkinControls
         }
         content.AddChild(title);
 
-        var scroll = new ScrollContainer
-        {
-            CustomMinimumSize = new Vector2(670, 350),
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill
-        };
-        content.AddChild(scroll);
+        scroll.CustomMinimumSize = new Vector2(670, 350);
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
         var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         rows.AddThemeConstantOverride("separation", 6);
         scroll.AddChild(rows);
@@ -511,11 +504,7 @@ internal static partial class ContextualSkinControls
         var categoryName = selector.GetMeta(MonsterCategoryNameMeta, string.Empty).AsString();
         var content = overlay.GetNode<VBoxContainer>(
             $"{MonsterPresetPanelName}/{MonsterPresetMarginName}/{MonsterPresetContentName}");
-        foreach (var child in content.GetChildren())
-        {
-            content.RemoveChild(child);
-            child.QueueFree();
-        }
+        var scroll = ScrollListRebuild.Begin(content, categoryId);
         if (string.IsNullOrWhiteSpace(categoryId))
         {
             overlay.Visible = false;
@@ -551,12 +540,9 @@ internal static partial class ContextualSkinControls
             refreshMonsters: false);
         createRow.AddChild(save);
 
-        var scroll = new ScrollContainer
-        {
-            CustomMinimumSize = new Vector2(890, 360),
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill
-        };
-        content.AddChild(scroll);
+        scroll.CustomMinimumSize = new Vector2(890, 360);
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
         var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         rows.AddThemeConstantOverride("separation", 7);
         scroll.AddChild(rows);

@@ -153,11 +153,7 @@ internal static class CharacterSkinBundleControls
 
     private static void BuildEditor(EditorState state)
     {
-        foreach (var child in state.Content.GetChildren())
-        {
-            state.Content.RemoveChild(child);
-            child.QueueFree();
-        }
+        var scroll = ScrollListRebuild.Begin(state.Content, state.GroupId);
         var title = CreateLabel(state.DisplayName + " · " + ModLocalization.Get(ModText.CharacterSkinBundle), 25);
         title.HorizontalAlignment = HorizontalAlignment.Center;
         title.AddThemeColorOverride("font_color", new Color("efc850"));
@@ -198,13 +194,10 @@ internal static class CharacterSkinBundleControls
         name.TextChanged += value => { state.Draft.Name = value; MarkDirty(state); };
         state.Content.AddChild(name);
 
-        var scroll = new ScrollContainer
-        {
-            CustomMinimumSize = new Vector2(0f, 360f),
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled
-        };
-        state.Content.AddChild(scroll);
+        scroll.CustomMinimumSize = new Vector2(0f, 360f);
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
         var fields = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         fields.AddThemeConstantOverride("separation", 10);
         scroll.AddChild(fields);

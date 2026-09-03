@@ -1116,11 +1116,7 @@ internal static class CardSkinControls
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var content = overlay.GetNode<VBoxContainer>(
             $"{PresetPanelName}/{PresetPanelMarginName}/{PresetContentName}");
-        foreach (var child in content.GetChildren())
-        {
-            content.RemoveChild(child);
-            child.QueueFree();
-        }
+        var scroll = ScrollListRebuild.Begin(content, groupId);
 
         var title = new Label
         {
@@ -1172,12 +1168,9 @@ internal static class CardSkinControls
             refreshCards: false);
         createRow.AddChild(save);
 
-        var scroll = new ScrollContainer
-        {
-            CustomMinimumSize = new Vector2(890, 360),
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill
-        };
-        content.AddChild(scroll);
+        scroll.CustomMinimumSize = new Vector2(890, 360);
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
         var rows = new VBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
@@ -1417,11 +1410,7 @@ internal static class CardSkinControls
         var group = FindGroup(groupId);
         var content = overlay.GetNode<VBoxContainer>(
             $"{PriorityPanelName}/{PriorityPanelMarginName}/{PriorityContentName}");
-        foreach (var child in content.GetChildren())
-        {
-            content.RemoveChild(child);
-            child.QueueFree();
-        }
+        var scroll = ScrollListRebuild.Begin(content, groupId);
 
         if (group == null)
         {
@@ -1440,12 +1429,9 @@ internal static class CardSkinControls
         title.AddThemeColorOverride("font_color", new Color("efc850"));
         content.AddChild(title);
 
-        var scroll = new ScrollContainer
-        {
-            CustomMinimumSize = new Vector2(670, 350),
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill
-        };
-        content.AddChild(scroll);
+        scroll.CustomMinimumSize = new Vector2(670, 350);
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
         var rows = new VBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
