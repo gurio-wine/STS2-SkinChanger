@@ -1610,7 +1610,17 @@ internal static class CardSkinControls
                     continue;
                 }
 
-                RefreshCardSkin(card);
+                CardRefreshDiagnostics.Begin(card,
+                    PresentationLayouts.TryGetValue(card, out _) ||
+                    SkinService.GetCardPresentation(card.Model) != null);
+                try
+                {
+                    RefreshCardSkin(card);
+                }
+                finally
+                {
+                    CardRefreshDiagnostics.End(card);
+                }
             }
         }
         catch (Exception exception)
@@ -2426,14 +2436,16 @@ internal static class CardLayoutFinalPatch
     }
 
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCard __instance)
+    private static void Postfix(NCard __instance, System.Reflection.MethodBase __originalMethod)
     {
         // 基线已在 Priority.First 的 Postfix 中捕获，避免把其他 Mod 后置
         // 修改过的卡框误当成原版。这里最后只做当前所有者的呈现。
         var externalOwnership = ExternalCardVisualBridge.GetOwnership(__instance);
         CardSkinControls.ApplySelectedPresentation(__instance, externalOwnership);
         CardSkinControls.ApplySelectedPortraitToNode(__instance, externalOwnership);
+        CardRefreshDiagnostics.Record(__instance, "managed", __originalMethod);
         ExternalCardVisualBridge.SynchronizeProvider(__instance);
+        CardRefreshDiagnostics.Record(__instance, "editor", __originalMethod);
         CardSkinControls.UpdateLibrarySourceIndicators(__instance);
     }
 }

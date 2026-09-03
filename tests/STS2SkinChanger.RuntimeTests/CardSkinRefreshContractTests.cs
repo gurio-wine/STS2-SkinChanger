@@ -72,7 +72,42 @@ internal static class CardSkinRefreshContractTests
         Require(!Calls(nativeReload).Any(call => call.Name == "UpdateEnergyCostVisuals") &&
                 Calls(nativeUpdate).Any(call => call.Name == "UpdateEnergyCostVisuals"),
             "目标游戏版本的卡牌刷新职责发生变化，需要重新审查换肤顺序。");
+        CheckRefreshDiagnostics(assembly, controls, refresh);
         Console.WriteLine("Card skin refresh contracts passed: library, presets, single-card selection, hover and pooled upgrade context.");
+    }
+
+    private static void CheckRefreshDiagnostics(Assembly assembly, Type controls, MethodInfo refresh)
+    {
+        var diagnostics = assembly.GetType("STS2SkinChanger.Ui.CardRefreshDiagnostics", true)!;
+        var begin = diagnostics.GetMethod("Begin")!;
+        var end = diagnostics.GetMethod("End")!;
+        var record = diagnostics.GetMethod("Record")!;
+        var library = Calls(controls.GetMethod("RefreshVisibleCards", BindingFlags.Static | BindingFlags.NonPublic)!);
+        Require(Array.IndexOf(library, begin) >= 0 &&
+                Array.IndexOf(library, begin) < Array.IndexOf(library, refresh) &&
+                Array.IndexOf(library, end) > Array.IndexOf(library, refresh),
+            "卡面诊断必须包围手动图鉴刷新，不能全局记录普通渲染。");
+
+        var finalPatch = assembly.GetType("STS2SkinChanger.Ui.CardLayoutFinalPatch", true)!;
+        var finalCalls = Calls(finalPatch.GetMethod("Postfix", BindingFlags.Static | BindingFlags.NonPublic)!);
+        var bridgeIndex = Array.FindIndex(finalCalls, call => call.Name == "SynchronizeProvider");
+        Require(Array.FindIndex(finalCalls, call => call.Name == "ApplySelectedPortraitToNode") <
+                Array.IndexOf(finalCalls, record) &&
+                Array.IndexOf(finalCalls, record) < bridgeIndex &&
+                Array.LastIndexOf(finalCalls, record) > bridgeIndex,
+            "诊断必须区分本 Mod 呈现完成和外部卡面编辑器处理后的状态。");
+
+        var diagnosticCalls = assembly.GetTypes()
+            .Where(type => type == diagnostics || type.FullName?.StartsWith(diagnostics.FullName + "+", StringComparison.Ordinal) == true)
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            .Where(method => method.GetMethodBody() != null)
+            .SelectMany(Calls).ToArray();
+        Require(!diagnosticCalls.Any(call =>
+                call.DeclaringType == typeof(Godot.ResourceLoader) ||
+                call.Name is "GetImage" or "get_Portrait" or "Dispose" or "QueueFree" ||
+                call.Name.StartsWith("set_", StringComparison.Ordinal) &&
+                typeof(Godot.GodotObject).IsAssignableFrom(call.DeclaringType)),
+            "诊断只能观察已有节点；禁止重新加载资源或修改任何 Godot 显示属性。");
     }
 
     private static MethodInfo[] Calls(MethodInfo method) => PatchProcessor.GetOriginalInstructions(method)
