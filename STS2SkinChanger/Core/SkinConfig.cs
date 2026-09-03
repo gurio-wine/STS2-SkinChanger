@@ -35,8 +35,8 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    // Kept separate from the full character appearance so a lightweight icon pack can be
-    // combined with any model/animation skin. Missing icon kinds fall back to that skin.
+    // Legacy migration input only. Current versions treat icon packs as ordinary character skins
+    // and convert an explicit old icon choice into a saved composition during initialization.
     public Dictionary<string, string> CharacterIconSelections { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 

@@ -213,7 +213,7 @@ internal static class CharacterSkinCompositionControls
 
         state.Rebuilding = true;
         var title = CreateLabel(
-            ModLocalization.Get(ModText.CharacterSkinMerge),
+            $"{group.DisplayName} · {ModLocalization.Get(ModText.CharacterSkinMerge)}",
             27,
             new Color("efc850"));
         title.HorizontalAlignment = HorizontalAlignment.Center;
@@ -286,7 +286,7 @@ internal static class CharacterSkinCompositionControls
 
         var scroll = new ScrollContainer
         {
-            CustomMinimumSize = new Vector2(808f, 420f),
+            CustomMinimumSize = new Vector2(808f, 300f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill
         };
@@ -323,7 +323,7 @@ internal static class CharacterSkinCompositionControls
         save.Pressed += () => Save(state);
         actionRow.AddChild(save);
         var delete = CreateButton(ModLocalization.Get(ModText.DeleteCharacterSkinMerge), 190f);
-        delete.Disabled = string.IsNullOrWhiteSpace(state.EditingCompositionId);
+        delete.Visible = !string.IsNullOrWhiteSpace(state.EditingCompositionId);
         delete.Pressed += () => Delete(state);
         actionRow.AddChild(delete);
 

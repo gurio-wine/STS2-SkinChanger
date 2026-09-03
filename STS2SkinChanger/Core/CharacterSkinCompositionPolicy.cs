@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace STS2SkinChanger.Core;
 
 internal sealed class CharacterSkinComposition
@@ -29,6 +32,30 @@ internal static class CharacterSkinCompositionPolicy
     public const int MaxNameLength = 40;
 
     public static string CreateId() => IdPrefix + Guid.NewGuid().ToString("N");
+
+    public static string CreateSessionId(
+        string groupId,
+        IEnumerable<string> sourceOptionIds)
+    {
+        var signature = new StringBuilder();
+        AppendToken(groupId);
+        foreach (var optionId in sourceOptionIds)
+        {
+            AppendToken(optionId);
+        }
+
+        return IdPrefix + "session:" +
+               Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signature.ToString())))
+                   .ToLowerInvariant();
+
+        void AppendToken(string value)
+        {
+            var normalized = value.Trim().ToLowerInvariant();
+            signature.Append(normalized.Length)
+                .Append(':')
+                .Append(normalized);
+        }
+    }
 
     public static List<CharacterSkinComposition> Normalize(
         IEnumerable<CharacterSkinComposition>? compositions)
@@ -124,6 +151,45 @@ internal static class CharacterSkinCompositionPolicy
             .Where(available.Contains)
             .ToArray();
     }
+
+    public static bool CanComposeCharacterGroup(
+        bool isKnownCharacterGroup,
+        bool hasRecognizedAppearanceAssets,
+        bool hasRuntimeProvider) =>
+        hasRecognizedAppearanceAssets ||
+        (isKnownCharacterGroup && hasRuntimeProvider);
+
+    public static IReadOnlyDictionary<string, string> MergeSelectionUpdates(
+        IEnumerable<IReadOnlyDictionary<string, string>> updateSets)
+    {
+        var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var updates in updateSets)
+        {
+            foreach (var update in updates)
+            {
+                merged[update.Key] = update.Value;
+            }
+        }
+
+        return merged;
+    }
+
+    public static IReadOnlyList<string> BuildProviderPriority(
+        IEnumerable<string> providerIds) =>
+        NormalizeOptionIds(providerIds)
+            .Reverse<string>()
+            .ToArray();
+
+    public static bool ShouldApplyAfterSave(
+        bool isNewComposition,
+        bool wasSelected) =>
+        isNewComposition || wasSelected;
+
+    public static string ResolveDisplayName(
+        string name,
+        bool isComposition,
+        Func<string, string> localizeRawName) =>
+        isComposition ? name : localizeRawName(name);
 
     public static ResolvedCharacterSkinComposition<T> ResolveAssets<T>(
         IEnumerable<string>? sourceOptionIds,

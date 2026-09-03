@@ -297,7 +297,7 @@ git commit -m "feat: sync composed character skins"
 - Consumes: the completed feature.
 - Produces: formal and public-beta builds, deployed local test DLLs, hashes, and a clean committed tree.
 
-- [ ] **Step 1: Run repository checks**
+- [x] **Step 1: Run repository checks**
 
 ```bash
 git diff --check
@@ -306,7 +306,7 @@ dotnet run --project tests/STS2SkinChanger.RuntimeTests/STS2SkinChanger.RuntimeT
 dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release
 ```
 
-- [ ] **Step 2: Build against the public-beta assembly directory**
+- [x] **Step 2: Build against the public-beta assembly directory**
 
 Build against the verified Steam public-beta assembly directory:
 
@@ -316,10 +316,10 @@ dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release -p:GameAssemblyDi
 
 Expected: both formal and beta builds succeed with zero errors.
 
-- [ ] **Step 3: Deploy the formal-compatible build to the shared local Workshop item**
+- [x] **Step 3: Deploy the formal-compatible build to the shared local Workshop item**
 
 Build the release-compatible DLL into a temporary directory, copy `Gurio.SkinChanger.dll`, `SkinChanger.json`, and `thunninoiSkinManager.dll` into `/mnt/d/Programs/Steam/steamapps/workshop/content/2868840/3787302680`, then compare SHA-256 hashes between the temporary build and deployed files. Both the formal launcher and current public-beta install consume this shared Workshop item. Do not call Steam Workshop upload tools.
 
-- [ ] **Step 4: Final regression and repository audit**
+- [x] **Step 4: Final regression and repository audit**
 
 Re-run both test projects after the final build, run `git status --short --branch`, and inspect the composition change blast radius. If a verification fix is required, write a failing regression test first, increment to the next internal suffix, commit it, and repeat all checks.

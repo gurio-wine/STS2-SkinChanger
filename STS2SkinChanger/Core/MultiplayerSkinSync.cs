@@ -680,6 +680,7 @@ internal static class MultiplayerSkinSync
                 ModLog.Warn("清理上一局联机皮肤运行时失败：" + exception.GetBaseException().Message);
             }
         }
+        SkinService.ClearSessionCharacterCompositions();
 
         _snapshotElapsed = 0;
         _snapshotStage = 0;
@@ -793,6 +794,7 @@ internal static class MultiplayerSkinSync
                     exception.GetBaseException().Message);
             }
         }
+        SkinService.ClearSessionCharacterCompositions();
 
     }
 

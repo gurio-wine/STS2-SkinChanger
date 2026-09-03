@@ -805,7 +805,10 @@ internal static partial class ContextualSkinControls
         foreach (var option in visualOptions)
         {
             var index = dropdown.ItemCount;
-            dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
+            dropdown.AddItem(CharacterSkinCompositionPolicy.ResolveDisplayName(
+                option.Name,
+                option.IsComposition,
+                ModLocalization.DisplayOptionName));
             dropdown.SetItemMetadata(index, option.Id);
         }
 

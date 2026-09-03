@@ -214,6 +214,81 @@ Require(
     "合并皮肤必须以规范路径执行前项覆盖、后项补缺，并且只运行首个动态来源。");
 
 Require(
+    CharacterSkinCompositionPolicy.CanComposeCharacterGroup(
+        isKnownCharacterGroup: true,
+        hasRecognizedAppearanceAssets: false,
+        hasRuntimeProvider: true) &&
+    !CharacterSkinCompositionPolicy.CanComposeCharacterGroup(
+        isKnownCharacterGroup: false,
+        hasRecognizedAppearanceAssets: false,
+        hasRuntimeProvider: true),
+    "只有 DLL 动态模型而没有直接资源替换的已知角色，也必须能够创建合并皮肤；" +
+    "不能因此把未知怪物运行时组误判成角色。");
+
+var mergedCompositionSelectionUpdates =
+    CharacterSkinCompositionPolicy.MergeSelectionUpdates(
+    [
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["necrobinder"] = "__base__",
+            ["osty"] = "__base__"
+        },
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["necrobinder"] = "composition:new",
+            ["orb"] = "new-provider"
+        }
+    ]);
+Require(
+    mergedCompositionSelectionUpdates.Count == 3 &&
+    mergedCompositionSelectionUpdates["necrobinder"] == "composition:new" &&
+    mergedCompositionSelectionUpdates["osty"] == "__base__" &&
+    mergedCompositionSelectionUpdates["orb"] == "new-provider",
+    "编辑当前合并皮肤时必须保留旧动态来源的完整退出范围，并让新来源覆盖同一角色。");
+
+var sessionCompositionIdA = CharacterSkinCompositionPolicy.CreateSessionId(
+    "silent",
+    ["line-a\nline-b", "tail"]);
+var sessionCompositionIdB = CharacterSkinCompositionPolicy.CreateSessionId(
+    "silent",
+    ["line-a", "line-b\ntail"]);
+Require(
+    sessionCompositionIdA != sessionCompositionIdB &&
+    sessionCompositionIdA == CharacterSkinCompositionPolicy.CreateSessionId(
+        "SILENT",
+        ["LINE-A\nLINE-B", "TAIL"]),
+    "联机会话合并 ID 必须避免分隔符碰撞，并保持大小写无关的稳定性。");
+
+Require(
+    CharacterSkinCompositionPolicy.BuildProviderPriority(
+            ["primary", "fallback", "PRIMARY"])
+        .SequenceEqual(["fallback", "primary"]),
+    "共享遗物等跨角色素材的提供者顺序必须让合并配方前项保持最高优先级。");
+
+Require(
+    CharacterSkinCompositionPolicy.ShouldApplyAfterSave(
+        isNewComposition: true,
+        wasSelected: false) &&
+    CharacterSkinCompositionPolicy.ShouldApplyAfterSave(
+        isNewComposition: false,
+        wasSelected: true) &&
+    !CharacterSkinCompositionPolicy.ShouldApplyAfterSave(
+        isNewComposition: false,
+        wasSelected: false),
+    "新建合并皮肤应立即选中，编辑当前项应立即重载，编辑未选中的配方不能擅自切换皮肤。");
+
+Require(
+    CharacterSkinCompositionPolicy.ResolveDisplayName(
+        "Game Default",
+        isComposition: true,
+        name => name == "Game Default" ? "游戏原版" : name) == "Game Default" &&
+    CharacterSkinCompositionPolicy.ResolveDisplayName(
+        "Game Default",
+        isComposition: false,
+        name => name == "Game Default" ? "游戏原版" : name) == "游戏原版",
+    "玩家给合并皮肤填写的名字必须原样显示，不能碰巧命中内置皮肤译名后被翻译。");
+
+Require(
     CharacterGroupEvidencePolicy.ResolveEligibleGroups(
             ["regent", "defect"],
             ["regent"])

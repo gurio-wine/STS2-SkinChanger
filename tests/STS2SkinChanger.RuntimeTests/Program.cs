@@ -553,13 +553,24 @@ if (compositionSourcesProperty?.PropertyType != typeof(IReadOnlyList<string>))
     throw new InvalidOperationException(
         "虚拟合并皮肤必须保留有序原始来源，供头像、动态行为、本地化和多人同步共同解析。");
 }
+var compositionProvidersProperty = skinOptionType.GetProperty(
+    "CompositionSourceProviderIds",
+    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+if (compositionProvidersProperty?.PropertyType != typeof(IReadOnlyList<string>))
+{
+    throw new InvalidOperationException(
+        "虚拟合并皮肤必须保留每个来源的提供者，避免私有依赖和共享遗物跨 Mod 串用。");
+}
 
 foreach (var methodName in new[]
          {
              "SynchronizeCharacterSkinCompositions",
              "GetRawCharacterOptions",
              "GetCompositionSourceOptionIds",
-             "TryCreateSessionCharacterComposition"
+             "GetSelectionProviderIds",
+             "TryCreateSessionCharacterComposition",
+             "ClearSessionCharacterCompositions",
+             "SelectionUsesVisualProvider"
          })
 {
     if (skinCatalogType.GetMethod(
@@ -611,6 +622,22 @@ foreach (var removedMethodName in new[]
     {
         throw new InvalidOperationException(
             $"独立头像写入 API {removedMethodName} 仍然存在，会让头像与角色皮肤再次分叉。");
+    }
+}
+
+foreach (var removedCatalogMethodName in new[]
+         {
+             "GetCharacterIconOptions",
+             "IsCharacterIconOnlyOption",
+             "CharacterIconOptionContainsResource"
+         })
+{
+    if (skinCatalogType.GetMethod(
+            removedCatalogMethodName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) != null)
+    {
+        throw new InvalidOperationException(
+            $"皮肤目录仍暴露独立头像来源接口：{removedCatalogMethodName}；头像包必须只是普通角色皮肤。");
     }
 }
 

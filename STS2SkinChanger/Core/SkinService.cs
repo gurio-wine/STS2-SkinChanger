@@ -237,6 +237,22 @@ internal static class SkinService
         }
     }
 
+    internal static void ClearSessionCharacterCompositions()
+    {
+        lock (Sync)
+        {
+            if (Catalog == null)
+            {
+                return;
+            }
+
+            foreach (var groupId in Catalog.ClearSessionCharacterCompositions())
+            {
+                ClearRuntimeResourceCache(groupId);
+            }
+        }
+    }
+
     public static IReadOnlyList<SkinOption> GetCharacterSkinOptions(string groupId)
     {
         lock (Sync)
@@ -373,7 +389,9 @@ internal static class SkinService
             var uniqueName = CharacterSkinCompositionPolicy.UniqueName(
                 name,
                 Config.CharacterSkinCompositions
-                    .Where(composition => !composition.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
+                    .Where(composition =>
+                        composition.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase) &&
+                        !composition.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
                     .Select(composition => composition.Name),
                 ModLocalization.Get(ModText.CombinedSkinDefaultName));
             var updated = new CharacterSkinComposition
@@ -384,6 +402,21 @@ internal static class SkinService
                 SourceOptionIds = normalizedSources,
                 HideSources = hideSources
             };
+            var wasSelected = existing != null && Config.GetSelection(groupId).Equals(
+                existing.Id,
+                StringComparison.OrdinalIgnoreCase);
+            var shouldApply = CharacterSkinCompositionPolicy.ShouldApplyAfterSave(
+                existing == null,
+                wasSelected);
+            var exitUpdates = wasSelected
+                ? catalog.BuildVisualSelectionTransaction(
+                    groupId,
+                    SkinCatalog.BaseOptionId,
+                    Config.Selections)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var affectedGroups = exitUpdates.Keys
+                .Append(groupId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
                 if (existing == null)
@@ -397,12 +430,45 @@ internal static class SkinService
                 }
 
                 catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
-                if (!ApplySelection(groupId, id))
+                if (catalog.Groups.First(group => group.Id.Equals(
+                        groupId,
+                        StringComparison.OrdinalIgnoreCase)).Options.All(option =>
+                        !option.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
                 {
-                    throw new InvalidOperationException(
-                        LastError ?? "应用合并皮肤失败。");
+                    throw new InvalidOperationException("合并皮肤没有当前可用的来源，无法应用。");
                 }
 
+                if (!shouldApply)
+                {
+                    Config.Save(ConfigPath);
+                    savedId = id;
+                    LastError = null;
+                    return true;
+                }
+
+                var transitionSelections = new Dictionary<string, string>(
+                    Config.Selections,
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var exitUpdate in exitUpdates)
+                {
+                    transitionSelections[exitUpdate.Key] = exitUpdate.Value;
+                }
+                var enterUpdates = catalog.BuildVisualSelectionTransaction(
+                    groupId,
+                    id,
+                    transitionSelections);
+                var updates = CharacterSkinCompositionPolicy.MergeSelectionUpdates(
+                    [exitUpdates, enterUpdates]);
+                affectedGroups.UnionWith(updates.Keys);
+                foreach (var update in updates)
+                {
+                    Config.Selections[update.Key] = update.Value;
+                    ClearRuntimeResourceCache(update.Key);
+                }
+
+                UpdateVisualProviderPriority(groupId, id);
+                MountOverlay(affectedGroups);
+                Config.Save(ConfigPath);
                 savedId = id;
                 LastError = null;
                 return true;
@@ -413,10 +479,11 @@ internal static class SkinService
                 Config.Selections = previousSelections;
                 Config.VisualProviderPriority = previousProviderPriority;
                 catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
-                ClearRuntimeResourceCache(groupId);
-                TryRestoreOverlay(
-                    new HashSet<string>([groupId], StringComparer.OrdinalIgnoreCase),
-                    cardOverlay: false);
+                foreach (var affectedGroup in affectedGroups)
+                {
+                    ClearRuntimeResourceCache(affectedGroup);
+                }
+                TryRestoreOverlay(affectedGroups, cardOverlay: false);
                 LastError = exception.GetBaseException().Message;
                 ModLog.Error($"保存 {groupId} 的合并皮肤失败：{exception}");
                 return false;
@@ -463,6 +530,7 @@ internal static class SkinService
                 }
                 Config.CharacterSkinCompositions.Remove(existing);
                 catalog.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
+                SanitizeVisualProviderPriority();
                 if (affectedGroups.Count > 0)
                 {
                     MountOverlay(affectedGroups);
@@ -944,7 +1012,7 @@ internal static class SkinService
                 _mountedLocalizationSignature = null;
                 CleanupOldOverlays();
                 CleanupPreparedRuntimeOverlayCache();
-                // Protocol 8 no longer downloads multiplayer skins. Keep one startup sweep so
+                // Protocol 9 no longer downloads multiplayer skins. Keep one startup sweep so
                 // files left by older releases are removed instead of becoming permanent disk
                 // usage after the feature is retired.
                 OnlineSkinCache.CleanupStaleSessionsAtStartup();
@@ -5983,7 +6051,7 @@ internal static class SkinService
                         pair.Key,
                         StringComparison.OrdinalIgnoreCase))
                     .Select(composition => composition.Name),
-                "合并皮肤");
+                ModLocalization.Get(ModText.CombinedSkinDefaultName));
             var composition = new CharacterSkinComposition
             {
                 Id = CharacterSkinCompositionPolicy.CreateId(),
@@ -6082,6 +6150,7 @@ internal static class SkinService
         // and never complete it by silently overwriting another explicit group choice.
         var incompleteProviders = Catalog.Groups
             .Select(group => Config.GetSelection(group.Id))
+            .Select(Catalog.ResolveVisualProviderId)
             .Where(Catalog.ProviderUsesFullRuntime)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(providerId =>
@@ -6092,8 +6161,10 @@ internal static class SkinService
             var ownedGroups = Catalog.GetFullRuntimeProviderGroups(providerId);
             var resetCount = 0;
             foreach (var ownedGroupId in ownedGroups.Where(ownedGroupId =>
-                         Config.GetSelection(ownedGroupId)
-                             .Equals(providerId, StringComparison.OrdinalIgnoreCase)))
+                         Catalog.SelectionUsesVisualProvider(
+                             ownedGroupId,
+                             Config.GetSelection(ownedGroupId),
+                             providerId)))
             {
                 Config.Selections[ownedGroupId] = SkinCatalog.BaseOptionId;
                 resetCount++;
@@ -6113,30 +6184,25 @@ internal static class SkinService
 
     private static void UpdateVisualProviderPriority(string groupId, string optionId)
     {
-        var requestedProviderId = Catalog!.Groups
-            .First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
-            .Options
-            .FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))
-            ?.EffectiveProviderId;
+        var requestedProviderIds = Catalog!.GetSelectionProviderIds(groupId, optionId);
         SanitizeVisualProviderPriority();
-        if (requestedProviderId == null)
+        if (requestedProviderIds.Count == 0)
         {
             return;
         }
 
         Config.VisualProviderPriority.RemoveAll(providerId =>
-            providerId.Equals(requestedProviderId, StringComparison.OrdinalIgnoreCase));
-        Config.VisualProviderPriority.Add(requestedProviderId);
+            requestedProviderIds.Contains(providerId, StringComparer.OrdinalIgnoreCase));
+        Config.VisualProviderPriority.AddRange(
+            CharacterSkinCompositionPolicy.BuildProviderPriority(requestedProviderIds));
     }
 
     private static void SanitizeVisualProviderPriority()
     {
         var selectedProviderIds = Catalog!.Groups
-            .Select(group => group.Options.FirstOrDefault(option => option.Id.Equals(
-                Config.GetSelection(group.Id),
-                StringComparison.OrdinalIgnoreCase)))
-            .Where(option => option != null)
-            .Select(option => option!.EffectiveProviderId)
+            .SelectMany(group => Catalog.GetSelectionProviderIds(
+                group.Id,
+                Config.GetSelection(group.Id)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         Config.VisualProviderPriority = Config.VisualProviderPriority
             .Select(providerId => Catalog.ResolveStoredProviderId(

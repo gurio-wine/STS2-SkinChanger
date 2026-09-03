@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -38,6 +37,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
     private readonly IReadOnlySet<string> _scopedMonsterRuntimeProviders;
     private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
+    private readonly IReadOnlySet<string> _characterAppearanceGroupIds;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _scopedMonsterRuntimeProviderGroups;
     private readonly IReadOnlyDictionary<string, string> _resourceGroupIds;
@@ -66,6 +66,15 @@ internal sealed partial class SkinCatalog : IDisposable
         _baselineIndexes = baselineIndexes;
         _cosmeticIndexes = cosmeticIndexes;
         _groups = groups.ToList();
+        _characterAppearanceGroupIds = baselineIndexes
+            .SelectMany(index => index.Assets.Keys)
+            .Select(TryGetUnambiguousCharacterGroup)
+            .Where(identity => identity != null)
+            .Select(identity => identity!.Id)
+            .Concat(_groups
+                .Where(group => group.Options.Any(IsCharacterAppearanceOption))
+                .Select(group => group.Id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _resourceGroupIds = _groups
             .SelectMany(group => group.Options
                 .SelectMany(option => option.Assets.Keys)
@@ -293,6 +302,28 @@ internal sealed partial class SkinCatalog : IDisposable
                 : [option.Id];
     }
 
+    public IReadOnlyList<string> GetSelectionProviderIds(
+        string groupId,
+        string optionId)
+    {
+        if (optionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var option = _groups.FirstOrDefault(group => group.Id.Equals(
+                groupId,
+                StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(candidate => candidate.Id.Equals(
+                optionId,
+                StringComparison.OrdinalIgnoreCase));
+        return option == null
+            ? []
+            : option.IsComposition
+                ? option.CompositionSourceProviderIds
+                : [option.EffectiveProviderId];
+    }
+
     public void SynchronizeCharacterSkinCompositions(
         IReadOnlyList<CharacterSkinComposition> compositions)
     {
@@ -345,12 +376,9 @@ internal sealed partial class SkinCatalog : IDisposable
             return true;
         }
 
-        var signature = groupId.ToLowerInvariant() + "\n" + string.Join(
-            "\n",
-            available.Select(id => id.ToLowerInvariant()));
-        var sessionOptionId = CharacterSkinCompositionPolicy.IdPrefix + "session:" +
-                              Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signature)))
-                                  .ToLowerInvariant();
+        var sessionOptionId = CharacterSkinCompositionPolicy.CreateSessionId(
+            groupId,
+            available);
         optionId = sessionOptionId;
         if (group.Options.Any(option => option.Id.Equals(
                 sessionOptionId,
@@ -376,36 +404,20 @@ internal sealed partial class SkinCatalog : IDisposable
         return true;
     }
 
-    public IReadOnlyList<SkinOption> GetCharacterIconOptions(string groupId) =>
-        _groups.FirstOrDefault(group => group.Id.Equals(
-                groupId,
-                StringComparison.OrdinalIgnoreCase))?
-            .Options
-            .Where(option => option.Assets.Keys.Any(path =>
-                CharacterIconPathBelongsToGroup(path, groupId)))
-            .DistinctBy(option => option.Id, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(option => option.Name, StringComparer.CurrentCultureIgnoreCase)
-            .ToArray() ?? [];
+    public IReadOnlyList<string> ClearSessionCharacterCompositions()
+    {
+        var affectedGroups = _groups
+            .Where(group => group.Options.RemoveAll(option =>
+                option.IsSessionComposition) > 0)
+            .Select(group => group.Id)
+            .ToArray();
+        if (affectedGroups.Length > 0)
+        {
+            SortGroupsAndOptions();
+        }
 
-    public bool IsCharacterIconOnlyOption(string groupId, string optionId) =>
-        _groups.FirstOrDefault(group => group.Id.Equals(
-                groupId,
-                StringComparison.OrdinalIgnoreCase))?
-            .Options.Any(option =>
-                option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase) &&
-                option.IsCharacterIconOnly) == true;
-
-    public bool CharacterIconOptionContainsResource(
-        string groupId,
-        string optionId,
-        string resourcePath) =>
-        GetCharacterIconOptions(groupId)
-            .FirstOrDefault(option => option.Id.Equals(
-                optionId,
-                StringComparison.OrdinalIgnoreCase))?
-            .Assets.Keys.Any(path => NormalizeTakeoverPath(path).Equals(
-                NormalizeTakeoverPath(resourcePath),
-                StringComparison.OrdinalIgnoreCase)) == true;
+        return affectedGroups;
+    }
 
     public IReadOnlySet<string> CardProviderRoots => _cardGroups
         .SelectMany(group => group.Options)
@@ -1459,7 +1471,10 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         var group = Groups.FirstOrDefault(candidate =>
             candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-        return group?.Options.Any(IsCharacterAppearanceOption) == true;
+        return group != null && CharacterSkinCompositionPolicy.CanComposeCharacterGroup(
+            _characterAppearanceGroupIds.Contains(group.Id),
+            group.Options.Any(IsCharacterAppearanceOption),
+            group.Options.Any(option => option.IsRuntimeProvider));
     }
 
     public bool IsFullRuntimeProviderFullySelected(
@@ -1528,9 +1543,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 var ownedOption = _groups.First(group => group.Id.Equals(
                         ownedGroupId,
                         StringComparison.OrdinalIgnoreCase))
-                    .Options.FirstOrDefault(candidate => candidate.EffectiveProviderId.Equals(
-                        requestedProviderId,
-                        StringComparison.OrdinalIgnoreCase));
+                    .Options.FirstOrDefault(candidate =>
+                        !candidate.IsComposition &&
+                        candidate.EffectiveProviderId.Equals(
+                            requestedProviderId,
+                            StringComparison.OrdinalIgnoreCase));
                 if (ownedOption != null)
                 {
                     updates[ownedGroupId] = ownedOption.Id;
@@ -1658,6 +1675,15 @@ internal sealed partial class SkinCatalog : IDisposable
                 selectionId,
                 StringComparison.OrdinalIgnoreCase))?
             .EffectiveProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) == true;
+
+    public bool SelectionUsesVisualProvider(
+        string groupId,
+        string selectionId,
+        string providerId) =>
+        SelectionUsesProvider(
+            groupId,
+            selectionId,
+            ResolveVisualProviderId(providerId));
 
     public bool IsResourceBackedOption(string groupId, string optionId)
     {
@@ -1970,7 +1996,8 @@ internal sealed partial class SkinCatalog : IDisposable
 
     internal IReadOnlySet<string> GetIsolatedRelicProviderPaths(SkinOption selected)
     {
-        if (_isolatedRelicProviderPaths.TryGetValue(
+        if (!selected.IsComposition &&
+            _isolatedRelicProviderPaths.TryGetValue(
                 selected.EffectiveProviderId,
                 out var cached))
         {
@@ -1978,9 +2005,7 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var index in _cosmeticIndexes.Where(index => index.Mod.Id.Equals(
-                     selected.EffectiveProviderId,
-                     StringComparison.OrdinalIgnoreCase)))
+        foreach (var index in GetSelectionProviderIndexes(selected))
         {
             foreach (var asset in index.Assets.Where(pair =>
                          IsRelicAtlasSpritePath(pair.Key) ||
@@ -1994,12 +2019,20 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
-        _isolatedRelicProviderPaths[selected.EffectiveProviderId] = paths;
+        if (!selected.IsComposition)
+        {
+            _isolatedRelicProviderPaths[selected.EffectiveProviderId] = paths;
+        }
+
         return paths;
     }
 
     internal IReadOnlyList<string> GetProviderRelicSpritePaths(SkinOption selected) =>
-        GetProviderRelicAssets(selected.EffectiveProviderId).Keys
+        selected.Assets.Keys
+            .Where(IsRelicAtlasSpritePath)
+            .Concat(GetOptionProviderIds(selected)
+                .SelectMany(providerId => GetProviderRelicAssets(providerId).Keys))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -2014,7 +2047,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return null;
         }
 
-        var candidates = new List<(SkinGroup Group, SkinOption Option)>();
+        var candidates = new List<(SkinGroup Group, SkinOption Option, string ProviderId)>();
         foreach (var group in Groups)
         {
             if (!selections.TryGetValue(group.Id, out var selectedId))
@@ -2026,9 +2059,14 @@ internal sealed partial class SkinCatalog : IDisposable
                 option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
             if (selected != null &&
                 IsCharacterAppearanceOption(selected) &&
-                TryResolveProviderAsset(selected, normalizedPath, out _))
+                TryResolveProviderAsset(selected, normalizedPath, out var asset))
             {
-                candidates.Add((group, selected));
+                var assetProviderId = asset.Files
+                    .Select(file => _cosmeticIndexes.FirstOrDefault(index =>
+                        ReferenceEquals(index.Archive, file.Archive))?.Mod.Id)
+                    .FirstOrDefault(providerId => providerId != null) ??
+                    selected.EffectiveProviderId;
+                candidates.Add((group, selected, assetProviderId));
             }
         }
 
@@ -2041,7 +2079,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             var providerId = providerPriority[i];
             var prioritized = candidates.FirstOrDefault(candidate =>
-                candidate.Option.EffectiveProviderId.Equals(
+                candidate.ProviderId.Equals(
                     providerId,
                     StringComparison.OrdinalIgnoreCase));
             if (prioritized.Group != null)
@@ -2133,9 +2171,40 @@ internal sealed partial class SkinCatalog : IDisposable
     internal bool TryResolveProviderAsset(
         SkinOption selected,
         string sourcePath,
-        out ResourceAsset asset) =>
-        GetProviderRelicAssets(selected.EffectiveProviderId)
-            .TryGetValue(NormalizeTakeoverPath(sourcePath), out asset!);
+        out ResourceAsset asset)
+    {
+        var normalizedPath = NormalizeTakeoverPath(sourcePath);
+        if (selected.Assets.TryGetValue(normalizedPath, out asset!) ||
+            selected.Assets.TryGetValue(sourcePath, out asset!))
+        {
+            return true;
+        }
+
+        foreach (var providerId in GetOptionProviderIds(selected))
+        {
+            if (GetProviderRelicAssets(providerId).TryGetValue(normalizedPath, out asset!))
+            {
+                return true;
+            }
+        }
+
+        asset = null!;
+        return false;
+    }
+
+    private static IReadOnlyList<string> GetOptionProviderIds(SkinOption selected) =>
+        selected.IsComposition
+            ? selected.CompositionSourceProviderIds
+            : [selected.EffectiveProviderId];
+
+    private IReadOnlyList<PckResourceIndex> GetSelectionProviderIndexes(SkinOption selected)
+    {
+        return GetOptionProviderIds(selected)
+            .SelectMany(providerId => _cosmeticIndexes.Where(index => index.Mod.Id.Equals(
+                providerId,
+                StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+    }
 
     private IReadOnlyDictionary<string, ResourceAsset> GetProviderRelicAssets(string providerId)
     {
@@ -2173,13 +2242,6 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static bool IsCharacterIconSourcePath(string sourcePath) =>
         TryGetCharacterIconGroup(NormalizeTakeoverPath(sourcePath)) != null;
-
-    private static bool CharacterIconPathBelongsToGroup(
-        string sourcePath,
-        string groupId) =>
-        TryGetCharacterIconGroup(NormalizeTakeoverPath(sourcePath))?.Id.Equals(
-            groupId,
-            StringComparison.OrdinalIgnoreCase) == true;
 
     private static GroupIdentity? TryGetCharacterIconGroup(string sourcePath) =>
         TryGetCharacterSelectIconGroup(sourcePath) ??
@@ -2412,11 +2474,22 @@ internal sealed partial class SkinCatalog : IDisposable
     private IReadOnlyDictionary<string, ResourceFile> CollectSelectedProviderOverlayDependencies(
         SkinOption selected)
     {
-        var indexes = _cosmeticIndexes
+        var runtimeIndexes = _cosmeticIndexes
             .Where(index => index.Mod.Id.Equals(
                 selected.EffectiveProviderId,
                 StringComparison.OrdinalIgnoreCase))
             .ToArray();
+        var assetIndexes = selected.Assets.Values
+            .SelectMany(asset => asset.Files)
+            .Select(file => _cosmeticIndexes.FirstOrDefault(index =>
+                ReferenceEquals(index.Archive, file.Archive)))
+            .Where(index => index != null)
+            .Cast<PckResourceIndex>();
+        var indexes = runtimeIndexes
+            .Concat(assetIndexes)
+            .Distinct()
+            .ToArray();
+        var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
         if (ProviderUsesFullRuntime(selected.Id))
         {
             // A full DLL skin is one inseparable visual bundle. Its binary scenes can store
@@ -2424,15 +2497,17 @@ internal sealed partial class SkinCatalog : IDisposable
             // hundreds of frame names), so text-reference walking can never reconstruct the whole
             // dependency graph. Mount the provider package at its original paths while selected,
             // excluding only project/editor metadata that must never replace the running game.
-            return indexes
-                .SelectMany(index => index.Archive.Paths
+            foreach (var file in runtimeIndexes
+                         .SelectMany(index => index.Archive.Paths
                     .Where(path => !IsProviderProjectControlFile(path))
                     .Select(path => new ResourceFile(index.Archive, path)))
-                .GroupBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+                         .GroupBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+                         .Select(group => group.Last()))
+            {
+                files[file.Path] = file;
+            }
         }
 
-        var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<(PckResourceIndex Index, ResourceFile File)>();
         var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // Character localization tables are discovered by LocManager rather than referenced from
@@ -2470,8 +2545,15 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
                 var sourcePath = match.Value;
+                // A merged skin may contain winning assets from several providers. Resolve each
+                // scene's private dependencies only inside the provider that supplied that scene;
+                // falling through to another source can mix skeletons, atlases or scripts.
                 var candidates = new[] { pending.Index }
-                    .Concat(indexes.Where(index => !ReferenceEquals(index, pending.Index)));
+                    .Concat(indexes.Where(index =>
+                        !ReferenceEquals(index, pending.Index) &&
+                        index.Mod.Id.Equals(
+                            pending.Index.Mod.Id,
+                            StringComparison.OrdinalIgnoreCase)));
                 ResourceAsset? dependency = null;
                 PckResourceIndex? dependencyIndex = null;
                 foreach (var candidate in candidates)
@@ -3208,13 +3290,12 @@ internal sealed partial class SkinCatalog : IDisposable
         bool reuseMountedPrivateDependencies = false,
         IReadOnlySet<string>? availableSourcePaths = null)
     {
-        var selectedIndexes = selected == null
+        IReadOnlyList<PckResourceIndex> selectedIndexes = selected == null
             ? []
-            : _cosmeticIndexes
-                .Where(index => index.Mod.Id.Equals(
-                    selected.EffectiveProviderId,
-                    StringComparison.OrdinalIgnoreCase))
-                .ToArray();
+            : GetSelectionProviderIndexes(selected);
+        var selectedProviderIds = selected == null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : GetOptionProviderIds(selected).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var discoveredResourcePaths = resources
             .Select(resource => resource.SourcePath)
@@ -3269,7 +3350,13 @@ internal sealed partial class SkinCatalog : IDisposable
                         continue;
                     }
 
-                    if (TryResolveSelected(sourcePath, out var selectedAsset, out var selectedIndex))
+                    var dependencyOwner = selectedIndexes.FirstOrDefault(candidate =>
+                        ReferenceEquals(candidate.Archive, dependencyFile.Archive));
+                    if (TryResolveSelected(
+                            sourcePath,
+                            dependencyOwner,
+                            out var selectedAsset,
+                            out var selectedIndex))
                     {
                         IncludeResource(sourcePath, selectedAsset, selectedIndex);
                         continue;
@@ -3351,6 +3438,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         bool TryResolveSelected(
             string sourcePath,
+            PckResourceIndex? preferredIndex,
             out ResourceAsset asset,
             out PckResourceIndex? index)
         {
@@ -3362,7 +3450,12 @@ internal sealed partial class SkinCatalog : IDisposable
                 return true;
             }
 
-            foreach (var candidate in selectedIndexes)
+            var candidates = preferredIndex == null
+                ? selectedIndexes
+                : selectedIndexes.Where(candidate => candidate.Mod.Id.Equals(
+                    preferredIndex.Mod.Id,
+                    StringComparison.OrdinalIgnoreCase));
+            foreach (var candidate in candidates)
             {
                 var dependency = candidate.Assets.GetValueOrDefault(sourcePath) ??
                                  candidate.TryBuildAsset(sourcePath);
@@ -3390,9 +3483,7 @@ internal sealed partial class SkinCatalog : IDisposable
             var belongsToSelectedProvider =
                 selected != null &&
                 index != null &&
-                index.Mod.Id.Equals(
-                    selected.EffectiveProviderId,
-                    StringComparison.OrdinalIgnoreCase) &&
+                selectedProviderIds.Contains(index.Mod.Id) &&
                 asset.Files.Any(file => ReferenceEquals(file.Archive, index.Archive));
 
             var providerFiles = asset.Files
@@ -3413,9 +3504,9 @@ internal sealed partial class SkinCatalog : IDisposable
             var isProviderExclusivePath =
                 ResolveBaseline(sourcePath) == null &&
                 !_cosmeticIndexes.Any(candidate =>
-                    !candidate.Mod.Id.Equals(
-                        selected?.EffectiveProviderId,
-                        StringComparison.OrdinalIgnoreCase) &&
+                    (index == null || !candidate.Mod.Id.Equals(
+                        index.Mod.Id,
+                        StringComparison.OrdinalIgnoreCase)) &&
                     (candidate.Assets.ContainsKey(sourcePath) ||
                      candidate.Assets.ContainsKey(normalizedSourcePath) ||
                      candidate.Archive.Contains(sourcePath) ||
@@ -3477,12 +3568,8 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyDictionary<string, string> sourceAliases,
         IReadOnlyDictionary<string, string> payloadAliases)
     {
-        var indexes = _cosmeticIndexes
-            .Where(index => index.Mod.Id.Equals(
-                selected.EffectiveProviderId,
-                StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (indexes.Length == 0)
+        var indexes = GetSelectionProviderIndexes(selected);
+        if (indexes.Count == 0)
         {
             return new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         }
@@ -3524,7 +3611,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 ResourceAsset? dependency = null;
                 var candidates = pending.Index == null
                     ? indexes
-                    : [pending.Index, .. indexes.Where(index => !ReferenceEquals(index, pending.Index))];
+                    : indexes.Where(index => index.Mod.Id.Equals(
+                        pending.Index.Mod.Id,
+                        StringComparison.OrdinalIgnoreCase));
                 foreach (var candidate in candidates)
                 {
                     dependency = candidate.Assets.GetValueOrDefault(sourcePath) ??
@@ -6380,6 +6469,10 @@ internal sealed partial class SkinCatalog : IDisposable
             IsCharacterIconOnly: false)
         {
             CompositionSourceOptionIds = resolved.SourceOptionIds,
+            CompositionSourceProviderIds = resolved.SourceOptionIds
+                .Select(sourceId => rawOptions[sourceId].EffectiveProviderId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
             IsSessionComposition = session
         };
         return true;
@@ -7052,6 +7145,8 @@ internal sealed record SkinOption(
         ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;
 
     public IReadOnlyList<string> CompositionSourceOptionIds { get; init; } = [];
+
+    public IReadOnlyList<string> CompositionSourceProviderIds { get; init; } = [];
 
     public bool IsSessionComposition { get; init; }
 
