@@ -87,6 +87,7 @@ internal static class CharacterSkinCompositionControls
                 return;
             }
 
+            state.PendingDeleteCompositionId = null;
             overlay.Visible = false;
             overlay.GetNode<ColorRect>("Mask").AcceptEvent();
         };
@@ -177,6 +178,7 @@ internal static class CharacterSkinCompositionControls
         state.DraftName = string.Empty;
         state.DraftSources.Clear();
         state.HideSources = false;
+        state.PendingDeleteCompositionId = null;
         state.StatusText = string.Empty;
     }
 
@@ -268,9 +270,9 @@ internal static class CharacterSkinCompositionControls
         };
         profileRow.AddChild(profiles);
 
-        var closeTop = CreateButton(ModLocalization.Get(ModText.Close), 138f);
-        closeTop.Pressed += () => state.Overlay.Visible = false;
-        profileRow.AddChild(closeTop);
+        var saveTop = CreateButton(ModLocalization.Get(ModText.SaveCharacterSkinMerge), 138f);
+        saveTop.Pressed += () => Save(state);
+        profileRow.AddChild(saveTop);
 
         var nameEdit = new LineEdit
         {
@@ -315,17 +317,26 @@ internal static class CharacterSkinCompositionControls
         var actionRow = new HBoxContainer
         {
             CustomMinimumSize = new Vector2(808f, 44f),
-            Alignment = BoxContainer.AlignmentMode.Center
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
         actionRow.AddThemeConstantOverride("separation", 12);
         content.AddChild(actionRow);
-        var save = CreateButton(ModLocalization.Get(ModText.SaveCharacterSkinMerge), 190f);
-        save.Pressed += () => Save(state);
-        actionRow.AddChild(save);
         var delete = CreateButton(ModLocalization.Get(ModText.DeleteCharacterSkinMerge), 190f);
         delete.Visible = !string.IsNullOrWhiteSpace(state.EditingCompositionId);
-        delete.Pressed += () => Delete(state);
+        if (state.DeleteConfirmationPending)
+        {
+            ApplyDeleteConfirmationTheme(delete);
+        }
+        delete.Pressed += () => Delete(state, delete);
         actionRow.AddChild(delete);
+        actionRow.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+        var close = CreateButton(ModLocalization.Get(ModText.Close), 190f);
+        close.Pressed += () =>
+        {
+            state.PendingDeleteCompositionId = null;
+            state.Overlay.Visible = false;
+        };
+        actionRow.AddChild(close);
 
         state.Rebuilding = false;
     }
@@ -440,6 +451,7 @@ internal static class CharacterSkinCompositionControls
 
     private static void Save(EditorState state)
     {
+        state.PendingDeleteCompositionId = null;
         if (state.Group == null)
         {
             return;
@@ -475,10 +487,16 @@ internal static class CharacterSkinCompositionControls
         BuildEditor(state);
     }
 
-    private static void Delete(EditorState state)
+    private static void Delete(EditorState state, Button button)
     {
         if (state.Group == null || string.IsNullOrWhiteSpace(state.EditingCompositionId))
         {
+            return;
+        }
+
+        if (!state.TryConfirmDelete())
+        {
+            ApplyDeleteConfirmationTheme(button);
             return;
         }
 
@@ -494,6 +512,22 @@ internal static class CharacterSkinCompositionControls
         ResetDraft(state);
         state.Refresh?.Invoke();
         BuildEditor(state);
+    }
+
+    private static void ApplyDeleteConfirmationTheme(Button button)
+    {
+        button.Text = ModLocalization.Get(ModText.ConfirmDeleteCharacterSkinMerge);
+        foreach (var (state, background) in new[]
+                 {
+                     ("normal", "7a1f2b"), ("hover", "9a2937"), ("pressed", "5e1720")
+                 })
+        {
+            button.AddThemeStyleboxOverride(state, ContextualSkinControls.CreateStyleBox(
+                new Color(background), new Color("ff7a86"), 2));
+        }
+        button.AddThemeColorOverride("font_color", new Color("fff4f4"));
+        button.AddThemeColorOverride("font_hover_color", new Color("fff4f4"));
+        button.AddThemeColorOverride("font_pressed_color", new Color("fff4f4"));
     }
 
     private static Label CreateLabel(string text, int fontSize, Color? color = null)
@@ -565,6 +599,18 @@ internal static class CharacterSkinCompositionControls
         public string DraftName { get; set; } = string.Empty;
         public List<string> DraftSources { get; } = [];
         public bool HideSources { get; set; }
+        public string? PendingDeleteCompositionId { get; set; }
+        public bool DeleteConfirmationPending =>
+            !string.IsNullOrWhiteSpace(EditingCompositionId) &&
+            string.Equals(PendingDeleteCompositionId, EditingCompositionId, StringComparison.OrdinalIgnoreCase);
+
+        public bool TryConfirmDelete()
+        {
+            var confirmed = DeleteConfirmationPending;
+            PendingDeleteCompositionId = confirmed ? null : EditingCompositionId;
+            return confirmed;
+        }
+
         public bool Rebuilding { get; set; }
         public string StatusText { get; set; } = string.Empty;
     }

@@ -659,6 +659,26 @@ if (compositionShowMethod.GetParameters().Length != 3)
 
 var modTextType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.ModText") ??
                   throw new InvalidOperationException("找不到 ModText。");
+var compositionEditorStateType = compositionControlsType.GetNestedType("EditorState", BindingFlags.NonPublic)!;
+var compositionEditorState = Activator.CreateInstance(compositionEditorStateType, new object?[] { null, null, null })!;
+var confirmCompositionDelete = compositionEditorStateType.GetMethod("TryConfirmDelete") ??
+                               throw new InvalidOperationException("合并皮肤删除缺少二次确认。");
+var editingCompositionId = compositionEditorStateType.GetProperty("EditingCompositionId")!;
+editingCompositionId.SetValue(compositionEditorState, "composition:first");
+if ((bool)confirmCompositionDelete.Invoke(compositionEditorState, null)!)
+    throw new InvalidOperationException("首次点击删除不能直接删除合并皮肤。");
+if (!(bool)confirmCompositionDelete.Invoke(compositionEditorState, null)!)
+    throw new InvalidOperationException("第二次点击删除应确认当前合并皮肤。");
+if ((bool)confirmCompositionDelete.Invoke(compositionEditorState, null)!)
+    throw new InvalidOperationException("删除确认只能使用一次。");
+editingCompositionId.SetValue(compositionEditorState, "composition:second");
+if ((bool)confirmCompositionDelete.Invoke(compositionEditorState, null)!)
+    throw new InvalidOperationException("切换合并皮肤后不能沿用旧的删除确认。");
+compositionControlsType.GetMethod("ResetDraft", BindingFlags.Static | BindingFlags.NonPublic)!
+    .Invoke(null, new[] { compositionEditorState });
+editingCompositionId.SetValue(compositionEditorState, "composition:second");
+if ((bool)confirmCompositionDelete.Invoke(compositionEditorState, null)!)
+    throw new InvalidOperationException("重开编辑器后必须重新确认删除。");
 var compositionTextNames = new[]
 {
     "CharacterSkinMerge",
@@ -667,6 +687,7 @@ var compositionTextNames = new[]
     "HideMergedSkinSources",
     "SaveCharacterSkinMerge",
     "DeleteCharacterSkinMerge",
+    "ConfirmDeleteCharacterSkinMerge",
     "CharacterSkinSourceUnavailable",
     "CharacterSkinMergeNeedsSource"
 };
