@@ -17,6 +17,11 @@ internal static partial class ContextualSkinControls
     private const string MonsterPriorityPanelName = "PriorityPanel";
     private const string MonsterPriorityMarginName = "PriorityMargin";
     private const string MonsterPriorityContentName = "PriorityContent";
+    private const string MonsterPresetButtonName = "MonsterPresetButton";
+    private const string MonsterPresetOverlayName = "MonsterPresetOverlay";
+    private const string MonsterPresetPanelName = "PresetPanel";
+    private const string MonsterPresetMarginName = "PresetMargin";
+    private const string MonsterPresetContentName = "PresetContent";
     private const string MonsterCategoryMeta = "sts2_skin_monster_category";
     private const string MonsterCategoryNameMeta = "sts2_skin_monster_category_name";
 
@@ -78,17 +83,41 @@ internal static partial class ContextualSkinControls
         };
         ApplyCompactButtonTheme(button);
         header.AddChild(button);
+
+        var presetButton = new Button
+        {
+            Name = MonsterPresetButtonName,
+            AnchorLeft = 0.5f,
+            AnchorRight = 0.5f,
+            OffsetLeft = 110,
+            OffsetRight = 270,
+            OffsetBottom = 42,
+            FocusMode = Control.FocusModeEnum.None,
+            MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+            Text = ModLocalization.Get(ModText.CardPresets)
+        };
+        ApplyCompactButtonTheme(presetButton);
+        header.AddChild(presetButton);
         screen.AddChild(header);
 
         var overlay = CreateMonsterPriorityOverlay();
         screen.AddChild(overlay);
         overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         button.Pressed += () => OpenMonsterPriorityOverlay(screen, selector, overlay);
+        var presetOverlay = CreateMonsterPresetOverlay();
+        screen.AddChild(presetOverlay);
+        presetOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        presetButton.Pressed += () => OpenMonsterPresetOverlay(screen, selector, presetOverlay);
         ModLocalization.Bind(overlay, () =>
         {
             if (overlay.Visible)
             {
                 BuildMonsterPriorityOverlay(screen, selector, overlay);
+            }
+            presetButton.Text = ModLocalization.Get(ModText.CardPresets);
+            if (presetOverlay.Visible)
+            {
+                BuildMonsterPresetOverlay(screen, selector, presetOverlay);
             }
         });
     }
@@ -174,7 +203,8 @@ internal static partial class ContextualSkinControls
         var header = screen?.GetNodeOrNull<Control>(MonsterPriorityHeaderName);
         var button = header?.GetNodeOrNull<Button>(MonsterPriorityButtonName);
         var regionLabel = header?.GetNodeOrNull<Label>(MonsterPriorityRegionLabelName);
-        if (header == null || button == null || regionLabel == null)
+        var presetButton = header?.GetNodeOrNull<Button>(MonsterPresetButtonName);
+        if (header == null || button == null || presetButton == null || regionLabel == null)
         {
             return;
         }
@@ -187,6 +217,7 @@ internal static partial class ContextualSkinControls
         regionLabel.Text = selector.GetMeta(MonsterCategoryNameMeta, string.Empty).AsString();
         button.Text = ModLocalization.Get(ModText.MonsterSkinPriority);
         button.TooltipText = ModLocalization.Get(ModText.MonsterPriorityTooltip);
+        presetButton.Text = ModLocalization.Get(ModText.CardPresets);
     }
 
     private static Control CreateMonsterPriorityOverlay()
@@ -412,6 +443,248 @@ internal static partial class ContextualSkinControls
         content.AddChild(close);
     }
 
+    private static Control CreateMonsterPresetOverlay()
+    {
+        var overlay = new Control
+        {
+            Name = MonsterPresetOverlayName,
+            Visible = false,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            ZIndex = 2001
+        };
+        var mask = new ColorRect
+        {
+            Name = "Mask",
+            Color = new Color(0f, 0f, 0f, 0.68f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        mask.GuiInput += input =>
+        {
+            if (input is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+            {
+                overlay.Visible = false;
+                mask.AcceptEvent();
+            }
+        };
+        overlay.AddChild(mask);
+        mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        var panel = new PanelContainer
+        {
+            Name = MonsterPresetPanelName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 0.5f,
+            AnchorTop = 0.5f,
+            AnchorRight = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -470,
+            OffsetTop = -275,
+            OffsetRight = 470,
+            OffsetBottom = 275
+        };
+        panel.AddThemeStyleboxOverride(
+            "panel", CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        overlay.AddChild(panel);
+        var margin = new MarginContainer { Name = MonsterPresetMarginName };
+        margin.AddThemeConstantOverride("margin_left", 20);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_right", 20);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
+        panel.AddChild(margin);
+        var content = new VBoxContainer { Name = MonsterPresetContentName };
+        content.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(content);
+        return overlay;
+    }
+
+    private static void OpenMonsterPresetOverlay(
+        NBestiary screen, HBoxContainer selector, Control overlay)
+    {
+        BuildMonsterPresetOverlay(screen, selector, overlay);
+        overlay.Visible = true;
+        overlay.MoveToFront();
+    }
+
+    private static void BuildMonsterPresetOverlay(
+        NBestiary screen, HBoxContainer selector, Control overlay)
+    {
+        var categoryId = selector.GetMeta(MonsterCategoryMeta, string.Empty).AsString();
+        var categoryName = selector.GetMeta(MonsterCategoryNameMeta, string.Empty).AsString();
+        var content = overlay.GetNode<VBoxContainer>(
+            $"{MonsterPresetPanelName}/{MonsterPresetMarginName}/{MonsterPresetContentName}");
+        foreach (var child in content.GetChildren())
+        {
+            content.RemoveChild(child);
+            child.QueueFree();
+        }
+        if (string.IsNullOrWhiteSpace(categoryId))
+        {
+            overlay.Visible = false;
+            return;
+        }
+
+        var title = new Label
+        {
+            Text = categoryName + " · " + ModLocalization.Get(ModText.CardPresets),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        title.AddThemeFontSizeOverride("font_size", 25);
+        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        content.AddChild(title);
+
+        var createRow = new HBoxContainer { CustomMinimumSize = new Vector2(890, 44) };
+        createRow.AddThemeConstantOverride("separation", 10);
+        content.AddChild(createRow);
+        var newName = new LineEdit
+        {
+            PlaceholderText = ModLocalization.Get(ModText.CardPresetName),
+            MaxLength = SkinService.MonsterSkinPresetNameMaxLength,
+            CustomMinimumSize = new Vector2(600, 40),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        newName.AddThemeFontSizeOverride("font_size", 18);
+        createRow.AddChild(newName);
+        var save = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.SaveCurrentPreset), 220);
+        save.Pressed += () => QueueMonsterPresetChange(
+            screen, selector, overlay,
+            () => SkinService.CreateMonsterSkinPreset(categoryId, newName.Text),
+            refreshMonsters: false);
+        createRow.AddChild(save);
+
+        var scroll = new ScrollContainer
+        {
+            CustomMinimumSize = new Vector2(890, 360),
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
+        content.AddChild(scroll);
+        var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        rows.AddThemeConstantOverride("separation", 7);
+        scroll.AddChild(rows);
+        var presets = SkinService.GetMonsterSkinPresets(categoryId);
+        if (presets.Count == 0)
+        {
+            var empty = new Label
+            {
+                Text = ModLocalization.Get(ModText.NoMonsterPresets),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                CustomMinimumSize = new Vector2(860, 100),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
+            empty.AddThemeFontSizeOverride("font_size", 19);
+            empty.AddThemeColorOverride("font_color", new Color("b9adbd"));
+            rows.AddChild(empty);
+        }
+
+        foreach (var preset in presets)
+        {
+            var row = new HBoxContainer { CustomMinimumSize = new Vector2(870, 46) };
+            row.AddThemeConstantOverride("separation", 8);
+            rows.AddChild(row);
+            var active = new Label
+            {
+                Text = preset.Active ? "●" : string.Empty,
+                CustomMinimumSize = new Vector2(24, 38),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            active.AddThemeColorOverride("font_color", new Color("efc850"));
+            row.AddChild(active);
+            var name = new LineEdit
+            {
+                Text = preset.Name,
+                MaxLength = SkinService.MonsterSkinPresetNameMaxLength,
+                CustomMinimumSize = new Vector2(310, 38),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            row.AddChild(name);
+            var apply = CreateMonsterPresetActionButton(
+                preset.Active ? ModLocalization.Get(ModText.ActiveCardPreset) : ModLocalization.Get(ModText.ApplyCardPreset), 112);
+            apply.Disabled = preset.Active;
+            apply.Pressed += () => QueueMonsterPresetChange(
+                screen, selector, overlay,
+                () => SkinService.ApplyMonsterSkinPreset(categoryId, preset.Name), true);
+            row.AddChild(apply);
+            var overwrite = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.OverwriteCardPreset), 100);
+            overwrite.Pressed += () => QueueMonsterPresetChange(
+                screen, selector, overlay,
+                () => SkinService.OverwriteMonsterSkinPreset(categoryId, preset.Name), false);
+            row.AddChild(overwrite);
+            var rename = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.RenameCardPreset), 100);
+            rename.Pressed += () => QueueMonsterPresetChange(
+                screen, selector, overlay,
+                () => SkinService.RenameMonsterSkinPreset(categoryId, preset.Name, name.Text), false);
+            row.AddChild(rename);
+            var delete = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.DeleteCardPreset), 112);
+            var deleteArmed = false;
+            delete.Pressed += () =>
+            {
+                if (!deleteArmed)
+                {
+                    deleteArmed = true;
+                    delete.Text = ModLocalization.Get(ModText.ConfirmDeleteCardPreset);
+                    delete.AddThemeColorOverride("font_color", new Color("ef6670"));
+                    return;
+                }
+                QueueMonsterPresetChange(
+                    screen, selector, overlay,
+                    () => SkinService.DeleteMonsterSkinPreset(categoryId, preset.Name), false);
+            };
+            row.AddChild(delete);
+        }
+        var close = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.Close), 180);
+        close.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        close.Pressed += () => overlay.Visible = false;
+        content.AddChild(close);
+    }
+
+    private static Button CreateMonsterPresetActionButton(string text, float width)
+    {
+        var button = new Button { Text = text, CustomMinimumSize = new Vector2(width, 38) };
+        ApplyGameTheme(button);
+        button.AddThemeFontSizeOverride("font_size", 17);
+        return button;
+    }
+
+    private static void QueueMonsterPresetChange(
+        NBestiary screen,
+        HBoxContainer selector,
+        Control overlay,
+        Func<bool> change,
+        bool refreshMonsters)
+    {
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !change())
+            {
+                ModLog.Error($"调整怪物皮肤预设失败：{SkinService.LastError}");
+                return;
+            }
+            BuildMonsterPresetOverlay(screen, selector, overlay);
+            RefreshMonsterPriorityButton(selector);
+            if (refreshMonsters)
+            {
+                var categoryId = selector.GetMeta(MonsterCategoryMeta, string.Empty).AsString();
+                var groups = MonsterCategoryGroupCache.GetValueOrDefault(categoryId) ?? [];
+                if (NRun.Instance != null)
+                {
+                    CharacterAppearanceRuntime.RefreshRunMonsterSelection(groups, "局内怪物预设");
+                }
+                RefreshBestiaryMonsterNames(screen);
+                var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
+                var group = string.IsNullOrWhiteSpace(groupId) ? null : FindGroup(groupId);
+                if (group != null)
+                {
+                    Populate(selector, group);
+                    if (RefreshActions.TryGetValue(selector.GetInstanceId(), out var refresh))
+                    {
+                        RunRefresh(refresh);
+                    }
+                }
+            }
+        }).CallDeferred();
+    }
+
     private static void QueueMonsterPriorityChange(
         NBestiary screen,
         HBoxContainer selector,
@@ -531,8 +804,19 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static void ScheduleInitialBestiaryMonsterNameRefresh(NBestiary screen) =>
+        Callable.From(() => RefreshBestiaryMonsterNames(screen)).CallDeferred();
+
     private sealed record MonsterSkinCategory(
         string Id,
         string DisplayName,
         IReadOnlyList<string> GroupIds);
+}
+
+[HarmonyPatch(typeof(NBestiary), nameof(NBestiary.OnSubmenuOpened))]
+internal static class BestiaryInitialSkinNamePatch
+{
+    [HarmonyPostfix]
+    private static void Postfix(NBestiary __instance) =>
+        ContextualSkinControls.ScheduleInitialBestiaryMonsterNameRefresh(__instance);
 }

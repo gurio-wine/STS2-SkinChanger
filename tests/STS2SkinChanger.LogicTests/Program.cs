@@ -577,6 +577,32 @@ Require(
     !singlePlayerSync.SendLocalAppearance,
     "单人游戏不能因为方向开关默认开启而启动任何联机皮肤网络路径。");
 
+var monsterPresetSnapshot = MonsterSkinPresetPolicy.Capture(
+    "act:one",
+    ["monster:jaw_worm", "monster:louse"],
+    [new MonsterSkinPresetPriorityState("skin:czn", true)],
+    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["monster:jaw_worm"] = "skin:czn",
+        ["monster:louse"] = "base",
+        ["monster:automaton"] = "skin:other-act"
+    });
+Require(monsterPresetSnapshot.CategoryId == "act:one" &&
+        monsterPresetSnapshot.Selections.Count == 2 &&
+        !monsterPresetSnapshot.Selections.ContainsKey("monster:automaton"),
+    "怪物预设必须只捕获当前地区的怪物选择，不能把其它地区一起保存。分区错误会导致应用预设时跨地区换皮。 ");
+var appliedMonsterPreset = MonsterSkinPresetPolicy.Apply(
+    monsterPresetSnapshot,
+    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["monster:jaw_worm"] = "skin:another",
+        ["monster:automaton"] = "skin:other-act"
+    });
+Require(appliedMonsterPreset["monster:jaw_worm"] == "skin:czn" &&
+        appliedMonsterPreset["monster:louse"] == "base" &&
+        appliedMonsterPreset["monster:automaton"] == "skin:other-act",
+    "应用怪物预设必须替换当前地区的完整选择，同时保留其它地区已有选择。 ");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

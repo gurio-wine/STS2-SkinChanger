@@ -29,6 +29,7 @@ internal static class SkinService
     public const string InheritMonsterSelectionId = "__monster_category__";
     private const string LegacyFollowCharacterSkinIconSelectionId = "__follow_character_skin__";
     public const int CardSkinPresetNameMaxLength = 40;
+    public const int MonsterSkinPresetNameMaxLength = 40;
     private const long DirectRuntimeProviderPackThresholdBytes = 64L * 1024L * 1024L;
 
     private static readonly object Sync = new();
@@ -1566,9 +1567,18 @@ internal static class SkinService
             var previousVisualProviderPriority = Config.VisualProviderPriority.ToList();
             var previousFollowingGroups = Config.MonsterGroupsFollowingCategory.ToList();
             var previousManualGroups = Config.MonsterGroupsWithManualSelection.ToList();
+            var previousActiveMonsterPresets = new Dictionary<string, string>(
+                Config.ActiveMonsterSkinPresets,
+                StringComparer.OrdinalIgnoreCase);
             var affectedGroups = updates.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
+                foreach (var categoryId in Config.MonsterSkinCategoryGroups
+                             .Where(pair => pair.Value.Any(affectedGroups.Contains))
+                             .Select(pair => pair.Key))
+                {
+                    Config.ActiveMonsterSkinPresets.Remove(categoryId);
+                }
                 Config.MonsterGroupsFollowingCategory.RemoveAll(candidate =>
                     affectedGroups.Contains(candidate));
                 foreach (var affectedGroup in affectedGroups.Where(affectedGroup =>
@@ -1603,6 +1613,7 @@ internal static class SkinService
                 Config.VisualProviderPriority = previousVisualProviderPriority;
                 Config.MonsterGroupsFollowingCategory = previousFollowingGroups;
                 Config.MonsterGroupsWithManualSelection = previousManualGroups;
+                Config.ActiveMonsterSkinPresets = previousActiveMonsterPresets;
 
                 TryRestoreOverlay(affectedGroups, cardOverlay: false);
                 LastError = exception.Message;
@@ -2150,6 +2161,199 @@ internal static class SkinService
         }
     }
 
+    public static IReadOnlyList<MonsterSkinPresetState> GetMonsterSkinPresets(string categoryId)
+    {
+        lock (Sync)
+        {
+            var active = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId);
+            return Config.MonsterSkinPresets
+                .Where(preset => preset.CategoryId.Equals(categoryId, StringComparison.OrdinalIgnoreCase))
+                .Select(preset => new MonsterSkinPresetState(
+                    preset.Name,
+                    preset.Name.Equals(active, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+        }
+    }
+
+    public static bool CreateMonsterSkinPreset(string categoryId, string name)
+    {
+        lock (Sync)
+        {
+            var normalized = NormalizeMonsterSkinPresetName(name);
+            if (normalized == null)
+            {
+                return false;
+            }
+            if (!Config.MonsterSkinCategoryGroups.ContainsKey(categoryId))
+            {
+                LastError = $"未知的怪物图鉴分类：{categoryId}";
+                return false;
+            }
+            if (FindMonsterSkinPresetIndex(categoryId, normalized) >= 0)
+            {
+                LastError = $"怪物皮肤预设已存在：{normalized}";
+                return false;
+            }
+
+            var preset = CaptureCurrentMonsterSkinPreset(categoryId, normalized);
+            var previousActive = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId);
+            Config.MonsterSkinPresets.Add(preset);
+            Config.ActiveMonsterSkinPresets[categoryId] = preset.Name;
+            return SaveMonsterPresetConfiguration("保存", preset, () =>
+            {
+                Config.MonsterSkinPresets.Remove(preset);
+                RestoreActiveMonsterPreset(categoryId, previousActive);
+            });
+        }
+    }
+
+    public static bool OverwriteMonsterSkinPreset(string categoryId, string name)
+    {
+        lock (Sync)
+        {
+            var index = FindMonsterSkinPresetIndex(categoryId, name);
+            if (index < 0)
+            {
+                LastError = $"找不到怪物皮肤预设：{name}";
+                return false;
+            }
+            var previous = CloneMonsterSkinPreset(Config.MonsterSkinPresets[index]);
+            var previousActive = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId);
+            Config.MonsterSkinPresets[index] = CaptureCurrentMonsterSkinPreset(categoryId, previous.Name);
+            Config.ActiveMonsterSkinPresets[categoryId] = previous.Name;
+            return SaveMonsterPresetConfiguration("覆盖", previous, () =>
+            {
+                Config.MonsterSkinPresets[index] = previous;
+                RestoreActiveMonsterPreset(categoryId, previousActive);
+            });
+        }
+    }
+
+    public static bool RenameMonsterSkinPreset(string categoryId, string currentName, string newName)
+    {
+        lock (Sync)
+        {
+            var index = FindMonsterSkinPresetIndex(categoryId, currentName);
+            var normalized = NormalizeMonsterSkinPresetName(newName);
+            if (normalized == null)
+            {
+                return false;
+            }
+            if (index < 0)
+            {
+                LastError = $"找不到怪物皮肤预设：{currentName}";
+                return false;
+            }
+            var duplicate = FindMonsterSkinPresetIndex(categoryId, normalized);
+            if (duplicate >= 0 && duplicate != index)
+            {
+                LastError = $"怪物皮肤预设已存在：{normalized}";
+                return false;
+            }
+
+            var preset = Config.MonsterSkinPresets[index];
+            var previousName = preset.Name;
+            var wasActive = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId)
+                ?.Equals(previousName, StringComparison.OrdinalIgnoreCase) == true;
+            preset.Name = normalized;
+            if (wasActive)
+            {
+                Config.ActiveMonsterSkinPresets[categoryId] = normalized;
+            }
+            return SaveMonsterPresetConfiguration("重命名", preset, () =>
+            {
+                preset.Name = previousName;
+                if (wasActive)
+                {
+                    Config.ActiveMonsterSkinPresets[categoryId] = previousName;
+                }
+            });
+        }
+    }
+
+    public static bool DeleteMonsterSkinPreset(string categoryId, string name)
+    {
+        lock (Sync)
+        {
+            var index = FindMonsterSkinPresetIndex(categoryId, name);
+            if (index < 0)
+            {
+                LastError = $"找不到怪物皮肤预设：{name}";
+                return false;
+            }
+            var preset = Config.MonsterSkinPresets[index];
+            var previousActive = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId);
+            Config.MonsterSkinPresets.RemoveAt(index);
+            if (preset.Name.Equals(previousActive, StringComparison.OrdinalIgnoreCase))
+            {
+                Config.ActiveMonsterSkinPresets.Remove(categoryId);
+            }
+            return SaveMonsterPresetConfiguration("删除", preset, () =>
+            {
+                Config.MonsterSkinPresets.Insert(index, preset);
+                if (previousActive != null)
+                {
+                    Config.ActiveMonsterSkinPresets[categoryId] = previousActive;
+                }
+            });
+        }
+    }
+
+    public static bool ApplyMonsterSkinPreset(string categoryId, string name)
+    {
+        lock (Sync)
+        {
+            var index = FindMonsterSkinPresetIndex(categoryId, name);
+            if (index < 0)
+            {
+                LastError = $"找不到怪物皮肤预设：{name}";
+                return false;
+            }
+            var preset = Config.MonsterSkinPresets[index];
+            return ChangeMonsterPriorityConfiguration(categoryId, () =>
+            {
+                var currentGroupIds = Config.MonsterSkinCategoryGroups[categoryId]
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var safeSelections = preset.Selections
+                    .Where(pair => currentGroupIds.Contains(pair.Key))
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair =>
+                        {
+                            var group = Catalog?.Groups.FirstOrDefault(candidate =>
+                                candidate.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase));
+                            return pair.Value.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
+                                   group?.Options.Any(option => option.Id.Equals(
+                                       pair.Value, StringComparison.OrdinalIgnoreCase)) == true
+                                ? pair.Value
+                                : SkinCatalog.BaseOptionId;
+                        },
+                        StringComparer.OrdinalIgnoreCase);
+                Config.MonsterSkinPriorities[categoryId] = preset.Priority.ToList();
+                Config.Selections = MonsterSkinPresetPolicy.Apply(
+                    new MonsterSkinPresetSnapshot(
+                        preset.CategoryId,
+                        preset.Priority.Select(entry => new MonsterSkinPresetPriorityState(
+                            entry.OptionId, entry.Enabled)).ToArray(),
+                        safeSelections),
+                    Config.Selections);
+                foreach (var groupId in Config.MonsterSkinCategoryGroups[categoryId])
+                {
+                    var follows = preset.FollowingGroupIds.Contains(
+                        groupId, StringComparer.OrdinalIgnoreCase);
+                    Config.MonsterGroupsFollowingCategory.RemoveAll(candidate =>
+                        candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+                    Config.MonsterGroupsWithManualSelection.RemoveAll(candidate =>
+                        candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+                    (follows
+                        ? Config.MonsterGroupsFollowingCategory
+                        : Config.MonsterGroupsWithManualSelection).Add(groupId);
+                }
+                Config.ActiveMonsterSkinPresets[categoryId] = preset.Name;
+            }, adoptUnconfiguredGroups: false);
+        }
+    }
+
     public static IReadOnlySet<string> GetMonsterRunEnvironmentProviders(
         string categoryId,
         IEnumerable<string> groupIds,
@@ -2321,10 +2525,14 @@ internal static class SkinService
         var previousEnabledCategories = Config.EnabledMonsterSkinPriorityCategories.ToList();
         var previousFollowingGroups = Config.MonsterGroupsFollowingCategory.ToList();
         var previousManualGroups = Config.MonsterGroupsWithManualSelection.ToList();
+        var previousActivePresets = new Dictionary<string, string>(
+            Config.ActiveMonsterSkinPresets,
+            StringComparer.OrdinalIgnoreCase);
         var previousVisualProviderPriority = Config.VisualProviderPriority.ToList();
         var affectedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
+            Config.ActiveMonsterSkinPresets.Remove(categoryId);
             mutation();
             if (!Config.MonsterSkinCategoryGroups.TryGetValue(categoryId, out var categoryGroups))
             {
@@ -2349,6 +2557,12 @@ internal static class SkinService
 
             _ = GetMonsterPriorityEntriesInternal(categoryId);
             affectedGroups = ApplyMonsterCategoryPriorityToSelections(categoryId);
+            affectedGroups.UnionWith(Config.Selections.Keys
+                .Union(previousSelections.Keys, StringComparer.OrdinalIgnoreCase)
+                .Where(groupId => !string.Equals(
+                    Config.Selections.GetValueOrDefault(groupId),
+                    previousSelections.GetValueOrDefault(groupId),
+                    StringComparison.OrdinalIgnoreCase)));
             foreach (var groupId in affectedGroups)
             {
                 ClearRuntimeResourceCache(groupId);
@@ -2380,6 +2594,7 @@ internal static class SkinService
             Config.EnabledMonsterSkinPriorityCategories = previousEnabledCategories;
             Config.MonsterGroupsFollowingCategory = previousFollowingGroups;
             Config.MonsterGroupsWithManualSelection = previousManualGroups;
+            Config.ActiveMonsterSkinPresets = previousActivePresets;
             Config.VisualProviderPriority = previousVisualProviderPriority;
             foreach (var groupId in restoreGroups)
             {
@@ -5781,6 +5996,97 @@ internal static class SkinService
         return normalized;
     }
 
+    private static string? NormalizeMonsterSkinPresetName(string name)
+    {
+        var normalized = name.Trim();
+        if (normalized.Length == 0 || normalized.Any(char.IsControl))
+        {
+            LastError = "怪物皮肤预设名称不能为空。";
+            return null;
+        }
+        if (normalized.Length > MonsterSkinPresetNameMaxLength)
+        {
+            LastError = $"怪物皮肤预设名称不能超过 {MonsterSkinPresetNameMaxLength} 个字符。";
+            return null;
+        }
+        return normalized;
+    }
+
+    private static int FindMonsterSkinPresetIndex(string categoryId, string name) =>
+        Config.MonsterSkinPresets.FindIndex(preset =>
+            preset.CategoryId.Equals(categoryId, StringComparison.OrdinalIgnoreCase) &&
+            preset.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private static MonsterSkinPreset CaptureCurrentMonsterSkinPreset(string categoryId, string name)
+    {
+        if (!Config.MonsterSkinCategoryGroups.TryGetValue(categoryId, out var groupIds))
+        {
+            throw new InvalidOperationException($"未知的怪物图鉴分类：{categoryId}");
+        }
+        var priority = GetMonsterPriorityEntriesInternal(categoryId).ToList();
+        var scopedSelections = groupIds.ToDictionary(
+            groupId => groupId,
+            Config.GetSelection,
+            StringComparer.OrdinalIgnoreCase);
+        var snapshot = MonsterSkinPresetPolicy.Capture(
+            categoryId,
+            groupIds,
+            priority.Select(entry => new MonsterSkinPresetPriorityState(entry.OptionId, entry.Enabled)).ToArray(),
+            scopedSelections);
+        return new MonsterSkinPreset
+        {
+            Name = name,
+            CategoryId = snapshot.CategoryId,
+            Priority = snapshot.Priority
+                .Select(entry => new MonsterSkinPriorityEntry(entry.OptionId, entry.Enabled))
+                .ToList(),
+            Selections = new Dictionary<string, string>(snapshot.Selections, StringComparer.OrdinalIgnoreCase),
+            FollowingGroupIds = groupIds.Where(groupId => Config.MonsterGroupsFollowingCategory.Contains(
+                groupId, StringComparer.OrdinalIgnoreCase)).ToList()
+        };
+    }
+
+    private static MonsterSkinPreset CloneMonsterSkinPreset(MonsterSkinPreset preset) => new()
+    {
+        Name = preset.Name,
+        CategoryId = preset.CategoryId,
+        Priority = preset.Priority.ToList(),
+        Selections = new Dictionary<string, string>(preset.Selections, StringComparer.OrdinalIgnoreCase),
+        FollowingGroupIds = preset.FollowingGroupIds.ToList()
+    };
+
+    private static bool SaveMonsterPresetConfiguration(
+        string operation,
+        MonsterSkinPreset preset,
+        Action rollback)
+    {
+        try
+        {
+            Config.Save(ConfigPath);
+            LastError = null;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            rollback();
+            LastError = exception.Message;
+            ModLog.Error($"{operation}怪物皮肤预设 {preset.Name} 失败：{exception}");
+            return false;
+        }
+    }
+
+    private static void RestoreActiveMonsterPreset(string categoryId, string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            Config.ActiveMonsterSkinPresets.Remove(categoryId);
+        }
+        else
+        {
+            Config.ActiveMonsterSkinPresets[categoryId] = name;
+        }
+    }
+
     private static int FindCardSkinPresetIndex(string groupId, string name) =>
         Config.CardSkinPresets.FindIndex(preset =>
             preset.CategoryId?.Equals(groupId, StringComparison.OrdinalIgnoreCase) == true &&
@@ -6864,6 +7170,10 @@ internal sealed record CardPriorityOptionState(
     int TotalCards);
 
 internal sealed record CardSkinPresetState(
+    string Name,
+    bool Active);
+
+internal sealed record MonsterSkinPresetState(
     string Name,
     bool Active);
 

@@ -35,6 +35,7 @@ internal enum ModText
     Close,
     MonsterSkinPriority,
     MonsterPriorityTooltip,
+    NoMonsterPresets,
     CardPresets,
     CardPresetTooltip,
     CardPresetName,
@@ -823,6 +824,26 @@ internal static class ModLocalization
                 "Bu kategori için kayıtlı kart profili yok")
         };
 
+    private static readonly IReadOnlyDictionary<string, string> NoMonsterPresetTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "No monster presets saved for this region",
+            ["zhs"] = "当前地区尚未保存怪物预设",
+            ["zht"] = "目前地區尚未儲存怪物預設",
+            ["deu"] = "Für dieses Gebiet sind keine Monsterprofile gespeichert",
+            ["esp"] = "No hay perfiles de monstruos guardados para esta región",
+            ["fra"] = "Aucun profil de monstres enregistré pour cette région",
+            ["ita"] = "Nessun profilo mostri salvato per questa regione",
+            ["jpn"] = "この地域のモンスタープリセットはありません",
+            ["kor"] = "이 지역에 저장된 몬스터 프리셋이 없습니다",
+            ["pol"] = "Brak profili potworów dla tego regionu",
+            ["ptb"] = "Nenhum perfil de monstro salvo para esta região",
+            ["rus"] = "Для этого региона нет профилей монстров",
+            ["spa"] = "No hay perfiles de monstruos guardados para esta región",
+            ["tha"] = "ยังไม่มีพรีเซ็ตมอนสเตอร์สำหรับพื้นที่นี้",
+            ["tur"] = "Bu bölge için kayıtlı canavar profili yok"
+        };
+
     private static readonly IReadOnlyDictionary<string, AdjustmentLanguagePack> AdjustmentPacks =
         new Dictionary<string, AdjustmentLanguagePack>(StringComparer.OrdinalIgnoreCase)
         {
@@ -1321,7 +1342,9 @@ internal static class ModLocalization
     }
 
     public static string Get(ModText text) =>
-        text == ModText.MultiplayerSkinSync
+        text == ModText.NoMonsterPresets
+            ? NoMonsterPresetTexts[CurrentLanguage]
+        : text == ModText.MultiplayerSkinSync
             ? MultiplayerSkinSyncTexts[CurrentLanguage]
             : text == ModText.LoadOtherPlayersCustomSkins
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]

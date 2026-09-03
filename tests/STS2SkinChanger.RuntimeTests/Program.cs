@@ -416,6 +416,88 @@ if (bestiaryNameRefresh == null)
         "地区皮肤优先级变化后必须刷新怪物图鉴当前地区已有条目与选中怪物的名称。");
 }
 
+var bestiaryInitialNamePatch = typeof(Entry).Assembly.GetType(
+    "STS2SkinChanger.Ui.BestiaryInitialSkinNamePatch") ??
+    throw new InvalidOperationException("怪物图鉴缺少首次皮肤名称刷新补丁。");
+var bestiaryHarmony = new Harmony("Gurio.SkinChanger.Tests.BestiaryInitialNames");
+try
+{
+    bestiaryHarmony.CreateClassProcessor(bestiaryInitialNamePatch).Patch();
+    var target = AccessTools.Method(typeof(NBestiary), nameof(NBestiary.OnSubmenuOpened)) ??
+                 throw new InvalidOperationException("当前游戏版本缺少怪物图鉴打开入口。");
+    if (Harmony.GetPatchInfo(target)?.Owners.Contains(bestiaryHarmony.Id) != true)
+    {
+        throw new InvalidOperationException("怪物图鉴首次名称刷新没有挂到条目生成完成之后。");
+    }
+}
+finally
+{
+    bestiaryHarmony.UnpatchAll(bestiaryHarmony.Id);
+}
+
+foreach (var methodName in new[]
+         {
+             "GetMonsterSkinPresets", "CreateMonsterSkinPreset", "OverwriteMonsterSkinPreset",
+             "RenameMonsterSkinPreset", "DeleteMonsterSkinPreset", "ApplyMonsterSkinPreset"
+         })
+{
+    if (skinServiceType.GetMethod(
+            methodName,
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) == null)
+    {
+        throw new InvalidOperationException($"怪物图鉴预设缺少持久化边界：{methodName}。");
+    }
+}
+var presetConfigPath = Path.Combine(Path.GetTempPath(), $"skin-changer-monster-preset-{Guid.NewGuid():N}.json");
+var presetRoundTripPath = presetConfigPath + ".roundtrip";
+try
+{
+    File.WriteAllText(presetConfigPath, """
+        {"MonsterSkinPresets":[{"Name":"Act 1","CategoryId":"act:one",
+        "Priority":[{"OptionId":"skin:czn","Enabled":true}],
+        "Selections":{"monster:jaw_worm":"skin:czn"},
+        "FollowingGroupIds":["monster:jaw_worm"]}],
+        "ActiveMonsterSkinPresets":{"act:one":"Act 1"}}
+        """);
+    var loadedConfig = skinConfigType.GetMethod(
+        "Load", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!
+        .Invoke(null, [presetConfigPath])!;
+    skinConfigType.GetMethod(
+        "Save", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
+        .Invoke(loadedConfig, [presetRoundTripPath]);
+    using var presetDocument = System.Text.Json.JsonDocument.Parse(File.ReadAllText(presetRoundTripPath));
+    var root = presetDocument.RootElement;
+    if (root.GetProperty("MonsterSkinPresets").GetArrayLength() != 1 ||
+        root.GetProperty("ActiveMonsterSkinPresets").GetProperty("act:one").GetString() != "Act 1")
+    {
+        throw new InvalidOperationException("怪物皮肤预设和当前地区预设未能经过配置文件往返保存。");
+    }
+}
+finally
+{
+    foreach (var path in new[]
+             {
+                 presetConfigPath, presetConfigPath + ".bak", presetRoundTripPath,
+                 presetRoundTripPath + ".bak", presetRoundTripPath + ".tmp"
+             })
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+    }
+}
+var monsterPresetLocalizationType = typeof(Entry).Assembly.GetType(
+    "STS2SkinChanger.Core.ModLocalization") ??
+    throw new InvalidOperationException("找不到怪物预设本地化服务。");
+var noMonsterPresetTexts = (IReadOnlyDictionary<string, string>?)monsterPresetLocalizationType.GetField(
+    "NoMonsterPresetTexts", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) ??
+    throw new InvalidOperationException("怪物预设缺少本地化文本。");
+if (noMonsterPresetTexts.Count != 15 || noMonsterPresetTexts.Values.Any(string.IsNullOrWhiteSpace))
+{
+    throw new InvalidOperationException("怪物预设提示必须覆盖工坊使用的全部 15 种语言。");
+}
+
 var appearanceScreenType = typeof(Entry).Assembly.GetType(
                                "STS2SkinChanger.Ui.CharacterAppearanceScreen") ??
                            throw new InvalidOperationException("找不到局内外观界面。");

@@ -25,6 +25,16 @@ internal sealed record MonsterSkinPriorityEntry(
     string OptionId,
     bool Enabled);
 
+internal sealed class MonsterSkinPreset
+{
+    public string Name { get; set; } = string.Empty;
+    public string CategoryId { get; set; } = string.Empty;
+    public List<MonsterSkinPriorityEntry> Priority { get; set; } = [];
+    public Dictionary<string, string> Selections { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+    public List<string> FollowingGroupIds { get; set; } = [];
+}
+
 internal sealed class SkinConfig
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -62,6 +72,11 @@ internal sealed class SkinConfig
     public string? ActiveCardSkinPreset { get; set; }
 
     public Dictionary<string, List<MonsterSkinPriorityEntry>> MonsterSkinPriorities { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public List<MonsterSkinPreset> MonsterSkinPresets { get; set; } = [];
+
+    public Dictionary<string, string> ActiveMonsterSkinPresets { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
     public Dictionary<string, List<string>> MonsterSkinCategoryGroups { get; set; } =
@@ -257,6 +272,47 @@ internal sealed class SkinConfig
                 .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
                 .ToList(),
             StringComparer.OrdinalIgnoreCase);
+        config.MonsterSkinPresets ??= [];
+        config.MonsterSkinPresets = config.MonsterSkinPresets
+            .Where(preset => preset != null &&
+                             !string.IsNullOrWhiteSpace(preset.Name) &&
+                             !string.IsNullOrWhiteSpace(preset.CategoryId))
+            .Select(preset =>
+            {
+                preset.Name = preset.Name.Trim();
+                preset.CategoryId = preset.CategoryId.Trim().ToLowerInvariant();
+                preset.Priority = (preset.Priority ?? [])
+                    .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
+                    .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                preset.Selections = new Dictionary<string, string>(
+                    (preset.Selections ?? new Dictionary<string, string>())
+                    .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) &&
+                                   !string.IsNullOrWhiteSpace(pair.Value))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value),
+                    StringComparer.OrdinalIgnoreCase);
+                preset.FollowingGroupIds = (preset.FollowingGroupIds ?? [])
+                    .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                return preset;
+            })
+            .DistinctBy(
+                preset => preset.CategoryId + "\n" + preset.Name,
+                StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        config.ActiveMonsterSkinPresets ??=
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        config.ActiveMonsterSkinPresets = config.ActiveMonsterSkinPresets
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) &&
+                           !string.IsNullOrWhiteSpace(pair.Value) &&
+                           config.MonsterSkinPresets.Any(preset =>
+                preset.CategoryId.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
+                preset.Name.Equals(pair.Value, StringComparison.OrdinalIgnoreCase)))
+            .ToDictionary(
+                pair => pair.Key.Trim().ToLowerInvariant(),
+                pair => pair.Value.Trim(),
+                StringComparer.OrdinalIgnoreCase);
         config.MonsterSkinCategoryGroups ??=
             new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         config.MonsterSkinCategoryGroups = config.MonsterSkinCategoryGroups.ToDictionary(
