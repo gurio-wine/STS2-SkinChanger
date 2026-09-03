@@ -332,6 +332,35 @@ Require(
         firstDuplicateInstanceId + "::variant:painted"),
     "卸载同 ID 差分包后，剩余单包必须能接回之前保存的实例化选择。");
 
+var disabledMultiplayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
+    enabled: false,
+    isMultiplayer: true);
+Require(
+    !disabledMultiplayerSync.AttachTransport &&
+    !disabledMultiplayerSync.WriteCapabilityTrailer &&
+    !disabledMultiplayerSync.ReadCapabilityTrailer &&
+    !disabledMultiplayerSync.ApplyRemoteAppearance,
+    "关闭联机皮肤同步后必须彻底停止监听、能力探测和远端外观覆盖；" +
+    "不能只隐藏选项却继续向未安装 Skin Changer 的玩家修改握手包。");
+var enabledMultiplayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
+    enabled: true,
+    isMultiplayer: true);
+Require(
+    enabledMultiplayerSync.AttachTransport &&
+    enabledMultiplayerSync.WriteCapabilityTrailer &&
+    enabledMultiplayerSync.ReadCapabilityTrailer &&
+    enabledMultiplayerSync.ApplyRemoteAppearance,
+    "默认启用联机皮肤同步时必须保留现有的同装皮肤、头像和参数同步流程。");
+var singlePlayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
+    enabled: true,
+    isMultiplayer: false);
+Require(
+    !singlePlayerSync.AttachTransport &&
+    !singlePlayerSync.WriteCapabilityTrailer &&
+    !singlePlayerSync.ReadCapabilityTrailer &&
+    !singlePlayerSync.ApplyRemoteAppearance,
+    "单人游戏不能因为总开关默认开启而启动任何联机皮肤网络路径。");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

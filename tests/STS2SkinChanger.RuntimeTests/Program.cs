@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
+using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
@@ -89,6 +90,118 @@ if (combatRoomCreate == null)
 
 var skinServiceType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.SkinService") ??
                       throw new InvalidOperationException("找不到 SkinService 类型。");
+var skinConfigType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.SkinConfig") ??
+                     throw new InvalidOperationException("找不到 SkinConfig 类型。");
+var multiplayerSyncType = typeof(Entry).Assembly.GetType(
+                              "STS2SkinChanger.Core.MultiplayerSkinSync") ??
+                          throw new InvalidOperationException("找不到联机皮肤同步类型。");
+var syncEnabledProperty = skinConfigType.GetProperty(
+                              "MultiplayerSkinSyncEnabled",
+                              BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) ??
+                          throw new InvalidOperationException("找不到联机皮肤同步总开关配置。");
+var skinConfigBackingField = skinServiceType.GetField(
+                                 "<Config>k__BackingField",
+                                 BindingFlags.Static | BindingFlags.NonPublic) ??
+                             throw new InvalidOperationException("找不到 SkinService.Config 存储字段。");
+var configLoadedField = skinServiceType.GetField(
+                            "_configLoaded",
+                            BindingFlags.Static | BindingFlags.NonPublic) ??
+                        throw new InvalidOperationException("找不到 SkinService 配置加载状态。");
+var testConfig = Activator.CreateInstance(skinConfigType) ??
+                 throw new InvalidOperationException("无法建立隔离的联机测试配置。");
+skinConfigBackingField.SetValue(null, testConfig);
+configLoadedField.SetValue(null, true);
+var appendCapabilityTrailer = multiplayerSyncType.GetMethod(
+                                  "AppendCapabilityTrailer",
+                                  BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ??
+                              throw new InvalidOperationException("找不到联机能力握手写入方法。");
+var readCapabilityTrailer = multiplayerSyncType.GetMethod(
+                                "TryReadCapabilityTrailer",
+                                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ??
+                            throw new InvalidOperationException("找不到联机能力握手读取方法。");
+var getAvailableSelectionMaps = multiplayerSyncType.GetMethod(
+                                    "GetAvailableSelectionMaps",
+                                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) ??
+                                throw new InvalidOperationException("找不到远端玩家皮肤映射读取方法。");
+var sessionSelectionType = typeof(Entry).Assembly.GetType(
+                               "STS2SkinChanger.Core.SessionCharacterSelection") ??
+                           throw new InvalidOperationException("找不到联机玩家皮肤快照类型。");
+var characterCombatTransformType = typeof(Entry).Assembly.GetType(
+                                       "STS2SkinChanger.Core.CharacterCombatTransform") ??
+                                   throw new InvalidOperationException("找不到角色局内外观参数类型。");
+var availableSelectionsField = multiplayerSyncType.GetField(
+                                   "AvailableSelections",
+                                   BindingFlags.Static | BindingFlags.NonPublic) ??
+                               throw new InvalidOperationException("找不到联机玩家皮肤快照缓存。");
+
+syncEnabledProperty.SetValue(testConfig, false);
+var disabledSyncWriter = new PacketWriter();
+appendCapabilityTrailer.Invoke(null, [disabledSyncWriter]);
+if (disabledSyncWriter.BitPosition != 0)
+{
+    throw new InvalidOperationException(
+        "关闭联机皮肤同步后仍修改了游戏握手包；未安装 Skin Changer 的玩家仍会收到额外数据。");
+}
+
+syncEnabledProperty.SetValue(testConfig, true);
+var enabledSyncWriter = new PacketWriter();
+appendCapabilityTrailer.Invoke(null, [enabledSyncWriter]);
+if (enabledSyncWriter.BitPosition != 72)
+{
+    throw new InvalidOperationException(
+        "启用联机皮肤同步后没有写入完整的 8 字节标记和协议版本。");
+}
+
+syncEnabledProperty.SetValue(testConfig, false);
+object?[] disabledReadArguments = [enabledSyncWriter.Buffer, (byte)0];
+if (readCapabilityTrailer.Invoke(null, disabledReadArguments) is not false)
+{
+    throw new InvalidOperationException(
+        "关闭联机皮肤同步后仍解析了其他玩家的能力握手。");
+}
+
+syncEnabledProperty.SetValue(testConfig, true);
+object?[] enabledReadArguments = [enabledSyncWriter.Buffer, (byte)0];
+if (readCapabilityTrailer.Invoke(null, enabledReadArguments) is not true ||
+    enabledReadArguments[1] is not byte protocolVersion ||
+    protocolVersion != 8)
+{
+    throw new InvalidOperationException(
+        "启用联机皮肤同步后无法读取当前协议的能力握手。");
+}
+
+var staleTransforms = Activator.CreateInstance(
+                          typeof(Dictionary<,>).MakeGenericType(
+                              typeof(string),
+                              characterCombatTransformType),
+                          StringComparer.OrdinalIgnoreCase) ??
+                      throw new InvalidOperationException("无法建立联机玩家外观参数快照。");
+var staleSelection = Activator.CreateInstance(
+                         sessionSelectionType,
+                         "REGENT",
+                         "character:regent",
+                         "provider:test",
+                         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                         {
+                             ["character:regent"] = "provider:test"
+                         },
+                         staleTransforms,
+                         true) ??
+                     throw new InvalidOperationException("无法建立联机玩家皮肤快照。");
+var availableSelections = availableSelectionsField.GetValue(null) as System.Collections.IDictionary ??
+                          throw new InvalidOperationException("联机玩家皮肤快照缓存类型不兼容。");
+availableSelections[99UL] = staleSelection;
+syncEnabledProperty.SetValue(testConfig, false);
+var disabledSelectionMaps = getAvailableSelectionMaps.Invoke(null, null)
+                            as System.Collections.IEnumerable ??
+                            throw new InvalidOperationException("无法读取关闭同步后的远端皮肤映射。");
+if (disabledSelectionMaps.Cast<object>().Any())
+{
+    throw new InvalidOperationException(
+        "关闭联机皮肤同步后仍向运行时暴露旧的远端玩家皮肤，关闭瞬间可能继续覆盖模型或头像。");
+}
+availableSelections.Clear();
+syncEnabledProperty.SetValue(testConfig, true);
 var characterPreviewApply = skinServiceType.GetMethod(
     "ApplyCharacterPreviewSelection",
     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,

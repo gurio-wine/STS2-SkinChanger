@@ -437,6 +437,35 @@ internal static class SkinService
         }
     }
 
+    public static bool ShouldSynchronizeMultiplayerSkins()
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            return Config.MultiplayerSkinSyncEnabled;
+        }
+    }
+
+    public static void SetMultiplayerSkinSyncEnabled(bool enabled)
+    {
+        bool changed;
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            changed = Config.MultiplayerSkinSyncEnabled != enabled;
+            if (changed)
+            {
+                Config.MultiplayerSkinSyncEnabled = enabled;
+                Config.Save(ConfigPath);
+            }
+        }
+
+        if (changed)
+        {
+            MultiplayerSkinSync.OnSynchronizationPreferenceChanged(enabled);
+        }
+    }
+
     public static void SetLoadOtherPlayersCustomSkins(bool enabled)
     {
         bool changed;

@@ -131,10 +131,25 @@ internal static class MultiplayerSkinSync
     private static string? _lastSentTransformSignature;
     private static bool _inRun;
     private static bool _hasLobbySession;
+    private static StartRunLobby? _suspendedLobby;
+    private static bool _resumeRunWhenEnabled;
     // The combat scene exits before the next StartRunLobby is attached, and both scenes reuse
     // the same Steam net service.  Keep this hand-off marker separate from _inRun so the lobby
     // attach can still invalidate the previous round's temporary providers and advertisements.
     private static bool _needsLobbyRoundReset;
+
+    private static bool ShouldApplyRemoteAppearance()
+    {
+        var service = _netService;
+        if (service?.Type.IsMultiplayer() != true)
+        {
+            return false;
+        }
+
+        return MultiplayerSkinSyncParticipationPolicy.Resolve(
+            SkinService.ShouldSynchronizeMultiplayerSkins(),
+            isMultiplayer: true).ApplyRemoteAppearance;
+    }
 
     internal static string? GetScopedSelection(string groupId)
     {
@@ -155,6 +170,11 @@ internal static class MultiplayerSkinSync
 
     internal static IReadOnlyList<IReadOnlyDictionary<string, string>> GetAvailableSelectionMaps()
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            return [];
+        }
+
         lock (Sync)
         {
             return AvailableSelections.Values
@@ -165,6 +185,11 @@ internal static class MultiplayerSkinSync
 
     internal static string GetSelectionForCreature(Creature creature, string groupId)
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            return SkinService.Config.GetSelection(groupId);
+        }
+
         var player = creature.Player ?? creature.PetOwner;
         if (player == null)
         {
@@ -190,6 +215,11 @@ internal static class MultiplayerSkinSync
 
     internal static bool CanEditSkinForCreature(Creature creature)
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            return true;
+        }
+
         var owner = creature.Player ?? creature.PetOwner;
         var service = _netService;
         if (owner == null || service == null || !service.Type.IsMultiplayer())
@@ -227,6 +257,11 @@ internal static class MultiplayerSkinSync
 
     internal static bool CanEditTransformForCreature(Creature creature)
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            return true;
+        }
+
         var owner = creature.Player ?? creature.PetOwner;
         var service = _netService;
         if (owner == null || service == null || !service.Type.IsMultiplayer() ||
@@ -244,6 +279,11 @@ internal static class MultiplayerSkinSync
 
     internal static bool UsesLocalFallbackControls(Creature creature)
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            return false;
+        }
+
         var owner = creature.Player ?? creature.PetOwner;
         var service = _netService;
         return owner != null &&
@@ -258,6 +298,12 @@ internal static class MultiplayerSkinSync
         string transformKey,
         out CharacterCombatTransform transform)
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            transform = null!;
+            return false;
+        }
+
         var owner = creature.Player ?? creature.PetOwner;
         var service = _netService;
         if (owner == null || service == null || !service.Type.IsMultiplayer() ||
@@ -479,6 +525,12 @@ internal static class MultiplayerSkinSync
         CharacterModel? character,
         out IReadOnlyDictionary<string, string> selections)
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            selections = null!;
+            return false;
+        }
+
         var resolvedCharacter = character;
         if (resolvedCharacter == null &&
             TryGetPlayerCharacter(playerNetId, out var discoveredCharacter))
@@ -531,11 +583,18 @@ internal static class MultiplayerSkinSync
         var service = RunManager.Instance.NetService;
         _lobby = null;
         _needsLobbyRoundReset = false;
-        if (!service.Type.IsMultiplayer())
+        var participation = MultiplayerSkinSyncParticipationPolicy.Resolve(
+            SkinService.ShouldSynchronizeMultiplayerSkins(),
+            service.Type.IsMultiplayer());
+        if (!participation.AttachTransport)
         {
+            _suspendedLobby = null;
+            _resumeRunWhenEnabled = service.Type.IsMultiplayer();
             return;
         }
 
+        _suspendedLobby = null;
+        _resumeRunWhenEnabled = false;
         AttachToService(service, "对局");
         _inRun = true;
         RememberLocalAdvertisement();
@@ -554,11 +613,18 @@ internal static class MultiplayerSkinSync
     internal static void AttachToLobby(StartRunLobby lobby)
     {
         var service = lobby.NetService;
-        if (!service.Type.IsMultiplayer())
+        var participation = MultiplayerSkinSyncParticipationPolicy.Resolve(
+            SkinService.ShouldSynchronizeMultiplayerSkins(),
+            service.Type.IsMultiplayer());
+        if (!participation.AttachTransport)
         {
+            _suspendedLobby = service.Type.IsMultiplayer() ? lobby : null;
+            _resumeRunWhenEnabled = false;
             return;
         }
 
+        _suspendedLobby = null;
+        _resumeRunWhenEnabled = false;
         var changedLobby = !ReferenceEquals(_lobby, lobby);
         // The game keeps the same Steam net service while returning from a run to a new
         // character-select lobby. Clear the previous round's per-player selection maps at this
@@ -618,6 +684,13 @@ internal static class MultiplayerSkinSync
 
     private static void AttachToService(INetGameService service, string stage)
     {
+        if (!MultiplayerSkinSyncParticipationPolicy.Resolve(
+                SkinService.ShouldSynchronizeMultiplayerSkins(),
+                service.Type.IsMultiplayer()).AttachTransport)
+        {
+            return;
+        }
+
         if (ReferenceEquals(service, _netService))
         {
             return;
@@ -721,6 +794,11 @@ internal static class MultiplayerSkinSync
 
     internal static void Tick(double delta)
     {
+        if (!SkinService.ShouldSynchronizeMultiplayerSkins())
+        {
+            return;
+        }
+
         var service = _netService;
         if (service == null || !service.IsConnected)
         {
@@ -1083,8 +1161,73 @@ internal static class MultiplayerSkinSync
         }
     }
 
+    internal static void OnSynchronizationPreferenceChanged(bool enabled)
+    {
+        if (enabled)
+        {
+            var lobbyToResume = _suspendedLobby;
+            var runToResume = _resumeRunWhenEnabled;
+            _suspendedLobby = null;
+            _resumeRunWhenEnabled = false;
+
+            if (runToResume && NRun.Instance != null)
+            {
+                AttachToRun();
+                ModLog.Info("已重新启用本局的联机皮肤同步。");
+                return;
+            }
+            if (lobbyToResume != null)
+            {
+                AttachToLobby(lobbyToResume);
+                ModLog.Info("已重新启用当前房间的联机皮肤同步。");
+                return;
+            }
+
+            ModLog.Info("联机皮肤同步已启用；将在下次进入联机房间时开始工作。");
+            return;
+        }
+
+        var currentLobby = _lobby;
+        var wasInRun = _inRun;
+        ulong[] remotePlayerIds;
+        lock (Sync)
+        {
+            remotePlayerIds = AvailableSelections.Keys.ToArray();
+        }
+
+        _suspendedLobby = currentLobby;
+        _resumeRunWhenEnabled = wasInRun;
+        DetachFromRun(
+            clearCapabilities: true,
+            refreshRuntimeProviders: true,
+            clearOnlineCache: false);
+        OnlineSkinCache.OnRemoteSkinLoadingPreferenceChanged(enabled: false);
+
+        foreach (var playerId in remotePlayerIds)
+        {
+            try
+            {
+                ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerId);
+                if (wasInRun && CharacterAppearanceRuntime.CanApplySelectionImmediately())
+                {
+                    CharacterAppearanceRuntime.RefreshPlayerAppearance(playerId);
+                }
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn(
+                    $"关闭联机同步后恢复玩家 {playerId} 的本机外观失败：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        ModLog.Info("联机皮肤同步已关闭；不会再修改握手包、收发皮肤消息或覆盖玩家外观。");
+    }
+
     internal static void ResetConnectionState(bool clearOnlineCache = false)
     {
+        _suspendedLobby = null;
+        _resumeRunWhenEnabled = false;
         DetachFromRun(
             refreshRuntimeProviders: clearOnlineCache,
             clearOnlineCache: clearOnlineCache);
@@ -1097,6 +1240,8 @@ internal static class MultiplayerSkinSync
     /// </summary>
     internal static void EndMultiplayerRunSession()
     {
+        _suspendedLobby = null;
+        _resumeRunWhenEnabled = false;
         if (_netService?.Type.IsMultiplayer() != true && !_inRun && !_hasLobbySession)
         {
             return;
@@ -1110,6 +1255,11 @@ internal static class MultiplayerSkinSync
 
     internal static void MarkPeerCapable(ulong peerId, byte protocolVersion)
     {
+        if (!SkinService.ShouldSynchronizeMultiplayerSkins())
+        {
+            return;
+        }
+
         if (protocolVersion != ProtocolVersion)
         {
             ModLog.Warn($"玩家 {peerId} 使用不兼容的 Skin Changer 联机协议 {protocolVersion}。");
@@ -1131,6 +1281,13 @@ internal static class MultiplayerSkinSync
     internal static bool TryReadCapabilityTrailer(byte[] packetBytes, out byte protocolVersion)
     {
         protocolVersion = 0;
+        if (!MultiplayerSkinSyncParticipationPolicy.Resolve(
+                SkinService.ShouldSynchronizeMultiplayerSkins(),
+                isMultiplayer: true).ReadCapabilityTrailer)
+        {
+            return false;
+        }
+
         var trailerLength = CapabilityMagic.Length + 1;
         if (packetBytes.Length < trailerLength)
         {
@@ -1155,6 +1312,13 @@ internal static class MultiplayerSkinSync
 
     internal static void AppendCapabilityTrailer(PacketWriter writer)
     {
+        if (!MultiplayerSkinSyncParticipationPolicy.Resolve(
+                SkinService.ShouldSynchronizeMultiplayerSkins(),
+                isMultiplayer: true).WriteCapabilityTrailer)
+        {
+            return;
+        }
+
         var remainder = writer.BitPosition % 8;
         if (remainder != 0)
         {
@@ -1166,6 +1330,11 @@ internal static class MultiplayerSkinSync
 
     private static void HandleMessage(SkinChangerNetMessage message, ulong senderId)
     {
+        if (!SkinService.ShouldSynchronizeMultiplayerSkins())
+        {
+            return;
+        }
+
         var service = _netService;
         if (service == null || message.ProtocolVersion != ProtocolVersion ||
             message.Kind != SkinSyncMessageKind.CharacterSelection)
@@ -1321,6 +1490,11 @@ internal static class MultiplayerSkinSync
 
     private static void TryMakeSelectionAvailable(SkinChangerNetMessage message)
     {
+        if (!ShouldApplyRemoteAppearance())
+        {
+            return;
+        }
+
         // The host periodically relays every known selection to late joiners. A client can
         // therefore receive its own older snapshot back from the host; never let session state
         // override the local player's current persistent choice.
@@ -1699,6 +1873,11 @@ internal static class MultiplayerSkinSync
 
     private static void SendLocalAdvertisement()
     {
+        if (!SkinService.ShouldSynchronizeMultiplayerSkins())
+        {
+            return;
+        }
+
         var service = _netService;
         if (service == null)
         {
@@ -1759,6 +1938,11 @@ internal static class MultiplayerSkinSync
         SkinChangerNetMessage message,
         ulong? exceptPeerId = null)
     {
+        if (!SkinService.ShouldSynchronizeMultiplayerSkins())
+        {
+            return;
+        }
+
         if (_netService is not INetHostGameService host)
         {
             return;

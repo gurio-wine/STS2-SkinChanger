@@ -23,6 +23,7 @@ namespace STS2SkinChanger.Ui;
 internal static partial class ContextualSkinControls
 {
     private const string SelectorName = "STS2SkinSelector";
+    private const string MultiplayerSkinSyncToggleName = "MultiplayerSkinSyncToggle";
     private const string MultiplayerSkinLoadingToggleName = "MultiplayerSkinLoadingToggle";
     private const string InRunAppearanceEntryToggleName = "InRunAppearanceEntryToggle";
     private const string CharacterSelectorTopRightToggleName = "CharacterSelectorTopRightToggle";
@@ -261,9 +262,9 @@ internal static partial class ContextualSkinControls
                 AnchorRight = 0.5f,
                 AnchorBottom = 0f,
                 OffsetLeft = -210f,
-                OffsetTop = -224f,
+                OffsetTop = -272f,
                 OffsetRight = 210f,
-                OffsetBottom = -180f,
+                OffsetBottom = -228f,
                 Alignment = HorizontalAlignment.Center,
                 MouseDefaultCursorShape = Control.CursorShape.PointingHand,
                 TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
@@ -310,9 +311,9 @@ internal static partial class ContextualSkinControls
                 AnchorRight = 0.5f,
                 AnchorBottom = 0f,
                 OffsetLeft = -210f,
-                OffsetTop = -176f,
+                OffsetTop = -224f,
                 OffsetRight = 210f,
-                OffsetBottom = -132f,
+                OffsetBottom = -180f,
                 Alignment = HorizontalAlignment.Center,
                 MouseDefaultCursorShape = Control.CursorShape.PointingHand,
                 TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
@@ -346,6 +347,7 @@ internal static partial class ContextualSkinControls
         NCharacterSelectScreen screen,
         Control infoPanel)
     {
+        EnsureMultiplayerSkinSyncToggle(screen, infoPanel);
         var toggle = infoPanel.GetNodeOrNull<CheckButton>(MultiplayerSkinLoadingToggleName);
         if (!IsMultiplayerCharacterSelect(screen))
         {
@@ -394,15 +396,87 @@ internal static partial class ContextualSkinControls
         }
 
         toggle.Visible = true;
+        toggle.Disabled = !SkinService.ShouldSynchronizeMultiplayerSkins();
+        toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
+    }
+
+    private static void EnsureMultiplayerSkinSyncToggle(
+        NCharacterSelectScreen screen,
+        Control infoPanel)
+    {
+        var toggle = infoPanel.GetNodeOrNull<CheckButton>(MultiplayerSkinSyncToggleName);
+        if (!IsMultiplayerCharacterSelect(screen))
+        {
+            if (toggle != null)
+            {
+                toggle.Visible = false;
+            }
+            return;
+        }
+
+        if (toggle == null)
+        {
+            toggle = new CheckButton
+            {
+                Name = MultiplayerSkinSyncToggleName,
+                AnchorLeft = 0.5f,
+                AnchorTop = 0f,
+                AnchorRight = 0.5f,
+                AnchorBottom = 0f,
+                OffsetLeft = -190f,
+                OffsetTop = -176f,
+                OffsetRight = 190f,
+                OffsetBottom = -132f,
+                Alignment = HorizontalAlignment.Center,
+                MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
+            };
+            toggle.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            toggle.AddThemeColorOverride("font_hover_color", Colors.White);
+            toggle.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
+            toggle.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+            toggle.AddThemeConstantOverride("outline_size", 3);
+            toggle.AddThemeFontSizeOverride("font_size", 18);
+            if (GameFont != null)
+            {
+                toggle.AddThemeFontOverride("font", GameFont);
+            }
+            toggle.SetPressedNoSignal(SkinService.ShouldSynchronizeMultiplayerSkins());
+            toggle.Toggled += enabled =>
+            {
+                SkinService.SetMultiplayerSkinSyncEnabled(enabled);
+                RefreshMultiplayerSkinLoadingToggle(screen);
+            };
+            infoPanel.AddChild(toggle);
+            ModLocalization.Bind(toggle, () =>
+            {
+                toggle.Text = ModLocalization.Get(ModText.MultiplayerSkinSync);
+                toggle.SetPressedNoSignal(SkinService.ShouldSynchronizeMultiplayerSkins());
+            });
+        }
+
+        toggle.Visible = true;
+        toggle.SetPressedNoSignal(SkinService.ShouldSynchronizeMultiplayerSkins());
     }
 
     private static void RefreshMultiplayerSkinLoadingToggle(NCharacterSelectScreen screen)
     {
+        var isMultiplayer = IsMultiplayerCharacterSelect(screen);
+        var syncEnabled = SkinService.ShouldSynchronizeMultiplayerSkins();
+        var syncToggle = screen.GetNodeOrNull<CheckButton>(
+            $"InfoPanel/{MultiplayerSkinSyncToggleName}");
+        if (syncToggle != null)
+        {
+            syncToggle.Visible = isMultiplayer;
+            syncToggle.SetPressedNoSignal(syncEnabled);
+        }
+
         var toggle = screen.GetNodeOrNull<CheckButton>(
             $"InfoPanel/{MultiplayerSkinLoadingToggleName}");
         if (toggle != null)
         {
-            toggle.Visible = IsMultiplayerCharacterSelect(screen);
+            toggle.Visible = isMultiplayer;
+            toggle.Disabled = !syncEnabled;
             toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
         }
     }
@@ -664,6 +738,13 @@ internal static partial class ContextualSkinControls
         if (toggle != null)
         {
             toggle.Visible = false;
+        }
+
+        var syncToggle = screen.GetNodeOrNull<Control>(
+            $"InfoPanel/{MultiplayerSkinSyncToggleName}");
+        if (syncToggle != null)
+        {
+            syncToggle.Visible = false;
         }
 
         var appearanceEntryToggle = screen.GetNodeOrNull<Control>(

@@ -88,6 +88,8 @@ internal sealed class SkinConfig
 
     public bool? LastKnownBeforeAllSkinMods { get; set; }
 
+    public bool MultiplayerSkinSyncEnabled { get; set; } = true;
+
     public bool LoadOtherPlayersCustomSkins { get; set; } = true;
 
     public bool ShowInRunAppearanceEntry { get; set; } = true;

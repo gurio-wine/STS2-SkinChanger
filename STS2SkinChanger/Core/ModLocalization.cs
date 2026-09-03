@@ -68,6 +68,7 @@ internal enum ModText
     FollowModelMovement,
     DirectDragHint,
     DirectDragIntentHint,
+    MultiplayerSkinSync,
     LoadOtherPlayersCustomSkins,
     ShowInRunAppearanceEntry,
     CharacterSelectorTopRight,
@@ -942,6 +943,26 @@ internal static class ModLocalization
             ["tur"] = "İki tarafta da yüklü görünümleri göster"
         };
 
+    private static readonly IReadOnlyDictionary<string, string> MultiplayerSkinSyncTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "Sync player skins online",
+            ["zhs"] = "联机同步玩家皮肤",
+            ["zht"] = "連線同步玩家外觀",
+            ["deu"] = "Spieler-Skins online synchronisieren",
+            ["esp"] = "Sincronizar aspectos de jugadores en línea",
+            ["fra"] = "Synchroniser les skins des joueurs en ligne",
+            ["ita"] = "Sincronizza online le skin dei giocatori",
+            ["jpn"] = "オンラインでプレイヤーのスキンを同期",
+            ["kor"] = "온라인 플레이어 스킨 동기화",
+            ["pol"] = "Synchronizuj skórki graczy online",
+            ["ptb"] = "Sincronizar visuais dos jogadores online",
+            ["rus"] = "Синхронизировать облики игроков по сети",
+            ["spa"] = "Sincronizar aspectos de jugadores en línea",
+            ["tha"] = "ซิงค์สกินผู้เล่นในการเล่นออนไลน์",
+            ["tur"] = "Çevrimiçi oyuncu görünümlerini eşitle"
+        };
+
     private static readonly IReadOnlyDictionary<string, string> InRunAppearanceEntryTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -1221,7 +1242,9 @@ internal static class ModLocalization
     }
 
     public static string Get(ModText text) =>
-        text == ModText.LoadOtherPlayersCustomSkins
+        text == ModText.MultiplayerSkinSync
+            ? MultiplayerSkinSyncTexts[CurrentLanguage]
+            : text == ModText.LoadOtherPlayersCustomSkins
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]
             : text == ModText.ShowInRunAppearanceEntry
                 ? InRunAppearanceEntryTexts[CurrentLanguage]
