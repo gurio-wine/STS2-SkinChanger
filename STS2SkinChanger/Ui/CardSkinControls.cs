@@ -50,6 +50,7 @@ internal static class CardSkinControls
         AccessTools.Method(typeof(NCardLibrary), "UpdateFilter", [typeof(bool)]);
     private static readonly ConditionalWeakTable<NCard, CardLayoutState> BaselineLayouts = new();
     private static readonly ConditionalWeakTable<NCard, CardPresentationState> PresentationLayouts = new();
+    private static readonly ConditionalWeakTable<NCard, CardPreviewState> PreviewModes = new();
     private static readonly System.Reflection.FieldInfo? HighlightShaderMaterialField =
         AccessTools.Field(typeof(NCardHighlight), "_shaderMaterial");
     private static Texture2D? _normalTextBackgroundCoverTexture;
@@ -1566,6 +1567,37 @@ internal static class CardSkinControls
         }).CallDeferred();
     }
 
+    public static void RememberPreviewMode(NCard card, CardPreviewMode previewMode)
+    {
+        var state = PreviewModes.GetValue(card, static _ => new CardPreviewState());
+        state.Model = card.Model;
+        state.Mode = previewMode;
+    }
+
+    private static CardPreviewMode GetRefreshPreviewMode(NCard card) =>
+        PreviewModes.TryGetValue(card, out var state)
+            ? state.GetMode(card.Model)
+            : CardPreviewMode.Normal;
+
+    public static void RefreshCardSkin(NCard card)
+    {
+        if (!GodotObject.IsInstanceValid(card) || card.IsQueuedForDeletion() ||
+            !card.IsNodeReady() || card.Model == null)
+        {
+            return;
+        }
+
+        var pile = card.DisplayingPile;
+        var previewMode = GetRefreshPreviewMode(card);
+        // Reload restores/rebuilds the layout, not its dynamic display. In particular, the
+        // baseline predates UpdateVisuals and may show an unplayable card's energy icon with
+        // its internal -1 cost. Follow the game's own model-binding lifecycle: finish with
+        // UpdateVisuals so costs, text, portraits and external editor overrides all settle.
+        // Keep the existing model and preview context; never mutate gameplay to fix visuals.
+        ReloadCardMethod.Invoke(card, null);
+        card.UpdateVisuals(pile, previewMode);
+    }
+
     private static void RefreshVisibleCards(NCardLibrary screen, string groupId)
     {
         try
@@ -1578,7 +1610,7 @@ internal static class CardSkinControls
                     continue;
                 }
 
-                ReloadCardMethod.Invoke(card, null);
+                RefreshCardSkin(card);
             }
         }
         catch (Exception exception)
@@ -1765,6 +1797,15 @@ internal static class CardSkinControls
 
     private sealed record CardPresentationState(
         IReadOnlyList<Node> AddedNodes);
+
+    private sealed class CardPreviewState
+    {
+        public CardModel? Model;
+        public CardPreviewMode Mode;
+
+        public CardPreviewMode GetMode(CardModel? currentModel) =>
+            ReferenceEquals(Model, currentModel) ? Mode : CardPreviewMode.Normal;
+    }
 }
 
 internal static class CardInspectSkinControls
@@ -1776,8 +1817,6 @@ internal static class CardInspectSkinControls
     private const string OptionsCardMeta = "sts2_individual_card_skin_options_card";
     private const string PreviewCardMeta = "sts2_individual_card_skin_preview_card";
     private const string PreviewOptionMeta = "sts2_individual_card_skin_preview_option";
-    private static readonly System.Reflection.MethodInfo ReloadCardMethod =
-        AccessTools.Method(typeof(NCard), "Reload");
 
     public static void Attach(NInspectCardScreen screen)
     {
@@ -2156,7 +2195,7 @@ internal static class CardInspectSkinControls
             SkinService.WithCardPreviewSelection(
                 card,
                 optionId,
-                () => ReloadCardMethod.Invoke(cardNode, null));
+                () => CardSkinControls.RefreshCardSkin(cardNode));
         }
         catch (Exception exception)
         {
@@ -2187,7 +2226,7 @@ internal static class CardInspectSkinControls
 
         try
         {
-            ReloadCardMethod.Invoke(cardNode, null);
+            CardSkinControls.RefreshCardSkin(cardNode);
         }
         catch (Exception exception)
         {
@@ -2210,7 +2249,7 @@ internal static class CardInspectSkinControls
                         cardId,
                         StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    ReloadCardMethod.Invoke(card, null);
+                    CardSkinControls.RefreshCardSkin(card);
                 }
             }
         }
@@ -2345,6 +2384,14 @@ internal static class CardPortraitResultPatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(CardModel __instance, ref Texture2D __result) =>
         CardSkinControls.ReplacePortrait(__instance, ref __result);
+}
+
+[HarmonyPatch(typeof(NCard), nameof(NCard.UpdateVisuals))]
+internal static class CardPreviewModeCapturePatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance, CardPreviewMode previewMode) =>
+        CardSkinControls.RememberPreviewMode(__instance, previewMode);
 }
 
 [HarmonyPatch]
