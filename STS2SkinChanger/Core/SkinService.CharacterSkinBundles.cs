@@ -1,3 +1,4 @@
+using Godot;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger.Catalog;
@@ -8,6 +9,15 @@ internal sealed record SkinPresetCategory(string Id, string DisplayName, IReadOn
 
 internal static partial class SkinService
 {
+    private static SkinConfig? _characterSkinBundleRunSnapshot;
+    private static HashSet<string> _characterSkinBundleRunVisualGroups =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static HashSet<string> _characterSkinBundleRunCardGroups =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static string CharacterSkinBundleRunSnapshotPath =>
+        Path.Combine(OS.GetUserDataDir(), "skin_changer_bundle_run_restore.json");
+
     public static IReadOnlyList<CharacterSkinBundle> GetCharacterSkinBundles(string groupId)
     {
         lock (Sync)
@@ -150,6 +160,36 @@ internal static partial class SkinService
         }
     }
 
+    public static string? GetCharacterSkinBundleCharacterOption(string groupId, string name)
+    {
+        lock (Sync)
+        {
+            var index = FindCharacterSkinBundleIndex(groupId, name);
+            var catalog = Catalog;
+            if (index < 0 || catalog == null)
+            {
+                LastError = ModLocalization.Get(ModText.BundleUnavailable);
+                return null;
+            }
+
+            var optionId = catalog.ResolveStoredVisualSelectionId(
+                groupId,
+                Config.CharacterSkinBundles[index].CharacterOptionId);
+            var group = catalog.Groups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
+                group?.Options.Any(option => option.Id.Equals(
+                    optionId, StringComparison.OrdinalIgnoreCase)) != true)
+            {
+                LastError = ModLocalization.Get(ModText.BundleMissingSkin);
+                return null;
+            }
+
+            LastError = null;
+            return optionId;
+        }
+    }
+
     public static bool ClearSelectedCharacterSkinBundle(string groupId)
     {
         lock (Sync)
@@ -184,11 +224,11 @@ internal static partial class SkinService
                 LastError = ModLocalization.Get(ModText.BundleScopeConflict);
                 return false;
             }
-            return ApplyCharacterSkinBundle(groupId, name, applications, out warnings);
+            return BeginCharacterSkinBundleRunSession(groupId, name, applications, out warnings);
         }
     }
 
-    private static bool ApplyCharacterSkinBundle(
+    private static bool BeginCharacterSkinBundleRunSession(
         string groupId,
         string name,
         IReadOnlySet<string> activeApplications,
@@ -212,6 +252,15 @@ internal static partial class SkinService
                 LastError = ModLocalization.Get(ModText.BundleScopeConflict);
                 return false;
             }
+
+            // A previous run should normally have reached RunManager.CleanUp. Restore it here as
+            // a defensive boundary before a new run is staged, so a failed/aborted transition can
+            // never make two packages recursively layer over one another.
+            if (_characterSkinBundleRunSnapshot != null)
+            {
+                RestoreCharacterSkinBundleAfterRun();
+            }
+
             var original = Config;
             var next = original.CloneForBundleTransaction();
             var visualGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -219,29 +268,7 @@ internal static partial class SkinService
 
             void Prepare()
             {
-                var requestedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId };
-                var characterGroup = catalog.Groups.FirstOrDefault(group =>
-                    group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-                var optionId = catalog.ResolveStoredVisualSelectionId(groupId, bundle.CharacterOptionId);
-                if (!optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) &&
-                    characterGroup?.Options.Any(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase)) != true)
-                {
-                    notices.Add(ModLocalization.Get(ModText.BundleMissingSkin));
-                    optionId = SkinCatalog.BaseOptionId;
-                }
-                if (characterGroup != null)
-                {
-                    var updates = catalog.BuildVisualSelectionTransaction(groupId, optionId, Config.Selections);
-                    foreach (var update in updates)
-                    {
-                        Config.Selections[update.Key] = update.Value;
-                    }
-                    visualGroups.UnionWith(updates.Keys);
-                }
-                else
-                {
-                    Config.Selections[groupId] = SkinCatalog.BaseOptionId;
-                }
+                var requestedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var reference in bundle.CardPresetNames)
                 {
                     var presetIndex = FindCardSkinPresetIndex(reference.Key, reference.Value);
@@ -267,14 +294,17 @@ internal static partial class SkinService
                     requestedGroups.UnionWith(Config.MonsterSkinCategoryGroups[reference.Key]);
                     visualGroups.UnionWith(ApplyMonsterCategoryPriorityToSelections(reference.Key));
                 }
-                // An inseparable full-runtime provider can request other characters/regions.
-                // Do not let such a dependency silently turn an "Unchanged" region into part
-                // of this bundle, or let a later monster preset replace the requested character.
+                // A run package may only touch the explicitly referenced monster regions. Most
+                // importantly, the character is intentionally absent here: it was already
+                // applied through the normal character selector path. Re-mounting character and
+                // CZN-style multi-region packs in one transaction can replace the canonical
+                // NCreatureVisuals scene with a provider-private Node2D scene.
                 var protectedGroups = Config.MonsterSkinCategoryGroups.Values.SelectMany(ids => ids)
                     .Concat(ModelDb.AllCharacters.Select(character => character.Id.Entry.ToLowerInvariant()));
                 if (CharacterSkinBundlePolicy.ChangesOutsideRequestedGroups(
                         original.Selections, Config.Selections, protectedGroups, requestedGroups) ||
-                    !Config.GetSelection(groupId).Equals(optionId, StringComparison.OrdinalIgnoreCase))
+                    !Config.GetSelection(groupId).Equals(
+                        original.GetSelection(groupId), StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(ModLocalization.Get(ModText.BundleScopeConflict));
                 }
@@ -326,7 +356,135 @@ internal static partial class SkinService
                 }
             }
 
-            return CommitBundleConfiguration(next, Prepare, () => { RefreshVisuals(); RefreshCards(); }, Restore);
+            // Persist the restore point before any temporary selection is mounted. During the run
+            // the in-memory Config contains package presets, while the normal config file keeps
+            // the player's original presets. The sidecar also repairs an interrupted/Alt-F4 run
+            // on the next startup.
+            original.Save(CharacterSkinBundleRunSnapshotPath);
+            var error = StagedConfigurationTransaction.Run(
+                original,
+                next,
+                value => Config = value,
+                Prepare,
+                () => { RefreshVisuals(); RefreshCards(); },
+                _ => original.Save(ConfigPath),
+                Restore);
+            LastError = error?.Message;
+            if (error != null)
+            {
+                DeleteCharacterSkinBundleRunSnapshot();
+                ModLog.Error("开始对局前应用皮肤包预设失败，已恢复原配置：" + error);
+                return false;
+            }
+
+            _characterSkinBundleRunSnapshot = original;
+            _characterSkinBundleRunVisualGroups = visualGroups;
+            _characterSkinBundleRunCardGroups = cardGroups;
+            ModLog.Info(
+                $"已为本局临时应用皮肤包“{bundle.Name}”：" +
+                $"角色皮肤保持当前热切换结果，卡牌分类={cardGroups.Count}，" +
+                $"怪物分组={visualGroups.Count}；离开本局时恢复原预设。");
+            return true;
+        }
+    }
+
+    public static void RestoreCharacterSkinBundleAfterRun()
+    {
+        lock (Sync)
+        {
+            var snapshot = _characterSkinBundleRunSnapshot;
+            if (snapshot == null)
+            {
+                return;
+            }
+
+            var visualGroups = _characterSkinBundleRunVisualGroups;
+            var cardGroups = _characterSkinBundleRunCardGroups;
+            Config = snapshot;
+            CharacterPreviewSelections.Clear();
+            CardPreviewSelections.Clear();
+            foreach (var id in visualGroups)
+            {
+                ClearRuntimeResourceCache(id);
+            }
+            foreach (var id in cardGroups)
+            {
+                ClearCardPortraitCache(id);
+            }
+
+            var failures = FailureIsolatedActionRunner.Run([
+                ("visuals", () =>
+                {
+                    if (visualGroups.Count > 0)
+                    {
+                        MountOverlay(visualGroups);
+                    }
+                }),
+                ("cards", () =>
+                {
+                    if (cardGroups.Count > 0)
+                    {
+                        MountCardOverlay(cardGroups);
+                    }
+                })
+            ]);
+            Config.Save(ConfigPath);
+            DeleteCharacterSkinBundleRunSnapshot();
+            _characterSkinBundleRunSnapshot = null;
+            _characterSkinBundleRunVisualGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            _characterSkinBundleRunCardGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (failures.Count == 0)
+            {
+                ModLog.Info("已在离开本局时恢复皮肤包应用前的卡牌与怪物预设。");
+                return;
+            }
+
+            ModLog.Error("恢复皮肤包应用前预设时有资源刷新失败：" +
+                         new AggregateException(failures.Select(failure => failure.Exception)));
+        }
+    }
+
+    private static void DeleteCharacterSkinBundleRunSnapshot()
+    {
+        foreach (var path in new[]
+                 {
+                     CharacterSkinBundleRunSnapshotPath,
+                     CharacterSkinBundleRunSnapshotPath + ".bak"
+                 })
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn("清理皮肤包本局恢复点失败，将在下次启动重试：" + exception.Message);
+            }
+        }
+    }
+
+    internal static SkinConfig RecoverInterruptedCharacterSkinBundleSession(SkinConfig current)
+    {
+        if (!File.Exists(CharacterSkinBundleRunSnapshotPath))
+        {
+            return current;
+        }
+
+        try
+        {
+            var restored = SkinConfig.Load(CharacterSkinBundleRunSnapshotPath);
+            restored.Save(ConfigPath);
+            DeleteCharacterSkinBundleRunSnapshot();
+            ModLog.Info("检测到上次游戏在皮肤包生效期间退出，已恢复进入该局前的预设。");
+            return restored;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("恢复上次皮肤包本局预设失败，将保留现有配置：" + exception.Message);
+            return current;
         }
     }
 

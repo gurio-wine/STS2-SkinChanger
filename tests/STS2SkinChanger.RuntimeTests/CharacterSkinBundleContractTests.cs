@@ -69,8 +69,9 @@ internal static class CharacterSkinBundleContractTests
         var service = assembly.GetType("STS2SkinChanger.Core.SkinService", true)!;
         Require(service.GetMethod("SelectCharacterSkinBundle", BindingFlags.Static | BindingFlags.Public) != null &&
                 service.GetMethod("ClearSelectedCharacterSkinBundle", BindingFlags.Static | BindingFlags.Public) != null &&
+                service.GetMethod("GetCharacterSkinBundleCharacterOption", BindingFlags.Static | BindingFlags.Public) != null &&
                 service.GetMethod("ApplySelectedCharacterSkinBundleForRun", BindingFlags.Static | BindingFlags.Public) != null,
-            "皮肤包必须分离“选中”和“开始对局时应用”，不能在管理界面直接热重载。");
+            "皮肤包必须能立即解析角色皮肤，同时把卡牌和怪物预设留到开始对局时应用。");
         Require(controls.GetMethod("Apply", BindingFlags.Static | BindingFlags.NonPublic) == null,
             "管理皮肤包界面不能保留立即应用入口。");
 
@@ -81,8 +82,33 @@ internal static class CharacterSkinBundleContractTests
                     called.Name == "GetCharacterSkinBundles"),
             "选角皮肤列表必须把当前角色保存的皮肤包置于普通皮肤之前。");
         Require(populateCalls.Any(instruction => instruction.operand is MethodInfo called &&
-                    called.Name == "ApplyCharacterBundleOptionStyle"),
-            "选角皮肤列表中的 [P] 皮肤包必须使用醒目的黄色标记和选中字体。");
+                    called.Name == "ConfigureCharacterBundlePopupList"),
+            "选角皮肤列表中的 [P] 皮肤包必须使用逐项黄色文字，不能退化为黄色标记。");
+
+        var applyDropdown = contextualControls.GetMethod(
+            "ApplyDropdownSelection", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var applyDropdownCalls = HarmonyLib.PatchProcessor.GetOriginalInstructions(applyDropdown);
+        Require(applyDropdownCalls.Any(instruction => instruction.operand is MethodInfo called &&
+                    called.Name == "GetCharacterSkinBundleCharacterOption") &&
+                applyDropdownCalls.Any(instruction => instruction.operand is MethodInfo called &&
+                    called.Name == "BeginCharacterDropdownSelection"),
+            "选中皮肤包时必须立即复用普通角色皮肤热切换流程。");
+
+        var applyForRun = service.GetMethod(
+            "ApplySelectedCharacterSkinBundleForRun", BindingFlags.Static | BindingFlags.Public)!;
+        var applyForRunCalls = HarmonyLib.PatchProcessor.GetOriginalInstructions(applyForRun);
+        Require(applyForRunCalls.All(instruction => instruction.operand is not MethodInfo called ||
+                    called.Name != "ApplyCharacterSkinBundle"),
+            "开始对局不能再次把角色皮肤和怪物资源一起批量挂载；这会破坏 NCreatureVisuals 场景类型。");
+        Require(service.GetMethod("RestoreCharacterSkinBundleAfterRun", BindingFlags.Static | BindingFlags.Public) != null,
+            "结束或退出对局时必须恢复皮肤包应用前的卡牌和怪物预设。");
+
+        var cleanupPatch = assembly.GetType(
+            "STS2SkinChanger.Ui.CharacterSkinBundleRunCleanupPatch", true)!;
+        var cleanupPrefix = cleanupPatch.GetMethod("Prefix", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Require(HarmonyLib.PatchProcessor.GetOriginalInstructions(cleanupPrefix).Any(instruction =>
+                instruction.operand is MethodInfo called && called.Name == "RestoreCharacterSkinBundleAfterRun"),
+            "RunManager.CleanUp 必须恢复本局临时皮肤包预设。");
 
         foreach (var patchName in new[] { "SingleplayerEmbarkSkinSelectorPatch", "MultiplayerEmbarkSkinSelectorPatch" })
         {
@@ -108,7 +134,7 @@ internal static class CharacterSkinBundleContractTests
         var missingPresetIndex = (int)Enum.Parse(textType, "BundleMissingPreset") - first;
         Require(packs.Values.All(values => string.Format(values[missingPresetIndex], "PresetName").Contains("PresetName")),
             "每种语言的缺失预设提示必须包含实际预设名称。");
-        Console.WriteLine("Skin bundle contracts passed: deferred embark apply, guarded list selection, responsive manager, 15 languages.");
+        Console.WriteLine("Skin bundle contracts passed: immediate character apply, run-scoped presets, yellow list text, restore cleanup, 15 languages.");
     }
 
     private static void Require(bool condition, string message)

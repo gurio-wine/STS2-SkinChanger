@@ -91,14 +91,26 @@ internal static class CharacterSkinBundleControls
             margin.AddThemeConstantOverride("margin_" + edge, 20);
         }
         panel.AddChild(margin);
+        var scroll = new ScrollContainer
+        {
+            Name = "BundleScroll",
+            CustomMinimumSize = Vector2.Zero,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto
+        };
+        margin.AddChild(scroll);
         var content = new VBoxContainer
         {
+            Name = "BundleContent",
+            CustomMinimumSize = new Vector2(820f, 0f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+            SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
         };
         content.AddThemeConstantOverride("separation", 12);
-        margin.AddChild(content);
-        var state = new EditorState(screen, entry, overlay, content);
+        scroll.AddChild(content);
+        var state = new EditorState(screen, entry, overlay, scroll, content);
         button.Pressed += () => Open(state);
         mask.GuiInput += input =>
         {
@@ -150,7 +162,12 @@ internal static class CharacterSkinBundleControls
 
     private static void BuildEditor(EditorState state)
     {
-        var scroll = ScrollListRebuild.Begin(state.Content, state.GroupId);
+        var previousScroll = state.Scroll.ScrollVertical;
+        foreach (var child in state.Content.GetChildren())
+        {
+            state.Content.RemoveChild(child);
+            child.QueueFree();
+        }
         var title = CreateLabel(state.DisplayName + " · " + ModLocalization.Get(ModText.CharacterSkinBundle), 25);
         title.HorizontalAlignment = HorizontalAlignment.Center;
         title.AddThemeColorOverride("font_color", new Color("efc850"));
@@ -190,13 +207,9 @@ internal static class CharacterSkinBundleControls
         name.TextChanged += value => { state.Draft.Name = value; MarkDirty(state); };
         state.Content.AddChild(name);
 
-        scroll.CustomMinimumSize = Vector2.Zero;
-        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
-        ScrollListRebuild.PlaceAfterHeader(scroll);
         var fields = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         fields.AddThemeConstantOverride("separation", 10);
-        scroll.AddChild(fields);
+        state.Content.AddChild(fields);
         fields.AddChild(CreateLabel(ModLocalization.Get(ModText.BundleCharacterSkin), 21));
         var skins = CreateOptions();
         skins.Name = "BundleCharacterSkin";
@@ -255,6 +268,22 @@ internal static class CharacterSkinBundleControls
         var close = CreateButton(ModText.Close);
         close.Pressed += () => state.Overlay.Hide();
         actions.AddChild(close);
+
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(state.Scroll))
+            {
+                return;
+            }
+            state.Scroll.QueueSort();
+            Callable.From(() =>
+            {
+                if (GodotObject.IsInstanceValid(state.Scroll))
+                {
+                    state.Scroll.ScrollVertical = previousScroll;
+                }
+            }).CallDeferred();
+        }).CallDeferred();
     }
 
     private static void AddPresetSection(EditorState state, VBoxContainer fields, ModText title,
@@ -424,11 +453,17 @@ internal static class CharacterSkinBundleControls
         }
     }
 
-    private sealed class EditorState(NCharacterSelectScreen screen, HBoxContainer entry, Control overlay, VBoxContainer content)
+    private sealed class EditorState(
+        NCharacterSelectScreen screen,
+        HBoxContainer entry,
+        Control overlay,
+        ScrollContainer scroll,
+        VBoxContainer content)
     {
         public NCharacterSelectScreen Screen { get; } = screen;
         public HBoxContainer Entry { get; } = entry;
         public Control Overlay { get; } = overlay;
+        public ScrollContainer Scroll { get; } = scroll;
         public VBoxContainer Content { get; } = content;
         public string GroupId = string.Empty;
         public string DisplayName = string.Empty;

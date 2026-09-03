@@ -15,6 +15,7 @@ using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Runs;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
@@ -38,6 +39,7 @@ internal static partial class ContextualSkinControls
     private const string CharacterPreviewActiveGroupMeta = "sts2_skin_character_preview_active_group";
     private const string CharacterPreviewActiveOptionMeta = "sts2_skin_character_preview_active_option";
     private const string CharacterLoadingOverlayName = "STS2CharacterSkinLoadingOverlay";
+    private const string CharacterBundlePopupListName = "STS2CharacterBundlePopupList";
     private const string GroupMeta = "sts2_skin_group";
     private const string UpdatingMeta = "sts2_skin_updating";
     private const string MonsterScaleGroupMeta = "sts2_skin_monster_scale_group";
@@ -51,7 +53,6 @@ internal static partial class ContextualSkinControls
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _refreshingMonsterDisplay;
     private static readonly ReloadingReferenceCache<Font> GameFontCache = new();
-    private static ImageTexture? _characterBundleMarkerTexture;
 
     internal static bool IsRefreshingMonsterDisplay => _refreshingMonsterDisplay;
 
@@ -712,13 +713,11 @@ internal static partial class ContextualSkinControls
             dropdown.SetItemMetadata(0, SkinService.InheritMonsterSelectionId);
         }
 
-        var packageColor = new Color("efc850");
         foreach (var bundle in bundles)
         {
             var index = dropdown.ItemCount;
             dropdown.AddItem(CharacterSkinBundlePolicy.CreateSelectionDisplayName(bundle.Name));
             dropdown.SetItemMetadata(index, CharacterSkinBundlePolicy.CreateSelectionOptionId(bundle.Name));
-            ApplyCharacterBundleOptionStyle(dropdown.GetPopup(), index, packageColor);
         }
 
         var defaultIndex = dropdown.ItemCount;
@@ -733,6 +732,7 @@ internal static partial class ContextualSkinControls
                 ModLocalization.DisplayOptionName));
             dropdown.SetItemMetadata(index, option.Id);
         }
+        ConfigureCharacterBundlePopupList(selector, dropdown, bundles.Count);
 
         var activeBundle = characterScreen != null
             ? SkinService.Config.ActiveCharacterSkinBundles.GetValueOrDefault(group.Id)
@@ -774,18 +774,110 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    private static void ApplyCharacterBundleOptionStyle(PopupMenu popup, int index, Color gold)
+    private static void ConfigureCharacterBundlePopupList(
+        HBoxContainer selector,
+        OptionButton dropdown,
+        int bundleCount)
     {
-        if (_characterBundleMarkerTexture == null ||
-            !GodotObject.IsInstanceValid(_characterBundleMarkerTexture))
+        var popup = dropdown.GetPopup();
+        var list = popup.GetNodeOrNull<ItemList>(CharacterBundlePopupListName);
+        if (bundleCount <= 0)
         {
-            using var image = Image.CreateEmpty(7, 22, false, Image.Format.Rgba8);
-            image.Fill(gold);
-            _characterBundleMarkerTexture = ImageTexture.CreateFromImage(image);
+            if (list != null)
+            {
+                list.Visible = false;
+            }
+            return;
         }
-        popup.SetItemIcon(index, _characterBundleMarkerTexture);
-        popup.SetItemIconMaxWidth(index, 7);
-        popup.SetItemIconModulate(index, gold);
+
+        if (list == null)
+        {
+            list = new ItemList
+            {
+                Name = CharacterBundlePopupListName,
+                MouseFilter = Control.MouseFilterEnum.Stop,
+                SelectMode = ItemList.SelectModeEnum.Single,
+                AllowReselect = true,
+                SameColumnWidth = true,
+                MaxColumns = 1,
+                ZIndex = 100
+            };
+            list.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+            list.AddThemeColorOverride("font_color", new Color("fff6e2"));
+            list.AddThemeColorOverride("font_hovered_color", Colors.White);
+            list.AddThemeColorOverride("font_selected_color", Colors.White);
+            list.AddThemeFontSizeOverride("font_size", 22);
+            list.AddThemeStyleboxOverride(
+                "panel", CreateStyleBox(new Color("45104e"), new Color("79547e"), 2));
+            list.AddThemeStyleboxOverride(
+                "hovered", CreateStyleBox(new Color("2c586f"), new Color("afcdde")));
+            list.AddThemeStyleboxOverride(
+                "selected", CreateStyleBox(new Color("58205f"), new Color("efc850"), 2));
+            if (GameFont != null)
+            {
+                list.AddThemeFontOverride("font", GameFont);
+            }
+            popup.AddChild(list);
+
+            var popupList = list;
+            popupList.ItemClicked += (clickedIndex, _, button) =>
+            {
+                if (button != (long)MouseButton.Left || clickedIndex < 0 || clickedIndex >= dropdown.ItemCount)
+                {
+                    return;
+                }
+                dropdown.Select((int)clickedIndex);
+                popup.Hide();
+                ApplyDropdownSelection(selector, dropdown, (int)clickedIndex);
+            };
+            popupList.ItemActivated += activatedIndex =>
+            {
+                if (activatedIndex < 0 || activatedIndex >= dropdown.ItemCount)
+                {
+                    return;
+                }
+                dropdown.Select((int)activatedIndex);
+                popup.Hide();
+                ApplyDropdownSelection(selector, dropdown, (int)activatedIndex);
+            };
+            popupList.GuiInput += inputEvent =>
+            {
+                if (inputEvent is InputEventMouseMotion motion)
+                {
+                    PreviewCharacterDropdownSelection(
+                        selector,
+                        dropdown,
+                        popupList.GetItemAtPosition(motion.Position, exact: true));
+                }
+            };
+            popup.AboutToPopup += () =>
+            {
+                popupList.Visible = true;
+                popupList.Select(dropdown.Selected);
+                Callable.From(() =>
+                {
+                    if (GodotObject.IsInstanceValid(popupList))
+                    {
+                        popupList.Position = Vector2.Zero;
+                        popupList.Size = popup.Size;
+                        popupList.GrabFocus();
+                    }
+                }).CallDeferred();
+            };
+        }
+
+        list.Clear();
+        var gold = new Color("efc850");
+        for (var index = 0; index < dropdown.ItemCount; index++)
+        {
+            list.AddItem(dropdown.GetItemText(index));
+            if (index < bundleCount)
+            {
+                list.SetItemCustomFgColor(index, gold);
+            }
+        }
+        list.Select(dropdown.Selected);
+        list.Visible = true;
     }
 
     private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
@@ -854,11 +946,23 @@ internal static partial class ContextualSkinControls
                 selector,
                 restoreOverlay: true,
                 restoreDisplay: true);
-            if (!SkinService.SelectCharacterSkinBundle(groupId, bundleName))
+            var characterOptionId = SkinService.GetCharacterSkinBundleCharacterOption(groupId, bundleName);
+            if (characterOptionId == null ||
+                !SkinService.SelectCharacterSkinBundle(groupId, bundleName))
             {
                 ModLog.Error($"选择皮肤包失败：{SkinService.LastError}");
+                Populate(selector, FindGroup(groupId));
+                return;
             }
-            Populate(selector, FindGroup(groupId));
+            ApplyCharacterBundleSelectionTheme(dropdown, selectedBundle: true);
+            BeginCharacterDropdownSelection(
+                characterScreen,
+                selector,
+                dropdown,
+                index,
+                groupId,
+                characterOptionId,
+                preserveCharacterSkinBundle: true);
             return;
         }
         if (characterScreen != null && !HasMonsterPriorityContext(selector))
@@ -895,12 +999,13 @@ internal static partial class ContextualSkinControls
         ApplyDropdownSelectionNow(selector, dropdown, index, groupId, optionId);
     }
 
-    private static void ApplyDropdownSelectionNow(
+    private static bool ApplyDropdownSelectionNow(
         HBoxContainer selector,
         OptionButton dropdown,
         int index,
         string groupId,
-        string optionId)
+        string optionId,
+        bool preserveCharacterSkinBundle = false)
     {
         var previousSelections = new Dictionary<string, string>(
             SkinService.Config.Selections,
@@ -920,11 +1025,12 @@ internal static partial class ContextualSkinControls
                 .FirstOrDefault(item => dropdown.GetItemMetadata(item).AsString()
                     .Equals(current, StringComparison.OrdinalIgnoreCase));
             dropdown.Select(currentIndex);
-            return;
+            return false;
         }
 
         if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
             !HasMonsterPriorityContext(selector) &&
+            !preserveCharacterSkinBundle &&
             !SkinService.ClearSelectedCharacterSkinBundle(groupId))
         {
             ModLog.Warn($"清除选角皮肤包选择失败：{SkinService.LastError}");
@@ -958,6 +1064,7 @@ internal static partial class ContextualSkinControls
         {
             Callable.From(() => RunRefresh(refresh)).CallDeferred();
         }
+        return true;
     }
 
     private static void BeginCharacterDropdownSelection(
@@ -966,7 +1073,8 @@ internal static partial class ContextualSkinControls
         OptionButton dropdown,
         int index,
         string groupId,
-        string optionId)
+        string optionId,
+        bool preserveCharacterSkinBundle = false)
     {
         var generation = screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() + 1L;
         screen.SetMeta(CharacterLoadingGenerationMeta, generation);
@@ -1016,7 +1124,21 @@ internal static partial class ContextualSkinControls
                 }
 
                 selector.SetMeta(UpdatingMeta, false);
-                ApplyDropdownSelectionNow(selector, dropdown, index, groupId, optionId);
+                var applied = ApplyDropdownSelectionNow(
+                    selector,
+                    dropdown,
+                    index,
+                    groupId,
+                    optionId,
+                    preserveCharacterSkinBundle);
+                if (preserveCharacterSkinBundle)
+                {
+                    if (!applied)
+                    {
+                        SkinService.ClearSelectedCharacterSkinBundle(groupId);
+                    }
+                    Populate(selector, FindGroup(groupId));
+                }
                 UpdateCharacterLoadingOverlay(overlay, optionName, 94);
                 ScheduleNextFrame(screen, () =>
                 {
@@ -1078,6 +1200,11 @@ internal static partial class ContextualSkinControls
         popup.WindowInput += inputEvent =>
         {
             if (inputEvent is not InputEventMouseMotion)
+            {
+                return;
+            }
+
+            if (popup.GetNodeOrNull<ItemList>(CharacterBundlePopupListName)?.Visible == true)
             {
                 return;
             }
@@ -2877,6 +3004,25 @@ internal static class MultiplayerEmbarkSkinSelectorPatch
             ModLog.Error("开始多人对局前应用皮肤包失败，将继续使用当前外观：" + error);
         }
         ContextualSkinControls.HideCharacterSelector(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(RunManager), nameof(RunManager.CleanUp))]
+internal static class CharacterSkinBundleRunCleanupPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix()
+    {
+        try
+        {
+            SkinService.RestoreCharacterSkinBundleAfterRun();
+        }
+        catch (Exception exception)
+        {
+            // A cosmetic restore must never prevent the game's own run cleanup. The sidecar is
+            // deliberately retained so startup recovery can finish the restore on the next boot.
+            ModLog.Error("退出对局时恢复皮肤包预设失败，将在下次启动重试：" + exception);
+        }
     }
 }
 

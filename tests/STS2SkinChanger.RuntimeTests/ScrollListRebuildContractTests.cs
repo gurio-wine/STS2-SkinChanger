@@ -15,8 +15,7 @@ internal static class ScrollListRebuildContractTests
             ("ContextualSkinControls", "BuildMonsterPriorityOverlay"),
             ("CharacterSkinCompositionControls", "BuildEditor"),
             ("CardSkinControls", "BuildPresetOverlay"),
-            ("ContextualSkinControls", "BuildMonsterPresetOverlay"),
-            ("CharacterSkinBundleControls", "BuildEditor")
+            ("ContextualSkinControls", "BuildMonsterPresetOverlay")
         };
         foreach (var (typeName, methodName) in builders)
         {
@@ -39,6 +38,24 @@ internal static class ScrollListRebuildContractTests
                 }
             }
         }
+
+        var bundleControls = assembly.GetType("STS2SkinChanger.Ui.CharacterSkinBundleControls", true)!;
+        var createState = bundleControls.GetMethod("CreateState", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var buildEditor = bundleControls.GetMethod("BuildEditor", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Require(PatchProcessor.GetOriginalInstructions(createState).Any(instruction =>
+                instruction.opcode == OpCodes.Newobj &&
+                instruction.operand is ConstructorInfo { DeclaringType: var type } &&
+                type == typeof(ScrollContainer)),
+            "皮肤包管理器必须在创建界面时建立固定视口滚动容器，不能在第二次打开时重建丢失。");
+        Require(PatchProcessor.GetOriginalInstructions(buildEditor).All(instruction =>
+                instruction.operand is not MethodInfo called ||
+                called.DeclaringType?.FullName != "STS2SkinChanger.Ui.ScrollListRebuild"),
+            "皮肤包管理器应只重建固定滚动视口内的内容。");
         Console.WriteLine("Scroll list rebuild contracts passed: priorities, compositions, presets and bundles.");
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
     }
 }

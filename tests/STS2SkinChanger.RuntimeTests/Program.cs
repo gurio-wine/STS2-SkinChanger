@@ -461,7 +461,8 @@ foreach (var methodName in new[]
          {
              "GetCharacterSkinBundles", "CreateCharacterSkinBundle",
              "OverwriteCharacterSkinBundle", "RenameCharacterSkinBundle",
-             "DeleteCharacterSkinBundle", "ApplyCharacterSkinBundle",
+             "DeleteCharacterSkinBundle", "GetCharacterSkinBundleCharacterOption",
+             "ApplySelectedCharacterSkinBundleForRun", "RestoreCharacterSkinBundleAfterRun",
              "GetCardPresetCategories", "GetMonsterPresetCategories"
          })
 {

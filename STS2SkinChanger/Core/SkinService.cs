@@ -6343,7 +6343,7 @@ internal static partial class SkinService
     {
         if (File.Exists(ConfigPath))
         {
-            return SkinConfig.Load(ConfigPath);
+            return RecoverInterruptedCharacterSkinBundleSession(SkinConfig.Load(ConfigPath));
         }
 
         var config = SkinConfig.Load(LegacyConfigPath);
@@ -6351,7 +6351,7 @@ internal static partial class SkinService
         {
             ModLog.Info("已将旧版 STS2SkinChanger 设置迁移到皮肤切换器-Skin Changer。");
         }
-        return config;
+        return RecoverInterruptedCharacterSkinBundleSession(config);
     }
 
     private static CharacterSkinComposition CloneCharacterSkinComposition(
