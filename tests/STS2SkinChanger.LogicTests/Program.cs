@@ -603,6 +603,29 @@ Require(appliedMonsterPreset["monster:jaw_worm"] == "skin:czn" &&
         appliedMonsterPreset["monster:automaton"] == "skin:other-act",
     "应用怪物预设必须替换当前地区的完整选择，同时保留其它地区已有选择。 ");
 
+var referencedBundle = new CharacterSkinBundle
+{
+    Name = "综合包",
+    CharacterGroupId = "REGENT",
+    CharacterOptionId = "skin:a"
+};
+referencedBundle.CardPresetNames["REGENT"] = "Cards A";
+referencedBundle.MonsterPresetNames["ACT:ONE"] = "Monsters A";
+CharacterSkinBundlePolicy.RenamePresetReference(
+    referencedBundle, monsterPreset: false, "regent", "Cards A", "Cards B");
+Require(referencedBundle.CardPresetNames["regent"] == "Cards B",
+    "卡牌预设重命名必须同步更新皮肤包引用。 ");
+CharacterSkinBundlePolicy.RemovePresetReference(
+    referencedBundle, monsterPreset: true, "act:one", "Monsters A");
+Require(!referencedBundle.MonsterPresetNames.ContainsKey("act:one"),
+    "怪物预设删除后，皮肤包对应地区必须自动变为不修改。 ");
+var normalizedBundles = CharacterSkinBundlePolicy.Normalize(
+    [referencedBundle, new CharacterSkinBundle { Name = "综合包", CharacterGroupId = "regent" }]);
+Require(normalizedBundles.Count == 1 &&
+        normalizedBundles[0].CharacterGroupId == "regent" &&
+        normalizedBundles[0].CardPresetNames.Comparer.Equals(StringComparer.OrdinalIgnoreCase),
+    "皮肤包加载时必须规范角色 ID、恢复大小写无关字典并去除同角色重名项。 ");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

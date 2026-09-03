@@ -73,6 +73,8 @@
              Link="MultiplayerSkinSyncParticipationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/MonsterSkinPresetPolicy.cs"
              Link="MonsterSkinPresetPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/CharacterSkinBundlePolicy.cs"
+             Link="CharacterSkinBundlePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/OtherCreatureCatalog.cs"
              Link="OtherCreatureCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantProviderReadyPolicy.cs"

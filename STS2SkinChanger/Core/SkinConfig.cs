@@ -52,6 +52,11 @@ internal sealed class SkinConfig
 
     public List<CharacterSkinComposition> CharacterSkinCompositions { get; set; } = [];
 
+    public List<CharacterSkinBundle> CharacterSkinBundles { get; set; } = [];
+
+    public Dictionary<string, string> ActiveCharacterSkinBundles { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public List<string> VisualProviderPriority { get; set; } = [];
 
     public int VisualSelectionDefaultsVersion { get; set; }
@@ -120,6 +125,10 @@ internal sealed class SkinConfig
     public float? CharacterSkinMergeX { get; set; }
 
     public float? CharacterSkinMergeY { get; set; }
+
+    public float? CharacterSkinBundleX { get; set; }
+
+    public float? CharacterSkinBundleY { get; set; }
 
     public float? IndividualCardSkinSelectorX { get; set; }
 
@@ -198,6 +207,21 @@ internal sealed class SkinConfig
                 StringComparer.OrdinalIgnoreCase);
         config.CharacterSkinCompositions = CharacterSkinCompositionPolicy.Normalize(
             config.CharacterSkinCompositions);
+        config.CharacterSkinBundles = CharacterSkinBundlePolicy.Normalize(
+            config.CharacterSkinBundles);
+        config.ActiveCharacterSkinBundles ??=
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        config.ActiveCharacterSkinBundles = config.ActiveCharacterSkinBundles
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) &&
+                           !string.IsNullOrWhiteSpace(pair.Value) &&
+                           config.CharacterSkinBundles.Any(bundle =>
+                               bundle.CharacterGroupId.Equals(
+                                   pair.Key, StringComparison.OrdinalIgnoreCase) &&
+                               bundle.Name.Equals(pair.Value, StringComparison.OrdinalIgnoreCase)))
+            .ToDictionary(
+                pair => pair.Key.Trim().ToLowerInvariant(),
+                pair => pair.Value.Trim(),
+                StringComparer.OrdinalIgnoreCase);
         config.VisualProviderPriority ??= [];
         config.VisualProviderPriority = config.VisualProviderPriority
             .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
