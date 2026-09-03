@@ -37,7 +37,7 @@
 - Produces: `CharacterSkinCompositionPolicy.Normalize`, `UniqueName`, `VisibleRawOptionIds`, `ResolveAvailableSourceIds`, and generic `ResolveAssets<T>`.
 - Produces: `SkinConfig.CharacterSkinCompositions` and preserves `CharacterIconSelections` only as a legacy migration input.
 
-- [ ] **Step 1: Write failing policy tests**
+- [x] **Step 1: Write failing policy tests**
 
 Add literal assertions covering single-source aliases, duplicate source removal, stable recipe IDs, duplicate-name suffixes, union hiding across multiple recipes, missing-source skipping and restoration, canonical first-wins assets, and first dynamic source selection.
 
@@ -59,13 +59,13 @@ Require(resolved.Assets["res://a"] == "A1" && resolved.Assets["res://b"] == "B2"
 Require(resolved.DynamicSourceId == "primary", "只能运行最高优先级动态来源。");
 ```
 
-- [ ] **Step 2: Run logic tests and verify RED**
+- [x] **Step 2: Run logic tests and verify RED**
 
 Run: `dotnet run --project tests/STS2SkinChanger.LogicTests/STS2SkinChanger.LogicTests.csproj -c Release`
 
 Expected: compilation fails because the composition policy and config model do not exist.
 
-- [ ] **Step 3: Implement the minimal pure policy and config normalization**
+- [x] **Step 3: Implement the minimal pure policy and config normalization**
 
 Use a `composition:` plus lowercase GUID ID, trim and cap names to 40 characters, preserve missing source IDs in recipes, remove only blank/duplicate IDs, and rebuild all dictionaries/lists with case-insensitive comparers during `SkinConfig.Deserialize`.
 An empty name uses the localized base name `合并皮肤`/`Combined Skin` plus the first available positive integer; an explicit duplicate name receives the same numeric suffix rule without changing any existing recipe ID.
@@ -81,13 +81,13 @@ internal sealed class CharacterSkinComposition
 }
 ```
 
-- [ ] **Step 4: Run logic tests and verify GREEN**
+- [x] **Step 4: Run logic tests and verify GREEN**
 
 Run: `dotnet run --project tests/STS2SkinChanger.LogicTests/STS2SkinChanger.LogicTests.csproj -c Release`
 
 Expected: `Skin Changer logic policy tests passed.`
 
-- [ ] **Step 5: Bump internal version and commit**
+- [x] **Step 5: Bump internal version and commit**
 
 Set all four-part assembly versions to `0.9.132.5`, then commit:
 

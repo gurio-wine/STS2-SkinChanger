@@ -40,6 +40,8 @@ internal sealed class SkinConfig
     public Dictionary<string, string> CharacterIconSelections { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
+    public List<CharacterSkinComposition> CharacterSkinCompositions { get; set; } = [];
+
     public List<string> VisualProviderPriority { get; set; } = [];
 
     public int VisualSelectionDefaultsVersion { get; set; }
@@ -171,6 +173,8 @@ internal sealed class SkinConfig
                 pair => pair.Key,
                 pair => pair.Value,
                 StringComparer.OrdinalIgnoreCase);
+        config.CharacterSkinCompositions = CharacterSkinCompositionPolicy.Normalize(
+            config.CharacterSkinCompositions);
         config.VisualProviderPriority ??= [];
         config.VisualProviderPriority = config.VisualProviderPriority
             .Where(providerId => !string.IsNullOrWhiteSpace(providerId))

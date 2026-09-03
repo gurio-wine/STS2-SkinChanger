@@ -88,6 +88,131 @@ Require(
     "观者美化版 · Hand Drawn",
     "卡图目录提供了明确名称时必须保留目录名，不能强制改成数字。");
 
+var normalizedCompositions = CharacterSkinCompositionPolicy.Normalize(
+[
+    new CharacterSkinComposition
+    {
+        Id = "composition:stable",
+        GroupId = "silent",
+        Name = "  猎手组合  ",
+        SourceOptionIds = ["primary", "PRIMARY", "fallback", "  "]
+    },
+    new CharacterSkinComposition
+    {
+        Id = "composition:stable",
+        GroupId = "silent",
+        Name = "备用",
+        SourceOptionIds = ["missing"]
+    }
+]);
+Require(
+    normalizedCompositions.Count == 2 &&
+    normalizedCompositions[0].Id == "composition:stable" &&
+    normalizedCompositions[0].Name == "猎手组合" &&
+    normalizedCompositions[0].SourceOptionIds.SequenceEqual(["primary", "fallback"]) &&
+    normalizedCompositions[1].Id.StartsWith(
+        CharacterSkinCompositionPolicy.IdPrefix,
+        StringComparison.Ordinal) &&
+    normalizedCompositions[1].Id != "composition:stable",
+    "合并皮肤配置必须保留首个稳定 ID、清理重复来源，并为冲突 ID 生成独立值。");
+
+Require(
+    CharacterSkinCompositionPolicy.UniqueName(
+        null,
+        ["合并皮肤 1", "合并皮肤 2"],
+        "合并皮肤") == "合并皮肤 3" &&
+    CharacterSkinCompositionPolicy.UniqueName(
+        "猎手组合",
+        ["猎手组合", "猎手组合 2"],
+        "合并皮肤") == "猎手组合 3" &&
+    CharacterSkinCompositionPolicy.UniqueName(
+        "自定义别名",
+        [],
+        "合并皮肤") == "自定义别名",
+    "空名称和重名必须使用连续数字，而单来源自定义别名应保持原名。");
+
+var hiddenCompositions = new[]
+{
+    new CharacterSkinComposition
+    {
+        Id = "composition:hidden-a",
+        GroupId = "silent",
+        Name = "隐藏 A",
+        SourceOptionIds = ["a", "shared"],
+        HideSources = true
+    },
+    new CharacterSkinComposition
+    {
+        Id = "composition:visible-b",
+        GroupId = "silent",
+        Name = "显示 B",
+        SourceOptionIds = ["b", "shared"],
+        HideSources = false
+    },
+    new CharacterSkinComposition
+    {
+        Id = "composition:other",
+        GroupId = "ironclad",
+        Name = "其它角色",
+        SourceOptionIds = ["c"],
+        HideSources = true
+    }
+};
+Require(
+    CharacterSkinCompositionPolicy.VisibleRawOptionIds(
+            "silent",
+            ["a", "b", "shared", "c"],
+            hiddenCompositions)
+        .SequenceEqual(["b", "c"]),
+    "隐藏来源必须合并当前角色全部启用隐藏的配方，不能受其它角色或未勾选配方影响。");
+
+var missingRecipe = new CharacterSkinComposition
+{
+    Id = "composition:missing",
+    GroupId = "silent",
+    Name = "缺失来源",
+    SourceOptionIds = ["installed-a", "missing", "installed-c"]
+};
+Require(
+    CharacterSkinCompositionPolicy.ResolveAvailableSourceIds(
+            missingRecipe.SourceOptionIds,
+            ["installed-a", "installed-c"])
+        .SequenceEqual(["installed-a", "installed-c"]) &&
+    CharacterSkinCompositionPolicy.ResolveAvailableSourceIds(
+            missingRecipe.SourceOptionIds,
+            ["installed-a", "missing", "installed-c"])
+        .SequenceEqual(["installed-a", "missing", "installed-c"]),
+    "未安装来源只能在本次解析时跳过，重新安装后必须按原顺序自动恢复。");
+
+var composedAssets = CharacterSkinCompositionPolicy.ResolveAssets(
+    ["primary", "fallback"],
+    new Dictionary<string, CharacterSkinCompositionSource<string>>(
+        StringComparer.OrdinalIgnoreCase)
+    {
+        ["primary"] = new(
+            "primary",
+            HasDynamicBehavior: true,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["res://characters/silent.tscn"] = "primary-scene"
+            }),
+        ["fallback"] = new(
+            "fallback",
+            HasDynamicBehavior: true,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["RES://CHARACTERS/SILENT.TSCN"] = "fallback-scene",
+                ["res://images/ui/silent.png"] = "fallback-icon"
+            })
+    },
+    path => path.ToLowerInvariant());
+Require(
+    composedAssets.SourceOptionIds.SequenceEqual(["primary", "fallback"]) &&
+    composedAssets.Assets["res://characters/silent.tscn"] == "primary-scene" &&
+    composedAssets.Assets["res://images/ui/silent.png"] == "fallback-icon" &&
+    composedAssets.DynamicSourceId == "primary",
+    "合并皮肤必须以规范路径执行前项覆盖、后项补缺，并且只运行首个动态来源。");
+
 Require(
     CharacterGroupEvidencePolicy.ResolveEligibleGroups(
             ["regent", "defect"],
