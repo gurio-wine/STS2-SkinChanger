@@ -25,8 +25,6 @@ internal static partial class ContextualSkinControls
     private const string SelectorName = "STS2SkinSelector";
     private const string MultiplayerSkinSyncToggleName = "MultiplayerSkinSyncToggle";
     private const string MultiplayerSkinLoadingToggleName = "MultiplayerSkinLoadingToggle";
-    private const string InRunAppearanceEntryToggleName = "InRunAppearanceEntryToggle";
-    private const string CharacterSelectorTopRightToggleName = "CharacterSelectorTopRightToggle";
     private const string DropdownName = "SkinDropdown";
     private const string MonsterScaleSliderName = "MonsterScaleSlider";
     private const string MonsterScaleValueName = "MonsterScaleValue";
@@ -212,10 +210,8 @@ internal static partial class ContextualSkinControls
         var existing = FindCharacterSelector(screen);
         if (existing != null)
         {
-            ApplyCharacterSelectorPlacement(screen, infoPanel, existing);
+            AttachCharacterSelectorDragging(screen, infoPanel, existing);
             EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
-            EnsureInRunAppearanceEntryToggle(infoPanel);
-            EnsureCharacterSelectorTopRightToggle(screen, infoPanel, existing);
             return existing;
         }
 
@@ -223,11 +219,9 @@ internal static partial class ContextualSkinControls
         ConfigureCharacterDropdownPreview(
             selector,
             selector.GetNode<OptionButton>(DropdownName));
-        infoPanel.AddChild(selector);
-        ApplyCharacterSelectorPlacement(screen, infoPanel, selector);
+        screen.AddChild(selector);
+        AttachCharacterSelectorDragging(screen, infoPanel, selector);
         EnsureMultiplayerSkinLoadingToggle(screen, infoPanel);
-        EnsureInRunAppearanceEntryToggle(infoPanel);
-        EnsureCharacterSelectorTopRightToggle(screen, infoPanel, selector);
         ModLocalization.Bind(selector, () => RefreshLocalizedText(selector));
         return selector;
     }
@@ -236,6 +230,11 @@ internal static partial class ContextualSkinControls
         screen.GetNodeOrNull<HBoxContainer>(SelectorName) ??
         screen.GetNodeOrNull<HBoxContainer>($"InfoPanel/{SelectorName}");
 
+    private static void AttachCharacterSelectorDragging(
+        NCharacterSelectScreen screen, Control infoPanel, HBoxContainer selector) =>
+        DraggableSkinControl.Attach(screen, selector, mergeButton: false,
+            () => ApplyCharacterSelectorPlacement(screen, infoPanel, selector));
+
     private static void ApplyCharacterSelectorPlacement(
         NCharacterSelectScreen screen,
         Control infoPanel,
@@ -243,10 +242,26 @@ internal static partial class ContextualSkinControls
     {
         var placement = CharacterSelectorPlacementPolicy.Resolve(
             SkinService.ShouldPlaceCharacterSelectorTopRight());
-        var host = placement.Host == CharacterSelectorHost.Screen ? screen : infoPanel;
-        if (selector.GetParent() != host)
+        if (placement.Host == CharacterSelectorHost.InfoPanel)
         {
-            selector.Reparent(host, keepGlobalTransform: false);
+            // Resolve the old default against InfoPanel, but keep one screen parent for the
+            // control's entire lifetime. Reparenting during a drag interrupts input capture
+            // and removes TreeExited-bound localization/refresh callbacks.
+            var transform = screen.GetGlobalTransformWithCanvas().AffineInverse() *
+                            infoPanel.GetGlobalTransformWithCanvas();
+            var topLeft = transform * new Vector2(
+                infoPanel.Size.X * placement.AnchorLeft + placement.OffsetLeft,
+                infoPanel.Size.Y * placement.AnchorTop + placement.OffsetTop);
+            var bottomRight = transform * new Vector2(
+                infoPanel.Size.X * placement.AnchorRight + placement.OffsetRight,
+                infoPanel.Size.Y * placement.AnchorBottom + placement.OffsetBottom);
+            selector.AnchorLeft = selector.AnchorTop = selector.AnchorRight = selector.AnchorBottom = 0f;
+            selector.OffsetLeft = topLeft.X;
+            selector.OffsetTop = topLeft.Y;
+            selector.OffsetRight = bottomRight.X;
+            selector.OffsetBottom = bottomRight.Y;
+            selector.ZIndex = 20;
+            return;
         }
 
         selector.AnchorLeft = placement.AnchorLeft;
@@ -258,103 +273,6 @@ internal static partial class ContextualSkinControls
         selector.OffsetRight = placement.OffsetRight;
         selector.OffsetBottom = placement.OffsetBottom;
         selector.ZIndex = placement.Host == CharacterSelectorHost.Screen ? 20 : 0;
-    }
-
-    private static void EnsureCharacterSelectorTopRightToggle(
-        NCharacterSelectScreen screen,
-        Control infoPanel,
-        HBoxContainer selector)
-    {
-        var toggle = infoPanel.GetNodeOrNull<CheckButton>(CharacterSelectorTopRightToggleName);
-        if (toggle == null)
-        {
-            toggle = new CheckButton
-            {
-                Name = CharacterSelectorTopRightToggleName,
-                AnchorLeft = 0.5f,
-                AnchorTop = 0f,
-                AnchorRight = 0.5f,
-                AnchorBottom = 0f,
-                OffsetLeft = -210f,
-                OffsetTop = -272f,
-                OffsetRight = 210f,
-                OffsetBottom = -228f,
-                Alignment = HorizontalAlignment.Center,
-                MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
-            };
-            toggle.AddThemeColorOverride("font_color", new Color("fff6e2"));
-            toggle.AddThemeColorOverride("font_hover_color", Colors.White);
-            toggle.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
-            toggle.AddThemeColorOverride("font_outline_color", new Color("332f27"));
-            toggle.AddThemeConstantOverride("outline_size", 3);
-            toggle.AddThemeFontSizeOverride("font_size", 18);
-            if (GameFont != null)
-            {
-                toggle.AddThemeFontOverride("font", GameFont);
-            }
-
-            toggle.SetPressedNoSignal(SkinService.ShouldPlaceCharacterSelectorTopRight());
-            toggle.Toggled += enabled =>
-            {
-                SkinService.SetCharacterSelectorTopRight(enabled);
-                ApplyCharacterSelectorPlacement(screen, infoPanel, selector);
-            };
-            infoPanel.AddChild(toggle);
-            ModLocalization.Bind(toggle, () =>
-            {
-                toggle.Text = ModLocalization.Get(ModText.CharacterSelectorTopRight);
-                toggle.SetPressedNoSignal(SkinService.ShouldPlaceCharacterSelectorTopRight());
-            });
-        }
-
-        toggle.Visible = true;
-        toggle.SetPressedNoSignal(SkinService.ShouldPlaceCharacterSelectorTopRight());
-    }
-
-    private static void EnsureInRunAppearanceEntryToggle(Control infoPanel)
-    {
-        var toggle = infoPanel.GetNodeOrNull<CheckButton>(InRunAppearanceEntryToggleName);
-        if (toggle == null)
-        {
-            toggle = new CheckButton
-            {
-                Name = InRunAppearanceEntryToggleName,
-                AnchorLeft = 0.5f,
-                AnchorTop = 0f,
-                AnchorRight = 0.5f,
-                AnchorBottom = 0f,
-                OffsetLeft = -210f,
-                OffsetTop = -224f,
-                OffsetRight = 210f,
-                OffsetBottom = -180f,
-                Alignment = HorizontalAlignment.Center,
-                MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
-            };
-            toggle.AddThemeColorOverride("font_color", new Color("fff6e2"));
-            toggle.AddThemeColorOverride("font_hover_color", Colors.White);
-            toggle.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
-            toggle.AddThemeColorOverride("font_outline_color", new Color("332f27"));
-            toggle.AddThemeConstantOverride("outline_size", 3);
-            toggle.AddThemeFontSizeOverride("font_size", 18);
-            if (GameFont != null)
-            {
-                toggle.AddThemeFontOverride("font", GameFont);
-            }
-
-            toggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
-            toggle.Toggled += SkinService.SetShowInRunAppearanceEntry;
-            infoPanel.AddChild(toggle);
-            ModLocalization.Bind(toggle, () =>
-            {
-                toggle.Text = ModLocalization.Get(ModText.ShowInRunAppearanceEntry);
-                toggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
-            });
-        }
-
-        toggle.Visible = true;
-        toggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
     }
 
     private static void EnsureMultiplayerSkinLoadingToggle(
@@ -734,19 +652,6 @@ internal static partial class ContextualSkinControls
             syncToggle.Visible = false;
         }
 
-        var appearanceEntryToggle = screen.GetNodeOrNull<Control>(
-            $"InfoPanel/{InRunAppearanceEntryToggleName}");
-        if (appearanceEntryToggle != null)
-        {
-            appearanceEntryToggle.Visible = false;
-        }
-
-        var placementToggle = screen.GetNodeOrNull<Control>(
-            $"InfoPanel/{CharacterSelectorTopRightToggleName}");
-        if (placementToggle != null)
-        {
-            placementToggle.Visible = false;
-        }
     }
 
     internal static bool ShouldIgnoreBackgroundMute(NMuteInBackgroundHandler handler, int notification)

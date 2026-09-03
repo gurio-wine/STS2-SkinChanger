@@ -17,6 +17,8 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+AppearanceControlContractTests.Run();
+
 var managedModListPatchType = typeof(Entry).Assembly.GetType(
                                   "STS2SkinChanger.Ui.ManagedModListNamePatch") ??
                               throw new InvalidOperationException("找不到 Mod 列表 [SC] 标记补丁类型。");
@@ -709,7 +711,7 @@ if (compositionShowMethod.GetParameters().Length != 3)
 var modTextType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.ModText") ??
                   throw new InvalidOperationException("找不到 ModText。");
 var compositionEditorStateType = compositionControlsType.GetNestedType("EditorState", BindingFlags.NonPublic)!;
-var compositionEditorState = Activator.CreateInstance(compositionEditorStateType, new object?[] { null, null, null })!;
+var compositionEditorState = Activator.CreateInstance(compositionEditorStateType, new object?[] { null, null, null, null })!;
 var confirmCompositionDelete = compositionEditorStateType.GetMethod("TryConfirmDelete") ??
                                throw new InvalidOperationException("合并皮肤删除缺少二次确认。");
 var editingCompositionId = compositionEditorStateType.GetProperty("EditingCompositionId")!;

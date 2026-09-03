@@ -449,6 +449,34 @@ Require(
         1f - CardSkinSelectorPlacementPolicy.SelectorHeight / 2f / 1200f,
     "拖动单卡皮肤控件时必须限制在屏幕内，避免保存后再也无法找回。");
 
+var characterButtonPosition = DraggableControlPlacementPolicy.ClampNormalized(
+    -1f, 2f, 1920f, 1080f, 452f, 44f);
+Require(characterButtonPosition == new NormalizedControlPosition(226f / 1920f, 1f - 22f / 1080f),
+    "选角按钮拖动必须按实际尺寸限制在屏幕内，不能套用卡牌按钮的固定宽度。");
+var oversizedMergeButtonPosition = DraggableControlPlacementPolicy.ClampNormalized(
+    1f, 0f, 160f, 30f, 280f, 46f);
+Require(oversizedMergeButtonPosition == new NormalizedControlPosition(0.5f, 0.5f),
+    "小窗口或长文本按钮大于窗口时应居中，不能出现反向边界异常。");
+Require(DraggableControlPlacementPolicy.ClampNormalized(float.NaN, 0f, 1920f, 1080f, 452f, 44f) ==
+        new NormalizedControlPosition(0.5f, 0.5f), "无效拖动坐标不能使按钮消失。");
+var holdGesture = new PauseMenuHoldGesture();
+holdGesture.Begin(1000);
+Require(!holdGesture.Advance(1799) && !holdGesture.ConsumeRelease(),
+    "短按必须保留原来的打开外观或继续游戏操作。");
+holdGesture.Begin(2000);
+Require(holdGesture.Advance(2800) && !holdGesture.Advance(3800) && holdGesture.ConsumeRelease(),
+    "长按只触发一次，并吞掉随后松开引发的普通点击。");
+holdGesture.Begin(4000);
+holdGesture.Cancel();
+Require(!holdGesture.Advance(5000) && holdGesture.ConsumeRelease(),
+    "长按中途移出、失焦或关闭菜单必须取消，松开不能误点其他操作。");
+holdGesture.Begin(6000);
+Require(!holdGesture.ConsumeRelease(), "取消后的下一次短按不能被上一轮的状态吞掉。");
+holdGesture.Begin(7000);
+Require(holdGesture.Advance(7800), "长按达到阈值应立即生效。");
+holdGesture.Cancel();
+Require(holdGesture.ConsumeRelease(), "隐藏按钮导致失焦后仍须吞掉本次松开的点击。");
+
 var singleProviderIdentity = ProviderInstanceIdentityPolicy.Resolve(
     [new ProviderInstanceCandidate("Same.Id", "Single Skin", @"D:\mods\only")]);
 Require(

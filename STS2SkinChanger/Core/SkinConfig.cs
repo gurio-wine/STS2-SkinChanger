@@ -98,6 +98,14 @@ internal sealed class SkinConfig
 
     public bool CharacterSelectorTopRight { get; set; }
 
+    public float? CharacterSkinSelectorX { get; set; }
+
+    public float? CharacterSkinSelectorY { get; set; }
+
+    public float? CharacterSkinMergeX { get; set; }
+
+    public float? CharacterSkinMergeY { get; set; }
+
     public float? IndividualCardSkinSelectorX { get; set; }
 
     public float? IndividualCardSkinSelectorY { get; set; }

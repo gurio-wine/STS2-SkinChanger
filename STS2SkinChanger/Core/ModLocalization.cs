@@ -70,8 +70,8 @@ internal enum ModText
     DirectDragIntentHint,
     MultiplayerSkinSync,
     LoadOtherPlayersCustomSkins,
-    ShowInRunAppearanceEntry,
-    CharacterSelectorTopRight,
+    HideAppearanceHoldHint,
+    ShowAppearanceHoldHint,
     CardSkinSelectorDragHint,
     RestorePlayerPosition,
     CharacterSkinMerge,
@@ -971,44 +971,44 @@ internal static class ModLocalization
             ["tur"] = "Çevrimiçi oyuncu görünümlerini eşitle"
         };
 
-    private static readonly IReadOnlyDictionary<string, string> InRunAppearanceEntryTexts =
+    private static readonly IReadOnlyDictionary<string, string> HideAppearanceHoldHintTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = "Show Appearance in pause menu",
-            ["zhs"] = "暂停菜单显示“外观”",
-            ["zht"] = "暫停選單顯示「外觀」",
-            ["deu"] = "„Aussehen“ im Pausenmenü anzeigen",
-            ["esp"] = "Mostrar «Aspecto» en el menú de pausa",
-            ["fra"] = "Afficher « Apparence » dans le menu pause",
-            ["ita"] = "Mostra «Aspetto» nel menu di pausa",
-            ["jpn"] = "ポーズメニューに「外見」を表示",
-            ["kor"] = "일시정지 메뉴에 ‘외형’ 표시",
-            ["pol"] = "Pokaż „Wygląd” w menu pauzy",
-            ["ptb"] = "Mostrar “Visual” no menu de pausa",
-            ["rus"] = "Показывать «Облик» в меню паузы",
-            ["spa"] = "Mostrar «Aspecto» en el menú de pausa",
-            ["tha"] = "แสดง “รูปลักษณ์” ในเมนูหยุดเกม",
-            ["tur"] = "Duraklatma menüsünde “Görünüm”ü göster"
+            ["eng"] = "Hold to hide this button; hold Resume to show it again",
+            ["zhs"] = "长按隐藏此按钮；长按“继续游戏”可恢复",
+            ["zht"] = "長按隱藏此按鈕；長按「繼續遊戲」可恢復",
+            ["deu"] = "Gedrückt halten zum Ausblenden; „Fortsetzen“ gedrückt halten zum Einblenden",
+            ["esp"] = "Mantén pulsado para ocultar; mantén pulsado «Continuar» para mostrarlo de nuevo",
+            ["fra"] = "Maintenir pour masquer ; maintenir « Reprendre » pour réafficher",
+            ["ita"] = "Tieni premuto per nascondere; tieni premuto «Riprendi» per mostrare di nuovo",
+            ["jpn"] = "長押しで非表示。「ゲームに戻る」を長押しすると再表示",
+            ["kor"] = "길게 눌러 숨기기. ‘계속하기’를 길게 누르면 다시 표시",
+            ["pol"] = "Przytrzymaj, aby ukryć; przytrzymaj „Wznów”, aby pokazać ponownie",
+            ["ptb"] = "Segure para ocultar; segure “Continuar” para mostrar novamente",
+            ["rus"] = "Удерживайте, чтобы скрыть; удерживайте «Продолжить», чтобы вернуть",
+            ["spa"] = "Mantén pulsado para ocultar; mantén pulsado «Continuar» para mostrarlo de nuevo",
+            ["tha"] = "กดค้างเพื่อซ่อนปุ่มนี้ กด “เล่นต่อ” ค้างเพื่อแสดงอีกครั้ง",
+            ["tur"] = "Gizlemek için basılı tut; yeniden göstermek için “Devam et”i basılı tut"
         };
 
-    private static readonly IReadOnlyDictionary<string, string> CharacterSelectorTopRightTexts =
+    private static readonly IReadOnlyDictionary<string, string> ShowAppearanceHoldHintTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = "Skin controls at top right",
-            ["zhs"] = "皮肤选项放在右上角",
-            ["zht"] = "外觀選項放在右上角",
-            ["deu"] = "Skin-Auswahl oben rechts",
-            ["esp"] = "Controles de aspecto arriba a la derecha",
-            ["fra"] = "Skins en haut à droite",
-            ["ita"] = "Controlli skin in alto a destra",
-            ["jpn"] = "スキン操作を右上に配置",
-            ["kor"] = "스킨 설정을 오른쪽 위에 배치",
-            ["pol"] = "Skórki w prawym górnym rogu",
-            ["ptb"] = "Controles de visual no canto superior direito",
-            ["rus"] = "Выбор облика в правом верхнем углу",
-            ["spa"] = "Controles de aspecto arriba a la derecha",
-            ["tha"] = "วางตัวเลือกสกินไว้ด้านขวาบน",
-            ["tur"] = "Görünüm seçenekleri sağ üstte"
+            ["eng"] = "Hold to show the Appearance button",
+            ["zhs"] = "长按显示“外观”按钮",
+            ["zht"] = "長按顯示「外觀」按鈕",
+            ["deu"] = "Gedrückt halten, um „Aussehen“ einzublenden",
+            ["esp"] = "Mantén pulsado para mostrar el botón «Aspecto»",
+            ["fra"] = "Maintenir pour afficher le bouton « Apparence »",
+            ["ita"] = "Tieni premuto per mostrare il pulsante «Aspetto»",
+            ["jpn"] = "長押しで「外見」ボタンを表示",
+            ["kor"] = "길게 눌러 ‘외형’ 버튼 표시",
+            ["pol"] = "Przytrzymaj, aby pokazać przycisk „Wygląd”",
+            ["ptb"] = "Segure para mostrar o botão “Visual”",
+            ["rus"] = "Удерживайте, чтобы показать кнопку «Облик»",
+            ["spa"] = "Mantén pulsado para mostrar el botón «Aspecto»",
+            ["tha"] = "กดค้างเพื่อแสดงปุ่ม “รูปลักษณ์”",
+            ["tur"] = "“Görünüm” düğmesini göstermek için basılı tut"
         };
 
     private static readonly IReadOnlyDictionary<string, string> CardSkinSelectorDragHintTexts =
@@ -1325,10 +1325,10 @@ internal static class ModLocalization
             ? MultiplayerSkinSyncTexts[CurrentLanguage]
             : text == ModText.LoadOtherPlayersCustomSkins
             ? MultiplayerSkinLoadingTexts[CurrentLanguage]
-            : text == ModText.ShowInRunAppearanceEntry
-                ? InRunAppearanceEntryTexts[CurrentLanguage]
-            : text == ModText.CharacterSelectorTopRight
-                ? CharacterSelectorTopRightTexts[CurrentLanguage]
+            : text == ModText.HideAppearanceHoldHint
+                ? HideAppearanceHoldHintTexts[CurrentLanguage]
+            : text == ModText.ShowAppearanceHoldHint
+                ? ShowAppearanceHoldHintTexts[CurrentLanguage]
             : text == ModText.CardSkinSelectorDragHint
                 ? CardSkinSelectorDragHintTexts[CurrentLanguage]
             : text == ModText.RestorePlayerPosition

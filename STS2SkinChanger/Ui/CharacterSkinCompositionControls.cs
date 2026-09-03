@@ -28,7 +28,7 @@ internal static class CharacterSkinCompositionControls
             StringComparison.OrdinalIgnoreCase);
         state.Group = group;
         state.Refresh = refresh;
-        state.EntryButton.Visible = group != null &&
+        state.EntryControl.Visible = group != null &&
                                     SkinService.GetRawCharacterSkinOptions(group.Id).Count > 0;
         if (changedGroup && state.Overlay.Visible)
         {
@@ -44,37 +44,54 @@ internal static class CharacterSkinCompositionControls
             return;
         }
 
-        state.EntryButton.Visible = false;
+        state.EntryControl.Visible = false;
         state.Overlay.Visible = false;
     }
 
     private static EditorState CreateState(NCharacterSelectScreen screen)
     {
-        var entryButton = new Button
+        var entryControl = new HBoxContainer
         {
-            Name = EntryButtonName,
+            Name = "STS2CharacterSkinMergeControl",
             AnchorLeft = 0f,
             AnchorTop = 0f,
             AnchorRight = 0f,
             AnchorBottom = 0f,
             OffsetLeft = 38f,
             OffsetTop = 86f,
-            OffsetRight = 218f,
+            OffsetRight = 246f,
             OffsetBottom = 132f,
-            FocusMode = Control.FocusModeEnum.None,
-            MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+            MouseFilter = Control.MouseFilterEnum.Stop,
             Visible = false,
             ZIndex = 100
         };
+        var entryButton = new Button
+        {
+            Name = EntryButtonName,
+            CustomMinimumSize = new Vector2(180f, 46f),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            FocusMode = Control.FocusModeEnum.None,
+            MouseDefaultCursorShape = Control.CursorShape.PointingHand
+        };
         ContextualSkinControls.ApplyGameTheme(entryButton);
         entryButton.AddThemeFontSizeOverride("font_size", 19);
-        screen.AddChild(entryButton);
+        entryControl.AddChild(entryButton);
+        screen.AddChild(entryControl);
+        DraggableSkinControl.Attach(screen, entryControl, mergeButton: true, () =>
+        {
+            entryControl.AnchorLeft = entryControl.AnchorRight = 0f;
+            entryControl.AnchorTop = entryControl.AnchorBottom = 0f;
+            entryControl.OffsetLeft = 38f;
+            entryControl.OffsetTop = 86f;
+            entryControl.OffsetRight = 246f;
+            entryControl.OffsetBottom = 132f;
+        });
 
         var overlay = CreateOverlay();
         screen.AddChild(overlay);
         overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
-        var state = new EditorState(screen, entryButton, overlay);
+        var state = new EditorState(screen, entryControl, entryButton, overlay);
         entryButton.Pressed += () => Open(state);
         overlay.GetNode<ColorRect>("Mask").GuiInput += input =>
         {
@@ -587,10 +604,12 @@ internal static class CharacterSkinCompositionControls
 
     private sealed class EditorState(
         NCharacterSelectScreen screen,
+        Control entryControl,
         Button entryButton,
         Control overlay)
     {
         public NCharacterSelectScreen Screen { get; } = screen;
+        public Control EntryControl { get; } = entryControl;
         public Button EntryButton { get; } = entryButton;
         public Control Overlay { get; } = overlay;
         public SkinGroup? Group { get; set; }

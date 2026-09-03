@@ -2418,6 +2418,10 @@ internal static class CharacterAppearancePauseMenu
         try
         {
             var container = pauseMenu.GetNode<Control>("%ButtonContainer");
+            // Always bind Resume, even when the appearance entry was hidden in an earlier run.
+            var resume = container.GetNode<NPauseMenuButton>("Resume");
+            PauseMenuHoldControl.Attach(resume,
+                () => SetEntryVisible(pauseMenu, true), ModText.ShowAppearanceHoldHint);
             var existing = container.GetNodeOrNull<NPauseMenuButton>(ButtonName);
             var visibility = PauseMenuAppearanceEntryPolicy.Resolve(
                 SkinService.ShouldShowInRunAppearanceEntry(),
@@ -2447,7 +2451,15 @@ internal static class CharacterAppearancePauseMenu
 
             button.Connect(
                 NClickableControl.SignalName.Released,
-                Callable.From<NButton>(_ => Open(pauseMenu)));
+                Callable.From<NButton>(clicked =>
+                {
+                    if (!PauseMenuHoldControl.ConsumeClick(clicked))
+                    {
+                        Open(pauseMenu);
+                    }
+                }));
+            PauseMenuHoldControl.Attach(button,
+                () => SetEntryVisible(pauseMenu, false), ModText.HideAppearanceHoldHint);
             ModLocalization.Bind(button, () =>
                 button.GetNode<MegaLabel>("Label")
                     .SetTextAutoSize(ModLocalization.Get(ModText.CharacterAppearance)));
@@ -2456,6 +2468,16 @@ internal static class CharacterAppearancePauseMenu
         catch (Exception exception)
         {
             ModLog.Error("添加游戏内角色外观入口失败：" + exception);
+        }
+    }
+
+    private static void SetEntryVisible(NPauseMenu pauseMenu, bool visible)
+    {
+        SkinService.SetShowInRunAppearanceEntry(visible);
+        Attach(pauseMenu);
+        if (!visible)
+        {
+            pauseMenu.GetNode<Control>("%ButtonContainer/Resume").GrabFocus();
         }
     }
 
@@ -2513,9 +2535,15 @@ internal static class CharacterAppearancePauseMenu
     }
 }
 
-[HarmonyPatch(typeof(NPauseMenu), nameof(NPauseMenu._Ready))]
+[HarmonyPatch]
 internal static class CharacterAppearancePauseMenuPatch
 {
+    private static IEnumerable<MethodBase> TargetMethods() =>
+    [
+        AccessTools.Method(typeof(NPauseMenu), nameof(NPauseMenu._Ready)),
+        AccessTools.Method(typeof(NPauseMenu), nameof(NPauseMenu.OnSubmenuOpened))
+    ];
+
     [HarmonyPriority(Priority.Last)]
     private static void Postfix(NPauseMenu __instance) =>
         CharacterAppearancePauseMenu.Attach(__instance);

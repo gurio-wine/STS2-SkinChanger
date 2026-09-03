@@ -847,17 +847,60 @@ internal static class SkinService
         }
     }
 
-    public static void SetCharacterSelectorTopRight(bool enabled)
+    public static (float X, float Y)? GetCharacterSkinControlPosition(bool mergeButton)
     {
         lock (Sync)
         {
             EnsureConfigLoaded();
-            if (Config.CharacterSelectorTopRight == enabled)
-            {
-                return;
-            }
+            var x = mergeButton ? Config.CharacterSkinMergeX : Config.CharacterSkinSelectorX;
+            var y = mergeButton ? Config.CharacterSkinMergeY : Config.CharacterSkinSelectorY;
+            return x is { } px && y is { } py && float.IsFinite(px) && float.IsFinite(py)
+                ? (Math.Clamp(px, 0f, 1f), Math.Clamp(py, 0f, 1f))
+                : null;
+        }
+    }
 
-            Config.CharacterSelectorTopRight = enabled;
+    public static void SetCharacterSkinControlPosition(bool mergeButton, float x, float y)
+    {
+        if (!float.IsFinite(x) || !float.IsFinite(y))
+        {
+            return;
+        }
+
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            if (mergeButton)
+            {
+                Config.CharacterSkinMergeX = Math.Clamp(x, 0f, 1f);
+                Config.CharacterSkinMergeY = Math.Clamp(y, 0f, 1f);
+            }
+            else
+            {
+                Config.CharacterSkinSelectorX = Math.Clamp(x, 0f, 1f);
+                Config.CharacterSkinSelectorY = Math.Clamp(y, 0f, 1f);
+            }
+            Config.Save(ConfigPath);
+        }
+    }
+
+    public static void ResetCharacterSkinControlPosition(bool mergeButton)
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            if (mergeButton)
+            {
+                Config.CharacterSkinMergeX = null;
+                Config.CharacterSkinMergeY = null;
+            }
+            else
+            {
+                Config.CharacterSkinSelectorX = null;
+                Config.CharacterSkinSelectorY = null;
+                // Keep the old preference until the player explicitly resets the position.
+                Config.CharacterSelectorTopRight = false;
+            }
             Config.Save(ConfigPath);
         }
     }
