@@ -1479,6 +1479,13 @@ internal static class SkinService
 
     public static bool ApplySelection(string groupId, string optionId)
     {
+        // The category entry is an instruction, not a resource provider. Keep this in the
+        // shared selection path so queued in-run choices retain their follow-category state.
+        if (optionId.Equals(InheritMonsterSelectionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return FollowMonsterCategoryPriority(groupId);
+        }
+
         lock (Sync)
         {
             if (Catalog == null)
@@ -2207,6 +2214,10 @@ internal static class SkinService
                 adoptUnconfiguredGroups: false);
         }
     }
+
+    public static bool HasMonsterSkinCategory(string groupId) =>
+        Config.MonsterSkinCategoryGroups.Values.Any(groupIds =>
+            groupIds.Contains(groupId, StringComparer.OrdinalIgnoreCase));
 
     public static string GetMonsterOverrideSelection(string groupId) =>
         Config.MonsterGroupsFollowingCategory.Contains(groupId, StringComparer.OrdinalIgnoreCase)

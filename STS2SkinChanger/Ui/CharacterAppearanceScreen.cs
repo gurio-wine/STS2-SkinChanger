@@ -709,8 +709,15 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         _skinDropdown.Disabled = false;
+        var hasMonsterPriorityContext = SkinService.HasMonsterSkinCategory(_group.Id);
+        if (hasMonsterPriorityContext)
+        {
+            _skinDropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
+            _skinDropdown.SetItemMetadata(0, SkinService.InheritMonsterSelectionId);
+        }
+        var defaultIndex = _skinDropdown.ItemCount;
         _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
-        _skinDropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
+        _skinDropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
         var options = SkinService.Catalog?.IsCharacterAppearanceGroup(_group.Id) == true
             ? SkinService.GetCharacterSkinOptions(_group.Id)
             : _group.Options;
@@ -722,7 +729,9 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         var selection = CharacterAppearanceRuntime.GetRequestedOption(_group.Id) ??
-                        (_targetCreature != null
+                        (hasMonsterPriorityContext
+                            ? SkinService.GetMonsterOverrideSelection(_group.Id)
+                            : _targetCreature != null
                             ? MultiplayerSkinSync.GetSelectionForCreature(
                                 _targetCreature.Entity,
                                 _group.Id)

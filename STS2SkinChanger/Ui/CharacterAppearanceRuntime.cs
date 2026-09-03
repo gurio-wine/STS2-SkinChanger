@@ -19,6 +19,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.sts2.Core.Nodes.TopBar;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
@@ -105,6 +106,8 @@ internal static class CharacterAppearanceRuntime
         AccessTools.Field(typeof(NBossMapPoint), "_placeholderOutline");
     private static readonly MethodInfo? BossMapRefreshColorMethod =
         AccessTools.Method(typeof(NBossMapPoint), "RefreshColorInstantly");
+    private static readonly MethodInfo? TopBarRoomIconRefreshMethod =
+        AccessTools.Method(typeof(NTopBarRoomIcon), "UpdateIcon");
     private static readonly FieldInfo? OrbNodesField =
         AccessTools.Field(typeof(NOrbManager), "_orbs");
     private static readonly FieldInfo? EnergyCounterField =
@@ -1986,9 +1989,12 @@ internal static class CharacterAppearanceRuntime
 
             var topBarBossIcon = run.GlobalUi.TopBar.BossIcon;
             topBarBossIcon.RefreshBossIcon();
+            // Inside a Boss room the game hides BossIcon and displays the separate RoomIcon.
+            // Refresh both through their native logic, including second-Boss and victory rules.
+            TopBarRoomIconRefreshMethod?.Invoke(run.GlobalUi.TopBar.RoomIcon, null);
             NHoverTipSet.Remove(topBarBossIcon);
             ModLog.Info(
-                $"已刷新当前阶段 Boss 的地图图标、顶部图标和名称；" +
+                $"已刷新当前阶段 Boss 的地图图标、顶部图标、房间图标和名称；" +
                 $"受影响外观组={string.Join(",", bossGroupIds.Intersect(affectedGroups))}。");
         }
         catch (Exception exception)
@@ -2258,6 +2264,27 @@ internal static class InRunCharacterAppearanceRuntimePatch
                 Name = "SkinChangerAppearanceRuntime",
                 ProcessMode = Node.ProcessModeEnum.Always
             });
+        }
+    }
+}
+
+[HarmonyPatch(typeof(NTopBarRoomIcon), "UpdateIcon")]
+internal static class TopBarRoomIconSkinTexturePatch
+{
+    [HarmonyTranspiler]
+    private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+    {
+        var compressedLoader = AccessTools.Method(typeof(AssetCache), nameof(AssetCache.GetCompressedTexture2D));
+        var textureLoader = AccessTools.Method(typeof(AssetCache), nameof(AssetCache.GetTexture2D));
+        foreach (var instruction in instructions)
+        {
+            // TextureRect accepts any Texture2D. Use the same managed lookup as BossIcon,
+            // retaining the game's room selection, visibility and tooltip behavior unchanged.
+            if (instruction.Calls(compressedLoader))
+            {
+                instruction.operand = textureLoader;
+            }
+            yield return instruction;
         }
     }
 }

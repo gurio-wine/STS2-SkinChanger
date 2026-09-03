@@ -2,6 +2,8 @@ using HarmonyLib;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.sts2.Core.Nodes.TopBar;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
@@ -428,6 +430,53 @@ if (bossPresentationRefresh == null ||
     throw new InvalidOperationException(
         "局内修改本阶段 Boss 皮肤后必须有统一刷新地图大图标、顶部图标和悬浮名称的入口。");
 }
+
+var roomIconUpdate = AccessTools.Method(typeof(NTopBarRoomIcon), "UpdateIcon") ??
+                     throw new InvalidOperationException("当前游戏缺少房间图标刷新入口。");
+var roomIconPatch = RequirePatchType(
+    "STS2SkinChanger.Ui.TopBarRoomIconSkinTexturePatch",
+    "房间图标仍绕过通用皮肤贴图替换流程。");
+var roomIconTranspiler = RequirePatchMethod(roomIconPatch, "Transpiler");
+var compressedTextureLoader = AccessTools.Method(typeof(AssetCache), nameof(AssetCache.GetCompressedTexture2D));
+var managedTextureLoader = AccessTools.Method(typeof(AssetCache), nameof(AssetCache.GetTexture2D));
+var originalRoomIconInstructions = PatchProcessor.GetOriginalInstructions(roomIconUpdate);
+if (originalRoomIconInstructions.Count(instruction => instruction.Calls(compressedTextureLoader)) != 2)
+    throw new InvalidOperationException("房间图标原方法已变化，请重新核对图标与描边的读取方式。");
+var roomIconInstructions = ((IEnumerable<CodeInstruction>)roomIconTranspiler.Invoke(
+    null, new object[] { originalRoomIconInstructions })!).ToArray();
+if (roomIconInstructions.Any(instruction => instruction.Calls(compressedTextureLoader)) ||
+    roomIconInstructions.Count(instruction => instruction.Calls(managedTextureLoader)) != 2)
+    throw new InvalidOperationException("房间图标及描边都必须使用支持托管皮肤的 Texture2D 加载路径。");
+var roomIconTestHarmony = new Harmony("Gurio.SkinChanger.RuntimeTests.RoomIcon");
+try
+{
+    // Compile the patched game method as well as inspecting it, catching invalid IL/type changes.
+    roomIconTestHarmony.Patch(roomIconUpdate, transpiler: new HarmonyMethod(roomIconTranspiler));
+}
+finally
+{
+    roomIconTestHarmony.Unpatch(roomIconUpdate, HarmonyPatchType.All, roomIconTestHarmony.Id);
+}
+
+var hasMonsterCategory = skinServiceType.GetMethod("HasMonsterSkinCategory") ??
+                         throw new InvalidOperationException("外观菜单无法判定怪物的分类优先级。");
+var monsterCategories = (Dictionary<string, List<string>>)skinConfigType
+    .GetProperty("MonsterSkinCategoryGroups")!.GetValue(testConfig)!;
+monsterCategories["act:test"] = ["monster:test", "boss:test"];
+foreach (var monsterGroup in new[] { "monster:test", "BOSS:TEST" })
+{
+    if (hasMonsterCategory.Invoke(null, new object[] { monsterGroup }) is not true)
+        throw new InvalidOperationException("普通怪物与 Boss 均应支持跟随分类。");
+}
+if (hasMonsterCategory.Invoke(null, new object[] { "character:test" }) is not false)
+    throw new InvalidOperationException("角色不应出现怪物跟随分类选项。");
+monsterCategories.Remove("act:test");
+var inheritMonsterId = (string)skinServiceType.GetField("InheritMonsterSelectionId")!.GetRawConstantValue()!;
+var applyVisualSelection = skinServiceType.GetMethod("ApplySelection")!;
+if (applyVisualSelection.Invoke(null, new object[] { "unregistered:monster", inheritMonsterId }) is not false ||
+    skinServiceType.GetProperty("LastError")!.GetValue(null) as string !=
+        "怪物 unregistered:monster 不属于已登记的图鉴分类。")
+    throw new InvalidOperationException("跟随分类必须路由到地区优先级，不能作为一个皮肤素材 ID 应用。");
 
 var nativeBossMapRefresh = appearanceRuntimeType.GetMethod(
     "RefreshNativeBossMapPoint",
