@@ -76,6 +76,32 @@ internal static class CharacterSkinBundleContractTests
             "管理皮肤包界面不能保留立即应用入口。");
 
         var contextualControls = assembly.GetType("STS2SkinChanger.Ui.ContextualSkinControls", true)!;
+        var localCharacterReader = contextualControls.GetMethod(
+            "GetLocalLobbyCharacter", BindingFlags.Static | BindingFlags.NonPublic);
+        Require(localCharacterReader != null,
+            "皮肤包开局必须兼容正式版 LobbyPlayer 和测试版 StartRunLobbyPlayer，不能绑定某一版 LocalPlayer 返回类型。");
+        var lobbyType = typeof(MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby);
+        // Only field identity and NetId are needed; constructors may access native Godot.
+        var lobby = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(lobbyType);
+        var netService = (MegaCrit.Sts2.Core.Multiplayer.NetSingleplayerGameService)
+            System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(MegaCrit.Sts2.Core.Multiplayer.NetSingleplayerGameService));
+        HarmonyLib.AccessTools.Field(lobbyType, "<NetService>k__BackingField").SetValue(lobby, netService);
+        var playersType = lobbyType.GetProperty("Players")!.PropertyType;
+        var players = (IList)Activator.CreateInstance(playersType)!;
+        var playerType = playersType.GetGenericArguments()[0];
+        var player = Activator.CreateInstance(playerType)!;
+        // Only identity is needed here. Constructing a model boots ModelDb/Godot on beta,
+        // which is unavailable in this headless contract runner.
+        var character = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(MegaCrit.Sts2.Core.Models.Characters.Ironclad));
+        playerType.GetField("id")!.SetValue(player, netService.NetId);
+        playerType.GetField("character")!.SetValue(player, character);
+        players.Add(player);
+        HarmonyLib.AccessTools.Field(lobbyType, "<Players>k__BackingField").SetValue(lobby, players);
+        Require(ReferenceEquals(localCharacterReader!.Invoke(null, [lobby]), character),
+            "开始对局读取的必须是当前游戏版本大厅中的本机角色。");
+
         var populate = contextualControls.GetMethod("Populate", BindingFlags.Static | BindingFlags.NonPublic)!;
         var populateCalls = HarmonyLib.PatchProcessor.GetOriginalInstructions(populate);
         Require(populateCalls.Any(instruction => instruction.operand is MethodInfo called &&

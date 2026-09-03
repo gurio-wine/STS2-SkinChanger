@@ -22,7 +22,11 @@ CharacterSkinBundleContractTests.Run();
 ScrollListRebuildContractTests.Run();
 CardSkinRefreshContractTests.Run();
 CardProviderBridgeContractTests.Run();
-if (typeof(Entry).Assembly.GetName().Version?.ToString() != Entry.InternalTestVersion)
+var declaredVersion = Version.Parse(Entry.InternalTestVersion);
+var expectedAssemblyVersion = new Version(
+    declaredVersion.Major, declaredVersion.Minor, declaredVersion.Build,
+    Math.Max(0, declaredVersion.Revision));
+if (typeof(Entry).Assembly.GetName().Version != expectedAssemblyVersion)
 {
     throw new InvalidOperationException("启动日志的内测版本必须与实际程序集版本一致，避免误报旧部署版本。");
 }

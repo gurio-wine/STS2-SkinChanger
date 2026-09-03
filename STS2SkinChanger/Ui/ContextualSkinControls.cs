@@ -15,6 +15,7 @@ using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Screens.Bestiary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Runs;
 using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
@@ -1632,6 +1633,17 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static CharacterModel GetLocalLobbyCharacter(StartRunLobby lobby)
+    {
+        // LocalPlayer returns LobbyPlayer on formal and StartRunLobbyPlayer on beta.
+        // Resolve both the getter and player field at runtime, without embedding either ABI.
+        var player = AccessTools.Property(typeof(StartRunLobby), "LocalPlayer")?.GetValue(lobby);
+        return player != null &&
+               AccessTools.Field(player.GetType(), "character")?.GetValue(player) is CharacterModel character
+            ? character
+            : throw new InvalidOperationException("选角大厅中没有可读取的本机角色。");
+    }
+
     private static void RebuildMountedFullRuntimeCharacterDisplay(
         NCharacterSelectScreen screen,
         CharacterModel character,
@@ -2964,7 +2976,7 @@ internal static class SingleplayerEmbarkSkinSelectorPatch
     {
         try
         {
-            var groupId = __instance.Lobby.LocalPlayer.character.Id.Entry.ToLowerInvariant();
+            var groupId = ContextualSkinControls.GetLocalLobbyCharacter(__instance.Lobby).Id.Entry.ToLowerInvariant();
             if (!SkinService.ApplySelectedCharacterSkinBundleForRun(groupId, out var warnings))
             {
                 ModLog.Error($"开始对局前应用皮肤包失败：{SkinService.LastError}");
@@ -2989,7 +3001,7 @@ internal static class MultiplayerEmbarkSkinSelectorPatch
     {
         try
         {
-            var groupId = __instance.Lobby.LocalPlayer.character.Id.Entry.ToLowerInvariant();
+            var groupId = ContextualSkinControls.GetLocalLobbyCharacter(__instance.Lobby).Id.Entry.ToLowerInvariant();
             if (!SkinService.ApplySelectedCharacterSkinBundleForRun(groupId, out var warnings))
             {
                 ModLog.Error($"开始多人对局前应用皮肤包失败：{SkinService.LastError}");
