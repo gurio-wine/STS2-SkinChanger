@@ -644,6 +644,25 @@ Require(!CharacterSkinBundlePolicy.ChangesOutsideRequestedGroups(
         new Dictionary<string, string>(), new Dictionary<string, string> { ["silent"] = "__base__" },
         ["silent"], new HashSet<string>()), "未保存的原皮与显式原皮是同一选择，不应误判越界。");
 
+var bundleSelectionId = CharacterSkinBundlePolicy.CreateSelectionOptionId("  常用组合 / 一周目  ");
+Require(CharacterSkinBundlePolicy.TryGetSelectionBundleName(bundleSelectionId, out var selectedBundleName) &&
+        selectedBundleName == "常用组合 / 一周目" &&
+        CharacterSkinBundlePolicy.CreateSelectionDisplayName(selectedBundleName) == "[P] 常用组合 / 一周目",
+    "皮肤包必须使用不可与普通皮肤冲突的选择 ID，并在选角皮肤列表中显示 [P] 前缀。");
+Require(!CharacterSkinBundlePolicy.TryGetSelectionBundleName("skin:ordinary", out _) &&
+        CharacterSkinBundlePolicy.IsValidCharacterOptionReference("skin:ordinary") &&
+        !CharacterSkinBundlePolicy.IsValidCharacterOptionReference(bundleSelectionId),
+    "皮肤包内部只能引用实际皮肤，不能递归引用另一个皮肤包。");
+Require(CharacterSkinBundlePolicy.TryEnterApplication("silent", "常用组合", new HashSet<string>(), out var guard) &&
+        !CharacterSkinBundlePolicy.TryEnterApplication("SILENT", "常用组合", guard, out _),
+    "重复进入同一角色和皮肤包时必须被递归保护阻止。");
+
+Require(DraggableControlPlacementPolicy.CharacterMergeDefault ==
+            new NormalizedControlPosition(0.1375f, 0.75925916f) &&
+        DraggableControlPlacementPolicy.CharacterBundleDefault ==
+            new NormalizedControlPosition(0.13007812f, 0.8090278f),
+    "选角界面的合并皮肤和管理皮肤包按钮默认位置必须采用玩家当前摆放位置。");
+
 foreach (var failurePoint in new[] { "none", "prepare", "visual", "cards", "persist", "restore" })
 {
     var originalBundleState = new Dictionary<string, string>

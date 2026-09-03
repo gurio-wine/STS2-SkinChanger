@@ -13,6 +13,47 @@ internal sealed class CharacterSkinBundle
 
 internal static class CharacterSkinBundlePolicy
 {
+    private const string SelectionOptionPrefix = "__skin_bundle__:";
+
+    internal static string CreateSelectionOptionId(string name) =>
+        SelectionOptionPrefix + Uri.EscapeDataString(name.Trim());
+
+    internal static bool TryGetSelectionBundleName(string? optionId, out string name)
+    {
+        name = string.Empty;
+        if (string.IsNullOrWhiteSpace(optionId) ||
+            !optionId.StartsWith(SelectionOptionPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        try
+        {
+            name = Uri.UnescapeDataString(optionId[SelectionOptionPrefix.Length..]).Trim();
+            return name.Length > 0;
+        }
+        catch (UriFormatException)
+        {
+            name = string.Empty;
+            return false;
+        }
+    }
+
+    internal static string CreateSelectionDisplayName(string name) => "[P] " + name.Trim();
+
+    internal static bool IsValidCharacterOptionReference(string? optionId) =>
+        !string.IsNullOrWhiteSpace(optionId) && !TryGetSelectionBundleName(optionId, out _);
+
+    internal static bool TryEnterApplication(
+        string groupId,
+        string bundleName,
+        IReadOnlySet<string> activeApplications,
+        out HashSet<string> nextApplications)
+    {
+        nextApplications = new HashSet<string>(activeApplications, StringComparer.OrdinalIgnoreCase);
+        return nextApplications.Add(groupId.Trim() + "\n" + bundleName.Trim());
+    }
+
     internal static bool ChangesOutsideRequestedGroups(
         IReadOnlyDictionary<string, string> original, IReadOnlyDictionary<string, string> staged,
         IEnumerable<string> protectedGroups, IReadOnlySet<string> requestedGroups) =>

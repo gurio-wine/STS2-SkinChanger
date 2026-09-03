@@ -2,6 +2,12 @@ namespace STS2SkinChanger.Ui;
 
 internal static class DraggableControlPlacementPolicy
 {
+    internal static readonly NormalizedControlPosition CharacterMergeDefault =
+        new(0.1375f, 0.75925916f);
+
+    internal static readonly NormalizedControlPosition CharacterBundleDefault =
+        new(0.13007812f, 0.8090278f);
+
     internal static NormalizedControlPosition ClampNormalized(
         float x, float y, float viewportWidth, float viewportHeight,
         float controlWidth, float controlHeight)

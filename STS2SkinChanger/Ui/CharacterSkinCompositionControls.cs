@@ -78,14 +78,8 @@ internal static class CharacterSkinCompositionControls
         entryControl.AddChild(entryButton);
         screen.AddChild(entryControl);
         DraggableSkinControl.Attach(screen, entryControl, mergeButton: true, () =>
-        {
-            entryControl.AnchorLeft = entryControl.AnchorRight = 0f;
-            entryControl.AnchorTop = entryControl.AnchorBottom = 0f;
-            entryControl.OffsetLeft = 38f;
-            entryControl.OffsetTop = 86f;
-            entryControl.OffsetRight = 246f;
-            entryControl.OffsetBottom = 132f;
-        });
+            DraggableSkinControl.ApplyDefaultPosition(
+                screen, entryControl, DraggableControlPlacementPolicy.CharacterMergeDefault));
 
         var overlay = CreateOverlay();
         screen.AddChild(overlay);

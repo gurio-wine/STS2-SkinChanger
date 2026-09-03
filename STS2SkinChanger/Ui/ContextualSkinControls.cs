@@ -51,6 +51,7 @@ internal static partial class ContextualSkinControls
         new(StringComparer.OrdinalIgnoreCase);
     private static bool _refreshingMonsterDisplay;
     private static readonly ReloadingReferenceCache<Font> GameFontCache = new();
+    private static ImageTexture? _characterBundleMarkerTexture;
 
     internal static bool IsRefreshingMonsterDisplay => _refreshingMonsterDisplay;
 
@@ -123,7 +124,8 @@ internal static partial class ContextualSkinControls
         CharacterSkinCompositionControls.Show(screen, group, refreshSelection);
         CharacterSkinBundleControls.ShowForCharacter(screen,
             group?.Id ?? character.Id.Entry.ToLowerInvariant(),
-            group?.DisplayName ?? character.Title.GetFormattedText(), refreshSelection);
+            group?.DisplayName ?? character.Title.GetFormattedText(),
+            () => Populate(selector, group));
         RefreshMultiplayerSkinLoadingToggle(screen);
         if (group != null)
         {
@@ -684,12 +686,16 @@ internal static partial class ContextualSkinControls
     private static void Populate(HBoxContainer selector, SkinGroup? group)
     {
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
+        var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
         var visualOptions = group == null
             ? []
             : SkinService.Catalog?.IsCharacterAppearanceGroup(group.Id) == true
                 ? SkinService.GetCharacterSkinOptions(group.Id).ToArray()
                 : group.Options.ToArray();
-        if (group == null || visualOptions.Length == 0)
+        var bundles = group != null && characterScreen != null && !HasMonsterPriorityContext(selector)
+            ? SkinService.GetCharacterSkinBundles(group.Id)
+            : [];
+        if (group == null || visualOptions.Length == 0 && bundles.Count == 0)
         {
             selector.Visible = false;
             dropdown.Clear();
@@ -706,6 +712,15 @@ internal static partial class ContextualSkinControls
             dropdown.SetItemMetadata(0, SkinService.InheritMonsterSelectionId);
         }
 
+        var packageColor = new Color("efc850");
+        foreach (var bundle in bundles)
+        {
+            var index = dropdown.ItemCount;
+            dropdown.AddItem(CharacterSkinBundlePolicy.CreateSelectionDisplayName(bundle.Name));
+            dropdown.SetItemMetadata(index, CharacterSkinBundlePolicy.CreateSelectionOptionId(bundle.Name));
+            ApplyCharacterBundleOptionStyle(dropdown.GetPopup(), index, packageColor);
+        }
+
         var defaultIndex = dropdown.ItemCount;
         dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         dropdown.SetItemMetadata(defaultIndex, SkinCatalog.BaseOptionId);
@@ -719,9 +734,15 @@ internal static partial class ContextualSkinControls
             dropdown.SetItemMetadata(index, option.Id);
         }
 
-        var selected = hasMonsterPriorityContext
-            ? SkinService.GetMonsterOverrideSelection(group.Id)
-            : SkinService.Config.GetSelection(group.Id);
+        var activeBundle = characterScreen != null
+            ? SkinService.Config.ActiveCharacterSkinBundles.GetValueOrDefault(group.Id)
+            : null;
+        var selected = !string.IsNullOrWhiteSpace(activeBundle) &&
+                       bundles.Any(bundle => bundle.Name.Equals(activeBundle, StringComparison.OrdinalIgnoreCase))
+            ? CharacterSkinBundlePolicy.CreateSelectionOptionId(activeBundle)
+            : hasMonsterPriorityContext
+                ? SkinService.GetMonsterOverrideSelection(group.Id)
+                : SkinService.Config.GetSelection(group.Id);
         if (dropdown.ItemCount > 0)
         {
             var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
@@ -729,11 +750,42 @@ internal static partial class ContextualSkinControls
                     .Equals(selected, StringComparison.OrdinalIgnoreCase));
             dropdown.Select(selectedIndex);
         }
+        ApplyCharacterBundleSelectionTheme(
+            dropdown,
+            CharacterSkinBundlePolicy.TryGetSelectionBundleName(selected, out _));
         dropdown.Visible = true;
         PopulateMonsterScale(selector, group.Id);
         selector.SetMeta(UpdatingMeta, false);
         selector.Visible = true;
         RefreshMonsterPriorityButton(selector);
+    }
+
+    private static void ApplyCharacterBundleSelectionTheme(OptionButton dropdown, bool selectedBundle)
+    {
+        ApplyGameTheme(dropdown);
+        if (!selectedBundle)
+        {
+            return;
+        }
+        var gold = new Color("efc850");
+        foreach (var state in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
+        {
+            dropdown.AddThemeColorOverride(state, gold);
+        }
+    }
+
+    private static void ApplyCharacterBundleOptionStyle(PopupMenu popup, int index, Color gold)
+    {
+        if (_characterBundleMarkerTexture == null ||
+            !GodotObject.IsInstanceValid(_characterBundleMarkerTexture))
+        {
+            using var image = Image.CreateEmpty(7, 22, false, Image.Format.Rgba8);
+            image.Fill(gold);
+            _characterBundleMarkerTexture = ImageTexture.CreateFromImage(image);
+        }
+        popup.SetItemIcon(index, _characterBundleMarkerTexture);
+        popup.SetItemIconMaxWidth(index, 7);
+        popup.SetItemIconModulate(index, gold);
     }
 
     private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
@@ -793,6 +845,22 @@ internal static partial class ContextualSkinControls
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
         var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        if (characterScreen != null &&
+            !HasMonsterPriorityContext(selector) &&
+            CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out var bundleName))
+        {
+            CancelCharacterDropdownPreview(
+                characterScreen,
+                selector,
+                restoreOverlay: true,
+                restoreDisplay: true);
+            if (!SkinService.SelectCharacterSkinBundle(groupId, bundleName))
+            {
+                ModLog.Error($"选择皮肤包失败：{SkinService.LastError}");
+            }
+            Populate(selector, FindGroup(groupId));
+            return;
+        }
         if (characterScreen != null && !HasMonsterPriorityContext(selector))
         {
             var previewMatchesSelection = characterScreen
@@ -853,6 +921,13 @@ internal static partial class ContextualSkinControls
                     .Equals(current, StringComparison.OrdinalIgnoreCase));
             dropdown.Select(currentIndex);
             return;
+        }
+
+        if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
+            !HasMonsterPriorityContext(selector) &&
+            !SkinService.ClearSelectedCharacterSkinBundle(groupId))
+        {
+            ModLog.Warn($"清除选角皮肤包选择失败：{SkinService.LastError}");
         }
 
         selector.SetMeta(UpdatingMeta, true);
@@ -1060,6 +1135,16 @@ internal static partial class ContextualSkinControls
         var optionId = dropdown.GetItemMetadata(index).AsString();
         if (string.IsNullOrWhiteSpace(groupId) || string.IsNullOrWhiteSpace(optionId))
         {
+            return;
+        }
+
+        if (CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out _))
+        {
+            CancelCharacterDropdownPreview(
+                screen,
+                selector,
+                restoreOverlay: true,
+                restoreDisplay: true);
             return;
         }
 
@@ -2748,15 +2833,51 @@ internal static class CharacterSelectionSkinPatch
 [HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewSingleplayerRun")]
 internal static class SingleplayerEmbarkSkinSelectorPatch
 {
-    private static void Prefix(NCharacterSelectScreen __instance) =>
+    private static void Prefix(NCharacterSelectScreen __instance)
+    {
+        try
+        {
+            var groupId = __instance.Lobby.LocalPlayer.character.Id.Entry.ToLowerInvariant();
+            if (!SkinService.ApplySelectedCharacterSkinBundleForRun(groupId, out var warnings))
+            {
+                ModLog.Error($"开始对局前应用皮肤包失败：{SkinService.LastError}");
+            }
+            foreach (var warning in warnings)
+            {
+                ModLog.Warn("皮肤包：" + warning);
+            }
+        }
+        catch (Exception error)
+        {
+            ModLog.Error("开始单人对局前应用皮肤包失败，将继续使用当前外观：" + error);
+        }
         ContextualSkinControls.HideCharacterSelector(__instance);
+    }
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewMultiplayerRun")]
 internal static class MultiplayerEmbarkSkinSelectorPatch
 {
-    private static void Prefix(NCharacterSelectScreen __instance) =>
+    private static void Prefix(NCharacterSelectScreen __instance)
+    {
+        try
+        {
+            var groupId = __instance.Lobby.LocalPlayer.character.Id.Entry.ToLowerInvariant();
+            if (!SkinService.ApplySelectedCharacterSkinBundleForRun(groupId, out var warnings))
+            {
+                ModLog.Error($"开始多人对局前应用皮肤包失败：{SkinService.LastError}");
+            }
+            foreach (var warning in warnings)
+            {
+                ModLog.Warn("皮肤包：" + warning);
+            }
+        }
+        catch (Exception error)
+        {
+            ModLog.Error("开始多人对局前应用皮肤包失败，将继续使用当前外观：" + error);
+        }
         ContextualSkinControls.HideCharacterSelector(__instance);
+    }
 }
 
 [HarmonyPatch(typeof(NBestiary), "SelectMonster")]

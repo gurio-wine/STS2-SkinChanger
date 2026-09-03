@@ -49,13 +49,8 @@ internal static class CharacterSkinBundleControls
         DraggableSkinControl.Attach(screen, entry,
             SkinService.GetCharacterSkinBundlePosition, SkinService.SetCharacterSkinBundlePosition,
             SkinService.ResetCharacterSkinBundlePosition, () =>
-            {
-                entry.AnchorLeft = entry.AnchorRight = entry.AnchorTop = entry.AnchorBottom = 0f;
-                entry.OffsetLeft = 38f;
-                entry.OffsetTop = 142f;
-                entry.OffsetRight = 246f;
-                entry.OffsetBottom = 188f;
-            });
+                DraggableSkinControl.ApplyDefaultPosition(
+                    screen, entry, DraggableControlPlacementPolicy.CharacterBundleDefault));
 
         var overlay = new Control
         {
@@ -79,12 +74,13 @@ internal static class CharacterSkinBundleControls
             MouseFilter = Control.MouseFilterEnum.Stop,
             AnchorLeft = 0.5f,
             AnchorRight = 0.5f,
-            AnchorTop = 0.5f,
-            AnchorBottom = 0.5f,
+            AnchorTop = 0.05f,
+            AnchorBottom = 0.95f,
             OffsetLeft = -440f,
             OffsetRight = 440f,
-            OffsetTop = -350f,
-            OffsetBottom = 350f
+            OffsetTop = 0f,
+            OffsetBottom = 0f,
+            ClipContents = true
         };
         panel.AddThemeStyleboxOverride("panel", ContextualSkinControls.CreateStyleBox(
             new Color("241a30"), new Color("79547e"), 2));
@@ -95,7 +91,11 @@ internal static class CharacterSkinBundleControls
             margin.AddThemeConstantOverride("margin_" + edge, 20);
         }
         panel.AddChild(margin);
-        var content = new VBoxContainer();
+        var content = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
+        };
         content.AddThemeConstantOverride("separation", 12);
         margin.AddChild(content);
         var state = new EditorState(screen, entry, overlay, content);
@@ -104,10 +104,7 @@ internal static class CharacterSkinBundleControls
         {
             if (input is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
-                if (!state.Busy)
-                {
-                    overlay.Hide();
-                }
+                overlay.Hide();
                 mask.AcceptEvent();
             }
         };
@@ -171,7 +168,6 @@ internal static class CharacterSkinBundleControls
                 profiles.Select(i + 1);
             }
         }
-        profiles.Disabled = state.Busy;
         profiles.ItemSelected += index =>
         {
             LoadDraft(state, index == 0 ? null : bundles[(int)index - 1]);
@@ -185,7 +181,7 @@ internal static class CharacterSkinBundleControls
             Text = state.Draft.Name,
             MaxLength = SkinService.CardSkinPresetNameMaxLength,
             PlaceholderText = ModLocalization.Get(ModText.BundleName),
-            Editable = !state.Busy,
+            Editable = true,
             CustomMinimumSize = new Vector2(0f, 42f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
@@ -194,7 +190,7 @@ internal static class CharacterSkinBundleControls
         name.TextChanged += value => { state.Draft.Name = value; MarkDirty(state); };
         state.Content.AddChild(name);
 
-        scroll.CustomMinimumSize = new Vector2(0f, 360f);
+        scroll.CustomMinimumSize = Vector2.Zero;
         scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
         ScrollListRebuild.PlaceAfterHeader(scroll);
@@ -222,7 +218,6 @@ internal static class CharacterSkinBundleControls
             skins.AddItem(option.Name);
         }
         skins.Select(selected);
-        skins.Disabled = state.Busy;
         skins.ItemSelected += index => { state.Draft.CharacterOptionId = options[(int)index].Id; MarkDirty(state); };
         fields.AddChild(skins);
         AddPresetSection(state, fields, ModText.BundleCardPresets, state.CardCategories, state.Draft.CardPresetNames);
@@ -244,7 +239,7 @@ internal static class CharacterSkinBundleControls
         state.Content.AddChild(actions);
         var delete = CreateButton(state.PendingDelete ? ModText.ConfirmDeleteCharacterSkinMerge : ModText.DeleteCharacterSkinMerge);
         delete.Name = "DeleteBundle";
-        delete.Disabled = state.EditingName == null || state.Busy;
+        delete.Disabled = state.EditingName == null;
         if (state.PendingDelete)
         {
             ApplyDeleteWarning(delete);
@@ -255,18 +250,9 @@ internal static class CharacterSkinBundleControls
         actions.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
         var save = CreateButton(ModText.SaveCharacterSkinMerge);
         save.Name = "SaveBundle";
-        save.Disabled = state.Busy;
         save.Pressed += () => Save(state);
         actions.AddChild(save);
-        var apply = CreateButton(ModText.BundleApply);
-        apply.Name = "ApplyBundle";
-        apply.Disabled = state.Busy || state.EditingName == null || state.Dirty;
-        apply.TooltipText = state.Dirty ? ModLocalization.Get(ModText.BundleUnsaved) : string.Empty;
-        apply.Pressed += () => Apply(state);
-        actions.AddChild(apply);
-        state.ApplyButton = apply;
         var close = CreateButton(ModText.Close);
-        close.Disabled = state.Busy;
         close.Pressed += () => state.Overlay.Hide();
         actions.AddChild(close);
     }
@@ -308,7 +294,6 @@ internal static class CharacterSkinBundleControls
                 currentIndex = names.Count - 1;
             }
             picker.Select(currentIndex + 1);
-            picker.Disabled = state.Busy;
             picker.ItemSelected += index =>
             {
                 if (index == 0)
@@ -330,8 +315,6 @@ internal static class CharacterSkinBundleControls
     {
         state.Dirty = true;
         state.PendingDelete = false;
-        state.ApplyButton.Disabled = true;
-        state.ApplyButton.TooltipText = ModLocalization.Get(ModText.BundleUnsaved);
         state.StatusLabel.Text = string.Empty;
         state.Status = string.Empty;
         state.DeleteButton.Text = ModLocalization.Get(ModText.DeleteCharacterSkinMerge);
@@ -351,6 +334,10 @@ internal static class CharacterSkinBundleControls
         state.Status = ok ? ModLocalization.Get(ModText.BundleSaved) : SkinService.LastError ?? string.Empty;
         state.PendingDelete = false;
         BuildEditor(state);
+        if (ok)
+        {
+            state.Refresh?.Invoke();
+        }
     }
 
     private static void Delete(EditorState state)
@@ -376,49 +363,10 @@ internal static class CharacterSkinBundleControls
         }
         state.PendingDelete = false;
         BuildEditor(state);
-    }
-
-    private static void Apply(EditorState state)
-    {
-        if (state.EditingName == null || state.Dirty || state.Busy)
+        if (state.EditingName == null)
         {
-            return;
+            state.Refresh?.Invoke();
         }
-        var groupId = state.GroupId;
-        var name = state.EditingName;
-        state.Busy = true;
-        state.Status = ModLocalization.Get(ModText.BundleApplying);
-        state.PendingDelete = false;
-        BuildEditor(state);
-        Callable.From(() =>
-        {
-            try
-            {
-                if (!GodotObject.IsInstanceValid(state.Overlay) || !state.Overlay.Visible || state.GroupId != groupId)
-                {
-                    return;
-                }
-                var ok = SkinService.ApplyCharacterSkinBundle(groupId, name, out var warnings);
-                state.Status = ok ? string.Join("\n", new[] { ModLocalization.Get(ModText.BundleApplied) }.Concat(warnings)) :
-                    ModLocalization.Get(ModText.AppearanceFailed) + " " + SkinService.LastError;
-                // Same character preview/portrait refresh as changing a normal skin. Also
-                // rebuild after rollback, because mounted resources may have been recreated.
-                state.Refresh?.Invoke();
-            }
-            catch (Exception error)
-            {
-                ModLog.Error("刷新皮肤包界面失败：" + error);
-                state.Status = ModLocalization.Get(ModText.AppearanceFailed) + " " + error.Message;
-            }
-            finally
-            {
-                state.Busy = false;
-                if (GodotObject.IsInstanceValid(state.Overlay))
-                {
-                    BuildEditor(state);
-                }
-            }
-        }).CallDeferred();
     }
 
     private static Label CreateLabel(string text, int size)
@@ -489,9 +437,7 @@ internal static class CharacterSkinBundleControls
         public string? EditingName;
         public string Status = string.Empty;
         public bool Dirty;
-        public bool Busy;
         public bool PendingDelete;
-        public Button ApplyButton = null!;
         public Button DeleteButton = null!;
         public Label StatusLabel = null!;
         public IReadOnlyList<SkinPresetCategory> CardCategories = [];

@@ -135,23 +135,40 @@ internal partial class DraggableSkinControl : Node
     }
 
     private NormalizedControlPosition ApplyPosition(float x, float y)
+        => ApplyPosition(_screen, _target, x, y, ref _placing);
+
+    internal static void ApplyDefaultPosition(
+        Control screen,
+        HBoxContainer target,
+        NormalizedControlPosition position)
     {
-        var size = _target.Size.Max(_target.GetCombinedMinimumSize());
+        var placing = false;
+        ApplyPosition(screen, target, position.X, position.Y, ref placing);
+    }
+
+    private static NormalizedControlPosition ApplyPosition(
+        Control screen,
+        HBoxContainer target,
+        float x,
+        float y,
+        ref bool placing)
+    {
+        var size = target.Size.Max(target.GetCombinedMinimumSize());
         var position = DraggableControlPlacementPolicy.ClampNormalized(
-            x, y, _screen.Size.X, _screen.Size.Y, size.X, size.Y);
-        _placing = true;
+            x, y, screen.Size.X, screen.Size.Y, size.X, size.Y);
+        placing = true;
         try
         {
-            _target.AnchorLeft = _target.AnchorRight = position.X;
-            _target.AnchorTop = _target.AnchorBottom = position.Y;
-            _target.OffsetLeft = -size.X / 2f;
-            _target.OffsetTop = -size.Y / 2f;
-            _target.OffsetRight = size.X / 2f;
-            _target.OffsetBottom = size.Y / 2f;
+            target.AnchorLeft = target.AnchorRight = position.X;
+            target.AnchorTop = target.AnchorBottom = position.Y;
+            target.OffsetLeft = -size.X / 2f;
+            target.OffsetTop = -size.Y / 2f;
+            target.OffsetRight = size.X / 2f;
+            target.OffsetBottom = size.Y / 2f;
         }
         finally
         {
-            _placing = false;
+            placing = false;
         }
         return position;
     }

@@ -74,7 +74,9 @@ internal static partial class SkinService
         lock (Sync)
         {
             var normalized = CharacterSkinBundlePolicy.Normalize([draft]).SingleOrDefault();
-            if (normalized == null || normalized.Name.Length > CardSkinPresetNameMaxLength || normalized.Name.Any(char.IsControl))
+            if (normalized == null || normalized.Name.Length > CardSkinPresetNameMaxLength ||
+                normalized.Name.Any(char.IsControl) ||
+                !CharacterSkinBundlePolicy.IsValidCharacterOptionReference(normalized.CharacterOptionId))
             {
                 LastError = ModLocalization.Get(ModText.BundleInvalidName);
                 return false;
@@ -126,7 +128,71 @@ internal static partial class SkinService
         }
     }
 
-    public static bool ApplyCharacterSkinBundle(string groupId, string name, out IReadOnlyList<string> warnings)
+    public static bool SelectCharacterSkinBundle(string groupId, string name)
+    {
+        lock (Sync)
+        {
+            var index = FindCharacterSkinBundleIndex(groupId, name);
+            if (index < 0)
+            {
+                LastError = ModLocalization.Get(ModText.BundleUnavailable);
+                return false;
+            }
+            if (string.Equals(Config.ActiveCharacterSkinBundles.GetValueOrDefault(groupId),
+                    Config.CharacterSkinBundles[index].Name, StringComparison.OrdinalIgnoreCase))
+            {
+                LastError = null;
+                return true;
+            }
+            var next = Config.CloneForBundleTransaction();
+            next.ActiveCharacterSkinBundles[groupId] = Config.CharacterSkinBundles[index].Name;
+            return CommitBundleConfiguration(next, () => { }, () => { }, () => { });
+        }
+    }
+
+    public static bool ClearSelectedCharacterSkinBundle(string groupId)
+    {
+        lock (Sync)
+        {
+            if (!Config.ActiveCharacterSkinBundles.ContainsKey(groupId))
+            {
+                LastError = null;
+                return true;
+            }
+            var next = Config.CloneForBundleTransaction();
+            next.ActiveCharacterSkinBundles.Remove(groupId);
+            return CommitBundleConfiguration(next, () => { }, () => { }, () => { });
+        }
+    }
+
+    public static bool ApplySelectedCharacterSkinBundleForRun(
+        string groupId,
+        out IReadOnlyList<string> warnings)
+    {
+        lock (Sync)
+        {
+            warnings = [];
+            var name = Config.ActiveCharacterSkinBundles.GetValueOrDefault(groupId);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                LastError = null;
+                return true;
+            }
+            if (!CharacterSkinBundlePolicy.TryEnterApplication(
+                    groupId, name, new HashSet<string>(StringComparer.OrdinalIgnoreCase), out var applications))
+            {
+                LastError = ModLocalization.Get(ModText.BundleScopeConflict);
+                return false;
+            }
+            return ApplyCharacterSkinBundle(groupId, name, applications, out warnings);
+        }
+    }
+
+    private static bool ApplyCharacterSkinBundle(
+        string groupId,
+        string name,
+        IReadOnlySet<string> activeApplications,
+        out IReadOnlyList<string> warnings)
     {
         lock (Sync)
         {
@@ -140,6 +206,12 @@ internal static partial class SkinService
                 return false;
             }
             var bundle = CharacterSkinBundlePolicy.Clone(Config.CharacterSkinBundles[index]);
+            if (!activeApplications.Contains(groupId.Trim() + "\n" + bundle.Name.Trim()) ||
+                !CharacterSkinBundlePolicy.IsValidCharacterOptionReference(bundle.CharacterOptionId))
+            {
+                LastError = ModLocalization.Get(ModText.BundleScopeConflict);
+                return false;
+            }
             var original = Config;
             var next = original.CloneForBundleTransaction();
             var visualGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
