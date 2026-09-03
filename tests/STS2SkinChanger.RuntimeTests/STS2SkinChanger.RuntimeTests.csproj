@@ -30,5 +30,10 @@
       <HintPath>$(GameAssemblyDir)/Sentry.Godot.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <!-- The public-beta sts2 module initializer calls Sentry.Godot before test code starts.
+         File references are copied but are not always written to the test .deps.json, so mark
+         this optional host assembly as a runtime asset as well. -->
+    <UserRuntimeAssembly Include="$(GameAssemblyDir)/Sentry.Godot.dll"
+                         Condition="Exists('$(GameAssemblyDir)/Sentry.Godot.dll')" />
   </ItemGroup>
 </Project>
