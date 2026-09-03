@@ -317,19 +317,19 @@ internal static partial class ContextualSkinControls
             {
                 toggle.AddThemeFontOverride("font", GameFont);
             }
-            toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
-            toggle.Toggled += SkinService.SetLoadOtherPlayersCustomSkins;
+            toggle.SetPressedNoSignal(SkinService.ShouldReceiveMultiplayerSkinChanges());
+            toggle.Toggled += SkinService.SetReceiveMultiplayerSkinChanges;
             infoPanel.AddChild(toggle);
             ModLocalization.Bind(toggle, () =>
             {
                 toggle.Text = ModLocalization.Get(ModText.LoadOtherPlayersCustomSkins);
-                toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
+                toggle.SetPressedNoSignal(SkinService.ShouldReceiveMultiplayerSkinChanges());
             });
         }
 
         toggle.Visible = true;
-        toggle.Disabled = !SkinService.ShouldSynchronizeMultiplayerSkins();
-        toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
+        toggle.Disabled = false;
+        toggle.SetPressedNoSignal(SkinService.ShouldReceiveMultiplayerSkinChanges());
     }
 
     private static void EnsureMultiplayerSkinSyncToggle(
@@ -373,34 +373,34 @@ internal static partial class ContextualSkinControls
             {
                 toggle.AddThemeFontOverride("font", GameFont);
             }
-            toggle.SetPressedNoSignal(SkinService.ShouldSynchronizeMultiplayerSkins());
+            toggle.SetPressedNoSignal(SkinService.ShouldSendMultiplayerSkinChanges());
             toggle.Toggled += enabled =>
             {
-                SkinService.SetMultiplayerSkinSyncEnabled(enabled);
+                SkinService.SetSendMultiplayerSkinChanges(enabled);
                 RefreshMultiplayerSkinLoadingToggle(screen);
             };
             infoPanel.AddChild(toggle);
             ModLocalization.Bind(toggle, () =>
             {
                 toggle.Text = ModLocalization.Get(ModText.MultiplayerSkinSync);
-                toggle.SetPressedNoSignal(SkinService.ShouldSynchronizeMultiplayerSkins());
+                toggle.SetPressedNoSignal(SkinService.ShouldSendMultiplayerSkinChanges());
             });
         }
 
         toggle.Visible = true;
-        toggle.SetPressedNoSignal(SkinService.ShouldSynchronizeMultiplayerSkins());
+        toggle.SetPressedNoSignal(SkinService.ShouldSendMultiplayerSkinChanges());
     }
 
     private static void RefreshMultiplayerSkinLoadingToggle(NCharacterSelectScreen screen)
     {
         var isMultiplayer = IsMultiplayerCharacterSelect(screen);
-        var syncEnabled = SkinService.ShouldSynchronizeMultiplayerSkins();
+        var sendEnabled = SkinService.ShouldSendMultiplayerSkinChanges();
         var syncToggle = screen.GetNodeOrNull<CheckButton>(
             $"InfoPanel/{MultiplayerSkinSyncToggleName}");
         if (syncToggle != null)
         {
             syncToggle.Visible = isMultiplayer;
-            syncToggle.SetPressedNoSignal(syncEnabled);
+            syncToggle.SetPressedNoSignal(sendEnabled);
         }
 
         var toggle = screen.GetNodeOrNull<CheckButton>(
@@ -408,8 +408,8 @@ internal static partial class ContextualSkinControls
         if (toggle != null)
         {
             toggle.Visible = isMultiplayer;
-            toggle.Disabled = !syncEnabled;
-            toggle.SetPressedNoSignal(SkinService.ShouldLoadOtherPlayersCustomSkins());
+            toggle.Disabled = false;
+            toggle.SetPressedNoSignal(SkinService.ShouldReceiveMultiplayerSkinChanges());
         }
     }
 

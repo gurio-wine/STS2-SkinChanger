@@ -89,8 +89,8 @@
              Link="CardSkinSelectorPlacementPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/DraggableControlPlacementPolicy.cs"
              Link="DraggableControlPlacementPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Ui/PauseMenuHoldGesture.cs"
-             Link="PauseMenuHoldGesture.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/PauseMenuAppearanceClickPolicy.cs"
+             Link="PauseMenuAppearanceClickPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/CardPresentationLayoutPolicy.cs"
              Link="CardPresentationLayoutPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/ReloadingReferenceCache.cs"

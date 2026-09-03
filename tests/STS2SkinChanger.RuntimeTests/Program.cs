@@ -101,10 +101,14 @@ var skinConfigType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.SkinCo
 var multiplayerSyncType = typeof(Entry).Assembly.GetType(
                               "STS2SkinChanger.Core.MultiplayerSkinSync") ??
                           throw new InvalidOperationException("找不到联机皮肤同步类型。");
-var syncEnabledProperty = skinConfigType.GetProperty(
+var sendChangesProperty = skinConfigType.GetProperty(
                               "MultiplayerSkinSyncEnabled",
                               BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) ??
-                          throw new InvalidOperationException("找不到联机皮肤同步总开关配置。");
+                          throw new InvalidOperationException("找不到发送皮肤改变配置。");
+var receiveChangesProperty = skinConfigType.GetProperty(
+                                 "LoadOtherPlayersCustomSkins",
+                                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) ??
+                             throw new InvalidOperationException("找不到接收皮肤改变配置。");
 var skinConfigBackingField = skinServiceType.GetField(
                                  "<Config>k__BackingField",
                                  BindingFlags.Static | BindingFlags.NonPublic) ??
@@ -140,7 +144,8 @@ var availableSelectionsField = multiplayerSyncType.GetField(
                                    BindingFlags.Static | BindingFlags.NonPublic) ??
                                throw new InvalidOperationException("找不到联机玩家皮肤快照缓存。");
 
-syncEnabledProperty.SetValue(testConfig, false);
+sendChangesProperty.SetValue(testConfig, false);
+receiveChangesProperty.SetValue(testConfig, false);
 var disabledSyncWriter = new PacketWriter();
 appendCapabilityTrailer.Invoke(null, [disabledSyncWriter]);
 if (disabledSyncWriter.BitPosition != 0)
@@ -149,16 +154,18 @@ if (disabledSyncWriter.BitPosition != 0)
         "关闭联机皮肤同步后仍修改了游戏握手包；未安装 Skin Changer 的玩家仍会收到额外数据。");
 }
 
-syncEnabledProperty.SetValue(testConfig, true);
+sendChangesProperty.SetValue(testConfig, false);
+receiveChangesProperty.SetValue(testConfig, true);
 var enabledSyncWriter = new PacketWriter();
 appendCapabilityTrailer.Invoke(null, [enabledSyncWriter]);
 if (enabledSyncWriter.BitPosition != 72)
 {
     throw new InvalidOperationException(
-        "启用联机皮肤同步后没有写入完整的 8 字节标记和协议版本。");
+        "只接收皮肤改变时没有写入能力标记，其他玩家将无法确认本机能够接收。");
 }
 
-syncEnabledProperty.SetValue(testConfig, false);
+sendChangesProperty.SetValue(testConfig, false);
+receiveChangesProperty.SetValue(testConfig, false);
 object?[] disabledReadArguments = [enabledSyncWriter.Buffer, (byte)0];
 if (readCapabilityTrailer.Invoke(null, disabledReadArguments) is not false)
 {
@@ -166,7 +173,8 @@ if (readCapabilityTrailer.Invoke(null, disabledReadArguments) is not false)
         "关闭联机皮肤同步后仍解析了其他玩家的能力握手。");
 }
 
-syncEnabledProperty.SetValue(testConfig, true);
+sendChangesProperty.SetValue(testConfig, true);
+receiveChangesProperty.SetValue(testConfig, false);
 object?[] enabledReadArguments = [enabledSyncWriter.Buffer, (byte)0];
 if (readCapabilityTrailer.Invoke(null, enabledReadArguments) is not true ||
     enabledReadArguments[1] is not byte protocolVersion ||
@@ -174,7 +182,7 @@ if (readCapabilityTrailer.Invoke(null, enabledReadArguments) is not true ||
     System.Text.Encoding.ASCII.GetString(enabledSyncWriter.Buffer, 0, 8) != "GSCAP09!")
 {
     throw new InvalidOperationException(
-        "启用联机皮肤同步后无法读取当前协议的能力握手。");
+        "只发送皮肤改变时无法读取当前协议的能力握手。");
 }
 
 var netMessageType = typeof(Entry).Assembly.GetType(
@@ -276,17 +284,17 @@ var staleSelection = Activator.CreateInstance(
 var availableSelections = availableSelectionsField.GetValue(null) as System.Collections.IDictionary ??
                           throw new InvalidOperationException("联机玩家皮肤快照缓存类型不兼容。");
 availableSelections[99UL] = staleSelection;
-syncEnabledProperty.SetValue(testConfig, false);
+receiveChangesProperty.SetValue(testConfig, false);
 var disabledSelectionMaps = getAvailableSelectionMaps.Invoke(null, null)
                             as System.Collections.IEnumerable ??
                             throw new InvalidOperationException("无法读取关闭同步后的远端皮肤映射。");
 if (disabledSelectionMaps.Cast<object>().Any())
 {
     throw new InvalidOperationException(
-        "关闭联机皮肤同步后仍向运行时暴露旧的远端玩家皮肤，关闭瞬间可能继续覆盖模型或头像。");
+        "关闭接收皮肤改变后仍向运行时暴露旧的远端玩家皮肤，可能继续覆盖模型或头像。");
 }
 availableSelections.Clear();
-syncEnabledProperty.SetValue(testConfig, true);
+receiveChangesProperty.SetValue(testConfig, true);
 var characterPreviewApply = skinServiceType.GetMethod(
     "ApplyCharacterPreviewSelection",
     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,

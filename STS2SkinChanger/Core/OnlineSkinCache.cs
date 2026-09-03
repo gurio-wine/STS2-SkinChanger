@@ -246,7 +246,7 @@ internal static partial class OnlineSkinCache
         CancellationToken cancellationToken;
         lock (Sync)
         {
-            if (!allowDownloads || !SkinService.ShouldLoadOtherPlayersCustomSkins() ||
+            if (!allowDownloads || !SkinService.ShouldReceiveMultiplayerSkinChanges() ||
                 _processing || Pending.Count == 0 || _sessionCancellation == null ||
                 NRun.Instance?.CombatRoom != null)
             {
@@ -265,7 +265,7 @@ internal static partial class OnlineSkinCache
 
     internal static bool HasPendingWork()
     {
-        var allowDownloads = SkinService.ShouldLoadOtherPlayersCustomSkins();
+        var allowDownloads = SkinService.ShouldReceiveMultiplayerSkinChanges();
         lock (Sync)
         {
             return LocalSourceBuilds.Count > 0 ||
@@ -363,7 +363,7 @@ internal static partial class OnlineSkinCache
 
     internal static bool QueueMissingSelection(SkinChangerNetMessage message)
     {
-        if (!SkinService.ShouldLoadOtherPlayersCustomSkins() ||
+        if (!SkinService.ShouldReceiveMultiplayerSkinChanges() ||
             !HasDownloadMetadata(message) ||
             message.OptionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
@@ -740,7 +740,7 @@ internal static partial class OnlineSkinCache
     {
         try
         {
-            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
+            if (!SkinService.ShouldReceiveMultiplayerSkinChanges())
             {
                 return;
             }
@@ -769,7 +769,7 @@ internal static partial class OnlineSkinCache
                 return;
             }
 
-            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
+            if (!SkinService.ShouldReceiveMultiplayerSkinChanges())
             {
                 return;
             }
@@ -788,7 +788,7 @@ internal static partial class OnlineSkinCache
                 request.WorkshopItemId,
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
+            if (!SkinService.ShouldReceiveMultiplayerSkinChanges())
             {
                 return;
             }
@@ -823,7 +823,7 @@ internal static partial class OnlineSkinCache
             {
                 return;
             }
-            if (!SkinService.ShouldLoadOtherPlayersCustomSkins())
+            if (!SkinService.ShouldReceiveMultiplayerSkinChanges())
             {
                 return;
             }

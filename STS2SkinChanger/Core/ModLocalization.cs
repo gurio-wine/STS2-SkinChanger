@@ -934,81 +934,81 @@ internal static class ModLocalization
     private static readonly IReadOnlyDictionary<string, string> MultiplayerSkinLoadingTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = "Show skins installed by both players",
-            ["zhs"] = "显示双方都已安装的皮肤",
-            ["zht"] = "顯示雙方都已安裝的外觀",
-            ["deu"] = "Auf beiden Seiten installierte Skins anzeigen",
-            ["esp"] = "Mostrar aspectos instalados por ambos jugadores",
-            ["fra"] = "Afficher les skins installés chez les deux joueurs",
-            ["ita"] = "Mostra le skin installate da entrambi",
-            ["jpn"] = "双方にインストール済みのスキンを表示",
-            ["kor"] = "양쪽에 모두 설치된 스킨 표시",
-            ["pol"] = "Pokaż skórki zainstalowane u obu graczy",
-            ["ptb"] = "Mostrar visuais instalados pelos dois jogadores",
-            ["rus"] = "Показывать облики, установленные у обоих игроков",
-            ["spa"] = "Mostrar aspectos instalados por ambos jugadores",
-            ["tha"] = "แสดงสกินที่ผู้เล่นทั้งสองฝ่ายติดตั้งไว้",
-            ["tur"] = "İki tarafta da yüklü görünümleri göster"
+            ["eng"] = "Receive skin changes",
+            ["zhs"] = "接收皮肤改变",
+            ["zht"] = "接收外觀變更",
+            ["deu"] = "Skin-Änderungen empfangen",
+            ["esp"] = "Recibir cambios de aspecto",
+            ["fra"] = "Recevoir les changements d’apparence",
+            ["ita"] = "Ricevi modifiche alle skin",
+            ["jpn"] = "スキン変更を受信",
+            ["kor"] = "스킨 변경 받기",
+            ["pol"] = "Odbieraj zmiany skórek",
+            ["ptb"] = "Receber alterações de visual",
+            ["rus"] = "Получать изменения обликов",
+            ["spa"] = "Recibir cambios de aspecto",
+            ["tha"] = "รับการเปลี่ยนแปลงสกิน",
+            ["tur"] = "Görünüm değişikliklerini al"
         };
 
     private static readonly IReadOnlyDictionary<string, string> MultiplayerSkinSyncTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = "Sync player skins online",
-            ["zhs"] = "联机同步玩家皮肤",
-            ["zht"] = "連線同步玩家外觀",
-            ["deu"] = "Spieler-Skins online synchronisieren",
-            ["esp"] = "Sincronizar aspectos de jugadores en línea",
-            ["fra"] = "Synchroniser les skins des joueurs en ligne",
-            ["ita"] = "Sincronizza online le skin dei giocatori",
-            ["jpn"] = "オンラインでプレイヤーのスキンを同期",
-            ["kor"] = "온라인 플레이어 스킨 동기화",
-            ["pol"] = "Synchronizuj skórki graczy online",
-            ["ptb"] = "Sincronizar visuais dos jogadores online",
-            ["rus"] = "Синхронизировать облики игроков по сети",
-            ["spa"] = "Sincronizar aspectos de jugadores en línea",
-            ["tha"] = "ซิงค์สกินผู้เล่นในการเล่นออนไลน์",
-            ["tur"] = "Çevrimiçi oyuncu görünümlerini eşitle"
+            ["eng"] = "Send skin changes",
+            ["zhs"] = "发送皮肤改变",
+            ["zht"] = "傳送外觀變更",
+            ["deu"] = "Skin-Änderungen senden",
+            ["esp"] = "Enviar cambios de aspecto",
+            ["fra"] = "Envoyer les changements d’apparence",
+            ["ita"] = "Invia modifiche alle skin",
+            ["jpn"] = "スキン変更を送信",
+            ["kor"] = "스킨 변경 보내기",
+            ["pol"] = "Wysyłaj zmiany skórek",
+            ["ptb"] = "Enviar alterações de visual",
+            ["rus"] = "Отправлять изменения обликов",
+            ["spa"] = "Enviar cambios de aspecto",
+            ["tha"] = "ส่งการเปลี่ยนแปลงสกิน",
+            ["tur"] = "Görünüm değişikliklerini gönder"
         };
 
     private static readonly IReadOnlyDictionary<string, string> HideAppearanceHoldHintTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = "Hold to hide this button; hold Resume to show it again",
-            ["zhs"] = "长按隐藏此按钮；长按“继续游戏”可恢复",
-            ["zht"] = "長按隱藏此按鈕；長按「繼續遊戲」可恢復",
-            ["deu"] = "Gedrückt halten zum Ausblenden; „Fortsetzen“ gedrückt halten zum Einblenden",
-            ["esp"] = "Mantén pulsado para ocultar; mantén pulsado «Continuar» para mostrarlo de nuevo",
-            ["fra"] = "Maintenir pour masquer ; maintenir « Reprendre » pour réafficher",
-            ["ita"] = "Tieni premuto per nascondere; tieni premuto «Riprendi» per mostrare di nuovo",
-            ["jpn"] = "長押しで非表示。「ゲームに戻る」を長押しすると再表示",
-            ["kor"] = "길게 눌러 숨기기. ‘계속하기’를 길게 누르면 다시 표시",
-            ["pol"] = "Przytrzymaj, aby ukryć; przytrzymaj „Wznów”, aby pokazać ponownie",
-            ["ptb"] = "Segure para ocultar; segure “Continuar” para mostrar novamente",
-            ["rus"] = "Удерживайте, чтобы скрыть; удерживайте «Продолжить», чтобы вернуть",
-            ["spa"] = "Mantén pulsado para ocultar; mantén pulsado «Continuar» para mostrarlo de nuevo",
-            ["tha"] = "กดค้างเพื่อซ่อนปุ่มนี้ กด “เล่นต่อ” ค้างเพื่อแสดงอีกครั้ง",
-            ["tur"] = "Gizlemek için basılı tut; yeniden göstermek için “Devam et”i basılı tut"
+            ["eng"] = "Right-click to hide; right-click Resume to show it again",
+            ["zhs"] = "右键隐藏；右键“继续游戏”可恢复",
+            ["zht"] = "右鍵隱藏；右鍵「繼續遊戲」可恢復",
+            ["deu"] = "Rechtsklick zum Ausblenden; Rechtsklick auf „Fortsetzen“ zum Einblenden",
+            ["esp"] = "Clic derecho para ocultar; clic derecho en «Continuar» para mostrar",
+            ["fra"] = "Clic droit pour masquer ; clic droit sur « Reprendre » pour réafficher",
+            ["ita"] = "Clic destro per nascondere; clic destro su «Riprendi» per mostrare",
+            ["jpn"] = "右クリックで非表示。「ゲームに戻る」を右クリックで再表示",
+            ["kor"] = "오른쪽 클릭으로 숨기기. ‘계속하기’를 오른쪽 클릭하면 다시 표시",
+            ["pol"] = "Prawy klik ukrywa; prawy klik „Wznów” pokazuje ponownie",
+            ["ptb"] = "Clique direito para ocultar; clique direito em “Continuar” para mostrar",
+            ["rus"] = "ПКМ — скрыть; ПКМ по «Продолжить» — вернуть",
+            ["spa"] = "Clic derecho para ocultar; clic derecho en «Continuar» para mostrar",
+            ["tha"] = "คลิกขวาเพื่อซ่อน คลิกขวา “เล่นต่อ” เพื่อแสดงอีกครั้ง",
+            ["tur"] = "Gizlemek için sağ tıkla; göstermek için “Devam et”e sağ tıkla"
         };
 
     private static readonly IReadOnlyDictionary<string, string> ShowAppearanceHoldHintTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["eng"] = "Hold to show the Appearance button",
-            ["zhs"] = "长按显示“外观”按钮",
-            ["zht"] = "長按顯示「外觀」按鈕",
-            ["deu"] = "Gedrückt halten, um „Aussehen“ einzublenden",
-            ["esp"] = "Mantén pulsado para mostrar el botón «Aspecto»",
-            ["fra"] = "Maintenir pour afficher le bouton « Apparence »",
-            ["ita"] = "Tieni premuto per mostrare il pulsante «Aspetto»",
-            ["jpn"] = "長押しで「外見」ボタンを表示",
-            ["kor"] = "길게 눌러 ‘외형’ 버튼 표시",
-            ["pol"] = "Przytrzymaj, aby pokazać przycisk „Wygląd”",
-            ["ptb"] = "Segure para mostrar o botão “Visual”",
-            ["rus"] = "Удерживайте, чтобы показать кнопку «Облик»",
-            ["spa"] = "Mantén pulsado para mostrar el botón «Aspecto»",
-            ["tha"] = "กดค้างเพื่อแสดงปุ่ม “รูปลักษณ์”",
-            ["tur"] = "“Görünüm” düğmesini göstermek için basılı tut"
+            ["eng"] = "Right-click to show the Appearance button",
+            ["zhs"] = "右键显示“外观”按钮",
+            ["zht"] = "右鍵顯示「外觀」按鈕",
+            ["deu"] = "Rechtsklick zeigt „Aussehen“ wieder an",
+            ["esp"] = "Clic derecho para mostrar el botón «Aspecto»",
+            ["fra"] = "Clic droit pour afficher le bouton « Apparence »",
+            ["ita"] = "Clic destro per mostrare il pulsante «Aspetto»",
+            ["jpn"] = "右クリックで「外見」ボタンを表示",
+            ["kor"] = "오른쪽 클릭으로 ‘외형’ 버튼 표시",
+            ["pol"] = "Prawy klik pokazuje przycisk „Wygląd”",
+            ["ptb"] = "Clique direito para mostrar o botão “Visual”",
+            ["rus"] = "ПКМ — показать кнопку «Облик»",
+            ["spa"] = "Clic derecho para mostrar el botón «Aspecto»",
+            ["tha"] = "คลิกขวาเพื่อแสดงปุ่ม “รูปลักษณ์”",
+            ["tur"] = "“Görünüm” düğmesini göstermek için sağ tıkla"
         };
 
     private static readonly IReadOnlyDictionary<string, string> CardSkinSelectorDragHintTexts =

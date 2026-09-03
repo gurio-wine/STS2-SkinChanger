@@ -756,7 +756,7 @@ internal static class SkinService
         }
     }
 
-    public static bool ShouldLoadOtherPlayersCustomSkins()
+    public static bool ShouldReceiveMultiplayerSkinChanges()
     {
         lock (Sync)
         {
@@ -765,7 +765,7 @@ internal static class SkinService
         }
     }
 
-    public static bool ShouldSynchronizeMultiplayerSkins()
+    public static bool ShouldSendMultiplayerSkinChanges()
     {
         lock (Sync)
         {
@@ -774,8 +774,12 @@ internal static class SkinService
         }
     }
 
-    public static void SetMultiplayerSkinSyncEnabled(bool enabled)
+    public static void SetSendMultiplayerSkinChanges(bool enabled)
     {
+        if (!enabled && ShouldSendMultiplayerSkinChanges())
+        {
+            MultiplayerSkinSync.BroadcastLocalFallbackBeforeDisablingSend();
+        }
         bool changed;
         lock (Sync)
         {
@@ -790,11 +794,11 @@ internal static class SkinService
 
         if (changed)
         {
-            MultiplayerSkinSync.OnSynchronizationPreferenceChanged(enabled);
+            MultiplayerSkinSync.OnDirectionPreferenceChanged();
         }
     }
 
-    public static void SetLoadOtherPlayersCustomSkins(bool enabled)
+    public static void SetReceiveMultiplayerSkinChanges(bool enabled)
     {
         bool changed;
         lock (Sync)
@@ -810,7 +814,8 @@ internal static class SkinService
 
         if (changed)
         {
-            MultiplayerSkinSync.OnRemoteSkinLoadingPreferenceChanged(enabled);
+            MultiplayerSkinSync.OnReceivePreferenceChanged(enabled);
+            MultiplayerSkinSync.OnDirectionPreferenceChanged();
         }
     }
 

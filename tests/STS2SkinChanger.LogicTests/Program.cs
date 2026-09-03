@@ -459,23 +459,11 @@ Require(oversizedMergeButtonPosition == new NormalizedControlPosition(0.5f, 0.5f
     "小窗口或长文本按钮大于窗口时应居中，不能出现反向边界异常。");
 Require(DraggableControlPlacementPolicy.ClampNormalized(float.NaN, 0f, 1920f, 1080f, 452f, 44f) ==
         new NormalizedControlPosition(0.5f, 0.5f), "无效拖动坐标不能使按钮消失。");
-var holdGesture = new PauseMenuHoldGesture();
-holdGesture.Begin(1000);
-Require(!holdGesture.Advance(1799) && !holdGesture.ConsumeRelease(),
-    "短按必须保留原来的打开外观或继续游戏操作。");
-holdGesture.Begin(2000);
-Require(holdGesture.Advance(2800) && !holdGesture.Advance(3800) && holdGesture.ConsumeRelease(),
-    "长按只触发一次，并吞掉随后松开引发的普通点击。");
-holdGesture.Begin(4000);
-holdGesture.Cancel();
-Require(!holdGesture.Advance(5000) && holdGesture.ConsumeRelease(),
-    "长按中途移出、失焦或关闭菜单必须取消，松开不能误点其他操作。");
-holdGesture.Begin(6000);
-Require(!holdGesture.ConsumeRelease(), "取消后的下一次短按不能被上一轮的状态吞掉。");
-holdGesture.Begin(7000);
-Require(holdGesture.Advance(7800), "长按达到阈值应立即生效。");
-holdGesture.Cancel();
-Require(holdGesture.ConsumeRelease(), "隐藏按钮导致失焦后仍须吞掉本次松开的点击。");
+Require(PauseMenuAppearanceClickPolicy.ShouldToggleVisibility(isRightButton: true, pressed: true),
+    "右键按下外观或继续游戏按钮时必须切换外观入口可见性。");
+Require(!PauseMenuAppearanceClickPolicy.ShouldToggleVisibility(isRightButton: true, pressed: false) &&
+        !PauseMenuAppearanceClickPolicy.ShouldToggleVisibility(isRightButton: false, pressed: true),
+    "右键松开和左键都不能重复切换外观入口。");
 
 var singleProviderIdentity = ProviderInstanceIdentityPolicy.Resolve(
     [new ProviderInstanceCandidate("Same.Id", "Single Skin", @"D:\mods\only")]);
@@ -545,34 +533,49 @@ Require(
         firstDuplicateInstanceId + "::variant:painted"),
     "卸载同 ID 差分包后，剩余单包必须能接回之前保存的实例化选择。");
 
+var receiveOnlyMultiplayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
+    sendChanges: false,
+    receiveChanges: true,
+    isMultiplayer: true);
+Require(
+    receiveOnlyMultiplayerSync.AttachTransport &&
+    receiveOnlyMultiplayerSync.WriteCapabilityTrailer &&
+    receiveOnlyMultiplayerSync.ReadCapabilityTrailer &&
+    receiveOnlyMultiplayerSync.ApplyRemoteAppearance &&
+    !receiveOnlyMultiplayerSync.SendLocalAppearance,
+    "只接收时必须能识别并应用其他玩家外观，但不能发送自己的皮肤和参数。");
+var sendOnlyMultiplayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
+    sendChanges: true,
+    receiveChanges: false,
+    isMultiplayer: true);
+Require(
+    sendOnlyMultiplayerSync.AttachTransport &&
+    sendOnlyMultiplayerSync.WriteCapabilityTrailer &&
+    sendOnlyMultiplayerSync.ReadCapabilityTrailer &&
+    !sendOnlyMultiplayerSync.ApplyRemoteAppearance &&
+    sendOnlyMultiplayerSync.SendLocalAppearance,
+    "只发送时必须发布自己的皮肤和参数，但不能用远端状态覆盖本机看到的玩家。");
 var disabledMultiplayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
-    enabled: false,
+    sendChanges: false,
+    receiveChanges: false,
     isMultiplayer: true);
-Require(
-    !disabledMultiplayerSync.AttachTransport &&
-    !disabledMultiplayerSync.WriteCapabilityTrailer &&
-    !disabledMultiplayerSync.ReadCapabilityTrailer &&
-    !disabledMultiplayerSync.ApplyRemoteAppearance,
-    "关闭联机皮肤同步后必须彻底停止监听、能力探测和远端外观覆盖；" +
-    "不能只隐藏选项却继续向未安装 Skin Changer 的玩家修改握手包。");
-var enabledMultiplayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
-    enabled: true,
-    isMultiplayer: true);
-Require(
-    enabledMultiplayerSync.AttachTransport &&
-    enabledMultiplayerSync.WriteCapabilityTrailer &&
-    enabledMultiplayerSync.ReadCapabilityTrailer &&
-    enabledMultiplayerSync.ApplyRemoteAppearance,
-    "默认启用联机皮肤同步时必须保留现有的同装皮肤、头像和参数同步流程。");
+Require(!disabledMultiplayerSync.AttachTransport &&
+        !disabledMultiplayerSync.WriteCapabilityTrailer &&
+        !disabledMultiplayerSync.ReadCapabilityTrailer &&
+        !disabledMultiplayerSync.ApplyRemoteAppearance &&
+        !disabledMultiplayerSync.SendLocalAppearance,
+    "发送和接收都关闭时不能继续修改网络包或交换外观数据。");
 var singlePlayerSync = MultiplayerSkinSyncParticipationPolicy.Resolve(
-    enabled: true,
+    sendChanges: true,
+    receiveChanges: true,
     isMultiplayer: false);
 Require(
     !singlePlayerSync.AttachTransport &&
     !singlePlayerSync.WriteCapabilityTrailer &&
     !singlePlayerSync.ReadCapabilityTrailer &&
-    !singlePlayerSync.ApplyRemoteAppearance,
-    "单人游戏不能因为总开关默认开启而启动任何联机皮肤网络路径。");
+    !singlePlayerSync.ApplyRemoteAppearance &&
+    !singlePlayerSync.SendLocalAppearance,
+    "单人游戏不能因为方向开关默认开启而启动任何联机皮肤网络路径。");
 
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {

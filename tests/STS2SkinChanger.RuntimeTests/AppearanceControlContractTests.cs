@@ -14,9 +14,7 @@ internal static class AppearanceControlContractTests
         var patches = new[]
         {
             ("CharacterAppearancePauseMenuPatch", typeof(NPauseMenu), "_Ready"),
-            ("CharacterAppearancePauseMenuPatch", typeof(NPauseMenu), "OnSubmenuOpened"),
-            ("PauseMenuAppearanceHoldPressPatch", typeof(NClickableControl), "OnPressHandler"),
-            ("PauseMenuAppearanceResumeHoldPatch", typeof(NPauseMenu), "OnBackOrResumeButtonPressed")
+            ("CharacterAppearancePauseMenuPatch", typeof(NPauseMenu), "OnSubmenuOpened")
         };
         try
         {
@@ -38,6 +36,16 @@ internal static class AppearanceControlContractTests
         finally
         {
             harmony.UnpatchAll(harmony.Id);
+        }
+
+        var rightClickType = assembly.GetType(
+                                 "STS2SkinChanger.Ui.PauseMenuAppearanceRightClick",
+                                 throwOnError: true)!;
+        if (rightClickType.GetMethod(
+                "Attach",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) == null)
+        {
+            throw new InvalidOperationException("暂停菜单外观按钮缺少右键绑定入口。");
         }
 
         var configType = assembly.GetType("STS2SkinChanger.Core.SkinConfig", throwOnError: true)!;
@@ -74,9 +82,9 @@ internal static class AppearanceControlContractTests
             if (languages.Any(language => !values.TryGetValue(language, out var text) ||
                                           string.IsNullOrWhiteSpace(text)))
             {
-                throw new InvalidOperationException("长按提示缺少本地化：" + field);
+                throw new InvalidOperationException("右键提示缺少本地化：" + field);
             }
         }
-        Console.WriteLine("Appearance control contracts passed: native press/resume hooks, persistence, 15 languages.");
+        Console.WriteLine("Appearance control contracts passed: right-click entry, persistence, 15 languages.");
     }
 }

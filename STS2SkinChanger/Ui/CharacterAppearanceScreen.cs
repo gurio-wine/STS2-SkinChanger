@@ -2420,7 +2420,7 @@ internal static class CharacterAppearancePauseMenu
             var container = pauseMenu.GetNode<Control>("%ButtonContainer");
             // Always bind Resume, even when the appearance entry was hidden in an earlier run.
             var resume = container.GetNode<NPauseMenuButton>("Resume");
-            PauseMenuHoldControl.Attach(resume,
+            PauseMenuAppearanceRightClick.Attach(resume,
                 () => SetEntryVisible(pauseMenu, true), ModText.ShowAppearanceHoldHint);
             var existing = container.GetNodeOrNull<NPauseMenuButton>(ButtonName);
             var visibility = PauseMenuAppearanceEntryPolicy.Resolve(
@@ -2451,14 +2451,8 @@ internal static class CharacterAppearancePauseMenu
 
             button.Connect(
                 NClickableControl.SignalName.Released,
-                Callable.From<NButton>(clicked =>
-                {
-                    if (!PauseMenuHoldControl.ConsumeClick(clicked))
-                    {
-                        Open(pauseMenu);
-                    }
-                }));
-            PauseMenuHoldControl.Attach(button,
+                Callable.From<NButton>(_ => Open(pauseMenu)));
+            PauseMenuAppearanceRightClick.Attach(button,
                 () => SetEntryVisible(pauseMenu, false), ModText.HideAppearanceHoldHint);
             ModLocalization.Bind(button, () =>
                 button.GetNode<MegaLabel>("Label")

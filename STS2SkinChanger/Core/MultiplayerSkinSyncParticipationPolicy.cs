@@ -4,19 +4,22 @@ internal readonly record struct MultiplayerSkinSyncParticipationDecision(
     bool AttachTransport,
     bool WriteCapabilityTrailer,
     bool ReadCapabilityTrailer,
-    bool ApplyRemoteAppearance);
+    bool ApplyRemoteAppearance,
+    bool SendLocalAppearance);
 
 internal static class MultiplayerSkinSyncParticipationPolicy
 {
     public static MultiplayerSkinSyncParticipationDecision Resolve(
-        bool enabled,
+        bool sendChanges,
+        bool receiveChanges,
         bool isMultiplayer)
     {
-        var participate = enabled && isMultiplayer;
+        var participate = (sendChanges || receiveChanges) && isMultiplayer;
         return new MultiplayerSkinSyncParticipationDecision(
             AttachTransport: participate,
             WriteCapabilityTrailer: participate,
             ReadCapabilityTrailer: participate,
-            ApplyRemoteAppearance: participate);
+            ApplyRemoteAppearance: receiveChanges && isMultiplayer,
+            SendLocalAppearance: sendChanges && isMultiplayer);
     }
 }
