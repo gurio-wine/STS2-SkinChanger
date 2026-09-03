@@ -2542,9 +2542,172 @@ static void RunCardExportSelfTest(string gamePckPath)
                 "later card batches did not reuse the already mounted private atlas");
         }
 
+        var duplicateRootA = System.IO.Path.Combine(testRoot, "1111111111");
+        var duplicateRootB = System.IO.Path.Combine(testRoot, "2222222222");
+        Directory.CreateDirectory(duplicateRootA);
+        Directory.CreateDirectory(duplicateRootB);
+        var duplicatePckA = System.IO.Path.Combine(duplicateRootA, "Tests.DuplicateSkin.pck");
+        var duplicatePckB = System.IO.Path.Combine(duplicateRootB, "Tests.DuplicateSkin.pck");
+        const string duplicatePortraitPath = "res://generated/duplicate.png";
+        const string duplicateVisualPath =
+            "res://animations/characters/ironclad/differential-preview.png";
+        var duplicateManifest = Encoding.UTF8.GetBytes(
+            """
+            {"entries":[
+              {"cardId":"Tests.DuplicateCard","kind":"image","image":"res://generated/duplicate.png"}
+            ]}
+            """);
+        PckArchive.Write(duplicatePckA, new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["res://generated/card_replacements.json"] = duplicateManifest,
+            [duplicatePortraitPath] = [41, 42, 43],
+            [duplicateVisualPath] = [61, 62, 63]
+        });
+        PckArchive.Write(duplicatePckB, new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["res://generated/card_replacements.json"] = duplicateManifest,
+            [duplicatePortraitPath] = [51, 52, 53],
+            [duplicateVisualPath] = [71, 72, 73]
+        });
+        SkinModDescriptor[] duplicateDescriptors =
+        [
+            new SkinModDescriptor(
+                "Tests.DuplicateSkin",
+                "Duplicate Skin",
+                duplicatePckA,
+                false,
+                duplicateRootA,
+                false),
+            new SkinModDescriptor(
+                "Tests.DuplicateSkin",
+                "Duplicate Skin",
+                duplicatePckB,
+                false,
+                duplicateRootB,
+                false)
+        ];
+        var duplicateProbes = SkinCatalog.ProbeSkinProviders(
+            duplicateDescriptors,
+            gamePckPath);
+        if (duplicateProbes.Count != 2 ||
+            duplicateProbes.Select(probe => probe.Id)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != 2)
+        {
+            throw new InvalidOperationException(
+                "same-ID differential packages collide during loader probing");
+        }
+
+        using var duplicateCatalog = SkinCatalog.Build(
+            gamePckPath,
+            duplicateDescriptors);
+        var duplicateOptions = duplicateCatalog.PckCardOptions
+            .Where(option => option.ProviderId?.StartsWith(
+                "Tests.DuplicateSkin::source:",
+                StringComparison.OrdinalIgnoreCase) == true)
+            .ToArray();
+        if (duplicateOptions.Length != 2 ||
+            duplicateOptions.Select(option => option.Id)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != 2 ||
+            duplicateOptions.Select(option => option.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != 2)
+        {
+            throw new InvalidOperationException(
+                "same-ID differential packages were merged into one card option");
+        }
+        if (!duplicateOptions.Select(option => option.ProviderId!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                .SetEquals(duplicateProbes.Select(probe => probe.Id)))
+        {
+            throw new InvalidOperationException(
+                "loader probe IDs and catalog option IDs do not identify the same package roots");
+        }
+
+        duplicateCatalog.FinalizeCardGroups([
+            new CardCatalogEntry(
+                "DuplicateCard",
+                "res://validation/duplicate.png",
+                "tests",
+                "tests",
+                "tests")
+        ]);
+        var routedDuplicateOptions = duplicateCatalog.CardGroups
+            .Single(group => group.Id == "tests")
+            .Options
+            .Where(option => option.ProviderId?.StartsWith(
+                "Tests.DuplicateSkin::source:",
+                StringComparison.OrdinalIgnoreCase) == true)
+            .ToArray();
+        if (routedDuplicateOptions.Length != 2)
+        {
+            throw new InvalidOperationException(
+                "same-ID differential card options were lost while routing card groups");
+        }
+
+        var duplicatePayloads = routedDuplicateOptions
+            .Select((option, index) => duplicateCatalog.BuildIsolatedCardResource(
+                "tests",
+                option.Id,
+                duplicatePortraitPath,
+                useSelectedProvider: true,
+                "self-test/duplicate-" + index))
+            .Select(overlay => overlay.Files[overlay.ResourcePaths[duplicatePortraitPath]])
+            .ToArray();
+        if (duplicatePayloads[0].AsSpan().SequenceEqual(duplicatePayloads[1]))
+        {
+            throw new InvalidOperationException(
+                "same-ID differential package options do not retain their own archive resources");
+        }
+        if (!duplicateCatalog.ResolveStoredCardSelectionId(
+                "tests",
+                "Tests.DuplicateSkin").StartsWith(
+                "Tests.DuplicateSkin::source:",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "legacy same-ID card selection was not migrated to a concrete differential package");
+        }
+        var duplicateVisualOptions = duplicateCatalog.Groups
+            .Single(group => group.Id == "ironclad")
+            .Options
+            .Where(option => option.EffectiveProviderId.StartsWith(
+                "Tests.DuplicateSkin::source:",
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (duplicateVisualOptions.Length != 2 ||
+            duplicateVisualOptions.Select(option => option.Id)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != 2 ||
+            duplicateVisualOptions.Select(option => option.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != 2)
+        {
+            throw new InvalidOperationException(
+                "same-ID differential packages were merged into one visual option");
+        }
+        var duplicateVisualPayloads = duplicateVisualOptions
+            .Select(option => option.Assets[duplicateVisualPath].Files
+                .Single(file => file.Path.Equals(
+                    duplicateVisualPath,
+                    StringComparison.OrdinalIgnoreCase))
+                .Archive.ReadFile(duplicateVisualPath))
+            .ToArray();
+        if (duplicateVisualPayloads[0].AsSpan().SequenceEqual(duplicateVisualPayloads[1]))
+        {
+            throw new InvalidOperationException(
+                "same-ID differential visual options share the wrong archive");
+        }
+        if (!duplicateCatalog.ResolveStoredVisualSelectionId(
+                "ironclad",
+                "Tests.DuplicateSkin").StartsWith(
+                "Tests.DuplicateSkin::source:",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "legacy same-ID visual selection was not migrated to a concrete differential package");
+        }
+
         Console.WriteLine(
             "card export self-test passed: static, BOM-framed, animation fallback, " +
-            "CardPortraitsCore modes, unique shared-pool routing and batched isolation");
+            "CardPortraitsCore modes, unique shared-pool routing, batched isolation and " +
+            "same-ID differential package isolation");
     }
     finally
     {

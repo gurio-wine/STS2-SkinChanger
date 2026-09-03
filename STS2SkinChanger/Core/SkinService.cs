@@ -727,8 +727,10 @@ internal static class SkinService
                 Catalog.FinalizeCardGroups(entries);
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
                 CardCoverageCache.Clear();
+                MigrateStoredCardSelections();
                 SanitizeCardSelections();
                 MigrateLegacyCardSkinPresets();
+                SanitizeCardSkinPresets();
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -5705,6 +5707,42 @@ internal static class SkinService
 
     private static void SanitizeSelections()
     {
+        var migratedVisualSelectionCount = 0;
+        foreach (var group in Catalog!.Groups)
+        {
+            if (!Config.Selections.TryGetValue(group.Id, out var storedSelection))
+            {
+                continue;
+            }
+
+            var resolvedSelection = Catalog.ResolveStoredVisualSelectionId(
+                group.Id,
+                storedSelection);
+            if (resolvedSelection.Equals(storedSelection, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            Config.Selections[group.Id] = resolvedSelection;
+            migratedVisualSelectionCount++;
+        }
+
+        foreach (var pair in Config.CharacterIconSelections.ToArray())
+        {
+            var resolvedSelection = Catalog.ResolveStoredVisualSelectionId(pair.Key, pair.Value);
+            if (!resolvedSelection.Equals(pair.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                Config.CharacterIconSelections[pair.Key] = resolvedSelection;
+                migratedVisualSelectionCount++;
+            }
+        }
+
+        if (migratedVisualSelectionCount > 0)
+        {
+            ModLog.Info(
+                $"已把 {migratedVisualSelectionCount} 项旧外观设置迁移到具体的同 ID 差分包。");
+        }
+
         if (Config.VisualSelectionDefaultsVersion < 1)
         {
             // The old default picked the first discovered Mod option for every new group. A
@@ -5849,6 +5887,9 @@ internal static class SkinService
             .Select(option => option!.EffectiveProviderId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         Config.VisualProviderPriority = Config.VisualProviderPriority
+            .Select(providerId => Catalog.ResolveStoredProviderId(
+                providerId,
+                selectedProviderIds))
             .Where(selectedProviderIds.Contains)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -5873,6 +5914,130 @@ internal static class SkinService
         }
 
         Config.CardPriorityDefaultsVersion = 1;
+    }
+
+    private static void MigrateStoredCardSelections()
+    {
+        var catalog = Catalog;
+        if (catalog == null)
+        {
+            return;
+        }
+
+        var groupsById = catalog.CardGroups.ToDictionary(
+            group => group.Id,
+            StringComparer.OrdinalIgnoreCase);
+        var individualGroupIds = ModelDb.AllCards
+            .GroupBy(IndividualCardSelectionKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => GetCardLookup(group.First()).GroupId,
+                StringComparer.OrdinalIgnoreCase);
+        var migratedCount = 0;
+        foreach (var pair in Config.Selections
+                     .Where(pair => pair.Key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
+        {
+            string? groupId = null;
+            if (individualGroupIds.TryGetValue(pair.Key, out var individualGroupId))
+            {
+                groupId = individualGroupId;
+            }
+            else if (!pair.Key.StartsWith("cards:item:", StringComparison.OrdinalIgnoreCase))
+            {
+                var categoryId = pair.Key["cards:".Length..];
+                if (groupsById.ContainsKey(categoryId))
+                {
+                    groupId = categoryId;
+                }
+            }
+
+            if (groupId == null ||
+                pair.Value.Equals(InheritCardSelectionId, StringComparison.OrdinalIgnoreCase) ||
+                pair.Value.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var resolvedSelection = catalog.ResolveStoredCardSelectionId(groupId, pair.Value);
+            if (resolvedSelection.Equals(pair.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            Config.Selections[pair.Key] = resolvedSelection;
+            migratedCount++;
+        }
+
+        if (migratedCount > 0)
+        {
+            ModLog.Info($"已把 {migratedCount} 项旧单卡设置迁移到具体的同 ID 差分包。");
+        }
+    }
+
+    private static void SanitizeCardSkinPresets()
+    {
+        var catalog = Catalog;
+        if (catalog == null)
+        {
+            return;
+        }
+
+        var selectionKeysByGroup = catalog.CardGroups.ToDictionary(
+            group => group.Id,
+            group => new HashSet<string>(
+                [CardSelectionKey(group.Id)],
+                StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var card in ModelDb.AllCards)
+        {
+            var lookup = GetCardLookup(card);
+            if (selectionKeysByGroup.TryGetValue(lookup.GroupId, out var keys))
+            {
+                keys.Add(IndividualCardSelectionKey(card));
+            }
+        }
+
+        foreach (var preset in Config.CardSkinPresets.Where(preset =>
+                     !string.IsNullOrWhiteSpace(preset.CategoryId)))
+        {
+            var group = catalog.CardGroups.FirstOrDefault(candidate => candidate.Id.Equals(
+                preset.CategoryId,
+                StringComparison.OrdinalIgnoreCase));
+            if (group == null)
+            {
+                continue;
+            }
+
+            if (preset.CardSkinPriorities.TryGetValue(group.Id, out var priorityEntries))
+            {
+                preset.CardSkinPriorities[group.Id] = priorityEntries
+                    .Select(entry => entry with
+                    {
+                        OptionId = catalog.ResolveStoredCardSelectionId(
+                            group.Id,
+                            entry.OptionId)
+                    })
+                    .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            var selectionKeys = selectionKeysByGroup[group.Id];
+            foreach (var pair in preset.Selections
+                         .Where(pair => selectionKeys.Contains(pair.Key))
+                         .ToArray())
+            {
+                if (pair.Value.Equals(InheritCardSelectionId, StringComparison.OrdinalIgnoreCase) ||
+                    pair.Value.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                preset.Selections[pair.Key] = catalog.ResolveStoredCardSelectionId(
+                    group.Id,
+                    pair.Value);
+            }
+        }
     }
 
     private static void SanitizeMonsterSkinPriorities()
@@ -5964,6 +6129,13 @@ internal static class SkinService
         var configuredEntries = Config.MonsterSkinPriorities.TryGetValue(categoryId, out var configured)
             ? configured
             : [];
+        configuredEntries = configuredEntries
+            .Select(entry => entry with
+            {
+                OptionId = ResolveStoredMonsterPriorityOptionId(categoryId, entry.OptionId)
+            })
+            .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var entries = configuredEntries
             .Where(entry => knownIds.Contains(entry.OptionId))
             .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
@@ -5979,6 +6151,29 @@ internal static class SkinService
             entries,
             knownIds);
         return entries;
+    }
+
+    private static string ResolveStoredMonsterPriorityOptionId(
+        string categoryId,
+        string optionId)
+    {
+        var catalog = Catalog;
+        if (catalog == null ||
+            !Config.MonsterSkinCategoryGroups.TryGetValue(categoryId, out var groupIds))
+        {
+            return optionId;
+        }
+
+        foreach (var groupId in groupIds)
+        {
+            var resolved = catalog.ResolveStoredVisualSelectionId(groupId, optionId);
+            if (!resolved.Equals(optionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return resolved;
+            }
+        }
+
+        return optionId;
     }
 
     private static IReadOnlyList<MonsterCategoryOptionState> GetMonsterCategoryOptionsInternal(
@@ -6140,6 +6335,13 @@ internal static class SkinService
         var configuredEntries = Config.CardSkinPriorities.TryGetValue(group.Id, out var configured)
             ? configured
             : [];
+        configuredEntries = configuredEntries
+            .Select(entry => entry with
+            {
+                OptionId = Catalog!.ResolveStoredCardSelectionId(group.Id, entry.OptionId)
+            })
+            .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (configuredEntries.Count > 0)
         {
             if (enableAllByDefault)
@@ -6164,7 +6366,7 @@ internal static class SkinService
             var selectionKey = CardSelectionKey(group.Id);
             var hasLegacySelection = Config.Selections.TryGetValue(selectionKey, out var legacySelection);
             var selectedId = hasLegacySelection
-                ? legacySelection!
+                ? Catalog!.ResolveStoredCardSelectionId(group.Id, legacySelection!)
                 : group.Options.FirstOrDefault()?.Id ?? SkinCatalog.BaseOptionId;
             entries = group.Options
                 .OrderByDescending(option => option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase))

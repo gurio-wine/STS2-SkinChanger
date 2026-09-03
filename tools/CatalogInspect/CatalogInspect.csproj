@@ -20,6 +20,7 @@
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedCharacterAssetReplacementScanner.cs" Link="ManagedCharacterAssetReplacementScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/DirectCharacterRuntimeTargetScanner.cs" Link="DirectCharacterRuntimeTargetScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs" Link="FrameworkSkinContractScanner.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/ProviderInstanceIdentityPolicy.cs" Link="ProviderInstanceIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ManagedMonsterSceneScanner.cs" Link="ManagedMonsterSceneScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/RuntimeMonsterVisualModeScanner.cs" Link="RuntimeMonsterVisualModeScanner.cs" />
   </ItemGroup>

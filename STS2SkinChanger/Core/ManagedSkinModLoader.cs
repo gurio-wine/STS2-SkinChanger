@@ -17,6 +17,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
 
 namespace STS2SkinChanger.Core;
 
@@ -38,11 +39,18 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, bool> SelectableCosmeticProbeResults =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> RegisteredProviderAssemblies =
-        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<Assembly> RegisteredProviderAssemblies = [];
     private static readonly Dictionary<string, ProviderAssembly> ProviderAssemblies =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ProviderAssemblySourceIdentity>
+        ProviderAssemblySourcesByIdentity = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Assembly> LoadedProviderAssemblies =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Assembly> LoadedProviderAssembliesByFingerprint =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, LoadedProviderAssemblyIdentity>
+        LoadedProviderAssembliesByIdentity = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ReportedProviderAssemblyIdentityConflicts =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, IReadOnlyList<ManagedVisualPostfix>> VisualPostfixesByProvider =
         new(StringComparer.OrdinalIgnoreCase);
@@ -571,11 +579,41 @@ internal static class ManagedSkinModLoader
         var hasDeclarativeCharacterAssetReplacement =
             ManagedCharacterAssetReplacementScanner.Scan(mod.path, mod.manifest.id).Count > 0 ||
             FrameworkSkinContractScanner.Scan(mod.path, mod.manifest.id).Count > 0;
-        ProviderAssemblies[mod.manifest.id] = new ProviderAssembly(
+        var fingerprint = ComputeProviderAssemblyFingerprint(assemblyPath);
+        var assemblyIdentity = TryReadProviderAssemblyIdentity(assemblyPath);
+        var canActivateBehavior = true;
+        if (assemblyIdentity != null)
+        {
+            if (ProviderAssemblySourcesByIdentity.TryGetValue(
+                    assemblyIdentity,
+                    out var existingSource))
+            {
+                canActivateBehavior = existingSource.Fingerprint.Equals(
+                    fingerprint,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                ProviderAssemblySourcesByIdentity[assemblyIdentity] =
+                    new ProviderAssemblySourceIdentity(fingerprint, assemblyPath);
+            }
+        }
+
+        var providerAssembly = new ProviderAssembly(
             assemblyPath,
             mod.manifest.name ?? mod.manifest.id,
             provider.ManagedScriptCount > 0 || hasDeclarativeCharacterAssetReplacement,
-            hasDeclarativeCharacterAssetReplacement);
+            hasDeclarativeCharacterAssetReplacement,
+            canActivateBehavior);
+        ProviderAssemblies[provider.Id] = providerAssembly;
+        if (!canActivateBehavior)
+        {
+            ReportProviderAssemblyIdentityConflict(
+                providerAssembly,
+                assemblyIdentity!,
+                fingerprint,
+                ProviderAssemblySourcesByIdentity[assemblyIdentity!].Fingerprint);
+        }
     }
 
     public static bool EnsureProviderGodotScripts(string providerId)
@@ -586,15 +624,16 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
+        Assembly? assembly = null;
         try
         {
-            var assembly = GetOrLoadProviderAssembly(provider);
+            assembly = GetOrLoadProviderAssembly(provider);
             if (assembly == null)
             {
                 return false;
             }
 
-            if (!RegisteredProviderAssemblies.Add(provider.AssemblyPath))
+            if (!RegisteredProviderAssemblies.Add(assembly))
             {
                 return true;
             }
@@ -608,7 +647,7 @@ internal static class ManagedSkinModLoader
                     parameterType == typeof(Assembly));
             if (lookupMethod == null)
             {
-                RegisteredProviderAssemblies.Remove(provider.AssemblyPath);
+                RegisteredProviderAssemblies.Remove(assembly);
                 ModLog.Warn(
                     $"无法找到 Godot 场景脚本注册入口，{provider.Name} " +
                     "的自定义场景脚本可能无法实例化。");
@@ -634,7 +673,10 @@ internal static class ManagedSkinModLoader
                 return true;
             }
 
-            RegisteredProviderAssemblies.Remove(provider.AssemblyPath);
+            if (assembly != null)
+            {
+                RegisteredProviderAssemblies.Remove(assembly);
+            }
             ModLog.Warn(
                 $"注册 {provider.Name} 的 Godot 场景脚本失败；" +
                 "仍会隔离其全局视觉补丁：" +
@@ -761,7 +803,6 @@ internal static class ManagedSkinModLoader
                     }
 
                     var initializerKey = BuildInitializerKey(
-                        providerId,
                         assembly,
                         initializer.Type,
                         method);
@@ -940,14 +981,12 @@ internal static class ManagedSkinModLoader
     }
 
     private static string BuildInitializerKey(
-        string providerId,
         Assembly assembly,
         Type initializerType,
         MethodInfo method) =>
-        providerId + "|" +
-        (assembly.FullName ?? assembly.GetName().Name ?? string.Empty) + "|" +
+        assembly.ManifestModule.ModuleVersionId.ToString("N") + "|" +
         initializerType.FullName + "|" +
-        method.Name;
+        method.MetadataToken;
 
     private static void DeactivateProvider(string providerId)
     {
@@ -2556,9 +2595,53 @@ internal static class ManagedSkinModLoader
 
     private static Assembly? GetOrLoadProviderAssembly(ProviderAssembly provider)
     {
+        if (!provider.CanActivateBehavior)
+        {
+            return null;
+        }
+
         if (LoadedProviderAssemblies.TryGetValue(provider.AssemblyPath, out var loadedProviderAssembly))
         {
             return loadedProviderAssembly;
+        }
+
+        var fingerprint = ComputeProviderAssemblyFingerprint(provider.AssemblyPath);
+        var assemblyIdentity = TryReadProviderAssemblyIdentity(provider.AssemblyPath);
+        if (LoadedProviderAssembliesByFingerprint.TryGetValue(
+                fingerprint,
+                out loadedProviderAssembly))
+        {
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                loadedProviderAssembly);
+            return loadedProviderAssembly;
+        }
+
+        if (assemblyIdentity != null &&
+            LoadedProviderAssembliesByIdentity.TryGetValue(
+                assemblyIdentity,
+                out var loadedIdentity))
+        {
+            if (!loadedIdentity.Fingerprint.Equals(
+                    fingerprint,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                ReportProviderAssemblyIdentityConflict(
+                    provider,
+                    assemblyIdentity,
+                    fingerprint,
+                    loadedIdentity.Fingerprint);
+                return null;
+            }
+
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                loadedIdentity.Assembly);
+            return loadedIdentity.Assembly;
         }
 
         var assembly = AppDomain.CurrentDomain.GetAssemblies()
@@ -2577,8 +2660,44 @@ internal static class ManagedSkinModLoader
             });
         if (assembly != null)
         {
-            LoadedProviderAssemblies[provider.AssemblyPath] = assembly;
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                assembly);
             return assembly;
+        }
+
+        if (assemblyIdentity != null)
+        {
+            assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(candidate =>
+                    !candidate.IsDynamic &&
+                    string.Equals(
+                        candidate.FullName,
+                        assemblyIdentity,
+                        StringComparison.OrdinalIgnoreCase));
+            if (assembly != null)
+            {
+                var loadedFingerprint = TryComputeLoadedAssemblyFingerprint(assembly);
+                if (loadedFingerprint == null ||
+                    !loadedFingerprint.Equals(fingerprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    ReportProviderAssemblyIdentityConflict(
+                        provider,
+                        assemblyIdentity,
+                        fingerprint,
+                        loadedFingerprint);
+                    return null;
+                }
+
+                CacheLoadedProviderAssembly(
+                    provider.AssemblyPath,
+                    fingerprint,
+                    assemblyIdentity,
+                    assembly);
+                return assembly;
+            }
         }
 
         var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
@@ -2594,7 +2713,11 @@ internal static class ManagedSkinModLoader
                            Assembly.Load(rewrittenAssembly!.ToArray());
             }
 
-            LoadedProviderAssemblies[provider.AssemblyPath] = assembly;
+            CacheLoadedProviderAssembly(
+                provider.AssemblyPath,
+                fingerprint,
+                assemblyIdentity,
+                assembly);
             ModLog.Info(
                 $"已为 {provider.Name} 桥接 {rewrittenCalls} 处跨游戏版本运行时接口调用。" +
                 "该处理按接口签名识别，不依赖皮肤 Mod 名称。");
@@ -2608,8 +2731,88 @@ internal static class ManagedSkinModLoader
 
         assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??
                    Assembly.LoadFrom(provider.AssemblyPath);
-        LoadedProviderAssemblies[provider.AssemblyPath] = assembly;
+        CacheLoadedProviderAssembly(
+            provider.AssemblyPath,
+            fingerprint,
+            assemblyIdentity,
+            assembly);
         return assembly;
+    }
+
+    private static string ComputeProviderAssemblyFingerprint(string assemblyPath)
+    {
+        using var stream = new FileStream(
+            assemblyPath,
+            FileMode.Open,
+            System.IO.FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    private static string? TryComputeLoadedAssemblyFingerprint(Assembly assembly)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(assembly.Location)
+                ? null
+                : ComputeProviderAssemblyFingerprint(assembly.Location);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryReadProviderAssemblyIdentity(string assemblyPath)
+    {
+        try
+        {
+            return AssemblyName.GetAssemblyName(assemblyPath).FullName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void CacheLoadedProviderAssembly(
+        string assemblyPath,
+        string fingerprint,
+        string? assemblyIdentity,
+        Assembly assembly)
+    {
+        LoadedProviderAssemblies[assemblyPath] = assembly;
+        LoadedProviderAssembliesByFingerprint[fingerprint] = assembly;
+        if (assemblyIdentity != null &&
+            !LoadedProviderAssembliesByIdentity.ContainsKey(assemblyIdentity))
+        {
+            LoadedProviderAssembliesByIdentity[assemblyIdentity] =
+                new LoadedProviderAssemblyIdentity(fingerprint, assembly);
+        }
+    }
+
+    private static void ReportProviderAssemblyIdentityConflict(
+        ProviderAssembly provider,
+        string assemblyIdentity,
+        string requestedFingerprint,
+        string? loadedFingerprint)
+    {
+        if (loadedFingerprint != null &&
+            loadedFingerprint.Equals(requestedFingerprint, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!ReportedProviderAssemblyIdentityConflicts.Add(
+                assemblyIdentity + "|" + requestedFingerprint))
+        {
+            return;
+        }
+
+        ModLog.Warn(
+            $"{provider.Name} 的差分包 DLL 与已加载程序集同名但内容不同；" +
+            ".NET 无法在游戏默认加载域中安全并存这两个行为程序集。为避免串用错误代码，" +
+            "当前差分包只接管可独立隔离的 PCK、图片、场景与卡面资源，不执行冲突 DLL。");
     }
 
     private static IReadOnlyList<ManagedVisualPostfix> DiscoverVisualPostfixes(Assembly assembly)
@@ -3274,7 +3477,16 @@ internal static class ManagedSkinModLoader
         string AssemblyPath,
         string Name,
         bool HasGodotScripts,
-        bool HasDeclarativeCharacterAssetReplacement);
+        bool HasDeclarativeCharacterAssetReplacement,
+        bool CanActivateBehavior);
+
+    private sealed record ProviderAssemblySourceIdentity(
+        string Fingerprint,
+        string AssemblyPath);
+
+    private sealed record LoadedProviderAssemblyIdentity(
+        string Fingerprint,
+        Assembly Assembly);
 
     private sealed record ActiveProviderRuntime(
         Assembly Assembly,

@@ -61,6 +61,8 @@
              Link="FrameworkSkinContractScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/DirectCharacterRuntimeTargetScanner.cs"
              Link="DirectCharacterRuntimeTargetScanner.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/ProviderInstanceIdentityPolicy.cs"
+             Link="ProviderInstanceIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/OtherCreatureCatalog.cs"
              Link="OtherCreatureCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/MerchantProviderReadyPolicy.cs"

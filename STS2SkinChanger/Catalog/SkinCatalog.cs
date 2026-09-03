@@ -40,6 +40,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _fullRuntimeProviderGroups;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _scopedMonsterRuntimeProviderGroups;
     private readonly IReadOnlyDictionary<string, string> _resourceGroupIds;
+    private readonly IReadOnlyList<ProviderInstanceIdentity> _providerInstanceIdentities;
     private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceFile>>
         _fullRuntimeProviderBaselineOverlays = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlyDictionary<string, ResourceAsset>>
@@ -84,6 +85,12 @@ internal sealed partial class SkinCatalog : IDisposable
         _configuredCardGroups = cardGroups;
         _pckCardOptions = pckCardOptions;
         _cardGroups = cardGroups.ToList();
+        _providerInstanceIdentities = mods
+            .Select(mod => new ProviderInstanceIdentity(
+                mod.ResourceNamespaceId,
+                mod.Id,
+                mod.Name))
+            .ToArray();
         // External image routers must be merged before runtime-bundle ownership is calculated.
         // Otherwise a DLL that independently supplies several Ancient pictures looks like one
         // inseparable multi-group runtime merely because its PCK also contains per-Ancient icons.
@@ -97,7 +104,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var providerLocalizationFiles = cosmeticIndexes
             .SelectMany(index => index.Archive.Paths
-                .Where(path => IsProviderLocalizationFile(path, index.Mod.Id))
+                .Where(path => IsProviderLocalizationFile(path, index.Mod.ResourceNamespaceId))
                 .Select(path => (Index: index, Path: path)))
             .ToArray();
         _cosmeticLocalizationPaths = providerLocalizationFiles
@@ -601,7 +608,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
     public static SkinCatalog Build(string gamePckPath, IEnumerable<SkinModDescriptor> mods)
     {
-        var modList = mods.ToArray();
+        var modList = AssignProviderInstanceIdentities(mods);
         var gameArchive = PckArchive.Open(gamePckPath);
         var baselineIndexes = new List<PckResourceIndex>();
         var cosmeticIndexes = new List<PckResourceIndex>();
@@ -680,7 +687,7 @@ internal sealed partial class SkinCatalog : IDisposable
         IEnumerable<SkinModDescriptor> mods,
         string? gamePckPath = null)
     {
-        var modList = mods.ToArray();
+        var modList = AssignProviderInstanceIdentities(mods);
         var providers = new List<SkinProviderProbe>();
         var importedToSource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var baselineIndexes = new List<PckResourceIndex>();
@@ -734,7 +741,7 @@ internal sealed partial class SkinCatalog : IDisposable
                         visualGroups = CountProbeVisualGroups(index, baselineIndexes);
                         var frameworkContracts = FrameworkSkinContractScanner.Scan(
                                 mod.RootPath,
-                                mod.Id)
+                                mod.ResourceNamespaceId)
                             .Where(contract => FrameworkContractResourceClosureComplete(
                                 index,
                                 baselineIndexes,
@@ -801,7 +808,8 @@ internal sealed partial class SkinCatalog : IDisposable
                         cardPresentations,
                         runtimeImages,
                         managedScriptCount,
-                        hasInteractiveScenes));
+                        hasInteractiveScenes,
+                        mod.ResourceNamespaceId));
                 }
             }
         }
@@ -814,6 +822,26 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return providers;
+    }
+
+    private static SkinModDescriptor[] AssignProviderInstanceIdentities(
+        IEnumerable<SkinModDescriptor> mods)
+    {
+        var modList = mods.ToArray();
+        var identities = ProviderInstanceIdentityPolicy.Resolve(modList
+            .Select(mod => new ProviderInstanceCandidate(
+                mod.ResourceNamespaceId,
+                mod.Name,
+                mod.RootPath))
+            .ToArray());
+        return modList
+            .Select((mod, index) => mod with
+            {
+                Id = identities[index].InstanceId,
+                Name = identities[index].DisplayName,
+                ManifestId = identities[index].ManifestId
+            })
+            .ToArray();
     }
 
     private static void TryAddProbeBaselineIndex(
@@ -956,7 +984,9 @@ internal sealed partial class SkinCatalog : IDisposable
             return false;
         }
 
-        var assemblyPath = System.IO.Path.Combine(mod.RootPath, mod.Id + ".dll");
+        var assemblyPath = System.IO.Path.Combine(
+            mod.RootPath,
+            mod.ResourceNamespaceId + ".dll");
         try
         {
             var info = new FileInfo(assemblyPath);
@@ -1367,6 +1397,98 @@ internal sealed partial class SkinCatalog : IDisposable
                        StringComparison.OrdinalIgnoreCase))?
                    .EffectiveProviderId ?? optionOrProviderId;
     }
+
+    public string ResolveStoredVisualSelectionId(string groupId, string selectionId)
+    {
+        var group = _groups.FirstOrDefault(candidate => candidate.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase));
+        if (group == null || group.Options.Any(option => option.Id.Equals(
+                selectionId,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            return selectionId;
+        }
+
+        foreach (var option in group.Options)
+        {
+            var identity = FindProviderIdentity(option.EffectiveProviderId);
+            if (identity != null && ProviderInstanceIdentityPolicy.IsOptionSelectionAlias(
+                    identity.ManifestId,
+                    identity.InstanceId,
+                    option.Id,
+                    selectionId))
+            {
+                return option.Id;
+            }
+        }
+
+        return selectionId;
+    }
+
+    public string ResolveStoredCardSelectionId(string groupId, string selectionId)
+    {
+        var group = _cardGroups.FirstOrDefault(candidate => candidate.Id.Equals(
+            groupId,
+            StringComparison.OrdinalIgnoreCase));
+        if (group == null || group.Options.Any(option => option.Id.Equals(
+                selectionId,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            return selectionId;
+        }
+
+        foreach (var option in group.Options)
+        {
+            var identity = FindProviderIdentity(option.ProviderId ?? option.Id);
+            if (identity != null && ProviderInstanceIdentityPolicy.IsOptionSelectionAlias(
+                    identity.ManifestId,
+                    identity.InstanceId,
+                    option.Id,
+                    selectionId))
+            {
+                return option.Id;
+            }
+        }
+
+        return selectionId;
+    }
+
+    public string ResolveStoredProviderId(
+        string providerId,
+        IReadOnlySet<string>? allowedProviderIds = null)
+    {
+        if (_providerInstanceIdentities.Any(identity =>
+                identity.InstanceId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
+                (allowedProviderIds == null || allowedProviderIds.Contains(identity.InstanceId))))
+        {
+            return providerId;
+        }
+
+        foreach (var identity in _providerInstanceIdentities)
+        {
+            if (allowedProviderIds != null && !allowedProviderIds.Contains(identity.InstanceId))
+            {
+                continue;
+            }
+
+            if (ProviderInstanceIdentityPolicy.IsOptionSelectionAlias(
+                    identity.ManifestId,
+                    identity.InstanceId,
+                    identity.InstanceId,
+                    providerId))
+            {
+                return identity.InstanceId;
+            }
+        }
+
+        return providerId;
+    }
+
+    private ProviderInstanceIdentity? FindProviderIdentity(string providerId) =>
+        _providerInstanceIdentities.FirstOrDefault(identity => identity.InstanceId.Equals(
+            providerId,
+            StringComparison.OrdinalIgnoreCase));
 
     private bool SelectionUsesProvider(
         string groupId,
@@ -1924,14 +2046,17 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var files = new Dictionary<string, ResourceFile>(StringComparer.OrdinalIgnoreCase);
-        var idToken = NormalizeResourceToken(providerId);
         var sourcePaths = _cosmeticIndexes
             .Where(index => index.Mod.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase))
-            .SelectMany(index => index.Archive.Paths
-                .Where(path => !IsProviderProjectControlFile(path))
-                .Select(NormalizeTakeoverPath)
-                .Concat(index.Assets.Keys))
-            .Where(path => !IsProviderNamespacePath(path, idToken))
+            .SelectMany(index =>
+            {
+                var namespaceToken = NormalizeResourceToken(index.Mod.ResourceNamespaceId);
+                return index.Archive.Paths
+                    .Where(path => !IsProviderProjectControlFile(path))
+                    .Select(NormalizeTakeoverPath)
+                    .Concat(index.Assets.Keys)
+                    .Where(path => !IsProviderNamespacePath(path, namespaceToken));
+            })
             .Distinct(StringComparer.OrdinalIgnoreCase);
         foreach (var sourcePath in sourcePaths)
         {
@@ -2085,7 +2210,9 @@ internal sealed partial class SkinCatalog : IDisposable
             foreach (var index in _cosmeticIndexes.Where(index =>
                          index.Mod.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase)))
             {
-                foreach (var file in CollectProviderNamespaceFiles(index, providerId))
+                foreach (var file in CollectProviderNamespaceFiles(
+                             index,
+                             index.Mod.ResourceNamespaceId))
                 {
                     files[file.Path] = file;
                 }
@@ -3877,7 +4004,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             var primaryAssembly = System.IO.Path.Combine(
                 index.Mod.RootPath!,
-                index.Mod.Id + ".dll");
+                index.Mod.ResourceNamespaceId + ".dll");
             var assemblyPaths = File.Exists(primaryAssembly)
                 ? [primaryAssembly]
                 : Directory.EnumerateFiles(
@@ -3892,7 +4019,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             var targetGroupIds = DirectCharacterRuntimeTargetScanner.Scan(
                 index.Mod.RootPath,
-                index.Mod.Id,
+                index.Mod.ResourceNamespaceId,
                 knownCharacterGroupIds);
             foreach (var targetGroupId in targetGroupIds)
             {
@@ -3937,7 +4064,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var declaration in ManagedMonsterSceneScanner.ScanDeclaredAssets(
                          index.Mod.RootPath,
-                         index.Mod.Id))
+                         index.Mod.ResourceNamespaceId))
             {
                 var groupId = declaration.ModelTypeName.ToLowerInvariant();
                 var identity = new GroupIdentity(groupId, DisplayName(groupId));
@@ -3977,7 +4104,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             var replacements = ManagedMonsterSceneScanner.Scan(
                 index.Mod.RootPath,
-                index.Mod.Id);
+                index.Mod.ResourceNamespaceId);
             foreach (var replacement in replacements)
             {
                 var sceneAsset = index.Assets.GetValueOrDefault(replacement.ScenePath) ??
@@ -4036,7 +4163,7 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         var profiles = ManagedMonsterSceneScanner.ScanRuntimeProfiles(
             index.Mod.RootPath,
-            index.Mod.Id);
+            index.Mod.ResourceNamespaceId);
         if (profiles.Count == 0)
         {
             return;
@@ -4369,7 +4496,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 StringComparer.OrdinalIgnoreCase);
             foreach (var pair in ManagedCardPortraitReplacementScanner.Scan(
                          index.Mod.RootPath,
-                         index.Mod.Id))
+                         index.Mod.ResourceNamespaceId))
             {
                 // Only accept DLL declarations backed by this provider's own PCK. Besides
                 // preventing stale paths from becoming blank card art, TryBuildAsset registers
@@ -4400,9 +4527,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(asset => IsCardArtSourcePath(asset.SourcePath))
                 .ToArray();
             var looseCandidates = index.Assets.Values
-                .Where(asset => IsLooseProviderCardArtPath(index.Mod.Id, asset.SourcePath))
+                .Where(asset => IsLooseProviderCardArtPath(
+                    index.Mod.ResourceNamespaceId,
+                    asset.SourcePath))
                 .ToArray();
-            var looseAssets = IsBulkLooseCardPack(index.Mod.Id, looseCandidates)
+            var looseAssets = IsBulkLooseCardPack(index.Mod.ResourceNamespaceId, looseCandidates)
                 ? looseCandidates
                 : [];
             var allAssets = standardAssets
@@ -5302,7 +5431,7 @@ internal sealed partial class SkinCatalog : IDisposable
             var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
             var frameworkContracts = FrameworkSkinContractScanner.Scan(
                     index.Mod.RootPath,
-                    index.Mod.Id)
+                    index.Mod.ResourceNamespaceId)
                 .Where(contract => FrameworkContractResourceClosureComplete(
                     index,
                     baselineIndexes,
@@ -5346,11 +5475,17 @@ internal sealed partial class SkinCatalog : IDisposable
                 // option would mix the resources of two skins from one DLL.
                 frameworkGroup.Options.RemoveAll(option =>
                     option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase));
+                var frameworkOptionId = ProviderInstanceIdentityPolicy.ScopeOptionId(
+                    index.Mod.ResourceNamespaceId,
+                    index.Mod.Id,
+                    contract.OptionId);
                 var existingFrameworkIndex = frameworkGroup.Options.FindIndex(option =>
-                    option.Id.Equals(contract.OptionId, StringComparison.OrdinalIgnoreCase));
+                    option.Id.Equals(frameworkOptionId, StringComparison.OrdinalIgnoreCase));
                 var frameworkOption = new SkinOption(
-                    contract.OptionId,
-                    contract.DisplayName,
+                    frameworkOptionId,
+                    DistinguishDuplicateProviderOptionName(
+                        index.Mod,
+                        contract.DisplayName),
                     mappedAssets,
                     IsRuntimeProvider: true,
                     ProviderId: index.Mod.Id,
@@ -5367,7 +5502,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             var managedCharacterReplacements = ManagedCharacterAssetReplacementScanner.Scan(
                 index.Mod.RootPath,
-                index.Mod.Id);
+                index.Mod.ResourceNamespaceId);
             var managedRuntimeMappings = managedCharacterReplacements
                 .SelectMany(replacement => replacement.CanonicalPathsByProviderPath.Select(pair =>
                     new KeyValuePair<string, RuntimeProviderAsset>(
@@ -5412,7 +5547,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     : path)
                 .Where(path =>
                     managedRuntimeMappings.ContainsKey(NormalizeTakeoverPath(path)) ||
-                    TryGetRuntimeProviderAsset(index.Mod.Id, path) != null)
+                    TryGetRuntimeProviderAsset(index.Mod.ResourceNamespaceId, path) != null)
                 .Select(index.TryBuildAsset)
                 .Where(asset => asset != null)
                 .Cast<ResourceAsset>()
@@ -5426,7 +5561,9 @@ internal sealed partial class SkinCatalog : IDisposable
                         ? managedMapping
                         : declarativeDependencyPaths.Contains(asset.SourcePath)
                             ? null
-                            : TryGetRuntimeProviderAsset(index.Mod.Id, asset.SourcePath)))
+                            : TryGetRuntimeProviderAsset(
+                                index.Mod.ResourceNamespaceId,
+                                asset.SourcePath)))
                 .Where(pair => pair.Mapping != null)
                 .Select(pair => (pair.Asset, Mapping: pair.Mapping!))
                 .ToArray();
@@ -5648,7 +5785,12 @@ internal sealed partial class SkinCatalog : IDisposable
                     var optionName = images.Length == 1
                         ? mod.Name
                         : $"{mod.Name} · {image.Name.Replace('_', ' ')}";
-                    AddRuntimeProviderOption(image.GroupId, optionId, optionName, image.Path);
+                    AddRuntimeProviderOption(
+                        image.GroupId,
+                        optionId,
+                        optionName,
+                        image.Path,
+                        mod.Id);
                 }
             }
         }
@@ -5750,11 +5892,30 @@ internal sealed partial class SkinCatalog : IDisposable
             .Any(extension => File.Exists(stemPath + extension));
     }
 
+    private static string DistinguishDuplicateProviderOptionName(
+        SkinModDescriptor mod,
+        string optionName)
+    {
+        if (mod.Id.Equals(mod.ResourceNamespaceId, StringComparison.OrdinalIgnoreCase))
+        {
+            return optionName;
+        }
+
+        var rankMarker = mod.Name.LastIndexOf(" · ", StringComparison.Ordinal);
+        var suffix = rankMarker >= 0
+            ? mod.Name[rankMarker..]
+            : " · " + mod.Name;
+        return optionName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            ? optionName
+            : optionName + suffix;
+    }
+
     private void AddRuntimeProviderOption(
         string groupId,
         string optionId,
         string optionName,
-        string runtimeImagePath)
+        string runtimeImagePath,
+        string providerId)
     {
         var group = _groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
         if (group == null)
@@ -5771,7 +5932,8 @@ internal sealed partial class SkinCatalog : IDisposable
             group.Options[existingIndex] = existing with
             {
                 IsRuntimeProvider = true,
-                RuntimeImagePath = runtimeImagePath
+                RuntimeImagePath = runtimeImagePath,
+                ProviderId = providerId
             };
             return;
         }
@@ -5781,7 +5943,8 @@ internal sealed partial class SkinCatalog : IDisposable
             optionName,
             new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
             IsRuntimeProvider: true,
-            RuntimeImagePath: runtimeImagePath));
+            RuntimeImagePath: runtimeImagePath,
+            ProviderId: providerId));
     }
 
     private static RuntimeProviderAsset? TryGetRuntimeProviderAsset(
@@ -6609,7 +6772,11 @@ internal sealed record SkinModDescriptor(
     string? PckPath,
     bool AffectsGameplay,
     string? RootPath = null,
-    bool HasDll = false);
+    bool HasDll = false,
+    string? ManifestId = null)
+{
+    public string ResourceNamespaceId => ManifestId ?? Id;
+}
 
 internal sealed record SkinProviderProbe(
     string Id,
@@ -6619,7 +6786,11 @@ internal sealed record SkinProviderProbe(
     int CardPresentationCount,
     int RuntimeImageCount,
     int ManagedScriptCount,
-    bool HasInteractiveScenes);
+    bool HasInteractiveScenes,
+    string? ManifestId = null)
+{
+    public string ResourceNamespaceId => ManifestId ?? Id;
+}
 
 internal sealed record AncientLayeredImagePaths(
     string Character,
@@ -6974,7 +7145,9 @@ internal sealed partial class PckResourceIndex : IDisposable
         foreach (var path in archive.Paths.Where(IsDirectCharacterImageResource))
         {
             var sourcePath = SkinCatalog.NormalizeTakeoverPath(path);
-            if (!SkinCatalog.IsCharacterImageResourceForProvider(mod.Id, sourcePath))
+            if (!SkinCatalog.IsCharacterImageResourceForProvider(
+                    mod.ResourceNamespaceId,
+                    sourcePath))
             {
                 continue;
             }

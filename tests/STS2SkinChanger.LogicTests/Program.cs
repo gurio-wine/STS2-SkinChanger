@@ -264,6 +264,74 @@ Require(
         1f - CardSkinSelectorPlacementPolicy.SelectorHeight / 2f / 1200f,
     "拖动单卡皮肤控件时必须限制在屏幕内，避免保存后再也无法找回。");
 
+var singleProviderIdentity = ProviderInstanceIdentityPolicy.Resolve(
+    [new ProviderInstanceCandidate("Same.Id", "Single Skin", @"D:\mods\only")]);
+Require(
+    singleProviderIdentity.Single().InstanceId == "Same.Id" &&
+    singleProviderIdentity.Single().DisplayName == "Single Skin",
+    "没有重复 Mod ID 时必须保留旧选项 ID 和名称，避免破坏玩家已有设置。");
+var duplicateProviderIdentities = ProviderInstanceIdentityPolicy.Resolve(
+    [
+        new ProviderInstanceCandidate(
+            "Same.Id",
+            "Shared Skin",
+            @"D:\Steam\steamapps\workshop\content\2868840\1111111111"),
+        new ProviderInstanceCandidate(
+            "same.id",
+            "Shared Skin",
+            @"D:\Steam\steamapps\workshop\content\2868840\2222222222")
+    ]);
+Require(
+    duplicateProviderIdentities.Select(identity => identity.InstanceId)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count() == 2 &&
+    duplicateProviderIdentities.All(identity =>
+        identity.InstanceId.StartsWith("Same.Id::source:", StringComparison.OrdinalIgnoreCase)),
+    "相同 Mod ID 的两个来源必须得到稳定且互不冲突的内部身份。");
+Require(
+    duplicateProviderIdentities.Select(identity => identity.DisplayName)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count() == 2,
+    "相同 Mod ID 且同名的差分包必须在皮肤列表里可区分。");
+Require(
+    duplicateProviderIdentities[1].ManifestId == "same.id",
+    "实例 ID 可统一大小写，但资源命名空间必须保留每个包清单中的原始大小写。");
+var firstDuplicateInstanceId = duplicateProviderIdentities[0].InstanceId;
+Require(
+    ProviderInstanceIdentityPolicy.ScopeOptionId(
+        "Same.Id",
+        firstDuplicateInstanceId,
+        "custom.skin") == firstDuplicateInstanceId + "::option:custom.skin",
+    "框架自行命名的选项也必须进入对应差分包的独立作用域。");
+Require(
+    ProviderInstanceIdentityPolicy.IsOptionSelectionAlias(
+        "Same.Id",
+        firstDuplicateInstanceId,
+        firstDuplicateInstanceId,
+        "Same.Id"),
+    "旧版按 Mod ID 保存的选择必须迁移到第一个同 ID 差分包。");
+Require(
+    ProviderInstanceIdentityPolicy.IsOptionSelectionAlias(
+        "Same.Id",
+        firstDuplicateInstanceId,
+        firstDuplicateInstanceId + "::variant:painted",
+        "Same.Id::variant:painted"),
+    "旧版带变体后缀的选择必须保留到对应差分包变体。");
+Require(
+    ProviderInstanceIdentityPolicy.IsOptionSelectionAlias(
+        "Same.Id",
+        firstDuplicateInstanceId,
+        firstDuplicateInstanceId + "::option:custom.skin",
+        "custom.skin"),
+    "框架自行命名的旧皮肤选项必须能迁移到差分包作用域。");
+Require(
+    ProviderInstanceIdentityPolicy.IsOptionSelectionAlias(
+        "Same.Id",
+        "Same.Id",
+        "Same.Id::variant:painted",
+        firstDuplicateInstanceId + "::variant:painted"),
+    "卸载同 ID 差分包后，剩余单包必须能接回之前保存的实例化选择。");
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,
