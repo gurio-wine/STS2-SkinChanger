@@ -96,6 +96,20 @@ internal static class ManagedSkinModLoader
     public static IReadOnlyList<Mod> SkinProvidersInLoadOrder { get; private set; } = [];
     public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
 
+    public static IReadOnlyCollection<string> GetPreservedRuntimeRoots(IEnumerable<Mod> sourceMods)
+    {
+        var mods = sourceMods.ToArray();
+        // Never remove gameplay/framework callbacks, even if stale candidate roots include
+        // them. A real resource-backed skin pack may itself have dependents: keep managing its
+        // visual callbacks while the original loader preserves its non-visual DLL functions.
+        return mods.Where(mod => mod.manifest != null &&
+                                 (Entry.IsSelfModId(mod.manifest.id) ||
+                                  ShouldTreatAsGameplayBaseline(mod, mods)))
+            .Select(mod => NormalizePath(mod.path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public static bool IsManagedProviderForDisplay(Mod? mod)
     {
         if (mod == null || Entry.IsSelfModId(mod.manifest?.id))
@@ -3351,10 +3365,10 @@ internal static class ManagedSkinModLoader
     }
 
     private static bool HasSelectableCosmetics(SkinProviderProbe probe) =>
-        probe.VisualGroupCount > 0 ||
-        probe.CardAssetCount > 0 ||
-        probe.CardPresentationCount > 0 ||
-        probe.RuntimeImageCount > 0;
+        // A framework implements visual getters for all custom characters, but those callbacks
+        // alone are not selectable skins. The DLL-only fallback is still valid for standalone
+        // cosmetic mods; it must not disqualify a required library from the gameplay baseline.
+        probe.HasResourceBackedCosmetics;
 
     public static bool IsRequiredByAnotherMod(Mod mod, IEnumerable<Mod> mods)
     {

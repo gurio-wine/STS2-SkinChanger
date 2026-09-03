@@ -15,7 +15,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "0.9.132.15";
+    public const string InternalTestVersion = "0.9.132.16";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -61,13 +61,17 @@ internal static class EssentialInitializationPatch
 {
     private static void Prefix()
     {
-        VisualPatchGuard.RemoveProviderVisualPatches(ManagedSkinModLoader.ProviderRoots);
+        VisualPatchGuard.RemoveProviderVisualPatches(
+            ManagedSkinModLoader.ProviderRoots,
+            ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
         SkinService.InitializeBeforeAssets();
     }
 
     private static void Postfix()
     {
-        VisualPatchGuard.RemoveProviderVisualPatches(ManagedSkinModLoader.ProviderRoots);
+        VisualPatchGuard.RemoveProviderVisualPatches(
+            ManagedSkinModLoader.ProviderRoots,
+            ManagedSkinModLoader.GetPreservedRuntimeRoots(ModManager.Mods));
         SkinService.InitializeCardGroupsAfterModels();
         SkinService.PrepareSelectedCharacterPreviews();
         ExternalCardVisualBridge.WarmUp();

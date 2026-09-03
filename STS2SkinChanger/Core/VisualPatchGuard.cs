@@ -23,7 +23,9 @@ internal static class VisualPatchGuard
         "Creature", "Merchant", "Card", "Animation", "Audio", "Sound"
     ];
 
-    public static int RemoveProviderVisualPatches(IEnumerable<string> providerRoots)
+    public static int RemoveProviderVisualPatches(
+        IEnumerable<string> providerRoots,
+        IEnumerable<string>? preservedRuntimeRoots = null)
     {
         var roots = providerRoots
             .Select(NormalizeRoot)
@@ -35,9 +37,15 @@ internal static class VisualPatchGuard
         {
             return 0;
         }
+        var preservedRoots = (preservedRuntimeRoots ?? [])
+            .Select(NormalizeRoot)
+            .Where(root => root != null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var removed = 0;
         var affectedTargets = new HashSet<string>(StringComparer.Ordinal);
+        var affectedAssemblies = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var target in HarmonyLib.Harmony.GetAllPatchedMethods()
                      .Where(IsVisualTarget)
                      .ToArray())
@@ -49,7 +57,7 @@ internal static class VisualPatchGuard
             }
 
             var providerPatches = EnumeratePatches(patchInfo)
-                .Select(entry => (entry.Patch, entry.Kind, Root: GetProviderRoot(entry.Patch, roots)))
+                .Select(entry => (entry.Patch, entry.Kind, Root: GetProviderRoot(entry.Patch, roots, preservedRoots)))
                 .Where(entry =>
                     entry.Root != null &&
                     !ManagedSkinModLoader.IsProviderAssemblyActive(
@@ -63,6 +71,8 @@ internal static class VisualPatchGuard
                     Harmony.Unpatch(target, entry.Patch.PatchMethod);
                     removed++;
                     affectedTargets.Add($"{target.DeclaringType?.Name}.{target.Name}");
+                    var source = entry.Patch.PatchMethod.Module.Assembly.GetName().Name ?? entry.Patch.owner;
+                    affectedAssemblies[source] = affectedAssemblies.GetValueOrDefault(source) + 1;
                 }
                 catch (Exception exception)
                 {
@@ -78,7 +88,9 @@ internal static class VisualPatchGuard
         {
             ModLog.Info(
                 $"已移除 {removed} 个提供者皮肤呈现补丁，保留其余 DLL 功能；目标：" +
-                string.Join("、", affectedTargets.OrderBy(name => name)));
+                string.Join("、", affectedTargets.OrderBy(name => name)) +
+                "；来源：" + string.Join("、", affectedAssemblies.OrderBy(pair => pair.Key)
+                    .Select(pair => $"{pair.Key}={pair.Value}")));
         }
 
         return removed;
@@ -219,7 +231,10 @@ internal static class VisualPatchGuard
                typeof(NCreatureVisuals).IsAssignableFrom(type);
     }
 
-    private static string? GetProviderRoot(HarmonyLib.Patch patch, IReadOnlyList<string> roots)
+    private static string? GetProviderRoot(
+        HarmonyLib.Patch patch,
+        IReadOnlyList<string> roots,
+        IReadOnlySet<string> preservedRoots)
     {
         var location = patch.PatchMethod.Module.Assembly.Location;
         if (string.IsNullOrWhiteSpace(location))
@@ -233,13 +248,15 @@ internal static class VisualPatchGuard
             return null;
         }
 
-        // 嵌套 Mod 目录下取最长匹配的根，避免把子目录 Mod 的补丁归属到父目录 Mod。
-        return roots
+        // Resolve ownership across both candidates and protected libraries. A nested gameplay
+        // Mod must not inherit its parent directory's permission to remove cosmetic callbacks.
+        var owner = roots.Concat(preservedRoots)
             .Where(root => assemblyPath.StartsWith(
                 root + Path.DirectorySeparatorChar,
                 StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(root => root.Length)
             .FirstOrDefault();
+        return owner != null && !preservedRoots.Contains(owner) ? owner : null;
     }
 
     private static string? NormalizeRoot(string path)

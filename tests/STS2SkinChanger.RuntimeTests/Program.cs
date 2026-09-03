@@ -785,6 +785,7 @@ foreach (System.Collections.DictionaryEntry pack in compositionPacks)
 }
 
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
+RequiredLibraryVisualGuardTests.Run(args);
 
 static Type RequirePatchType(string name, string error) =>
     typeof(Entry).Assembly.GetType(name) ?? throw new InvalidOperationException(error);

@@ -352,7 +352,7 @@ if (validateIndex >= 0)
             $"provider {probe.Id}: visual={probe.VisualGroupCount}, " +
             $"cards={probe.CardAssetCount}, presentations={probe.CardPresentationCount}, " +
             $"images={probe.RuntimeImageCount}, scripts={probe.ManagedScriptCount}, " +
-            $"interactive={probe.HasInteractiveScenes}");
+            $"interactive={probe.HasInteractiveScenes}, resource-backed={probe.HasResourceBackedCosmetics}");
     }
 
     foreach (var provider in catalog.Groups
@@ -1730,7 +1730,8 @@ static void RunProviderProbeSelfTest()
                 tempRoot,
                 false)]);
         Require(
-            canonicalProbe.Count == 1 && canonicalProbe[0].VisualGroupCount == 1,
+            canonicalProbe.Count == 1 && canonicalProbe[0].VisualGroupCount == 1 &&
+            canonicalProbe[0].HasResourceBackedCosmetics,
             "只替换游戏既有怪物资源的普通 PCK 必须在加载前被识别为皮肤提供者。");
 
         var baselinePckPath = System.IO.Path.Combine(tempRoot, "Baseline.pck");
@@ -1766,7 +1767,8 @@ static void RunProviderProbeSelfTest()
                 false)],
             baselinePckPath);
         Require(
-            payloadOnlyProbe.Count == 1 && payloadOnlyProbe[0].VisualGroupCount == 1,
+            payloadOnlyProbe.Count == 1 && payloadOnlyProbe[0].VisualGroupCount == 1 &&
+            payloadOnlyProbe[0].HasResourceBackedCosmetics,
             "只携带 .godot/imported 载荷的皮肤必须借助游戏资源映射在加载前被识别。");
 
         var animatedTanxRoot = System.IO.Path.Combine(tempRoot, "animated-tanx");
@@ -1835,6 +1837,30 @@ static void RunProviderProbeSelfTest()
         Require(
             SkinCatalog.HasDirectVisualPatchTargetMetadata("NMerchantButton|_Ready"),
             "直接替换商人按钮呈现的补丁仍应作为商人皮肤证据。");
+
+        // Exercise the metadata fallback without executing an assembly: a standalone DLL skin
+        // remains a candidate, but its callbacks alone cannot turn a required framework into a
+        // resource-backed cosmetic pack.
+        var patchOnlyRoot = System.IO.Path.Combine(tempRoot, "patch-only");
+        Directory.CreateDirectory(patchOnlyRoot);
+        var patchAssembly = new System.Reflection.Emit.PersistedAssemblyBuilder(
+            new System.Reflection.AssemblyName("PatchOnly"), typeof(object).Assembly);
+        var patchType = patchAssembly.DefineDynamicModule("PatchOnly")
+            .DefineType("HarmonyLib.CharacterModel", System.Reflection.TypeAttributes.Public);
+        var patchMethod = patchType.DefineMethod("CreateVisuals",
+            System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
+            typeof(string), Type.EmptyTypes).GetILGenerator();
+        patchMethod.Emit(System.Reflection.Emit.OpCodes.Ldstr, "res://scenes/creature_visuals/custom.tscn");
+        patchMethod.Emit(System.Reflection.Emit.OpCodes.Ret);
+        patchType.CreateType();
+        patchAssembly.Save(System.IO.Path.Combine(patchOnlyRoot, "PatchOnly.dll"));
+        var patchOnlyProbe = SkinCatalog.ProbeSkinProviders(
+            [new SkinModDescriptor("PatchOnly", "Patch Only", null, false, patchOnlyRoot, true)]);
+        Require(patchOnlyProbe.Count == 1 && patchOnlyProbe[0].VisualGroupCount == 1 &&
+                !patchOnlyProbe[0].HasResourceBackedCosmetics,
+            "纯 DLL 的视觉补丁证据必须仍可识别，但不能冒充实际可选资源。");
+        Require(staticAncientProbe.Single().HasResourceBackedCosmetics,
+            "外置先古图片是实际可选资源，不能被纯补丁保护规则排除。");
 
         Console.WriteLine("Skin provider probe self-test passed.");
     }

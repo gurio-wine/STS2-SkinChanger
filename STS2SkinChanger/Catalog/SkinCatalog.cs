@@ -954,9 +954,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 var runtimeImages = 0;
+                var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0;
                 if (mod.RootPath != null)
                 {
                     runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
+                    hasResourceBackedCosmetics |= runtimeImages > 0;
 
                     if (mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
                         LooksLikeDllSkinProvider(mod))
@@ -978,7 +980,8 @@ internal sealed partial class SkinCatalog : IDisposable
                         runtimeImages,
                         managedScriptCount,
                         hasInteractiveScenes,
-                        mod.ResourceNamespaceId));
+                        mod.ResourceNamespaceId,
+                        HasResourceBackedCosmetics: hasResourceBackedCosmetics));
                 }
             }
         }
@@ -7096,7 +7099,8 @@ internal sealed record SkinProviderProbe(
     int RuntimeImageCount,
     int ManagedScriptCount,
     bool HasInteractiveScenes,
-    string? ManifestId = null)
+    string? ManifestId = null,
+    bool HasResourceBackedCosmetics = false)
 {
     public string ResourceNamespaceId => ManifestId ?? Id;
 }
