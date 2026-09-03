@@ -722,7 +722,7 @@ internal static partial class ContextualSkinControls
                 {
                     CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
                         [group.Id],
-                        "局内怪物图鉴");
+                        "局内怪物图鉴", refreshCurrentRoom: true);
                 }
                 else
                 {

@@ -92,6 +92,8 @@ internal static class CharacterAppearanceRuntime
         AccessTools.Field(typeof(NCreature), "_tempScale");
     private static readonly FieldInfo? RunStateField =
         AccessTools.Field(typeof(NRun), "_state");
+    private static readonly FieldInfo? RunRoomContainerField =
+        AccessTools.Field(typeof(NRun), "_roomContainer");
     private static readonly FieldInfo? MapMarkerField =
         AccessTools.Field(typeof(NMapScreen), "_marker");
     private static readonly FieldInfo? BossMapUsesSpineField =
@@ -264,7 +266,8 @@ internal static class CharacterAppearanceRuntime
         IEnumerable<string>? additionalGroupIds = null,
         string reason = "对局",
         long? expectedScopeLease = null,
-        NRun? run = null)
+        NRun? run = null,
+        bool refreshCurrentRoom = false)
     {
         try
         {
@@ -300,13 +303,13 @@ internal static class CharacterAppearanceRuntime
                         reason,
                         out var scopeLease)
                         ? scopeLease
-                        : 0);
+                        : 0, refreshCurrentRoom);
                 }
 
                 return TrackCombatScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                     groupIds,
                     runEnvironmentProviders,
-                    reason));
+                    reason), refreshCurrentRoom);
             }
 
             if (expectedScopeLease.HasValue)
@@ -318,13 +321,13 @@ internal static class CharacterAppearanceRuntime
                     reason,
                     out var scopeLease)
                     ? scopeLease
-                    : 0);
+                    : 0, refreshCurrentRoom);
             }
 
             return TrackCombatScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                 groupIds,
                 runEnvironmentProviderIds: [],
-                reason));
+                reason), refreshCurrentRoom);
         }
         catch (Exception exception)
         {
@@ -333,9 +336,12 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
-    private static long TrackCombatScopeLease(long scopeLease)
+    private static long TrackCombatScopeLease(long scopeLease, bool refreshCurrentRoom)
     {
-        if (scopeLease != 0 && _combatRuntimeScopeActive)
+        // A newly created room can claim its provider scope before the outgoing combat exits.
+        // Only an explicit refresh of that combat may renew its cleanup lease; never transfer
+        // ownership of a merchant/event room to the old combat merely because it is still alive.
+        if (scopeLease != 0 && _combatRuntimeScopeActive && refreshCurrentRoom)
         {
             _combatRuntimeScopeLease = scopeLease;
         }
@@ -366,7 +372,7 @@ internal static class CharacterAppearanceRuntime
 
     private static HashSet<string> ResolveActiveCombatMonsterGroupIds()
     {
-        if (NCombatRoom.Instance is not { } room || !room.IsInsideTree())
+        if (TryGetActiveCombatRoom(NRun.Instance) is not { } room || !room.IsInsideTree())
         {
             return CombatRuntimeMonsterGroupIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
@@ -379,6 +385,15 @@ internal static class CharacterAppearanceRuntime
             .Where(groupId => groupId != null)
             .Cast<string>()
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static NCombatRoom? TryGetActiveCombatRoom(NRun? run)
+    {
+        // NRun exists before _Ready assigns its room container. Its native CombatRoom getter
+        // dereferences that container, so probing NCombatRoom.Instance during run setup throws.
+        return run != null && RunRoomContainerField?.GetValue(run) != null
+            ? run.CombatRoom
+            : null;
     }
 
     internal static bool TryGetBossMapAppearance(
@@ -1180,7 +1195,7 @@ internal static class CharacterAppearanceRuntime
         IReadOnlySet<string> affectedGroups,
         string reason)
     {
-        FocusRuntimeProviderBehaviorsOnRunContext(affectedGroups, reason);
+        FocusRuntimeProviderBehaviorsOnRunContext(affectedGroups, reason, refreshCurrentRoom: true);
 
         var errors = RefreshLiveCreatures(affectedGroups);
         if (ResolveActiveCombatMonsterGroupIds().Overlaps(affectedGroups) &&

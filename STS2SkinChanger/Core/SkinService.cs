@@ -1297,7 +1297,9 @@ internal static partial class SkinService
                 currentScope.VisibleGroupIds.ToHashSet(
                     StringComparer.OrdinalIgnoreCase).SetEquals(nextScope))
             {
-                return RuntimeProviderScopeLeases.Current;
+                // Reuse resources/patches, not lifecycle ownership. A new room can request
+                // the same providers as an outgoing room or its compendium preview.
+                return RuntimeProviderScopeLeases.Claim();
             }
 
             _runtimeProviderBehaviorScope = new RuntimeProviderScope(

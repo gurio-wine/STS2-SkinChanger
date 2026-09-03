@@ -23,6 +23,7 @@ CharacterSkinPopupContractTests.Run();
 ScrollListRebuildContractTests.Run();
 CardSkinRefreshContractTests.Run();
 CardProviderBridgeContractTests.Run();
+SceneAppearanceLifecycleTests.Run();
 var declaredVersion = Version.Parse(Entry.InternalTestVersion);
 var expectedAssemblyVersion = new Version(
     declaredVersion.Major, declaredVersion.Minor, declaredVersion.Build,

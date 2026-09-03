@@ -183,7 +183,7 @@ internal static partial class ContextualSkinControls
         {
             CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
                 group == null ? [] : [group.Id],
-                reason: "局内怪物图鉴");
+                reason: "局内怪物图鉴", refreshCurrentRoom: true);
         }
         else
         {
@@ -2831,7 +2831,7 @@ internal static class BestiaryRuntimeProviderScopePatch
         if (NRun.Instance != null)
         {
             CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
-                reason: "关闭局内怪物图鉴");
+                reason: "关闭局内怪物图鉴", refreshCurrentRoom: true);
             return;
         }
 

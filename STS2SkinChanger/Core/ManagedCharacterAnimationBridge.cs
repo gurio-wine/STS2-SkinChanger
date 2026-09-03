@@ -46,8 +46,9 @@ internal static class ManagedCharacterAnimationBridge
     {
         try
         {
-            var characterId = creature.Entity?.Player?.Character?.Id.Entry;
-            if (string.IsNullOrWhiteSpace(characterId) ||
+            var entity = creature.Entity;
+            var characterId = entity?.Player?.Character?.Id.Entry;
+            if (entity == null || string.IsNullOrWhiteSpace(characterId) ||
                 !SkinService.ShouldDriveManagedCharacterAnimations(characterId))
             {
                 return;
@@ -65,7 +66,7 @@ internal static class ManagedCharacterAnimationBridge
                 return;
             }
 
-            var animation = route.Candidates.FirstOrDefault(spine.HasAnimation);
+            var animation = ResolveAnimation(trigger, entity.CurrentHp, entity.MaxHp, spine.HasAnimation);
             if (animation == null)
             {
                 return;
@@ -83,7 +84,7 @@ internal static class ManagedCharacterAnimationBridge
                 return;
             }
 
-            var idle = ResolveIdleAnimation(creature, spine);
+            var idle = ResolveAnimation("Idle", entity.CurrentHp, entity.MaxHp, spine.HasAnimation);
             if (idle != null &&
                 AddAnimationMethod != null &&
                 !idle.Equals(animation, StringComparison.OrdinalIgnoreCase))
@@ -104,21 +105,27 @@ internal static class ManagedCharacterAnimationBridge
         "Cast" or "PowerUp" => new(["cast", "power_up", "attack1", "attack"], QueueIdle: true),
         "Dead" => new(["die", "death", "dead"], QueueIdle: false),
         "Hit" => new(["hurt", "hit"], QueueIdle: true),
-        "Idle" or "Revive" => new(["low_health_loop", "idle_loop", "idle"], QueueIdle: false),
+        "Idle" or "Revive" => new(["idle_loop", "idle"], QueueIdle: false),
         "Relaxed" => new(["relaxed_loop", "idle_loop", "idle"], QueueIdle: false),
         _ => new([], QueueIdle: false)
     };
 
-    private static string? ResolveIdleAnimation(NCreature creature, MegaSprite spine)
+    internal static string? ResolveAnimation(
+        string trigger,
+        int currentHp,
+        int maxHp,
+        Func<string, bool> hasAnimation)
     {
-        if (creature.Entity is { MaxHp: > 0 } entity &&
-            entity.CurrentHp * 4 <= entity.MaxHp &&
-            spine.HasAnimation("low_health_loop"))
+        // Initial Ready, revive and the idle queued after an action must agree. A low-health
+        // loop is a conditional state, not the first fallback for every managed skeleton.
+        if (trigger is "Idle" or "Revive" &&
+            maxHp > 0 && (long)currentHp * 4 <= maxHp &&
+            hasAnimation("low_health_loop"))
         {
             return "low_health_loop";
         }
 
-        return new[] { "idle_loop", "idle" }.FirstOrDefault(spine.HasAnimation);
+        return GetRoute(trigger).Candidates.FirstOrDefault(hasAnimation);
     }
 
     private static bool IsLooping(string animation) =>

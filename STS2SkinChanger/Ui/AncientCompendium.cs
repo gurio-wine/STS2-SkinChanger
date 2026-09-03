@@ -1825,7 +1825,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
                 group == null ? [] : [group.Id],
-                reason);
+                reason, refreshCurrentRoom: true);
             return;
         }
 
