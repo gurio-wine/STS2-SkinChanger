@@ -295,6 +295,24 @@ internal static class SkinService
         }
     }
 
+    public static IReadOnlyList<string> GetAvailableCharacterSelectionSourceIds(
+        string groupId,
+        IReadOnlyList<string> sourceOptionIds)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null || !catalog.IsCharacterAppearanceGroup(groupId))
+            {
+                return [];
+            }
+
+            return CharacterSkinCompositionPolicy.ResolveAvailableSourceIds(
+                sourceOptionIds,
+                catalog.GetRawCharacterOptions(groupId).Select(option => option.Id));
+        }
+    }
+
     public static bool SaveCharacterSkinComposition(
         string groupId,
         string? compositionId,

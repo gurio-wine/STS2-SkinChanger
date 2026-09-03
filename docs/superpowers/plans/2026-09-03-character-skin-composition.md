@@ -260,25 +260,25 @@ git commit -m "feat: add character skin composition editor"
 - Consumes: `SkinService.GetCharacterSelectionSourceIds` and session-composition resolution.
 - Produces: protocol 9 `SourceOptionManifest`, a validated JSON array capped at 64 source IDs/32 KiB, and deterministic per-player transient option IDs.
 
-- [ ] **Step 1: Write failing packet and resolution tests**
+- [x] **Step 1: Write failing packet and resolution tests**
 
 Assert protocol 9 round-trips ordered source IDs, rejects blank/duplicate/oversized manifests, preserves regular skins as one source, resolves `[installed-a, missing-b, installed-c]` to `[installed-a, installed-c]`, uses base when none remain, and never mutates `Config.Selections` for a remote player.
 
-- [ ] **Step 2: Run runtime tests and verify RED**
+- [x] **Step 2: Run runtime tests and verify RED**
 
 Expected: packet lacks `SourceOptionManifest` and protocol remains 8.
 
-- [ ] **Step 3: Extend advertisement and receive resolution**
+- [x] **Step 3: Extend advertisement and receive resolution**
 
 Serialize the ordered source list after `OptionId`; advertise a regular skin as one source and base as an empty list. On receive, map only locally recognized raw option IDs, build or reuse a deterministic transient composition for two or more matches, use the raw option directly for one match, and explicit base for none. Store the resulting selection only in that player's `SessionCharacterSelection`.
 
 Increment capability magic to `GSCAP09!`; incompatible peers retain the existing safe base fallback and never block the lobby.
 
-- [ ] **Step 4: Run runtime and logic tests and verify GREEN**
+- [x] **Step 4: Run runtime and logic tests and verify GREEN**
 
 Expected: both suites pass, including packet bit length and per-player isolation assertions.
 
-- [ ] **Step 5: Bump internal version and commit**
+- [x] **Step 5: Bump internal version and commit**
 
 Set version to `0.9.132.9` and commit:
 

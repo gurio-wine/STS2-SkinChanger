@@ -166,10 +166,89 @@ syncEnabledProperty.SetValue(testConfig, true);
 object?[] enabledReadArguments = [enabledSyncWriter.Buffer, (byte)0];
 if (readCapabilityTrailer.Invoke(null, enabledReadArguments) is not true ||
     enabledReadArguments[1] is not byte protocolVersion ||
-    protocolVersion != 8)
+    protocolVersion != 9 ||
+    System.Text.Encoding.ASCII.GetString(enabledSyncWriter.Buffer, 0, 8) != "GSCAP09!")
 {
     throw new InvalidOperationException(
         "启用联机皮肤同步后无法读取当前协议的能力握手。");
+}
+
+var netMessageType = typeof(Entry).Assembly.GetType(
+                         "STS2SkinChanger.Core.SkinChangerNetMessage") ??
+                     throw new InvalidOperationException("找不到 Skin Changer 联机消息。");
+var sourceManifestField = netMessageType.GetField(
+                              "SourceOptionManifest",
+                              BindingFlags.Instance | BindingFlags.Public |
+                              BindingFlags.NonPublic) ??
+                          throw new InvalidOperationException(
+                              "联机消息没有携带合并皮肤的有序来源。");
+var netMessage = Activator.CreateInstance(netMessageType) ??
+                 throw new InvalidOperationException("无法建立联机消息测试对象。");
+netMessageType.GetField("ProtocolVersion")!.SetValue(netMessage, (byte)9);
+netMessageType.GetField("Kind")!.SetValue(
+    netMessage,
+    Enum.ToObject(netMessageType.GetField("Kind")!.FieldType, 1));
+netMessageType.GetField("PlayerNetId")!.SetValue(netMessage, 42UL);
+netMessageType.GetField("CharacterId")!.SetValue(netMessage, "REGENT");
+netMessageType.GetField("GroupId")!.SetValue(netMessage, "character:regent");
+netMessageType.GetField("OptionId")!.SetValue(netMessage, "composition:test");
+sourceManifestField.SetValue(netMessage, "[\"primary\",\"fallback\"]");
+netMessageType.GetField("TransformManifest")!.SetValue(netMessage, "{}");
+var messageWriter = new PacketWriter();
+netMessageType.GetMethod("Serialize")!.Invoke(netMessage, [messageWriter]);
+var messageReader = new PacketReader();
+messageReader.Reset(messageWriter.Buffer);
+var decodedMessage = Activator.CreateInstance(netMessageType) ??
+                     throw new InvalidOperationException("无法建立联机消息读取对象。");
+netMessageType.GetMethod("Deserialize")!.Invoke(decodedMessage, [messageReader]);
+if (sourceManifestField.GetValue(decodedMessage) as string !=
+    "[\"primary\",\"fallback\"]")
+{
+    throw new InvalidOperationException("合并皮肤来源没有按顺序完成联机消息往返。");
+}
+
+var tryParseSourceManifest = multiplayerSyncType.GetMethod(
+                                 "TryParseSourceOptionManifest",
+                                 BindingFlags.Static | BindingFlags.Public |
+                                 BindingFlags.NonPublic) ??
+                             throw new InvalidOperationException(
+                                 "缺少联机合并皮肤来源校验入口。");
+var serializeSourceManifest = multiplayerSyncType.GetMethod(
+                                  "SerializeSourceOptionManifest",
+                                  BindingFlags.Static | BindingFlags.Public |
+                                  BindingFlags.NonPublic) ??
+                              throw new InvalidOperationException(
+                                  "缺少本机皮肤来源清单生成入口。");
+if (serializeSourceManifest.Invoke(null, [Array.Empty<string>()]) as string != "[]" ||
+    serializeSourceManifest.Invoke(null, [new[] { "single-skin" }]) as string !=
+    "[\"single-skin\"]")
+{
+    throw new InvalidOperationException(
+        "游戏原皮必须广播空来源，普通皮肤必须广播唯一来源。");
+}
+object?[] validSourceArguments = ["[\"installed-a\",\"missing-b\",\"installed-c\"]", null];
+if (tryParseSourceManifest.Invoke(null, validSourceArguments) is not true ||
+    validSourceArguments[1] is not IReadOnlyList<string> validSources ||
+    !validSources.SequenceEqual(["installed-a", "missing-b", "installed-c"]))
+{
+    throw new InvalidOperationException("合法的合并皮肤来源顺序没有被保留。");
+}
+
+foreach (var invalidManifest in new[]
+         {
+             "[\"valid\",\"\"]",
+             "[\"duplicate\",\"DUPLICATE\"]",
+             System.Text.Json.JsonSerializer.Serialize(
+                 Enumerable.Range(0, 65).Select(index => $"skin-{index}").ToArray()),
+             new string('x', 32769)
+         })
+{
+    object?[] invalidSourceArguments = [invalidManifest, null];
+    if (tryParseSourceManifest.Invoke(null, invalidSourceArguments) is not false)
+    {
+        throw new InvalidOperationException(
+            "联机合并皮肤来源校验接受了空项、重复项或超限数据。");
+    }
 }
 
 var staleTransforms = Activator.CreateInstance(

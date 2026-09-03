@@ -41,6 +41,7 @@ internal struct SkinChangerNetMessage : INetMessage
     public string CharacterId;
     public string GroupId;
     public string OptionId;
+    public string SourceOptionManifest;
     public string ProviderId;
     public ulong WorkshopItemId;
     public string SafeResourceFingerprint;
@@ -62,6 +63,7 @@ internal struct SkinChangerNetMessage : INetMessage
         writer.WriteString(CharacterId ?? string.Empty);
         writer.WriteString(GroupId ?? string.Empty);
         writer.WriteString(OptionId ?? string.Empty);
+        writer.WriteString(SourceOptionManifest ?? "[]");
         writer.WriteString(TransformManifest ?? string.Empty);
     }
 
@@ -73,6 +75,7 @@ internal struct SkinChangerNetMessage : INetMessage
         CharacterId = reader.ReadString();
         GroupId = reader.ReadString();
         OptionId = reader.ReadString();
+        SourceOptionManifest = reader.ReadString();
         TransformManifest = reader.ReadString();
         ProviderId = string.Empty;
         WorkshopItemId = 0;
@@ -93,14 +96,15 @@ internal sealed record SessionCharacterSelection(
 
 internal static class MultiplayerSkinSync
 {
-    // Protocol 8 removes online Workshop transfer and ready-gate messages. Peers on the old
-    // protocol are deliberately not treated as compatible so an older client cannot restart the
-    // removed automatic-download workflow after receiving a new player's selection.
-    internal const byte ProtocolVersion = 8;
+    // Protocol 9 transmits the ordered raw sources behind a saved composition. Receivers only
+    // resolve sources already installed locally; no Workshop download or remote cache is used.
+    internal const byte ProtocolVersion = 9;
     internal const int ReservedMessageId = 254;
+    private const int MaximumSourceOptionCount = 64;
+    private const int MaximumSourceOptionManifestLength = 32768;
 
     private static readonly byte[] CapabilityMagic =
-        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x38, 0x21]; // GSCAP08!
+        [0x47, 0x53, 0x43, 0x41, 0x50, 0x30, 0x39, 0x21]; // GSCAP09!
     private static readonly HashSet<ulong> CapablePeers = [];
     private static readonly Dictionary<ulong, SkinChangerNetMessage> AdvertisedSelections = [];
     private static readonly Dictionary<ulong, SessionCharacterSelection> AvailableSelections = [];
@@ -1099,6 +1103,7 @@ internal static class MultiplayerSkinSync
                 message.GroupId,
                 message.OptionId));
         var transformSignature = message.GroupId + "\n" + message.OptionId + "\n" +
+                                 message.SourceOptionManifest + "\n" +
                                  message.TransformManifest;
         var shouldLogTransform = false;
         lock (Sync)
@@ -1378,6 +1383,7 @@ internal static class MultiplayerSkinSync
             !ValidateText(message.CharacterId) ||
             !ValidateText(message.GroupId) ||
             !ValidateText(message.OptionId) ||
+            !TryParseSourceOptionManifest(message.SourceOptionManifest, out _) ||
             message.TransformManifest is { Length: > 65536 } ||
             !TryParseTransformManifest(message.TransformManifest, message.GroupId, out _))
         {
@@ -1386,6 +1392,7 @@ internal static class MultiplayerSkinSync
 
         RememberAdvertisement(message);
         var receivedTransformSignature = message.GroupId + "\n" + message.OptionId + "\n" +
+                                         message.SourceOptionManifest + "\n" +
                                          message.TransformManifest;
         var shouldLogTransform = false;
         lock (Sync)
@@ -1417,6 +1424,60 @@ internal static class MultiplayerSkinSync
     private static string SerializeTransformManifest(
         IReadOnlyDictionary<string, CharacterCombatTransform> transforms) =>
         JsonSerializer.Serialize(transforms);
+
+    internal static string SerializeSourceOptionManifest(
+        IReadOnlyList<string> sourceOptionIds)
+    {
+        var normalized = sourceOptionIds
+            .Where(ValidateText)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalized.Length != sourceOptionIds.Count ||
+            normalized.Length > MaximumSourceOptionCount)
+        {
+            ModLog.Warn("联机合并皮肤来源数量或格式无效，已对远端玩家回退为原皮。");
+            return "[]";
+        }
+
+        var manifest = JsonSerializer.Serialize(normalized);
+        if (manifest.Length > MaximumSourceOptionManifestLength)
+        {
+            ModLog.Warn("联机合并皮肤来源清单过大，已对远端玩家回退为原皮。");
+            return "[]";
+        }
+
+        return manifest;
+    }
+
+    internal static bool TryParseSourceOptionManifest(
+        string? manifest,
+        out IReadOnlyList<string> sourceOptionIds)
+    {
+        sourceOptionIds = [];
+        if (string.IsNullOrWhiteSpace(manifest) ||
+            manifest.Length > MaximumSourceOptionManifestLength)
+        {
+            return false;
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<string[]>(manifest);
+            if (parsed == null || parsed.Length > MaximumSourceOptionCount ||
+                parsed.Any(sourceId => !ValidateText(sourceId)) ||
+                parsed.Distinct(StringComparer.OrdinalIgnoreCase).Count() != parsed.Length)
+            {
+                return false;
+            }
+
+            sourceOptionIds = parsed;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     private static bool TryParseTransformManifest(
         string? manifest,
@@ -1511,6 +1572,9 @@ internal static class MultiplayerSkinSync
         }
 
         if (!PlayerMatchesCharacterSelection(message) ||
+            !TryParseSourceOptionManifest(
+                message.SourceOptionManifest,
+                out var advertisedSourceIds) ||
             !TryParseTransformManifest(
                 message.TransformManifest,
                 message.GroupId,
@@ -1520,31 +1584,51 @@ internal static class MultiplayerSkinSync
         }
 
         var allowRemoteSkin = SkinService.ShouldLoadOtherPlayersCustomSkins();
-        var effectiveOptionId = allowRemoteSkin
-            ? message.OptionId
-            : SkinCatalog.BaseOptionId;
-        var selectionAvailable = SkinService.TryBuildSessionCharacterSelection(
-            message.GroupId,
-            effectiveOptionId,
-            out var selectionOverrides);
-        var ownerAppearanceLoaded = allowRemoteSkin && selectionAvailable;
+        var effectiveOptionId = SkinCatalog.BaseOptionId;
+        IReadOnlyDictionary<string, string> selectionOverrides;
+        var availableSourceIds = allowRemoteSkin
+            ? SkinService.GetAvailableCharacterSelectionSourceIds(
+                message.GroupId,
+                advertisedSourceIds)
+            : [];
+        bool selectionAvailable;
+        var ownerAppearanceLoaded = false;
+        if (!allowRemoteSkin || advertisedSourceIds.Count == 0)
+        {
+            selectionAvailable = SkinService.TryBuildSessionCharacterSelection(
+                message.GroupId,
+                SkinCatalog.BaseOptionId,
+                out selectionOverrides);
+        }
+        else if (availableSourceIds.Count > 0)
+        {
+            selectionAvailable = SkinService.TryBuildSessionCharacterComposition(
+                message.GroupId,
+                availableSourceIds,
+                out selectionOverrides,
+                out effectiveOptionId);
+            ownerAppearanceLoaded = selectionAvailable;
+        }
+        else
+        {
+            selectionOverrides = null!;
+            selectionAvailable = false;
+        }
         var fallbackKey = (message.PlayerNetId, message.GroupId);
 
         if (!selectionAvailable)
         {
-            if (allowRemoteSkin &&
-                !message.OptionId.Equals(
-                    SkinCatalog.BaseOptionId,
-                    StringComparison.OrdinalIgnoreCase))
+            if (allowRemoteSkin && advertisedSourceIds.Count > 0)
             {
-                var warningKey = $"{message.PlayerNetId}\n{message.GroupId}\n{message.OptionId}";
+                var warningKey = $"{message.PlayerNetId}\n{message.GroupId}\n" +
+                                 message.SourceOptionManifest;
                 lock (Sync)
                 {
                     if (MissingInstalledSkinWarnings.Add(warningKey))
                     {
                         ModLog.Info(
                             $"联机玩家 {message.PlayerNetId} 选择了本机未安装的皮肤 " +
-                            $"{message.OptionId}；已使用原皮，不会下载远端资源。");
+                            $"{string.Join(", ", advertisedSourceIds)}；已使用原皮，不会下载远端资源。");
                     }
                 }
             }
@@ -1656,6 +1740,7 @@ internal static class MultiplayerSkinSync
         }
 
         var appliedTransformSignature = message.GroupId + "\n" + effectiveOptionId + "\n" +
+                                        message.SourceOptionManifest + "\n" +
                                         message.TransformManifest;
         var transformChanged = false;
         lock (Sync)
@@ -1736,6 +1821,10 @@ internal static class MultiplayerSkinSync
             GroupId = group.Id,
             OptionId = SkinService.Config.GetSelection(group.Id)
         };
+        message.SourceOptionManifest = SerializeSourceOptionManifest(
+            SkinService.GetCharacterSelectionSourceIds(
+                message.GroupId,
+                message.OptionId));
         message.TransformManifest = SerializeTransformManifest(
             SkinService.GetSessionCharacterCombatTransforms(
                 message.GroupId,
@@ -1747,7 +1836,7 @@ internal static class MultiplayerSkinSync
         SkinChangerNetMessage message,
         string sessionOptionId)
     {
-        // Compatibility no-op for the retired OnlineSkinCache worker. Protocol 8 never starts
+        // Compatibility no-op for the retired OnlineSkinCache worker. Protocol 9 never starts
         // that worker and never accepts a downloaded session option.
     }
 
@@ -1869,7 +1958,11 @@ internal static class MultiplayerSkinSync
         left.PlayerNetId == right.PlayerNetId &&
         string.Equals(left.CharacterId, right.CharacterId, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(left.GroupId, right.GroupId, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(left.OptionId, right.OptionId, StringComparison.OrdinalIgnoreCase);
+        string.Equals(left.OptionId, right.OptionId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(
+            left.SourceOptionManifest,
+            right.SourceOptionManifest,
+            StringComparison.Ordinal);
 
     private static void SendLocalAdvertisement()
     {
