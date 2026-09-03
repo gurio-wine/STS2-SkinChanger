@@ -18,6 +18,11 @@ using STS2SkinChanger;
 using System.Reflection;
 
 AppearanceControlContractTests.Run();
+CharacterSkinBundleContractTests.Run();
+if (typeof(Entry).Assembly.GetName().Version?.ToString() != Entry.InternalTestVersion)
+{
+    throw new InvalidOperationException("启动日志的内测版本必须与实际程序集版本一致，避免误报旧部署版本。");
+}
 
 var managedModListPatchType = typeof(Entry).Assembly.GetType(
                                   "STS2SkinChanger.Ui.ManagedModListNamePatch") ??
@@ -446,6 +451,22 @@ foreach (var methodName in new[]
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) == null)
     {
         throw new InvalidOperationException($"怪物图鉴预设缺少持久化边界：{methodName}。");
+    }
+}
+
+foreach (var methodName in new[]
+         {
+             "GetCharacterSkinBundles", "CreateCharacterSkinBundle",
+             "OverwriteCharacterSkinBundle", "RenameCharacterSkinBundle",
+             "DeleteCharacterSkinBundle", "ApplyCharacterSkinBundle",
+             "GetCardPresetCategories", "GetMonsterPresetCategories"
+         })
+{
+    if (skinServiceType.GetMethod(
+            methodName,
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) == null)
+    {
+        throw new InvalidOperationException($"皮肤包服务缺少边界：{methodName}。");
     }
 }
 var presetConfigPath = Path.Combine(Path.GetTempPath(), $"skin-changer-monster-preset-{Guid.NewGuid():N}.json");

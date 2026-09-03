@@ -579,7 +579,7 @@ internal static class CharacterSkinCompositionControls
         return button;
     }
 
-    private static void ApplyLineEditTheme(LineEdit lineEdit)
+    internal static void ApplyLineEditTheme(LineEdit lineEdit)
     {
         lineEdit.AddThemeFontSizeOverride("font_size", 19);
         lineEdit.AddThemeColorOverride("font_color", new Color("fff6e2"));

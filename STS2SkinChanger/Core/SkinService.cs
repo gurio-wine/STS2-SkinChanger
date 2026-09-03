@@ -14,7 +14,7 @@ using STS2SkinChanger.Pck;
 
 namespace STS2SkinChanger.Core;
 
-internal static class SkinService
+internal static partial class SkinService
 {
     public const float MinimumMonsterScale = 0.2f;
     public const float MaximumMonsterScale = 5f;
@@ -1840,6 +1840,7 @@ internal static class SkinService
 
             var previousName = Config.CardSkinPresets[index].Name;
             var previousActivePreset = GetActiveCardSkinPreset(groupId);
+            var previousBundles = UpdateBundlePresetReferences(false, groupId, previousName, normalizedName);
             try
             {
                 Config.CardSkinPresets[index].Name = normalizedName;
@@ -1855,6 +1856,7 @@ internal static class SkinService
             catch (Exception exception)
             {
                 Config.CardSkinPresets[index].Name = previousName;
+                Config.CharacterSkinBundles = previousBundles;
                 SetActiveCardSkinPreset(groupId, previousActivePreset);
                 LastError = exception.Message;
                 ModLog.Error($"重命名卡图预设 {previousName} 失败：{exception}");
@@ -1876,6 +1878,7 @@ internal static class SkinService
 
             var preset = Config.CardSkinPresets[index];
             var previousActivePreset = GetActiveCardSkinPreset(groupId);
+            var previousBundles = UpdateBundlePresetReferences(false, groupId, preset.Name, null);
             try
             {
                 Config.CardSkinPresets.RemoveAt(index);
@@ -1893,6 +1896,7 @@ internal static class SkinService
             catch (Exception exception)
             {
                 Config.CardSkinPresets.Insert(index, preset);
+                Config.CharacterSkinBundles = previousBundles;
                 SetActiveCardSkinPreset(groupId, previousActivePreset);
                 LastError = exception.Message;
                 ModLog.Error($"删除卡图预设 {preset.Name} 失败：{exception}");
@@ -1925,19 +1929,7 @@ internal static class SkinService
             var previousDefaultsVersion = Config.CardPriorityDefaultsVersion;
             try
             {
-                if (preset.CardSkinPriorities.TryGetValue(groupId, out var requestedPriority))
-                {
-                    Config.CardSkinPriorities[groupId] = requestedPriority.ToList();
-                }
-                else
-                {
-                    Config.CardSkinPriorities.Remove(groupId);
-                }
-
-                ReplaceCardSelectionsForGroup(groupId, preset.Selections);
-                Config.CardPriorityDefaultsVersion = 1;
-                SetActiveCardSkinPreset(groupId, preset.Name);
-                GetCardPriorityEntriesInternal(group);
+                ApplyCardPresetSettings(group, preset);
                 CardPreviewSelections.Clear();
                 ClearCardPortraitCache(groupId);
 
@@ -2253,6 +2245,7 @@ internal static class SkinService
 
             var preset = Config.MonsterSkinPresets[index];
             var previousName = preset.Name;
+            var previousBundles = UpdateBundlePresetReferences(true, categoryId, previousName, normalized);
             var wasActive = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId)
                 ?.Equals(previousName, StringComparison.OrdinalIgnoreCase) == true;
             preset.Name = normalized;
@@ -2263,6 +2256,7 @@ internal static class SkinService
             return SaveMonsterPresetConfiguration("重命名", preset, () =>
             {
                 preset.Name = previousName;
+                Config.CharacterSkinBundles = previousBundles;
                 if (wasActive)
                 {
                     Config.ActiveMonsterSkinPresets[categoryId] = previousName;
@@ -2283,6 +2277,7 @@ internal static class SkinService
             }
             var preset = Config.MonsterSkinPresets[index];
             var previousActive = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId);
+            var previousBundles = UpdateBundlePresetReferences(true, categoryId, preset.Name, null);
             Config.MonsterSkinPresets.RemoveAt(index);
             if (preset.Name.Equals(previousActive, StringComparison.OrdinalIgnoreCase))
             {
@@ -2291,6 +2286,7 @@ internal static class SkinService
             return SaveMonsterPresetConfiguration("删除", preset, () =>
             {
                 Config.MonsterSkinPresets.Insert(index, preset);
+                Config.CharacterSkinBundles = previousBundles;
                 if (previousActive != null)
                 {
                     Config.ActiveMonsterSkinPresets[categoryId] = previousActive;
@@ -2310,48 +2306,52 @@ internal static class SkinService
                 return false;
             }
             var preset = Config.MonsterSkinPresets[index];
-            return ChangeMonsterPriorityConfiguration(categoryId, () =>
-            {
-                var currentGroupIds = Config.MonsterSkinCategoryGroups[categoryId]
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var safeSelections = preset.Selections
-                    .Where(pair => currentGroupIds.Contains(pair.Key))
-                    .ToDictionary(
-                        pair => pair.Key,
-                        pair =>
-                        {
-                            var group = Catalog?.Groups.FirstOrDefault(candidate =>
-                                candidate.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase));
-                            return pair.Value.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
-                                   group?.Options.Any(option => option.Id.Equals(
-                                       pair.Value, StringComparison.OrdinalIgnoreCase)) == true
-                                ? pair.Value
-                                : SkinCatalog.BaseOptionId;
-                        },
-                        StringComparer.OrdinalIgnoreCase);
-                Config.MonsterSkinPriorities[categoryId] = preset.Priority.ToList();
-                Config.Selections = MonsterSkinPresetPolicy.Apply(
-                    new MonsterSkinPresetSnapshot(
-                        preset.CategoryId,
-                        preset.Priority.Select(entry => new MonsterSkinPresetPriorityState(
-                            entry.OptionId, entry.Enabled)).ToArray(),
-                        safeSelections),
-                    Config.Selections);
-                foreach (var groupId in Config.MonsterSkinCategoryGroups[categoryId])
-                {
-                    var follows = preset.FollowingGroupIds.Contains(
-                        groupId, StringComparer.OrdinalIgnoreCase);
-                    Config.MonsterGroupsFollowingCategory.RemoveAll(candidate =>
-                        candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-                    Config.MonsterGroupsWithManualSelection.RemoveAll(candidate =>
-                        candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-                    (follows
-                        ? Config.MonsterGroupsFollowingCategory
-                        : Config.MonsterGroupsWithManualSelection).Add(groupId);
-                }
-                Config.ActiveMonsterSkinPresets[categoryId] = preset.Name;
-            }, adoptUnconfiguredGroups: false);
+            return ChangeMonsterPriorityConfiguration(categoryId,
+                () => ApplyMonsterPresetSettings(preset), adoptUnconfiguredGroups: false);
         }
+    }
+
+    private static void ApplyMonsterPresetSettings(MonsterSkinPreset preset)
+    {
+        var categoryId = preset.CategoryId;
+        var currentGroupIds = Config.MonsterSkinCategoryGroups[categoryId]
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var safeSelections = preset.Selections
+            .Where(pair => currentGroupIds.Contains(pair.Key))
+            .ToDictionary(
+                pair => pair.Key,
+                pair =>
+                {
+                    var group = Catalog?.Groups.FirstOrDefault(candidate =>
+                        candidate.Id.Equals(pair.Key, StringComparison.OrdinalIgnoreCase));
+                    return pair.Value.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase) ||
+                           group?.Options.Any(option => option.Id.Equals(
+                               pair.Value, StringComparison.OrdinalIgnoreCase)) == true
+                        ? pair.Value
+                        : SkinCatalog.BaseOptionId;
+                },
+                StringComparer.OrdinalIgnoreCase);
+        Config.MonsterSkinPriorities[categoryId] = preset.Priority.ToList();
+        Config.Selections = MonsterSkinPresetPolicy.Apply(
+            new MonsterSkinPresetSnapshot(
+                preset.CategoryId,
+                preset.Priority.Select(entry => new MonsterSkinPresetPriorityState(
+                    entry.OptionId, entry.Enabled)).ToArray(),
+                safeSelections),
+            Config.Selections);
+        foreach (var groupId in Config.MonsterSkinCategoryGroups[categoryId])
+        {
+            var follows = preset.FollowingGroupIds.Contains(
+                groupId, StringComparer.OrdinalIgnoreCase);
+            Config.MonsterGroupsFollowingCategory.RemoveAll(candidate =>
+                candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            Config.MonsterGroupsWithManualSelection.RemoveAll(candidate =>
+                candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            (follows
+                ? Config.MonsterGroupsFollowingCategory
+                : Config.MonsterGroupsWithManualSelection).Add(groupId);
+        }
+        Config.ActiveMonsterSkinPresets[categoryId] = preset.Name;
     }
 
     public static IReadOnlySet<string> GetMonsterRunEnvironmentProviders(
@@ -5713,7 +5713,7 @@ internal static class SkinService
     private static void MountCardOverlay(IReadOnlySet<string> groups)
     {
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
-        var priorityStacks = catalog.CardGroups.ToDictionary(
+        var priorityStacks = catalog.CardGroups.Where(group => groups.Contains(group.Id)).ToDictionary(
             group => group.Id,
             group => (IReadOnlyList<string>)GetCardPriorityEntriesInternal(group)
                 .Where(entry => entry.Enabled)

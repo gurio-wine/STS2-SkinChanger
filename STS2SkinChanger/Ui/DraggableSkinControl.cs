@@ -12,13 +12,23 @@ internal partial class DraggableSkinControl : Node
     private HBoxContainer _target = null!;
     private Button _handle = null!;
     private Action _defaultPlacement = null!;
-    private bool _mergeButton;
+    private Func<(float X, float Y)?> _loadPosition = null!;
+    private Action<float, float> _savePosition = null!;
+    private Action _resetPosition = null!;
     private bool _dragging;
     private bool _placing;
     private Vector2 _dragOffset;
 
     internal static void Attach(
         Control screen, HBoxContainer target, bool mergeButton, Action defaultPlacement)
+        => Attach(screen, target,
+            () => SkinService.GetCharacterSkinControlPosition(mergeButton),
+            (x, y) => SkinService.SetCharacterSkinControlPosition(mergeButton, x, y),
+            () => SkinService.ResetCharacterSkinControlPosition(mergeButton), defaultPlacement);
+
+    internal static void Attach(
+        Control screen, HBoxContainer target, Func<(float X, float Y)?> loadPosition,
+        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement)
     {
         var binding = target.GetNodeOrNull<DraggableSkinControl>(BindingName);
         if (binding != null)
@@ -32,7 +42,9 @@ internal partial class DraggableSkinControl : Node
             Name = BindingName,
             _screen = screen,
             _target = target,
-            _mergeButton = mergeButton,
+            _loadPosition = loadPosition,
+            _savePosition = savePosition,
+            _resetPosition = resetPosition,
             _defaultPlacement = defaultPlacement
         };
         target.AddChild(binding);
@@ -74,7 +86,7 @@ internal partial class DraggableSkinControl : Node
                 if (mouse.Pressed)
                 {
                     _dragging = false;
-                    SkinService.ResetCharacterSkinControlPosition(_mergeButton);
+                    _resetPosition();
                     RestorePosition();
                 }
                 _handle.AcceptEvent();
@@ -98,7 +110,7 @@ internal partial class DraggableSkinControl : Node
             {
                 _dragging = false;
                 var position = MoveToMouse();
-                SkinService.SetCharacterSkinControlPosition(_mergeButton, position.X, position.Y);
+                _savePosition(position.X, position.Y);
             }
             _handle.AcceptEvent();
         }
@@ -136,7 +148,6 @@ internal partial class DraggableSkinControl : Node
             _target.OffsetTop = -size.Y / 2f;
             _target.OffsetRight = size.X / 2f;
             _target.OffsetBottom = size.Y / 2f;
-            _target.ZIndex = _mergeButton ? 100 : 20;
         }
         finally
         {
@@ -156,7 +167,7 @@ internal partial class DraggableSkinControl : Node
             return;
         }
         _dragging = false;
-        if (SkinService.GetCharacterSkinControlPosition(_mergeButton) is { } position)
+        if (_loadPosition() is { } position)
         {
             ApplyPosition(position.X, position.Y);
         }
@@ -177,7 +188,7 @@ internal partial class DraggableSkinControl : Node
     private void ClampAfterLayout()
     {
         if (!_placing && !_dragging &&
-            SkinService.GetCharacterSkinControlPosition(_mergeButton) is { } position)
+            _loadPosition() is { } position)
         {
             ApplyPosition(position.X, position.Y);
         }

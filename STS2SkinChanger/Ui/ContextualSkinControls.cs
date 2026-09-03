@@ -106,10 +106,7 @@ internal static partial class ContextualSkinControls
         }
         RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
         Populate(selector, group);
-        CharacterSkinCompositionControls.Show(
-            screen,
-            group,
-            () =>
+        Action refreshSelection = () =>
             {
                 Populate(selector, group);
                 if (group == null)
@@ -122,7 +119,11 @@ internal static partial class ContextualSkinControls
                 {
                     MultiplayerSkinSync.OnLocalCharacterSelectionChanged(group.Id);
                 }
-            });
+            };
+        CharacterSkinCompositionControls.Show(screen, group, refreshSelection);
+        CharacterSkinBundleControls.ShowForCharacter(screen,
+            group?.Id ?? character.Id.Entry.ToLowerInvariant(),
+            group?.DisplayName ?? character.Title.GetFormattedText(), refreshSelection);
         RefreshMultiplayerSkinLoadingToggle(screen);
         if (group != null)
         {
@@ -627,6 +628,7 @@ internal static partial class ContextualSkinControls
     internal static void HideCharacterSelector(NCharacterSelectScreen screen)
     {
         CharacterSkinCompositionControls.Hide(screen);
+        CharacterSkinBundleControls.Hide(screen);
         CancelCharacterDropdownPreview(
             screen,
             FindCharacterSelector(screen),

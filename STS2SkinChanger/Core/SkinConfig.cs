@@ -134,6 +134,29 @@ internal sealed class SkinConfig
 
     public float? IndividualCardSkinSelectorY { get; set; }
 
+    // Copy the mutable settings touched by bundle preparation/overlay normalization. Other
+    // fields are deliberately retained without deserializing/migrating unrelated settings.
+    internal SkinConfig CloneForBundleTransaction()
+    {
+        var copy = (SkinConfig)MemberwiseClone();
+        copy.Selections = new(Selections, StringComparer.OrdinalIgnoreCase);
+        copy.VisualProviderPriority = VisualProviderPriority.ToList();
+        copy.CharacterSkinBundles = CharacterSkinBundles.Select(CharacterSkinBundlePolicy.Clone).ToList();
+        copy.ActiveCharacterSkinBundles = new(ActiveCharacterSkinBundles, StringComparer.OrdinalIgnoreCase);
+        copy.CardSkinPriorities = CardSkinPriorities.ToDictionary(
+            pair => pair.Key, pair => pair.Value.ToList(), StringComparer.OrdinalIgnoreCase);
+        copy.ActiveCardSkinPresets = new(ActiveCardSkinPresets, StringComparer.OrdinalIgnoreCase);
+        copy.MonsterSkinPriorities = MonsterSkinPriorities.ToDictionary(
+            pair => pair.Key, pair => pair.Value.ToList(), StringComparer.OrdinalIgnoreCase);
+        copy.ActiveMonsterSkinPresets = new(ActiveMonsterSkinPresets, StringComparer.OrdinalIgnoreCase);
+        copy.MonsterSkinCategoryGroups = MonsterSkinCategoryGroups.ToDictionary(
+            pair => pair.Key, pair => pair.Value.ToList(), StringComparer.OrdinalIgnoreCase);
+        copy.EnabledMonsterSkinPriorityCategories = EnabledMonsterSkinPriorityCategories.ToList();
+        copy.MonsterGroupsFollowingCategory = MonsterGroupsFollowingCategory.ToList();
+        copy.MonsterGroupsWithManualSelection = MonsterGroupsWithManualSelection.ToList();
+        return copy;
+    }
+
     public static SkinConfig Load(string path)
     {
         var backupPath = path + ".bak";

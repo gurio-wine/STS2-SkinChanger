@@ -626,6 +626,82 @@ Require(normalizedBundles.Count == 1 &&
         normalizedBundles[0].CardPresetNames.Comparer.Equals(StringComparer.OrdinalIgnoreCase),
     "皮肤包加载时必须规范角色 ID、恢复大小写无关字典并去除同角色重名项。 ");
 
+var mixedBundles = CharacterSkinBundlePolicy.Normalize([
+    new() { Name = "同名包", CharacterGroupId = "silent", CharacterOptionId = "",
+        CardPresetNames = new Dictionary<string, string> { [" SILENT "] = "A", ["silent"] = "B" } },
+    new() { Name = "同名包", CharacterGroupId = "regent" }
+]);
+Require(mixedBundles.Count == 2 && mixedBundles[0].CharacterOptionId == "__base__" &&
+        mixedBundles[0].CardPresetNames.Count == 1,
+    "不同角色允许同名包；原皮 ID 必须与游戏一致；重复规范化分类不能让配置加载失败。");
+
+Require(CharacterSkinBundlePolicy.ChangesOutsideRequestedGroups(
+        new Dictionary<string, string> { ["silent"] = "skin:a", ["monster:one"] = "__base__" },
+        new Dictionary<string, string> { ["silent"] = "skin:b", ["monster:one"] = "skin:b" },
+        ["silent", "monster:one"], new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "silent" }),
+    "整包皮肤的隐式联动不能覆盖未选地区，必须在挂载前发现并回滚。");
+Require(!CharacterSkinBundlePolicy.ChangesOutsideRequestedGroups(
+        new Dictionary<string, string>(), new Dictionary<string, string> { ["silent"] = "__base__" },
+        ["silent"], new HashSet<string>()), "未保存的原皮与显式原皮是同一选择，不应误判越界。");
+
+foreach (var failurePoint in new[] { "none", "prepare", "visual", "cards", "persist", "restore" })
+{
+    var originalBundleState = new Dictionary<string, string>
+    {
+        ["character"] = "old", ["cards"] = "old", ["monsters"] = "old", ["unchanged"] = "keep"
+    };
+    var stagedBundleState = new Dictionary<string, string>(originalBundleState);
+    var currentBundleState = originalBundleState;
+    var savedBundleState = originalBundleState;
+    var bundleSteps = new List<string>();
+    var failure = StagedConfigurationTransaction.Run(originalBundleState, stagedBundleState,
+        value => currentBundleState = value,
+        () =>
+        {
+            currentBundleState["character"] = currentBundleState["cards"] = currentBundleState["monsters"] = "new";
+            bundleSteps.Add("prepare");
+            if (failurePoint == "prepare") throw new InvalidOperationException("prepare");
+        },
+        () =>
+        {
+            bundleSteps.Add("visual");
+            if (failurePoint == "visual") throw new InvalidOperationException("visual");
+            bundleSteps.Add("cards");
+            if (failurePoint is "cards" or "restore") throw new InvalidOperationException("cards");
+        },
+        value =>
+        {
+            bundleSteps.Add("persist");
+            if (failurePoint == "persist") throw new IOException("persist");
+            savedBundleState = new Dictionary<string, string>(value);
+        },
+        () =>
+        {
+            Require(ReferenceEquals(currentBundleState, originalBundleState), "恢复资源之前必须先恢复所有原配置。");
+            bundleSteps.Add("restore");
+            if (failurePoint == "restore") throw new IOException("restore");
+        });
+    if (failurePoint == "none")
+    {
+        Require(failure == null && bundleSteps.SequenceEqual(new[] { "prepare", "visual", "cards", "persist" }) &&
+                savedBundleState["character"] == "new" && savedBundleState["cards"] == "new" &&
+                savedBundleState["monsters"] == "new" && savedBundleState["unchanged"] == "keep",
+            "角色、卡牌、怪物必须全部刷新成功后才保存一次，未选分类保持不变。");
+    }
+    else
+    {
+        Require(failure != null && ReferenceEquals(currentBundleState, originalBundleState) &&
+                savedBundleState["character"] == "old" && savedBundleState["cards"] == "old" &&
+                savedBundleState["monsters"] == "old" &&
+                (failurePoint == "prepare" ? !bundleSteps.Contains("restore") : bundleSteps.Contains("restore")),
+            "任何步骤失败不能保存半套皮肤包；准备失败不应重载资源。");
+        Require(failurePoint != "restore" || failure is AggregateException { InnerExceptions.Count: 2 },
+            "回滚自身失败时必须保留两个错误，不得报告成功。");
+    }
+    Require(originalBundleState["character"] == "old" && originalBundleState["cards"] == "old" &&
+            originalBundleState["monsters"] == "old", "暂存配置不得污染原配置快照。");
+}
+
 var offscreenTransform = new CharacterCombatTransform(5f, 1800f, -900f)
 {
     HealthBarScale = 1.35f,

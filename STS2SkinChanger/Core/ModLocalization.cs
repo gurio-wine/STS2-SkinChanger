@@ -84,10 +84,29 @@ internal enum ModText
     ConfirmDeleteCharacterSkinMerge,
     CharacterSkinSourceUnavailable,
     CharacterSkinMergeNeedsSource,
-    CombinedSkinDefaultName
+    CombinedSkinDefaultName,
+    CharacterSkinBundle,
+    NewBundle,
+    BundleName,
+    BundleCharacterSkin,
+    BundleCardPresets,
+    BundleMonsterPresets,
+    BundleUnchanged,
+    BundleApply,
+    BundleSaved,
+    BundleApplied,
+    BundleMissingSkin,
+    BundleMissingPreset,
+    BundleUnavailable,
+    BundleInvalidName,
+    BundleDuplicateName,
+    BundleReferenceHint,
+    BundleUnsaved,
+    BundleApplying,
+    BundleScopeConflict
 }
 
-internal static class ModLocalization
+internal static partial class ModLocalization
 {
     public const string DefaultVariantMarker = "{skin-changer-default}";
     public const string DifferentialVariantMarker = "{skin-changer-differential}";
@@ -1364,6 +1383,8 @@ internal static class ModLocalization
                 ? OtherCompendiumPacks[CurrentLanguage].Merchants
             : text == ModText.OtherCategoryCreatures
                 ? OtherCompendiumPacks[CurrentLanguage].Creatures
+            : text >= ModText.CharacterSkinBundle
+                ? BundlePacks[CurrentLanguage][text - ModText.CharacterSkinBundle]
             : text >= ModText.CharacterSkinMerge
                 ? CharacterSkinCompositionPacks[CurrentLanguage].Get(text)
             : text >= ModText.ModelTransform
