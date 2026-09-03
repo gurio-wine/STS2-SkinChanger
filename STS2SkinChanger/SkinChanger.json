@@ -4,7 +4,7 @@
   "author": "Gurio",
   "description": "切换角色、卡牌、怪物、先古场景、商人和生物皮肤；百科大全新增包含先古、商人和生物的其它图鉴。多人游戏可按玩家同步角色皮肤、头像和局内外观参数，也可在对局中热切换自己的皮肤。双方都安装同一皮肤时显示所选皮肤，否则使用原皮，不会下载远端皮肤。界面支持 15 种语言，无需重启。 Switch character, card, monster, Ancient, merchant, and creature skins, with an Other Compendium for Ancients, merchants, and creatures. Multiplayer syncs each player's character skin, avatar, and live model/UI transforms, including hot-swapping your own skin during a run. A selected skin is shown only when both players have it installed; otherwise the original is used, with no remote skin downloads. 15-language interface, no restart required.",
   "version": "0.9.132",
-  "internal_test_version": "0.9.132.3",
+  "internal_test_version": "0.9.132.4",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

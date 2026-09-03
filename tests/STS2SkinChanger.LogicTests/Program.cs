@@ -73,6 +73,21 @@ Require(
     "[SC] Existing Prefix",
     "Mod 列表反复刷新时不能重复叠加 [SC] 前缀。");
 
+string CardOptionName(string modName, string? namedVariant, int ordinal, int optionCount) =>
+    CardSkinOptionNamingPolicy.Build(modName, namedVariant, ordinal, optionCount);
+Require(
+    CardOptionName("观者美化版", null, 1, 1) == "观者美化版",
+    "只有一套无名卡图时不能添加多余编号。");
+Require(
+    CardOptionName("观者美化版", null, 1, 3) == "观者美化版 · 1" &&
+    CardOptionName("观者美化版", null, 2, 3) == "观者美化版 · 2" &&
+    CardOptionName("观者美化版", null, 3, 3) == "观者美化版 · 3",
+    "同一 Mod 的多套无名卡图必须按稳定顺序使用连续数字，不能显示“差分”等实现名称。");
+Require(
+    CardOptionName("观者美化版", "Hand Drawn", 1, 3) ==
+    "观者美化版 · Hand Drawn",
+    "卡图目录提供了明确名称时必须保留目录名，不能强制改成数字。");
+
 Require(
     CharacterGroupEvidencePolicy.ResolveEligibleGroups(
             ["regent", "defect"],

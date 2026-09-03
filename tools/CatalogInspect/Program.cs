@@ -2308,6 +2308,11 @@ static void RunCardExportSelfTest(string gamePckPath)
                 false)]);
         var sourceOption = catalog.PckCardOptions.Single(option =>
             option.Id.Equals("Tests.ExportedCardSkin", StringComparison.OrdinalIgnoreCase));
+        if (sourceOption.Name != "Exported Card Skin · 1")
+        {
+            throw new InvalidOperationException(
+                $"primary unnamed card variant was not numbered: {sourceOption.Name}");
+        }
         const string uiCardWidget =
             "res://Tests.ExportedCardSkin/images/cards/card_sel.png";
         if (sourceOption.Assets.ContainsKey(uiCardWidget))
@@ -2341,7 +2346,8 @@ static void RunCardExportSelfTest(string gamePckPath)
         var differentialOption = catalog.PckCardOptions.Single(option => option.Id.Equals(
             "Tests.ExportedCardSkin::portrait-mode:differential",
             StringComparison.OrdinalIgnoreCase));
-        if (differentialOption.NormalPortraits.Count != 1 ||
+        if (differentialOption.Name != "Exported Card Skin · 2" ||
+            differentialOption.NormalPortraits.Count != 1 ||
             !differentialOption.NormalPortraits.TryGetValue("DifferentialCard", out var differentialPath) ||
             !differentialPath.Equals(
                 "res://card_core/card_portraits/tests/differential_alt.png",
@@ -2353,7 +2359,8 @@ static void RunCardExportSelfTest(string gamePckPath)
         var ancientOption = catalog.PckCardOptions.Single(option => option.Id.Equals(
             "Tests.ExportedCardSkin::portrait-mode:ancient",
             StringComparison.OrdinalIgnoreCase));
-        if (ancientOption.NormalPortraits.Count != 1 ||
+        if (ancientOption.Name != "Exported Card Skin · 3" ||
+            ancientOption.NormalPortraits.Count != 1 ||
             !ancientOption.NormalPortraits.TryGetValue("AncientToggleCard", out var ancientPath) ||
             !ancientPath.Equals(
                 "res://card_core/card_portraits/tests/ancient.png",
@@ -2366,7 +2373,8 @@ static void RunCardExportSelfTest(string gamePckPath)
         var ancientDifferentialOption = catalog.PckCardOptions.Single(option => option.Id.Equals(
             "Tests.ExportedCardSkin::portrait-mode:ancient-differential",
             StringComparison.OrdinalIgnoreCase));
-        if (ancientDifferentialOption.NormalPortraits.Count != 1 ||
+        if (ancientDifferentialOption.Name != "Exported Card Skin · 4" ||
+            ancientDifferentialOption.NormalPortraits.Count != 1 ||
             !ancientDifferentialOption.NormalPortraits.TryGetValue(
                 "AncientToggleCard",
                 out var ancientDifferentialPath) ||

@@ -4587,14 +4587,21 @@ internal sealed partial class SkinCatalog : IDisposable
                 ];
             var exposeVariants = splitVariants ||
                                  (optionVariants[0].Key.Length > 0 && originalVariantKeys.Length > 1);
+            var optionCount = optionVariants.Length + exportedPortraits.Modes.Count;
+            var unnamedOptionOrdinal = 0;
             foreach (var variant in optionVariants)
             {
                 var variantId = optionVariants.Length == 1 || variant.Key.Length == 0
                     ? index.Mod.Id
                     : index.Mod.Id + "::variant:" + variant.Key.ToLowerInvariant();
-                var variantName = exposeVariants
-                    ? index.Mod.Name + " · " + DisplayCardVariant(variant.Key)
-                    : index.Mod.Name;
+                var namedVariant = exposeVariants && variant.Key.Length > 0
+                    ? DisplayCardVariant(variant.Key)
+                    : null;
+                var variantName = CardSkinOptionNamingPolicy.Build(
+                    index.Mod.Name,
+                    namedVariant,
+                    namedVariant == null ? ++unnamedOptionOrdinal : 0,
+                    optionCount);
                 options.Add(new CardSkinOption(
                     variantId,
                     variantName,
@@ -4657,7 +4664,11 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 options.Add(new CardSkinOption(
                     index.Mod.Id + "::portrait-mode:" + mode.IdSuffix,
-                    index.Mod.Name + " · " + mode.NameMarker,
+                    CardSkinOptionNamingPolicy.Build(
+                        index.Mod.Name,
+                        namedVariant: null,
+                        ++unnamedOptionOrdinal,
+                        optionCount),
                     new Dictionary<string, string>(
                         mode.Portraits,
                         StringComparer.OrdinalIgnoreCase),
