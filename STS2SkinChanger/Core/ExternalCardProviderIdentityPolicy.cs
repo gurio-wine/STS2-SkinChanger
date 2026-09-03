@@ -26,14 +26,6 @@ internal static class ExternalCardProviderIdentityPolicy
             Text: fullArt || ancientTextOutside);
     }
 
-    public static bool NeedsSyntheticPath(
-        bool managerAvailable,
-        bool isManagedTexture,
-        string? resourcePath) =>
-        managerAvailable &&
-        isManagedTexture &&
-        string.IsNullOrWhiteSpace(resourcePath);
-
     public static string BuildSyntheticPath(string cardId, string stableKey)
     {
         var normalizedCardId = NormalizeCardId(cardId);

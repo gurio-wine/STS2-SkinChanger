@@ -21,6 +21,7 @@ AppearanceControlContractTests.Run();
 CharacterSkinBundleContractTests.Run();
 ScrollListRebuildContractTests.Run();
 CardSkinRefreshContractTests.Run();
+CardProviderBridgeContractTests.Run();
 if (typeof(Entry).Assembly.GetName().Version?.ToString() != Entry.InternalTestVersion)
 {
     throw new InvalidOperationException("启动日志的内测版本必须与实际程序集版本一致，避免误报旧部署版本。");

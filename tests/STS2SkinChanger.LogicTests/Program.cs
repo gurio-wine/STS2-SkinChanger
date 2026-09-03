@@ -1235,26 +1235,6 @@ Require(
         ancientTextOutside: true) == default,
     "没有实际卡图覆盖时，编辑器的残留显示设置不能伪造视觉所有权。");
 
-Require(
-    ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
-        managerAvailable: true,
-        isManagedTexture: true,
-        resourcePath: string.Empty),
-    "动态卡图管理器存在时，Skin Changer 生成的无路径贴图需要稳定资源身份，避免旧缓存写回。");
-Require(
-    !ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
-        managerAvailable: false,
-        isManagedTexture: true,
-        resourcePath: string.Empty) &&
-    !ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
-        managerAvailable: true,
-        isManagedTexture: false,
-        resourcePath: string.Empty) &&
-    !ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
-        managerAvailable: true,
-        isManagedTexture: true,
-        resourcePath: "res://already_named.png"),
-    "没有管理器、不是本 Mod 贴图或已有真实路径时，不能篡改资源身份。");
 var providerPath = ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
     "ZAP",
     "defect\nprovider-a\nres://zap.png");
@@ -1270,6 +1250,14 @@ Require(
         "ZAP",
         "defect\nprovider-b\nres://zap.png"),
     "相同来源的资源身份必须稳定，不同皮肤来源必须分离。");
+var numberedPortraitIdentity = ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+    "CARD.WITHER", "status\nprovider\nres://status/wither1.png");
+Require(numberedPortraitIdentity.Contains("/card_wither_", StringComparison.Ordinal) &&
+        numberedPortraitIdentity != ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+            "CARD.WITHER", "status\nprovider\nres://status/wither2.png") &&
+        numberedPortraitIdentity != ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+            "CARD.BURN", "status\nprovider\nres://status/wither1.png"),
+    "凋萎等多状态卡图需要保留真实卡牌身份，并隔离不同状态、来源和卡牌；不能按文件名猜测。");
 
 Require(
     FrameworkEntryAnimationPolicy.Resolve(

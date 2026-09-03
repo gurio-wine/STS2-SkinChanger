@@ -2,6 +2,7 @@ using Godot;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace STS2SkinChanger.Core;
 
@@ -20,6 +21,7 @@ internal static class ExternalCardVisualBridge
     private static WeakReference<Node>? _scriptedManagerReference;
     private static ulong _nextScriptedManagerProbeTicks;
     private static bool _scriptedManagerLogged;
+    private static readonly ConditionalWeakTable<Texture2D, ProviderTextureView> ProviderTextureViews = new();
 
     static ExternalCardVisualBridge()
     {
@@ -62,20 +64,14 @@ internal static class ExternalCardVisualBridge
 
         try
         {
-            var temporaryProviderPaths = PrepareManagedProviderIdentity(card);
+            var providerCapture = PrepareManagedProviderIdentity(card);
             try
             {
                 manager.Call("capture_card_provider_after_visual_update", card, true);
             }
             finally
             {
-                foreach (var texture in temporaryProviderPaths)
-                {
-                    if (GodotObject.IsInstanceValid(texture))
-                    {
-                        texture.ResourcePath = string.Empty;
-                    }
-                }
+                providerCapture?.Restore();
             }
             manager.Call("apply_card_override_after_visual_update", card);
         }
@@ -256,20 +252,85 @@ internal static class ExternalCardVisualBridge
         candidate.HasMethod("capture_card_provider_after_visual_update") &&
         candidate.HasMethod("apply_card_override_after_visual_update");
 
-    private static List<Texture2D> PrepareManagedProviderIdentity(NCard card)
+    private static ProviderCaptureScope? PrepareManagedProviderIdentity(NCard card)
     {
-        var temporaryPaths = new List<Texture2D>(2);
-        foreach (var path in new[] { "%Portrait", "%AncientPortrait" })
+        var portrait = card.GetNodeOrNull<TextureRect>("%Portrait");
+        var ancientPortrait = card.GetNodeOrNull<TextureRect>("%AncientPortrait");
+        // Only the displayed layer can supply the current provider. A hidden layer may
+        // contain a stale skin or a transparent safety placeholder from another mod.
+        var active = ancientPortrait?.Visible == true ? ancientPortrait : portrait;
+        if (active?.Visible != true || active.Texture is not { } source ||
+            SkinService.GetExternalCardProviderIdentity(card.Model!, source) is not { } identity)
         {
-            var portrait = card.GetNodeOrNull<TextureRect>(path);
-            if (portrait?.Texture != null &&
-                SkinService.TryAssignExternalCardProviderIdentity(card.Model!, portrait.Texture))
-            {
-                temporaryPaths.Add(portrait.Texture);
-            }
+            return null;
         }
 
-        return temporaryPaths;
+        if (!ProviderTextureViews.TryGetValue(source, out var view) ||
+            view.Identity != identity || !GodotObject.IsInstanceValid(view.Texture))
+        {
+            // AtlasTexture is a view, not a pixel copy. Preserve the source's path, image,
+            // atlas crop/margins and animation. Each live view needs a unique cache path,
+            // while the prefix keeps the real card identity even for numbered variants.
+            var texture = CreateProviderView(source);
+            texture.ResourcePath = identity[..^4] + "_" + texture.GetInstanceId() + ".png";
+            view = new ProviderTextureView(identity, texture);
+            ProviderTextureViews.Remove(source);
+            ProviderTextureViews.Add(source, view);
+        }
+
+        // The editor caches ordinary and full-art layers separately. Seed both with the
+        // current winner, then restore the live nodes before applying user editor overrides.
+        // This also replaces any previously cached hidden-layer placeholder without polling
+        // or fighting the editor's deferred refresh on every frame.
+        return new ProviderCaptureScope(portrait, ancientPortrait, view.Texture);
+    }
+
+    private static AtlasTexture CreateProviderView(Texture2D source) => source is AtlasTexture atlas
+        // Wrapping an AtlasTexture again changes GetImage's handling of its margins.
+        // Copy its view properties instead; share the same underlying atlas pixels.
+        ? new AtlasTexture
+        {
+            Atlas = atlas.Atlas,
+            Region = atlas.Region,
+            Margin = atlas.Margin,
+            FilterClip = atlas.FilterClip
+        }
+        : new AtlasTexture { Atlas = source, FilterClip = false };
+
+    private sealed record ProviderTextureView(string Identity, AtlasTexture Texture);
+
+    private sealed class ProviderCaptureScope
+    {
+        private readonly TextureRect? _portrait;
+        private readonly TextureRect? _ancientPortrait;
+        private readonly Texture2D? _previousPortrait;
+        private readonly Texture2D? _previousAncientPortrait;
+        private readonly Texture2D _provider;
+
+        public ProviderCaptureScope(TextureRect? portrait, TextureRect? ancientPortrait, Texture2D provider)
+        {
+            _portrait = portrait;
+            _ancientPortrait = ancientPortrait;
+            _previousPortrait = portrait?.Texture;
+            _previousAncientPortrait = ancientPortrait?.Texture;
+            _provider = provider;
+            if (portrait != null) portrait.Texture = provider;
+            if (ancientPortrait != null) ancientPortrait.Texture = provider;
+        }
+
+        public void Restore()
+        {
+            RestoreNode(_portrait, _previousPortrait);
+            RestoreNode(_ancientPortrait, _previousAncientPortrait);
+        }
+
+        private void RestoreNode(TextureRect? node, Texture2D? previous)
+        {
+            if (node != null && GodotObject.IsInstanceValid(node) && node.Texture == _provider)
+            {
+                node.Texture = previous;
+            }
+        }
     }
 
     private static FullCardPresentationAdapter? CreateFullCardPresentationAdapter(

@@ -2909,7 +2909,7 @@ internal static partial class SkinService
         }
     }
 
-    public static bool TryAssignExternalCardProviderIdentity(
+    public static string? GetExternalCardProviderIdentity(
         CardModel card,
         Texture2D texture)
     {
@@ -2921,29 +2921,23 @@ internal static partial class SkinService
                 !GodotObject.IsInstanceValid(managedTexture) ||
                 managedTexture.GetInstanceId() != texture.GetInstanceId())
             {
-                return false;
+                return null;
             }
 
-            if (ExternalCardProviderIdentityPolicy.NeedsSyntheticPath(
-                    managerAvailable: true,
-                    isManagedTexture: true,
-                    texture.ResourcePath))
+            // Identity comes from the winning card request, not from guessing a filename.
+            // Imported textures can be named wither1/2/3, or anything else entirely.
+            // Do not rename the source resource: the bridge exports a lightweight view.
+            if (!ExternalCardProviderIdentityPaths.TryGetValue(
+                    request.CacheKey,
+                    out var providerPath))
             {
-                if (!ExternalCardProviderIdentityPaths.TryGetValue(
-                        request.CacheKey,
-                        out var providerPath))
-                {
-                    providerPath = ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
-                        card.Id.ToString(),
-                        request.CacheKey);
-                    ExternalCardProviderIdentityPaths[request.CacheKey] = providerPath;
-                }
-
-                texture.ResourcePath = providerPath;
-                return !string.IsNullOrWhiteSpace(texture.ResourcePath);
+                providerPath = ExternalCardProviderIdentityPolicy.BuildSyntheticPath(
+                    card.Id.ToString(),
+                    request.CacheKey);
+                ExternalCardProviderIdentityPaths[request.CacheKey] = providerPath;
             }
 
-            return false;
+            return providerPath;
         }
     }
 
