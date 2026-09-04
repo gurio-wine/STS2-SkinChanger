@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
 using System.Text.Json;
 using HarmonyLib;
@@ -47,7 +48,9 @@ internal static class DuplicateProviderLoadingTests
                     Require((bool)loader.GetMethod("TryManage", Static)!.Invoke(null, [mod])!,
                         $"无法接管实包：{mod.path} ({mod.state})");
                 var loadedDescriptors = loader.GetMethod("GetProviderProbeDescriptors", Static)!
-                    .Invoke(null, [ModManager.GetLoadedMods()])!;
+                    .Invoke(null, [CatalogMods(loader)])!;
+                Require(ModManager.GetLoadedMods().ToDictionary(mod => mod.manifest!.id!).Count == 2,
+                    "实包对外只注册观者本体与一个美化版 ID，不能让前置库按 ID 建表时崩溃。");
                 using var catalog = (IDisposable)catalogType.GetMethod("Build", Static)!.Invoke(null, [gamePck, loadedDescriptors])!;
                 var group = Items(Property(catalog, "Groups")).Single(item => (string)Property(item, "Id") == "watcher");
                 var visualOptions = Items(Property(group, "Options")).ToArray();
@@ -99,7 +102,7 @@ internal static class DuplicateProviderLoadingTests
         static IEnumerable<object> Items(object collection) => ((System.Collections.IEnumerable)collection).Cast<object>();
     }
 
-    internal static void Run()
+    internal static void Run(string? baseLibPath = null)
     {
         var assembly = typeof(Entry).Assembly;
         var loader = assembly.GetType("STS2SkinChanger.Core.ManagedSkinModLoader", true)!;
@@ -128,12 +131,28 @@ internal static class DuplicateProviderLoadingTests
             var second = Add("Tests.DuplicateSkin", "second");
             var suppressed = Add("Tests.DuplicateSkin", "suppressed", ModLoadState.DisabledDuplicate);
             Require(Manage(first), "第一个资源皮肤应能正常被接管。");
-            Require(Manage(second) && second.state == ModLoadState.Loaded,
+            Require(Manage(second),
                 "同 ID 的第二个已确认皮肤不能再被原加载器的同名限制拦截。");
-            Require(Manage(suppressed) && suppressed.state == ModLoadState.Loaded,
+            Require(Manage(suppressed),
                 "只因重复 ID 被游戏跳过的独立皮肤来源仍应交给切换器。");
-            Require(mods.Count(mod => mod.state == ModLoadState.Loaded) == 3,
-                "三个来源必须同时进入游戏的已加载列表，后续才能建立三套独立选项。");
+            if (baseLibPath != null) CheckInstalledBaseLib(baseLibPath, first.manifest!.id!, harmony);
+            // BaseLib.ModInterop constructs this dictionary during essential startup. Keep
+            // the native contract unique instead of patching each third-party consumer.
+            var publicRegistry = ModManager.GetLoadedMods().ToDictionary(mod => mod.manifest!.id!);
+            Require(publicRegistry.Count == 1 && ReferenceEquals(publicRegistry[first.manifest!.id!], first),
+                "已加载 Mod 注册必须每个 ID 只有一个代表，不能让 BaseLib 因重复键中断启动。");
+            Require(mods.Count(mod => mod.state == ModLoadState.Loaded) == 1,
+                "直接读取原生 Mod 状态的第三方也不能看到重复的已加载 ID。");
+            Require(CatalogMods(loader).Length == 3 && CatalogMods(loader).Contains(second) &&
+                    CatalogMods(loader).Contains(suppressed),
+                "对外不重复注册不等于丢弃差分：内部目录仍必须包含全部三个已接管来源。");
+            Require(Manage(second) && ModManager.GetLoadedMods().Count() == 1,
+                "重复接管同一差分不能再次执行加载或泄露第二个已加载 ID。");
+            Require(first.manifest!.id == second.manifest!.id && second.manifest.id == suppressed.manifest!.id,
+                "不能通过篡改原清单 ID 绕过重复键，否则前置和资源命名空间会失效。");
+            Require((bool)loader.GetMethod("IsManagedProviderForDisplay", Static)!.Invoke(null, [second])! &&
+                    new SettingsSaveMod(second).IsEnabled,
+                "内部差分仍须显示接管标识，保存 Mod 列表也不能将它变成玩家主动禁用。");
 
             foreach (var state in new[] { ModLoadState.Disabled, ModLoadState.Failed, ModLoadState.AddedAtRuntime })
             {
@@ -167,6 +186,12 @@ internal static class DuplicateProviderLoadingTests
             var otherItem = Add("Tests.Snapshot", "workshop/content/2868840/9876543210", ModLoadState.DisabledDuplicate);
             otherItem.modSource = ModSource.SteamWorkshop;
             Require(Manage(otherItem), "不同工坊物品共用 ID 的独立差分仍应接管。");
+            var catalogMods = CatalogMods(loader);
+            Require(catalogMods.Contains(native) && catalogMods.Contains(otherItem) &&
+                    !catalogMods.Contains(shadow) && !catalogMods.Contains(gameplay) &&
+                    !catalogMods.Contains(missingDependency) && !catalogMods.Contains(userDisabled) &&
+                    !catalogMods.Contains(mirror) && !catalogMods.Contains(required),
+                "目录只允许原生已加载来源和成功接管的差分，不能重新收进被拒绝或禁用的包。");
             Console.WriteLine("Duplicate provider loading passed: managed coexistence, disabled/dependency guards, snapshot isolation.");
 
             bool Manage(Mod mod) => (bool)manage.Invoke(null, [mod])!;
@@ -198,6 +223,42 @@ internal static class DuplicateProviderLoadingTests
     }
 
     private static bool SkipLog() => false;
+
+    private static void CheckInstalledBaseLib(string path, string expectedId, Harmony harmony)
+    {
+        // Do not run the Mod initializer or any rendering code. Execute the exact startup
+        // consumer that crashed; only suppress native logger output in this headless test.
+        var baseLib = Assembly.LoadFrom(Path.GetFullPath(path));
+        var interop = baseLib.GetType("BaseLib.Patches.Features.ModInterop", true)!;
+        var constructor = AccessTools.Constructor(interop, Type.EmptyTypes)!;
+        // Even touching Logger.Info with Harmony runs Logger's static constructor, which
+        // calls native OS.GetCmdlineArgs outside Godot. Remove only this constructor's
+        // initial log call; leave GetLoadedMods/ToDictionary/AssembliesForMod unchanged.
+        harmony.Patch(constructor, transpiler: new HarmonyMethod(
+            typeof(DuplicateProviderLoadingTests), nameof(OmitBaseLibNativeLog)));
+        var instance = Activator.CreateInstance(interop, nonPublic: true)!;
+        var ids = (System.Collections.IDictionary)interop.GetField("_loadedIds", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(instance)!;
+        Require(ids.Count == 1 && ids.Contains(expectedId),
+            "BaseLib 的实际启动互操作注册必须完成，并且仍能按原 ID 找到该皮肤。");
+        Console.WriteLine("Installed BaseLib ModInterop constructor passed with multiple admitted same-ID skins.");
+    }
+
+    private static IEnumerable<CodeInstruction> OmitBaseLibNativeLog(IEnumerable<CodeInstruction> instructions)
+    {
+        var code = instructions.ToList();
+        var index = code.FindIndex(item => item.operand is MethodInfo method &&
+            method.DeclaringType?.FullName == "BaseLib.BaseLibMain" && method.Name == "get_Logger");
+        Require(index >= 0 && index + 3 < code.Count && code[index + 1].opcode == OpCodes.Ldstr &&
+                code[index + 2].opcode == OpCodes.Ldc_I4_1 && code[index + 3].operand is MethodInfo info &&
+                info.DeclaringType?.FullName == "MegaCrit.Sts2.Core.Logging.Logger" && info.Name == "Info",
+            "BaseLib 日志调用形态变化，不能在测试里跳过未知的启动代码。");
+        code.RemoveRange(index, 4);
+        return code;
+    }
+
+    private static Mod[] CatalogMods(Type loader) =>
+        ((IEnumerable<Mod>)loader.GetMethod("GetCatalogMods", Static)!.Invoke(null, null)!).ToArray();
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

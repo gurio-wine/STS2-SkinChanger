@@ -530,6 +530,8 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
+        if (ManagedModInstances.Contains(mod)) return true;
+
         var originalState = mod.state;
         try
         {
@@ -545,13 +547,21 @@ internal static class ManagedSkinModLoader
             }
 
             RememberProviderAssembly(mod, provider);
-            mod.state = ModLoadState.Loaded;
+            // The native registry promises one loaded Mod per manifest ID. BaseLib and
+            // other consumers build ID-keyed dictionaries from it during startup. Extra
+            // cosmetic sources belong to our catalog, not duplicate native registrations.
+            mod.state = ModManager.Mods.Any(other => !ReferenceEquals(other, mod) &&
+                            other.state == ModLoadState.Loaded &&
+                            string.Equals(other.manifest?.id, mod.manifest?.id, StringComparison.OrdinalIgnoreCase))
+                ? ModLoadState.DisabledDuplicate
+                : ModLoadState.Loaded;
             ManagedModInstances.Add(mod);
             NotifyModDetected(mod);
             if (originalState == ModLoadState.DisabledDuplicate ||
                 !provider.Id.Equals(mod.manifest?.id, StringComparison.OrdinalIgnoreCase))
             {
-                ModLog.Info($"已接管同 ID 皮肤来源：{provider.Id}；目录={mod.path}；原状态={originalState}。");
+                ModLog.Info($"已接管同 ID 皮肤来源：{provider.Id}；目录={mod.path}；原状态={originalState}；" +
+                            $"注册方式={(mod.state == ModLoadState.Loaded ? "原生代表" : "仅内部差分")}。");
             }
             ModLog.Info(
                 $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
@@ -584,6 +594,10 @@ internal static class ManagedSkinModLoader
             .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
             .Select(ToDescriptor)
             .ToArray();
+
+    public static Mod[] GetCatalogMods() =>
+        ModManager.Mods.Where(mod => mod.state == ModLoadState.Loaded ||
+            (mod.state == ModLoadState.DisabledDuplicate && ManagedModInstances.Contains(mod))).ToArray();
 
     private static bool IsProviderLoadCandidate(Mod mod)
     {

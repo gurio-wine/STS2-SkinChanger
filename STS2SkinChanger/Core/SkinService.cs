@@ -1067,7 +1067,7 @@ internal static partial class SkinService
                 OnlineSkinCache.CleanupStaleSessionsAtStartup();
                 var gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
                 ModLog.Info($"已定位游戏主资源包：{gamePckPath}");
-                var loadedMods = ModManager.GetLoadedMods()
+                var loadedMods = ManagedSkinModLoader.GetCatalogMods()
                     .Where(mod => mod.manifest is { id: not null })
                     .Where(mod => !Entry.IsSelfModId(mod.manifest!.id))
                     .ToArray();
