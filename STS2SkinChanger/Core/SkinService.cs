@@ -4313,6 +4313,27 @@ internal static partial class SkinService
         }
     }
 
+    internal static string? GetSelectedCreatureRuntimeProvider(string groupId)
+    {
+        lock (Sync)
+        {
+            var fullProvider = GetSelectedFullRuntimeProvider(groupId);
+            if (fullProvider != null)
+            {
+                return fullProvider;
+            }
+
+            // Independently selectable character runtimes still own isolated NCreature._Ready
+            // callbacks. Full-package linkage controls selections, not whether the selected
+            // creature needs its author's skeleton/actor initialization replayed.
+            var providerId = GetSelectedRuntimeProvider(groupId);
+            return providerId != null &&
+                   Catalog?.ProviderUsesDirectCharacterRuntime(providerId) == true
+                ? providerId
+                : null;
+        }
+    }
+
     public static string? GetSelectedRuntimeProvider(string groupId)
     {
         lock (Sync)

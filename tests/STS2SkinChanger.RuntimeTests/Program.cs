@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 3 && args[0] == "--audit-direct-character-runtime")
+{
+    DirectCharacterRuntimeTests.Audit(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--audit-base-lib-duplicates")
 {
     DuplicateProviderLoadingTests.Run(args[1]);

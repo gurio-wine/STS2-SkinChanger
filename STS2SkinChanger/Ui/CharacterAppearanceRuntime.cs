@@ -1847,7 +1847,7 @@ internal static class CharacterAppearanceRuntime
         var group = ContextualSkinControls.FindGroup(modelId, typeName);
         if (group != null)
         {
-            AddSelectedFullRuntimeProvider(providerIds, group.Id);
+            AddSelectedCreatureRuntimeProvider(providerIds, group.Id);
         }
 
         // A character skin can own the complete presentation of its pets as well as the player model.
@@ -1861,16 +1861,16 @@ internal static class CharacterAppearanceRuntime
                 ownerCharacter.GetType().Name);
             if (ownerGroup != null)
             {
-                AddSelectedFullRuntimeProvider(providerIds, ownerGroup.Id);
+                AddSelectedCreatureRuntimeProvider(providerIds, ownerGroup.Id);
             }
         }
 
         return providerIds;
     }
 
-    private static void AddSelectedFullRuntimeProvider(ICollection<string> providerIds, string groupId)
+    private static void AddSelectedCreatureRuntimeProvider(ICollection<string> providerIds, string groupId)
     {
-        var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
+        var providerId = SkinService.GetSelectedCreatureRuntimeProvider(groupId);
         if (providerId != null && !providerIds.Contains(providerId, StringComparer.OrdinalIgnoreCase))
         {
             providerIds.Add(providerId);
