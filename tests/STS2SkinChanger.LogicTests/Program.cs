@@ -332,6 +332,12 @@ Require(
             ["regent", "defect"])
         .Count == 0,
     "未由游戏或玩法 Mod 定义的角色 ID 不能生成幽灵皮肤分组。");
+Require(
+    DirectCharacterRuntimeTargetPolicy.ResolveTargets(
+            [("RuntimeSkinCharacterName", "Silent")],
+            ["silent", "defect"])
+        .SetEquals(["silent"]),
+    "仅在 DLL 字符串中声明角色名的 Spine 运行时皮肤也必须进入对应角色列表。");
 var directRuntimeFixtureAssembly = Assembly.GetExecutingAssembly().Location;
 Require(
     DirectCharacterRuntimeTargetScanner.ScanAssembly(

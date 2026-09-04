@@ -1196,6 +1196,7 @@ internal sealed partial class SkinCatalog : IDisposable
             var hasSkinResourcePath = new[]
             {
                 "scenes/creature_visuals",
+                "spineskins/",
                 "screens/char_select",
                 "packed/character_select",
                 "events/background_scenes",
@@ -1247,6 +1248,8 @@ internal sealed partial class SkinCatalog : IDisposable
         var reader = peReader.GetMetadataReader();
         var hasCreatureLifecyclePatch = false;
         var hasCharacterSelectPatch = false;
+        var hasRestSiteCharacterPatch = false;
+        var hasMerchantRoomPatch = false;
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
@@ -1281,13 +1284,84 @@ internal sealed partial class SkinCatalog : IDisposable
             hasCharacterSelectPatch |=
                 HasPatchTarget(value, "NCharacterSelectScreen", "SelectCharacter") ||
                 HasPatchTarget(value, "NCharacterSelectButton", "Init");
+            hasRestSiteCharacterPatch |=
+                HasPatchTarget(value, "NRestSiteCharacter", "_Ready");
+            hasMerchantRoomPatch |=
+                HasPatchTarget(value, "NMerchantRoom", "AfterRoomIsLoaded");
         }
 
-        return hasCreatureLifecyclePatch && hasCharacterSelectPatch;
+        if (hasCreatureLifecyclePatch &&
+            (hasCharacterSelectPatch || hasRestSiteCharacterPatch || hasMerchantRoomPatch))
+        {
+            return true;
+        }
+
+        // A few framework-independent Spine packs emit the Harmony patches through a
+        // reflection helper, so the target arguments are not present as HarmonyPatch metadata.
+        // Keep the fallback generic: require the actual Spine skin resource namespace plus at
+        // least two concrete lifecycle entry points. This does not match ordinary VFX patches
+        // that only hook NCreature._Ready, and it does not depend on a provider name or ID.
+        return HasRuntimeSpineSkinPatchMetadata(assemblyPath);
 
         static bool HasPatchTarget(string metadata, string typeName, params string[] members) =>
             metadata.Contains(typeName, StringComparison.Ordinal) &&
             members.Any(member => metadata.Contains(member, StringComparison.Ordinal));
+    }
+
+    private static bool HasRuntimeSpineSkinPatchMetadata(string assemblyPath)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(assemblyPath);
+            if (!ContainsBinaryString(bytes, "Harmony", StringComparison.OrdinalIgnoreCase) ||
+                !ContainsBinaryString(bytes, "spineskins/", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var lifecycleHooks = 0;
+            if (ContainsBinaryString(bytes, "NCreature", StringComparison.Ordinal) &&
+                ContainsBinaryString(bytes, "_Ready", StringComparison.Ordinal))
+            {
+                lifecycleHooks++;
+            }
+
+            if (ContainsBinaryString(bytes, "NRestSiteCharacter", StringComparison.Ordinal) &&
+                ContainsBinaryString(bytes, "_Ready", StringComparison.Ordinal))
+            {
+                lifecycleHooks++;
+            }
+
+            if (ContainsBinaryString(bytes, "NMerchantRoom", StringComparison.Ordinal) &&
+                ContainsBinaryString(bytes, "AfterRoomIsLoaded", StringComparison.Ordinal))
+            {
+                lifecycleHooks++;
+            }
+
+            return lifecycleHooks >= 2;
+        }
+        catch
+        {
+            return false;
+        }
+
+        static bool ContainsBinaryString(
+            byte[] bytes,
+            string value,
+            StringComparison comparison)
+        {
+            var ascii = Encoding.Latin1.GetString(bytes);
+            if (ascii.Contains(value, comparison))
+            {
+                return true;
+            }
+
+            // User strings in some third-party assemblies are UTF-16 blobs at an odd byte
+            // offset, so decoding the entire file as UTF-16 can miss them. Search the encoded
+            // byte sequence directly as well.
+            var utf16 = Encoding.Unicode.GetBytes(value);
+            return bytes.AsSpan().IndexOf(utf16) >= 0;
+        }
     }
 
     internal static bool HasDirectVisualPatchTargetMetadata(string value)

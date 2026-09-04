@@ -54,6 +54,10 @@ internal static class DirectCharacterRuntimeTargetScanner
         string assemblyPath,
         IEnumerable<string> knownCharacterGroupIds)
     {
+        var knownGroups = knownCharacterGroupIds
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(value => value, value => value, StringComparer.OrdinalIgnoreCase);
         var info = new FileInfo(assemblyPath);
         IReadOnlyList<(string FieldName, string Value)> declarations;
         lock (CacheSync)
@@ -66,7 +70,7 @@ internal static class DirectCharacterRuntimeTargetScanner
             }
             else
             {
-                declarations = ReadDeclarations(assemblyPath);
+                declarations = ReadDeclarations(assemblyPath, knownGroups);
                 Cache[assemblyPath] = new ScannerCacheEntry(
                     info.Length,
                     info.LastWriteTimeUtc,
@@ -80,7 +84,8 @@ internal static class DirectCharacterRuntimeTargetScanner
     }
 
     private static IReadOnlyList<(string FieldName, string Value)> ReadDeclarations(
-        string assemblyPath)
+        string assemblyPath,
+        IReadOnlyDictionary<string, string> knownCharacterGroups)
     {
         using var stream = new FileStream(
             assemblyPath,
@@ -128,7 +133,31 @@ internal static class DirectCharacterRuntimeTargetScanner
 
         if (targetFields.Count == 0)
         {
-            return declarations;
+            // Some Spine skin packs keep their target character in a switch expression and
+            // never expose a TargetCharacterId field. In that case, retain only string literals
+            // that exactly match a character group already discovered from the game resources.
+            // This is deliberately gated by the absence of explicit target fields so ordinary
+            // visual patches that merely mention character names cannot create extra groups.
+            foreach (var methodHandle in reader.MethodDefinitions)
+            {
+                var method = reader.GetMethodDefinition(methodHandle);
+                if (method.RelativeVirtualAddress == 0)
+                {
+                    continue;
+                }
+
+                var il = peReader.GetMethodBody(method.RelativeVirtualAddress).GetILBytes();
+                if (il != null)
+                {
+                    ReadCharacterStringLiterals(
+                        reader,
+                        il,
+                        knownCharacterGroups,
+                        declarations);
+                }
+            }
+
+            return declarations.Distinct().ToArray();
         }
 
         foreach (var methodHandle in reader.MethodDefinitions)
@@ -147,6 +176,55 @@ internal static class DirectCharacterRuntimeTargetScanner
         }
 
         return declarations.Distinct().ToArray();
+    }
+
+    private static void ReadCharacterStringLiterals(
+        MetadataReader reader,
+        byte[] il,
+        IReadOnlyDictionary<string, string> knownCharacterGroups,
+        ICollection<(string FieldName, string Value)> declarations)
+    {
+        var offset = 0;
+        while (offset < il.Length)
+        {
+            var first = il[offset++];
+            var value = first == 0xfe && offset < il.Length
+                ? (ushort)(0xfe00 | il[offset++])
+                : first;
+            if (!OpCodesByValue.TryGetValue(value, out var opCode))
+            {
+                return;
+            }
+
+            var operandOffset = offset;
+            var operandSize = GetOperandSize(opCode.OperandType, il, operandOffset);
+            if (operandSize < 0 || operandOffset + operandSize > il.Length)
+            {
+                return;
+            }
+
+            if (opCode.Equals(OpCodes.Ldstr) && operandSize == 4)
+            {
+                var token = BinaryPrimitives.ReadInt32LittleEndian(
+                    il.AsSpan(operandOffset, 4));
+                try
+                {
+                    var literal = reader.GetUserString(
+                        MetadataTokens.UserStringHandle(token & 0x00ffffff));
+                    if (knownCharacterGroups.TryGetValue(literal.Trim(), out var groupId))
+                    {
+                        declarations.Add(("RuntimeSkinCharacterName", groupId));
+                    }
+                }
+                catch (Exception exception) when (
+                    exception is BadImageFormatException or ArgumentException)
+                {
+                    // Ignore malformed third-party metadata.
+                }
+            }
+
+            offset += operandSize;
+        }
     }
 
     private static void ReadStaticAssignments(

@@ -39,6 +39,7 @@ internal static class DirectCharacterRuntimeTargetPolicy
             .ToArray());
         return normalized is "characterid" or "characterentry" ||
                normalized.StartsWith("targetcharacter", StringComparison.Ordinal) ||
-               normalized.StartsWith("skincharacter", StringComparison.Ordinal);
+               normalized.StartsWith("skincharacter", StringComparison.Ordinal) ||
+               normalized.StartsWith("runtimeskincharacter", StringComparison.Ordinal);
     }
 }
