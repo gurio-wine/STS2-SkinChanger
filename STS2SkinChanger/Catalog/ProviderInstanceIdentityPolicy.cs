@@ -48,7 +48,7 @@ internal static class ProviderInstanceIdentityPolicy
                 foreach (var pair in collision)
                 {
                     sourceTokens[pair.Key] += "-" + ShortHash(
-                        NormalizePath(candidates[pair.Key].RootPath) + "|" + pair.Key);
+                        NormalizePath(candidates[pair.Key].RootPath).ToLowerInvariant());
                 }
             }
 
@@ -185,7 +185,11 @@ internal static class ProviderInstanceIdentityPolicy
             readable = readable[..24].TrimEnd('-');
         }
 
-        return readable.Length == 0 ? "local" : readable;
+        // Chinese names can all collapse to "local", and different drives can contain the
+        // same leaf name. Include the source path from the start so adding/reordering sources
+        // cannot change an existing ID; the display rank must never become persistence data.
+        return (readable.Length == 0 ? "local" : readable) + "-" +
+               ShortHash(normalized.ToLowerInvariant());
     }
 
     private static string NormalizePath(string? path) =>

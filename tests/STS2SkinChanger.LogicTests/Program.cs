@@ -498,6 +498,29 @@ Require(
     duplicateProviderIdentities[1].ManifestId == "same.id",
     "实例 ID 可统一大小写，但资源命名空间必须保留每个包清单中的原始大小写。");
 var firstDuplicateInstanceId = duplicateProviderIdentities[0].InstanceId;
+var localSourceA = new ProviderInstanceCandidate("Same.Local", "Skin", @"D:\mods\全露");
+var localSourceB = new ProviderInstanceCandidate("Same.Local", "Skin", @"D:\mods\半露");
+var localBefore = ProviderInstanceIdentityPolicy.Resolve([localSourceA, localSourceB]);
+var localAfter = ProviderInstanceIdentityPolicy.Resolve([
+    new ProviderInstanceCandidate("Unrelated", "Library", @"D:\mods\library"),
+    localSourceB, localSourceA]);
+Require(localBefore[0].InstanceId == localAfter[2].InstanceId &&
+        localBefore[1].InstanceId == localAfter[1].InstanceId,
+    "中文目录差分的来源标识不能随加载顺序或无关 Mod 数量改变。");
+var localExpanded = ProviderInstanceIdentityPolicy.Resolve([
+    new ProviderInstanceCandidate("Same.Local", "Skin", @"D:\mods\情趣"),
+    localSourceA, localSourceB]);
+Require(localBefore[0].InstanceId == localExpanded[1].InstanceId &&
+        localBefore[1].InstanceId == localExpanded[2].InstanceId,
+    "新增同 ID 差分不能改变已有来源标识。");
+var readableSource = new ProviderInstanceCandidate("Same.Local", "Skin", @"D:\mods\variant");
+var readableBefore = ProviderInstanceIdentityPolicy.Resolve([readableSource, localSourceA]);
+var readableAfter = ProviderInstanceIdentityPolicy.Resolve([
+    new ProviderInstanceCandidate("Same.Local", "Skin", @"E:\mods\variant"),
+    localSourceA, readableSource]);
+Require(readableBefore[0].InstanceId == readableAfter[2].InstanceId &&
+        readableAfter[0].InstanceId != readableAfter[2].InstanceId,
+    "另一个盘符里的同名目录不能使已有来源改名或串包。");
 Require(
     ProviderInstanceIdentityPolicy.ScopeOptionId(
         "Same.Id",

@@ -32,6 +32,9 @@ internal static class ManagedSkinModLoader
         AccessTools.Field(typeof(ModManager), "_gameVersion");
     private static readonly FieldInfo? CircularDependenciesField =
         AccessTools.Field(typeof(ModManager), "_circularDependencies");
+    private static readonly FieldInfo? ModSettingsField =
+        AccessTools.Field(typeof(ModManager), "_settings");
+    private static readonly HashSet<Mod> ManagedModInstances = new(ReferenceEqualityComparer.Instance);
     // A Workshop item may contain several independent manifests/DLLs in the same folder.
     // Root-only keys let the last probe overwrite its siblings (and register their DLLs under
     // the wrong provider). Keep manifest identity for lookup, root paths only for pack cleanup.
@@ -462,12 +465,7 @@ internal static class ManagedSkinModLoader
 
         CleanupOldProviderNamespaces();
         var mods = ModManager.Mods.ToArray();
-        var descriptors = mods
-            .Where(mod => mod.state is ModLoadState.None or ModLoadState.Loaded)
-            .Where(mod => mod.manifest is { id: not null })
-            .Where(mod => !Entry.IsSelfModId(mod.manifest!.id))
-            .Select(ToDescriptor)
-            .ToArray();
+        var descriptors = GetProviderProbeDescriptors(mods);
         string? gamePckPath = null;
         try
         {
@@ -493,12 +491,14 @@ internal static class ManagedSkinModLoader
 
         var selfIndex = Array.FindIndex(mods, mod => Entry.IsSelfModId(mod.manifest?.id));
         SkinProvidersInLoadOrder = mods
+            .Where(IsProviderLoadCandidate)
             .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
             .Where(mod => IsManagedProvider(mod, out _))
             .ToArray();
         SkinProvidersBeforeSelf = selfIndex < 0
             ? SkinProvidersInLoadOrder
             : mods.Take(selfIndex)
+                .Where(IsProviderLoadCandidate)
                 .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
                 .Where(mod => IsManagedProvider(mod, out _))
                 .ToArray();
@@ -523,12 +523,14 @@ internal static class ManagedSkinModLoader
     public static bool TryManage(Mod mod)
     {
         if (!_reflectionTargetsReady ||
-            mod.state != ModLoadState.None ||
+            mod.state is not (ModLoadState.None or ModLoadState.DisabledDuplicate) ||
+            !IsProviderLoadCandidate(mod) ||
             !IsManagedProvider(mod, out var provider))
         {
             return false;
         }
 
+        var originalState = mod.state;
         try
         {
             if (!CanBypassOriginalLoader(mod))
@@ -544,7 +546,13 @@ internal static class ManagedSkinModLoader
 
             RememberProviderAssembly(mod, provider);
             mod.state = ModLoadState.Loaded;
+            ManagedModInstances.Add(mod);
             NotifyModDetected(mod);
+            if (originalState == ModLoadState.DisabledDuplicate ||
+                !provider.Id.Equals(mod.manifest?.id, StringComparison.OrdinalIgnoreCase))
+            {
+                ModLog.Info($"已接管同 ID 皮肤来源：{provider.Id}；目录={mod.path}；原状态={originalState}。");
+            }
             ModLog.Info(
                 $"已隔离皮肤提供者 {mod.manifest?.name ?? mod.manifest?.id}：" +
                 $"视觉组={provider.VisualGroupCount}, 卡图={provider.CardAssetCount}, " +
@@ -562,12 +570,50 @@ internal static class ManagedSkinModLoader
         }
         catch (Exception exception)
         {
-            mod.state = ModLoadState.None;
+            ManagedModInstances.Remove(mod);
+            mod.state = originalState;
             ModLog.Warn(
                 $"托管 {mod.manifest?.name ?? mod.manifest?.id} 失败，将交回游戏原加载器：" +
                 exception.GetBaseException().Message);
             return false;
         }
+    }
+
+    private static SkinModDescriptor[] GetProviderProbeDescriptors(IEnumerable<Mod> mods) =>
+        mods.Where(IsProviderLoadCandidate)
+            .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
+            .Select(ToDescriptor)
+            .ToArray();
+
+    private static bool IsProviderLoadCandidate(Mod mod)
+    {
+        if (mod.manifest?.id == null ||
+            mod.state is not (ModLoadState.None or ModLoadState.Loaded or ModLoadState.DisabledDuplicate) ||
+            (ModSettingsField?.GetValue(null) as ModSettings)?.IsModDisabled(mod) == true)
+        {
+            return false;
+        }
+
+        // A formal/beta mirror of the same Workshop item is not a user-installed variation.
+        // Preserve the game's chosen snapshot instead of bringing the other branch back.
+        var workshopId = GetWorkshopSourceId(mod.path);
+        return mod.state != ModLoadState.DisabledDuplicate || workshopId == null ||
+               !ModManager.Mods.Any(other => !ReferenceEquals(other, mod) &&
+                   other.state is ModLoadState.None or ModLoadState.Loaded &&
+                   string.Equals(other.manifest?.id, mod.manifest.id, StringComparison.OrdinalIgnoreCase) &&
+                   GetWorkshopSourceId(other.path) == workshopId);
+    }
+
+    private static string? GetWorkshopSourceId(string root)
+    {
+        var parts = root.Replace('\\', '/').TrimEnd('/').Split('/');
+        if (parts.Length < 2 || !ulong.TryParse(parts[^1], out var id) || id == 0) return null;
+        return parts[^2].Equals("_workshop_formal_cache", StringComparison.OrdinalIgnoreCase) ||
+               (parts.Length >= 4 &&
+                parts[^3].Equals("content", StringComparison.OrdinalIgnoreCase) &&
+                parts[^4].Equals("workshop", StringComparison.OrdinalIgnoreCase))
+            ? parts[^1]
+            : null;
     }
 
     private static void RememberProviderAssembly(Mod mod, SkinProviderProbe provider)
@@ -3219,8 +3265,9 @@ internal static class ManagedSkinModLoader
 
         if (mods.Any(other =>
                 !ReferenceEquals(other, mod) &&
-                other.manifest?.id == manifest.id &&
-                other.state == ModLoadState.Loaded))
+                string.Equals(other.manifest?.id, manifest.id, StringComparison.OrdinalIgnoreCase) &&
+                other.state == ModLoadState.Loaded &&
+                !ManagedModInstances.Contains(other)))
         {
             return false;
         }
