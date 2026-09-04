@@ -2142,6 +2142,20 @@ internal static partial class ContextualSkinControls
         result = visuals;
     }
 
+    internal static void ApplySelectedCreatureVisualPostfix(
+        Creature creature,
+        ref NCreatureVisuals? visuals)
+    {
+        if (visuals == null) return;
+        var result = visuals;
+        ApplySelectedProviderVisualPostfix(
+            creature.ModelId.Entry,
+            creature.Player?.Character.GetType().Name ?? creature.Monster?.GetType().Name,
+            creature,
+            ref result);
+        visuals = result;
+    }
+
     internal static void ApplySelectedProviderVisualPostfix(
         string modelId,
         string? modelTypeName,
@@ -2159,7 +2173,8 @@ internal static partial class ContextualSkinControls
             IDisposable? resourceScope = null;
             if (MultiplayerSkinSync.GetScopedSelection(group.Id) != null)
             {
-                var scenePath = model is MonsterModel monster
+                var monster = model as MonsterModel ?? (model as Creature)?.Monster;
+                var scenePath = monster != null
                     ? GetMonsterVisualsPath(monster)
                     : CanonicalScenePath("creature_visuals/" + modelId.ToLowerInvariant());
                 try

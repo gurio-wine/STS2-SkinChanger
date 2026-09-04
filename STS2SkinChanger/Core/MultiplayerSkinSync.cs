@@ -2385,6 +2385,10 @@ internal static class MultiplayerCreatureVisualScopePatch
             // later global provider can overwrite this player's isolated selection.
             ContextualSkinControls.ReplaceCreatedCreatureVisuals(__instance, ref __result);
         }
+
+        // Also run for local creations: model-level finishing cannot substitute for a
+        // Creature postfix that inspects Player/PetOwner or removes native child effects.
+        ContextualSkinControls.ApplySelectedCreatureVisualPostfix(__instance, ref __result);
     }
 
     private static Exception? Finalizer(Exception? __exception, IDisposable? __state)

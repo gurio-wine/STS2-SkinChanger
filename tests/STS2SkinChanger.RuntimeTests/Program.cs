@@ -18,6 +18,7 @@ using STS2SkinChanger;
 using System.Reflection;
 
 AppearanceControlContractTests.Run();
+CreatureVisualLifecycleTests.Run();
 CharacterSkinBundleContractTests.Run();
 CharacterSkinPopupContractTests.Run();
 ScrollListRebuildContractTests.Run();

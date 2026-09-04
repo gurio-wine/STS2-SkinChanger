@@ -1421,6 +1421,7 @@ internal static class CharacterAppearanceRuntime
         var desiredVisualName = oldVisuals.Name;
         var oldAnimator = SpineAnimatorField.GetValue(creature);
         var parent = oldVisuals.GetParent();
+        var oldVisualIndex = oldVisuals.GetIndex();
         NCreatureVisuals? newVisuals = null;
         var movedFormChildren = new List<Node>();
         try
@@ -1449,6 +1450,10 @@ internal static class CharacterAppearanceRuntime
                                                             playerCharacter.GetType().Name,
                                                             playerCharacter,
                                                             ref visuals);
+                                                    NCreatureVisuals? finishedVisuals = visuals;
+                                                    ContextualSkinControls.ApplySelectedCreatureVisualPostfix(
+                                                        creature.Entity, ref finishedVisuals);
+                                                    visuals = finishedVisuals ?? visuals;
                                                     return visuals;
                                                 },
                                                 out newVisuals);
@@ -1485,8 +1490,8 @@ internal static class CharacterAppearanceRuntime
                 ? oldVisuals.DefaultScale / oldBaseDefaultScale
                 : 1f;
 
-            parent.AddChild(newVisuals);
-            parent.MoveChild(newVisuals, oldVisuals.GetIndex());
+            AttachReplacementCreatureVisuals(creature, parent, oldVisuals, newVisuals);
+            creature.MoveChild(newVisuals, ReferenceEquals(parent, creature) ? oldVisualIndex : parent.GetIndex());
 
             CreatureAnimator? newAnimator = null;
             if (newVisuals.HasSpineAnimation)
@@ -1542,13 +1547,18 @@ internal static class CharacterAppearanceRuntime
                     }
                 }
 
-                ConnectSpineAnimatorSignalsMethod?.Invoke(creature, null);
-                RefreshCreatureAnchors(creature);
                 if (newVisuals != null && GodotObject.IsInstanceValid(newVisuals))
                 {
                     newVisuals.GetParent()?.RemoveChild(newVisuals);
                     newVisuals.QueueFree();
                 }
+                if (oldVisuals.GetParent() == null)
+                {
+                    parent.AddChild(oldVisuals);
+                    parent.MoveChild(oldVisuals, oldVisualIndex);
+                }
+                ConnectSpineAnimatorSignalsMethod?.Invoke(creature, null);
+                RefreshCreatureAnchors(creature);
             }
             catch (Exception rollbackException)
             {
@@ -1559,6 +1569,20 @@ internal static class CharacterAppearanceRuntime
             ModLog.Error($"重建 {creature.Entity.ModelId.Entry} 的实战外观失败：{exception}");
             return false;
         }
+    }
+
+    private static void AttachReplacementCreatureVisuals(
+        NCreature creature,
+        Node previousParent,
+        NCreatureVisuals previousVisuals,
+        NCreatureVisuals replacement)
+    {
+        previousParent.RemoveChild(previousVisuals);
+        VisualsField!.SetValue(creature, replacement);
+        // Match initial combat creation: provider NCreatureVisuals._Ready callbacks resolve
+        // their owner through GetParent<NCreature>(). ApplyStoredTransform reparents only
+        // after Ready, animator construction and provider finishing have completed.
+        creature.AddChild(replacement);
     }
 
     private static Node2D? EnsureTransformWrapper(NCreature creature)
@@ -1789,6 +1813,10 @@ internal static class CharacterAppearanceRuntime
         }
 
         ReplaySelectedCreatureNodeReady(creature, providerIds);
+        foreach (var providerId in providerIds)
+        {
+            ManagedSkinModLoader.ReplaySelectedCompanionReveal(providerId, creature);
+        }
     }
 
     /// <summary>

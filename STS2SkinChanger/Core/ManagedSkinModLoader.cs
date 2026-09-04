@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Entities.Creatures;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Combat;
@@ -1181,6 +1182,18 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
+        // Creature-level finishing can remove native attachments as well as replace a skin.
+        // Replay supported postfixes once on the final selected result, not globally before
+        // our isolated factory replaces it. Keep unsupported prefix/transpiler behavior intact.
+        if (declaringType == typeof(Creature) &&
+            patch.Target.Name == nameof(Creature.CreateVisuals))
+        {
+            return patch.Kind == ProviderPatchKind.Postfix &&
+                   patch.Callback.DeclaringType is { } patchType &&
+                   GetVisualPatchTarget(patchType) == typeof(Creature) &&
+                   CanReplayVisualPostfix(patch.Callback, typeof(Creature));
+        }
+
         // A cosmetic provider may patch a rendered relic node before the game has assigned its
         // model. The selected PCK already owns the icon resource, so this eager second texture pass
         // is both redundant and unsafe across game versions.
@@ -1729,6 +1742,39 @@ internal static class ManagedSkinModLoader
             RestoreNodeReadyMutation(runtime, node.GetInstanceId());
         }
     }
+
+    public static void ReplaySelectedCompanionReveal(string providerId, NCreature creature)
+    {
+        if (!ActiveProviderRuntimes.TryGetValue(providerId, out var runtime)) return;
+        var entity = creature.Entity;
+        if (entity.PetOwner == null || entity.IsDead || !creature.Visuals.HasSpineAnimation) return;
+        var hiddenBody = creature.Visuals.SpineBody?.BoundObject is CanvasItem { Visible: false };
+        foreach (var patch in runtime.Patches.Where(patch => IsCompanionRevealPresentationPatch(
+                     patch, entity.PetOwner != null, entity.IsDead, hiddenBody)))
+        {
+            if (!TryBuildCreatureInitializationArguments(patch.Callback, patch.Target, creature,
+                    NCombatRoom.Instance, out var arguments)) continue;
+            try
+            {
+                // Some skins hide a newly initialized pet until their summon/revive presentation
+                // reveals it. Hot replacement is neither a new summon nor a gameplay revival.
+                // Run only the selected skin's compatible visual prefix: never call the game's
+                // revive method (which also re-enables hitboxes/UI), nor change HP or summon state.
+                patch.Callback.Invoke(null, arguments);
+                ModLog.Info($"已为 {entity.ModelId.Entry} 重放 {providerId} 的随从显示初始化：{patch.Callback.DeclaringType?.Name}。");
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn($"重放 {providerId} 的随从显示初始化失败：{exception.GetBaseException().Message}");
+            }
+        }
+    }
+
+    private static bool IsCompanionRevealPresentationPatch(
+        ProviderPatch patch, bool isCompanion, bool isDead, bool bodyHidden) =>
+        isCompanion && !isDead && bodyHidden && patch.Kind == ProviderPatchKind.Prefix &&
+        patch.Target.DeclaringType == typeof(NCreature) &&
+        patch.Target.Name == nameof(NCreature.StartReviveAnim);
 
     private static int InvokeSelectedNodeReadyCallbacks(
         string providerId,
@@ -2892,7 +2938,8 @@ internal static class ManagedSkinModLoader
 
         if (!string.Equals(methodName, nameof(CharacterModel.CreateVisuals), StringComparison.Ordinal) ||
             targetType == null ||
-            (!typeof(CharacterModel).IsAssignableFrom(targetType) &&
+            (targetType != typeof(Creature) &&
+             !typeof(CharacterModel).IsAssignableFrom(targetType) &&
              !typeof(MonsterModel).IsAssignableFrom(targetType)))
         {
             return null;
@@ -2900,6 +2947,23 @@ internal static class ManagedSkinModLoader
 
         return targetType;
     }
+
+    private static bool CanReplayVisualPostfix(MethodInfo method, Type targetType) =>
+        method.IsStatic && method.GetParameters().All(parameter =>
+        {
+            var type = parameter.ParameterType.IsByRef
+                ? parameter.ParameterType.GetElementType()!
+                : parameter.ParameterType;
+            return parameter.HasDefaultValue || (parameter.Name switch
+            {
+                "__instance" => type.IsAssignableFrom(targetType),
+                "__result" => type.IsAssignableFrom(typeof(NCreatureVisuals)) ||
+                              typeof(NCreatureVisuals).IsAssignableFrom(type),
+                "__originalMethod" => type == typeof(MethodBase),
+                "__runOriginal" => type == typeof(bool),
+                _ => false
+            });
+        });
 
     private static bool IsPostfixMethod(MethodInfo method) =>
         method.Name.Equals("Postfix", StringComparison.Ordinal) ||
