@@ -73,6 +73,7 @@ Windows 与 WSL 的还原和中间文件分别写入 `obj/windows`、`obj/unix`�
 - `tools/PckInspect`：检查 PCK 目录或复制少量文件验证写入器。
 - `tools/CatalogInspect`：用实际游戏与 Mod PCK 构建皮肤目录，输出识别结果。
 - `tools/Test-BuildEnvironment.ps1`：通过真实 MSBuild 求值检查五个项目的正式版默认引用、测试版覆盖、跨系统缓存隔离及 AnyCPU，需 PowerShell 7。
+- 运行时测试附加 `-- --audit-provider-animation <皮肤DLL路径>`：对实包进行跨版本动画接口桥接和 JIT 检查，不执行提供者初始化或游戏画面；正式版与测试版分别运行，不能代替实机换肤验证。
 
 ```powershell
 ./tools/Test-BuildEnvironment.ps1

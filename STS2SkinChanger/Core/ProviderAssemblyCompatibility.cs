@@ -138,10 +138,12 @@ internal static class ProviderAssemblyCompatibility
                     method.GetParameters().Length == 1 &&
                     method.GetParameters()[0].ParameterType == typeof(MethodBase));
             var importedRuntimeMethods = new Dictionary<MethodInfo, object>();
+            var trackedSetAdapters = new Dictionary<object, object>();
 
             foreach (var type in EnumerateTypes(module))
             {
-                foreach (var method in Enumerate(GetRequiredProperty(type, "Methods")))
+                // A compatibility adapter may be appended to this type while rewriting it.
+                foreach (var method in Enumerate(GetRequiredProperty(type, "Methods")).ToArray())
                 {
                     if (!(bool)GetRequiredProperty(method, "HasBody"))
                     {
@@ -226,6 +228,39 @@ internal static class ProviderAssemblyCompatibility
                         {
                             operandProperty!.SetValue(instruction, runtimeReference);
                             rewrittenCalls++;
+                            continue;
+                        }
+
+                        // Old SetAnimation callers may configure the returned track instead of
+                        // discarding it. v0.111's equivalent is SetAnimation + GetCurrent(trackId).
+                        // Keep the original stack/result contract via a private provider-local
+                        // adapter; never fake a null result or drop the author's track settings.
+                        if (GetInstructionOpCodeName(instruction) is "call" or "callvirt" &&
+                            runtimeMethod.Name == "SetAnimation" &&
+                            runtimeMethod.ReturnType == typeof(void) &&
+                            providerReturnName == "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaTrackEntry" &&
+                            runtimeMethod.GetParameters().Select(parameter => parameter.ParameterType)
+                                .SequenceEqual(new[] { typeof(string), typeof(bool), typeof(int) }))
+                        {
+                            var getCurrent = runtimeMethods.SingleOrDefault(candidate =>
+                                candidate.Name == "GetCurrent" &&
+                                candidate.DeclaringType == runtimeMethod.DeclaringType &&
+                                candidate.ReturnType.FullName == providerReturnName &&
+                                candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                                    .SequenceEqual(new[] { typeof(int) }));
+                            if (getCurrent == null)
+                                continue;
+
+                            if (!trackedSetAdapters.TryGetValue(type, out var adapter))
+                            {
+                                var getCurrentReference = importReference.Invoke(module, [getCurrent])!;
+                                adapter = CreateTrackedSetAnimationAdapter(
+                                    cecilAssembly, type, runtimeReference, getCurrentReference, opCodesType);
+                                trackedSetAdapters.Add(type, adapter);
+                            }
+
+                            SetInstruction(instruction, opCodesType.GetField("Call")!.GetValue(null)!, adapter);
+                            rewrittenCalls++;
                         }
                     }
                 }
@@ -245,6 +280,61 @@ internal static class ProviderAssemblyCompatibility
         {
             (definition as IDisposable)?.Dispose();
         }
+    }
+
+    private static object CreateTrackedSetAnimationAdapter(
+        Assembly cecilAssembly,
+        object ownerType,
+        object setAnimation,
+        object getCurrent,
+        Type opCodesType)
+    {
+        var methodType = cecilAssembly.GetType("Mono.Cecil.MethodDefinition", true)!;
+        var attributesType = cecilAssembly.GetType("Mono.Cecil.MethodAttributes", true)!;
+        var parameterType = cecilAssembly.GetType("Mono.Cecil.ParameterDefinition", true)!;
+        var instructionType = cecilAssembly.GetType("Mono.Cecil.Cil.Instruction", true)!;
+        var methods = GetRequiredProperty(ownerType, "Methods");
+        var existingNames = Enumerate(methods)
+            .Select(method => (string)GetRequiredProperty(method, "Name"))
+            .ToHashSet(StringComparer.Ordinal);
+        var name = "__SkinChanger_SetAnimationTracked";
+        for (var suffix = 1; existingNames.Contains(name); suffix++)
+            name = "__SkinChanger_SetAnimationTracked_" + suffix;
+        var adapter = Activator.CreateInstance(methodType, name,
+            Enum.Parse(attributesType, "Private, Static, HideBySig"),
+            GetRequiredProperty(getCurrent, "ReturnType"))!;
+        var parameters = GetRequiredProperty(adapter, "Parameters");
+        var argumentTypes = new[] { GetRequiredProperty(setAnimation, "DeclaringType") }
+            .Concat(Enumerate(GetRequiredProperty(setAnimation, "Parameters"))
+                .Select(parameter => GetRequiredProperty(parameter, "ParameterType")));
+        foreach (var argumentType in argumentTypes)
+        {
+            InvokeProcessor(parameters, "Add", Activator.CreateInstance(parameterType, argumentType)!);
+        }
+        InvokeProcessor(methods, "Add", adapter);
+        var body = GetRequiredProperty(adapter, "Body");
+        var processor = body.GetType().GetMethod("GetILProcessor")!.Invoke(body, null)!;
+        void Emit(string opCodeName, object? operand = null)
+        {
+            var opCode = opCodesType.GetField(opCodeName)!.GetValue(null)!;
+            object[] arguments = operand == null ? [opCode] : [opCode, operand];
+            var factory = instructionType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Single(candidate => candidate.Name == "Create" &&
+                    candidate.GetParameters().Length == arguments.Length &&
+                    candidate.GetParameters().Select((parameter, index) =>
+                        parameter.ParameterType.IsInstanceOfType(arguments[index])).All(matches => matches));
+            InvokeProcessor(processor, "Append", factory.Invoke(null, arguments)!);
+        }
+        Emit("Ldarg_0"); // original receiver, name, loop, trackId
+        Emit("Ldarg_1");
+        Emit("Ldarg_2");
+        Emit("Ldarg_3");
+        Emit("Callvirt", setAnimation);
+        Emit("Ldarg_0");
+        Emit("Ldarg_3"); // query the same track, not hard-coded track 0
+        Emit("Callvirt", getCurrent);
+        Emit("Ret");
+        return adapter;
     }
 
     private static bool TryRewriteUnsupportedDispose(
