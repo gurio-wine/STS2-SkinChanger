@@ -4,7 +4,6 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <GameAssemblyDir Condition="'$(GameAssemblyDir)' == ''">/mnt/d/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64</GameAssemblyDir>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj" />

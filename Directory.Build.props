@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <!-- Keep one checkout usable from Windows and WSL without sharing restore metadata. -->
+    <SkinChangerBuildHost Condition="'$(OS)' == 'Windows_NT'">windows</SkinChangerBuildHost>
+    <SkinChangerBuildHost Condition="'$(SkinChangerBuildHost)' == ''">unix</SkinChangerBuildHost>
+    <BaseIntermediateOutputPath Condition="'$(BaseIntermediateOutputPath)' == ''">obj/$(SkinChangerBuildHost)/</BaseIntermediateOutputPath>
+    <!-- Old obj trees remain harmless after changing BaseIntermediateOutputPath. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**</DefaultItemExcludes>
+
+    <!-- Compile releases against the lowest supported game version. Beta references must
+         be selected explicitly with -p:GameAssemblyDir, including in child projects. -->
+    <GameAssemblyDir Condition="'$(GameAssemblyDir)' == '' and '$(OS)' == 'Windows_NT'">D:/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64</GameAssemblyDir>
+    <GameAssemblyDir Condition="'$(GameAssemblyDir)' == ''">/mnt/d/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64</GameAssemblyDir>
+  </PropertyGroup>
+</Project>

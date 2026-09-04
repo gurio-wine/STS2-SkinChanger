@@ -44,17 +44,42 @@
 
 ## 构建
 
-项目引用本机游戏目录中的 `GodotSharp.dll`、`0Harmony.dll` 和 `sts2.dll`：
+需要 **.NET 9 SDK**（只有运行时不能编译）。`global.json` 将工具链限定为稳定版 .NET 9；当前开发主环境为 Windows 原生 PowerShell。
 
-```bash
+从 WSL 迁移现有仓库时，建议执行 `git config --local core.longpaths true`。Codex 的历史检查点引用可能具有很长的路径；开启后 Windows Git 才能完整读取这些引用，无需删除历史检查点。
+
+项目通过 `Directory.Build.props` 引用本机游戏目录中的 `GodotSharp.dll`、`0Harmony.dll`、`Steamworks.NET.dll` 和 `sts2.dll`，默认使用最低支持的正式版 `v0.107.1`：
+
+```powershell
 dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release
 ```
 
-也可用 `-p:GameAssemblyDir=<游戏程序集目录>` 指定要验证的游戏版本；不同版本的反编译结果统一存放在 `D:/Projects/Godot/Slay The Spire 2/<版本号>/`。
+Windows 默认游戏程序集目录为 `D:/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64`；WSL 自动使用对应的 `/mnt/d/...` 路径。其它安装位置通过 `-p:GameAssemblyDir=<游戏程序集目录>` 指定。
 
-产物位于 `STS2SkinChanger/bin/Release/Gurio.SkinChanger.dll`；游戏要求 DLL 文件名与 Mod ID 完全一致。
+测试版必须显式指定引用，并使用独立的 `ReleaseBeta` 配置，避免把测试版验证产物误当成正式版兼容发布包：
+
+```powershell
+dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c ReleaseBeta -p:Optimize=true "-p:GameAssemblyDir=D:/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64"
+```
+
+Windows 与 WSL 的还原和中间文件分别写入 `obj/windows`、`obj/unix`，不会沿用旧系统的 NuGet 绝对路径。旧 `obj` 目录无需复制或手工改路径，也不会作为源代码参加编译。不要同时从两个系统构建到同一个输出目录。
+
+不同版本的反编译结果统一存放在 `D:/Projects/Godot/Slay The Spire 2/<版本号>/`。
+
+发布产物位于 `STS2SkinChanger/bin/Release/Gurio.SkinChanger.dll`，测试版验证产物位于 `STS2SkinChanger/bin/ReleaseBeta/`；游戏要求 DLL 文件名与 Mod ID 完全一致。发布 DLL 保持 `AnyCPU`，不因开发环境迁移到 Windows 而限制为 x64。
 
 ## 开发检查工具
 
 - `tools/PckInspect`：检查 PCK 目录或复制少量文件验证写入器。
 - `tools/CatalogInspect`：用实际游戏与 Mod PCK 构建皮肤目录，输出识别结果。
+- `tools/Test-BuildEnvironment.ps1`：通过真实 MSBuild 求值检查五个项目的正式版默认引用、测试版覆盖、跨系统缓存隔离及 AnyCPU，需 PowerShell 7。
+
+```powershell
+./tools/Test-BuildEnvironment.ps1
+dotnet run --project tests/STS2SkinChanger.LogicTests/STS2SkinChanger.LogicTests.csproj -c Release
+dotnet run --project tests/STS2SkinChanger.RuntimeTests/STS2SkinChanger.RuntimeTests.csproj -c Release
+dotnet run --project tests/STS2SkinChanger.RuntimeTests/STS2SkinChanger.RuntimeTests.csproj -c ReleaseBeta -p:Optimize=true "-p:GameAssemblyDir=D:/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64"
+dotnet publish tools/WorkshopPublisher/WorkshopPublisher.csproj -c Release
+```
+
+最后一条仅构建上传工具，不会上传工坊。上传和本地部署必须另行执行，并核对正式版兼容产物及各部署目标的版本/哈希。
