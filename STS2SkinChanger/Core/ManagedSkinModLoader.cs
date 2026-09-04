@@ -32,11 +32,16 @@ internal static class ManagedSkinModLoader
         AccessTools.Field(typeof(ModManager), "_gameVersion");
     private static readonly FieldInfo? CircularDependenciesField =
         AccessTools.Field(typeof(ModManager), "_circularDependencies");
-    private static readonly Dictionary<string, SkinProviderProbe> ProvidersByRoot =
+    // A Workshop item may contain several independent manifests/DLLs in the same folder.
+    // Root-only keys let the last probe overwrite its siblings (and register their DLLs under
+    // the wrong provider). Keep manifest identity for lookup, root paths only for pack cleanup.
+    private static readonly Dictionary<string, SkinProviderProbe> ProvidersByIdentity =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> ProviderIds =
+    private static readonly HashSet<string> ProviderRootPaths =
         new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> NegativeProviderRoots =
+    private static readonly HashSet<string> ProviderManifestIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> NegativeProviderIdentities =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, bool> SelectableCosmeticProbeResults =
         new(StringComparer.OrdinalIgnoreCase);
@@ -95,7 +100,7 @@ internal static class ManagedSkinModLoader
     public static bool IsBeforeAllSkinProviders { get; private set; } = true;
     public static IReadOnlyList<Mod> SkinProvidersBeforeSelf { get; private set; } = [];
     public static IReadOnlyList<Mod> SkinProvidersInLoadOrder { get; private set; } = [];
-    public static IReadOnlyCollection<string> ProviderRoots => ProvidersByRoot.Keys;
+    public static IReadOnlyCollection<string> ProviderRoots => ProviderRootPaths;
 
     public static IReadOnlyCollection<string> GetPreservedRuntimeRoots(IEnumerable<Mod> sourceMods)
     {
@@ -120,11 +125,7 @@ internal static class ManagedSkinModLoader
 
         try
         {
-            return ManagedProviderDisplayPolicy.IsManaged(
-                mod.manifest?.id,
-                NormalizePath(mod.path),
-                ProvidersByRoot.Keys,
-                ProviderIds);
+            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds);
         }
         catch
         {
@@ -487,8 +488,7 @@ internal static class ManagedSkinModLoader
                 continue;
             }
 
-            ProvidersByRoot[NormalizePath(probe.RootPath)] = probe;
-            ProviderIds.Add(probe.Id);
+            RememberProviderProbe(probe);
         }
 
         var selfIndex = Array.FindIndex(mods, mod => Entry.IsSelfModId(mod.manifest?.id));
@@ -515,7 +515,7 @@ internal static class ManagedSkinModLoader
         }
 
         ModLog.Info(
-            $"托管加载模式已识别 {ProvidersByRoot.Count} 个皮肤提供者；" +
+            $"托管加载模式已识别 {ProvidersByIdentity.Count} 个皮肤提供者；" +
             "PCK 资源由本 Mod 按选择接管；运行时私有依赖会在首次选中时低优先级挂载，" +
             "DLL 行为补丁仅在选中期间启用。");
     }
@@ -3293,8 +3293,14 @@ internal static class ManagedSkinModLoader
     {
         try
         {
-            var root = NormalizePath(mod.path);
-            if (ProvidersByRoot.TryGetValue(root, out provider!))
+            if (string.IsNullOrWhiteSpace(mod.manifest?.id))
+            {
+                provider = null!;
+                return false;
+            }
+
+            var identity = ProviderLookupKey(mod.path, mod.manifest.id);
+            if (ProvidersByIdentity.TryGetValue(identity, out provider!))
             {
                 return true;
             }
@@ -3310,8 +3316,7 @@ internal static class ManagedSkinModLoader
                     0,
                     0,
                     false);
-                ProvidersByRoot[root] = provider;
-                ProviderIds.Add(provider.Id);
+                RememberProviderProbe(provider);
                 if (FrameworkCompatibilityLayer.IsBundledFrameworkHost(mod.manifest?.id) &&
                     !IsRequiredByAnotherMod(mod, ModManager.Mods))
                 {
@@ -3328,7 +3333,7 @@ internal static class ManagedSkinModLoader
                 return true;
             }
 
-            if (!NegativeProviderRoots.Add(root))
+            if (!NegativeProviderIdentities.Add(identity))
             {
                 provider = null!;
                 return false;
@@ -3342,8 +3347,7 @@ internal static class ManagedSkinModLoader
                 return false;
             }
 
-            ProvidersByRoot[root] = detected;
-            ProviderIds.Add(detected.Id);
+            RememberProviderProbe(detected);
             provider = detected;
             ModLog.Info($"加载时补充识别皮肤提供者：{mod.manifest?.name ?? mod.manifest?.id}。");
             return true;
@@ -3353,6 +3357,19 @@ internal static class ManagedSkinModLoader
             provider = null!;
             return false;
         }
+    }
+
+    private static string ProviderLookupKey(string root, string manifestId) =>
+        NormalizePath(root) + "\n" + manifestId;
+
+    private static void RememberProviderProbe(SkinProviderProbe provider)
+    {
+        if (provider.RootPath == null) return;
+        var identity = ProviderLookupKey(provider.RootPath, provider.ResourceNamespaceId);
+        ProvidersByIdentity[identity] = provider;
+        ProviderRootPaths.Add(NormalizePath(provider.RootPath));
+        ProviderManifestIds.Add(provider.ResourceNamespaceId);
+        NegativeProviderIdentities.Remove(identity);
     }
 
     private static SkinModDescriptor ToDescriptor(Mod mod)
@@ -3398,12 +3415,12 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
-        var root = NormalizePath(mod.path);
-        if (ProvidersByRoot.TryGetValue(root, out var known))
+        var identity = ProviderLookupKey(mod.path, manifest.id);
+        if (ProvidersByIdentity.TryGetValue(identity, out var known))
         {
             return HasSelectableCosmetics(known);
         }
-        if (SelectableCosmeticProbeResults.TryGetValue(root, out var cached))
+        if (SelectableCosmeticProbeResults.TryGetValue(identity, out var cached))
         {
             return cached;
         }
@@ -3424,7 +3441,7 @@ internal static class ManagedSkinModLoader
                     manifest.hasDll)])
             .FirstOrDefault(candidate => candidate.RootPath != null);
         var result = probe != null && HasSelectableCosmetics(probe);
-        SelectableCosmeticProbeResults[root] = result;
+        SelectableCosmeticProbeResults[identity] = result;
         return result;
     }
 

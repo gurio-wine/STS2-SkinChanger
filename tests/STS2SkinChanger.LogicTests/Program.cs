@@ -758,18 +758,19 @@ Require(
 Require(
     ManagedProviderDisplayPolicy.IsManaged(
         "KaguyaSilentRavenSkin",
-        @"D:\\Steam\\workshop\\3786286239",
-        [@"D:\\Formal\\mods\\KaguyaSilentRavenSkin"],
         ["KaguyaSilentRavenSkin"]),
     "同一皮肤 Mod 的正式版本地快照与 Steam 副本路径不同，也必须都按清单 ID 显示 [SC]；" +
     "不能只依赖被扫描到的那一个根目录。");
 Require(
     !ManagedProviderDisplayPolicy.IsManaged(
         "MoreActionEffects",
-        @"D:\\Steam\\workshop\\utility",
-        [@"D:\\Formal\\mods\\KaguyaSilentRavenSkin"],
         ["KaguyaSilentRavenSkin"]),
     "不同 ID、不同来源的普通功能 Mod 不能因为正式版存在本地皮肤快照而误标 [SC]。");
+Require(
+    !ManagedProviderDisplayPolicy.IsManaged(
+        "GameplaySibling",
+        ["CharacterSkin", "CardArt"]),
+    "同一个工坊文件夹里的功能 Mod 不能借用其它清单的 [SC] 标记。");
 
 var managedCharacterAssetProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 {

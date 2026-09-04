@@ -17,7 +17,14 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 2 && args[0] == "--audit-provider-folder")
+{
+    ProviderLookupTests.AuditFolder(args[1]);
+    return;
+}
+
 AppearanceControlContractTests.Run();
+ProviderLookupTests.Run();
 CreatureVisualLifecycleTests.Run();
 CharacterSkinBundleContractTests.Run();
 CharacterSkinPopupContractTests.Run();
