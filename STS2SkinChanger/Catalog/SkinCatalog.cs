@@ -12,6 +12,10 @@ namespace STS2SkinChanger.Catalog;
 internal sealed partial class SkinCatalog : IDisposable
 {
     public const string BaseOptionId = "__base__";
+    // Game ownership, not provider identity: unrelated creatures from the same skin pack
+    // must remain independent. Add other actual owner/companion relationships here.
+    private static readonly (string Owner, string Companion)[] CompanionGroups =
+        [("necrobinder", "osty")];
     private static readonly JsonSerializerOptions CardReplacementJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -344,6 +348,17 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             group.Options.Add(option);
+        }
+
+        // Rebuilding saved compositions also rebuilds their derived companion choices.
+        // Otherwise editing an unrelated composition could remove the active pet option.
+        foreach (var (ownerId, companionId) in CompanionGroups)
+        {
+            var owner = _groups.FirstOrDefault(group => group.Id.Equals(ownerId, StringComparison.OrdinalIgnoreCase));
+            var companion = _groups.FirstOrDefault(group => group.Id.Equals(companionId, StringComparison.OrdinalIgnoreCase));
+            if (owner == null || companion == null) continue;
+            foreach (var option in owner.Options.Where(option => option.IsComposition))
+                ResolveCompanionSelection(owner, option.Id, companion);
         }
 
         SortGroupsAndOptions();
@@ -1558,7 +1573,70 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
+        if (!CompanionGroups.Any(pair => updates.ContainsKey(pair.Owner) || updates.ContainsKey(pair.Companion)))
+            return updates;
+
+        var workingSelections = new Dictionary<string, string>(selections, StringComparer.OrdinalIgnoreCase);
+        foreach (var update in updates) workingSelections[update.Key] = update.Value;
+        foreach (var update in BuildCompanionSelectionUpdates(workingSelections, updates.Keys))
+            updates[update.Key] = update.Value;
+
         return updates;
+    }
+
+    public IReadOnlyDictionary<string, string> BuildCompanionSelectionUpdates(
+        IReadOnlyDictionary<string, string> selections,
+        IEnumerable<string>? affectedGroups = null)
+    {
+        var affected = affectedGroups?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (ownerId, companionId) in CompanionGroups)
+        {
+            if (affected != null && !affected.Contains(ownerId) && !affected.Contains(companionId)) continue;
+            var owner = _groups.FirstOrDefault(group => group.Id.Equals(ownerId, StringComparison.OrdinalIgnoreCase));
+            var companion = _groups.FirstOrDefault(group => group.Id.Equals(companionId, StringComparison.OrdinalIgnoreCase));
+            if (owner == null || companion == null) continue;
+            updates[companion.Id] = ResolveCompanionSelection(
+                owner, selections.GetValueOrDefault(owner.Id) ?? BaseOptionId, companion);
+        }
+        return updates;
+    }
+
+    private string ResolveCompanionSelection(SkinGroup owner, string ownerOptionId, SkinGroup companion)
+    {
+        var ownerOption = owner.Options.FirstOrDefault(option => option.Id.Equals(
+            ownerOptionId, StringComparison.OrdinalIgnoreCase));
+        if (ownerOption == null || ownerOptionId.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            return BaseOptionId;
+
+        var sourceIds = GetCompositionSourceOptionIds(owner.Id, ownerOptionId)
+            .Select(sourceId => owner.Options.FirstOrDefault(option => !option.IsComposition &&
+                option.Id.Equals(sourceId, StringComparison.OrdinalIgnoreCase)))
+            .Where(option => option != null)
+            .Select(source => companion.Options.FirstOrDefault(option => !option.IsComposition &&
+                                  option.Id.Equals(source!.Id, StringComparison.OrdinalIgnoreCase)) ??
+                              companion.Options.FirstOrDefault(option => !option.IsComposition &&
+                                  option.EffectiveProviderId.Equals(source!.EffectiveProviderId, StringComparison.OrdinalIgnoreCase)))
+            .Where(option => option != null)
+            .Select(option => option!.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (sourceIds.Count == 0) return BaseOptionId;
+        if (sourceIds.Count == 1) return sourceIds[0];
+
+        // Use the same priority/asset merge as the owner, without persisting a second editable
+        // composition. Its lifetime follows the owner (saved versus multiplayer session).
+        var id = (ownerOption.IsSessionComposition ? "companion:session:" : "companion:saved:") +
+                 CharacterSkinCompositionPolicy.CreateSessionId(companion.Id, sourceIds);
+        if (companion.Options.Any(option => option.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) return id;
+        var composition = new CharacterSkinComposition
+        {
+            Id = id, GroupId = companion.Id, Name = ownerOption.Name, SourceOptionIds = sourceIds
+        };
+        if (!TryBuildCompositionOption(companion, composition, ownerOption.IsSessionComposition, out var merged))
+            return BaseOptionId;
+        companion.Options.Add(merged);
+        return id;
     }
 
     public string ResolveVisualProviderId(string optionOrProviderId)

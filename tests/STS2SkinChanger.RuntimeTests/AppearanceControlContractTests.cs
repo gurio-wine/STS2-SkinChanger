@@ -10,6 +10,22 @@ internal static class AppearanceControlContractTests
     internal static void Run()
     {
         var assembly = typeof(Entry).Assembly;
+        var runtime = assembly.GetType("STS2SkinChanger.Ui.CharacterAppearanceRuntime", true)!;
+        var createBinding = runtime.GetMethod("CreateCreatureAppearanceBinding",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("奥斯提自己的资源组不能让它重新获得独立皮肤选择。");
+        var groupType = assembly.GetType("STS2SkinChanger.Catalog.SkinGroup", true)!;
+        var petGroup = Activator.CreateInstance(groupType, "osty", "奥斯提")!;
+        foreach (var companion in new[] { true, false })
+        {
+            var binding = createBinding.Invoke(null, [petGroup, true, companion])!;
+            bool Flag(string name) => (bool)binding.GetType().GetProperty(name)!.GetValue(binding)!;
+            if (Flag("CanSelectSkin") != !companion || !Flag("SupportsCombatControls") ||
+                Flag("SupportsIntent") != !companion || Flag("UsesMonsterScale") != !companion)
+            {
+                throw new InvalidOperationException("奥斯提只能跟随主人皮肤，但模型与血条调整必须保留；怪物不受影响。");
+            }
+        }
         var harmony = new Harmony("Gurio.SkinChanger.Tests.AppearanceControlContracts");
         var patches = new[]
         {

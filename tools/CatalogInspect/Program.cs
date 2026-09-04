@@ -5,6 +5,18 @@ using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 using STS2SkinChanger.Pck;
 
+if (args.Length == 1 && args[0] == "--self-test-companion-selection")
+{
+    CompanionSelectionTests.Run();
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--self-test-companion-pack")
+{
+    CompanionSelectionTests.RunPack(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0].Equals("--self-test-game-pack-locator", StringComparison.OrdinalIgnoreCase))
 {
     RunGamePackLocatorSelfTest();

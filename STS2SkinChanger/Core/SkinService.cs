@@ -6511,6 +6511,10 @@ internal static partial class SkinService
 
         SanitizeMonsterSkinPriorities();
 
+        // Old versions saved Osty independently, and only linked DLL-backed suites. Repair
+        // that stale choice before deciding whether a full-runtime suite is incomplete.
+        SynchronizeCompanionSelections();
+
         // A full-runtime provider is safe only as one coherent selection transaction. Never leave
         // a partial provider displayed as selected while its callbacks are deliberately inactive,
         // and never complete it by silently overwriting another explicit group choice.
@@ -6544,8 +6548,20 @@ internal static partial class SkinService
             }
         }
 
+        SynchronizeCompanionSelections();
         SanitizeCardSelections();
         SanitizeVisualProviderPriority();
+    }
+
+    private static void SynchronizeCompanionSelections()
+    {
+        foreach (var update in Catalog!.BuildCompanionSelectionUpdates(Config.Selections))
+        {
+            var previous = Config.GetSelection(update.Key);
+            if (previous.Equals(update.Value, StringComparison.OrdinalIgnoreCase)) continue;
+            Config.Selections[update.Key] = update.Value;
+            ModLog.Info($"已按主人皮肤同步随从外观：{update.Key}，{previous} -> {update.Value}。");
+        }
     }
 
     private static void UpdateVisualProviderPriority(string groupId, string optionId)

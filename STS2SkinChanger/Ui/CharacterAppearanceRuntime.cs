@@ -857,19 +857,22 @@ internal static class CharacterAppearanceRuntime
 
         if (directGroup != null)
         {
-            var isCompanion = creature.Entity.PetOwner != null;
-            binding = new CreatureAppearanceBinding(
-                directGroup,
-                directGroup.Id,
-                UsesMonsterScale: creature.Entity.IsMonster && !isCompanion,
-                CanSelectSkin: true,
-                SupportsIntent: creature.Entity.IsMonster && !isCompanion,
-                SupportsCombatControls: !isCompanion);
+            binding = CreateCreatureAppearanceBinding(
+                directGroup, creature.Entity.IsMonster, creature.Entity.PetOwner != null);
             return true;
         }
 
         return false;
     }
+
+    private static CreatureAppearanceBinding CreateCreatureAppearanceBinding(
+        SkinGroup group, bool isMonster, bool isCompanion) => new(
+        group,
+        group.Id,
+        UsesMonsterScale: isMonster && !isCompanion,
+        CanSelectSkin: !isCompanion,
+        SupportsIntent: isMonster && !isCompanion,
+        SupportsCombatControls: true);
 
     private static CharacterCombatTransform GetCreatureCombatTransform(
         NCreature creature,
