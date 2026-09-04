@@ -266,6 +266,19 @@ Require(
     "共享遗物等跨角色素材的提供者顺序必须让合并配方前项保持最高优先级。");
 
 Require(
+    RuntimeProviderScopePolicy.ResolveCharacterSelectionTargets(
+            isFullRuntimeProvider: false,
+            providerGroupIds: ["ironclad", "silent", "defect"],
+            requestedGroupId: "silent")
+        .SequenceEqual(["silent"], StringComparer.OrdinalIgnoreCase) &&
+    RuntimeProviderScopePolicy.ResolveCharacterSelectionTargets(
+            isFullRuntimeProvider: true,
+            providerGroupIds: ["ironclad", "silent", "defect"],
+            requestedGroupId: "silent")
+        .SequenceEqual(["ironclad", "silent", "defect"], StringComparer.OrdinalIgnoreCase),
+    "按角色运行时皮肤只能更新当前角色；只有明确的整包运行时提供者才允许联动全部角色。");
+
+Require(
     CharacterSkinCompositionPolicy.ShouldApplyAfterSave(
         isNewComposition: true,
         wasSelected: false) &&

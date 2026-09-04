@@ -4260,6 +4260,36 @@ internal static partial class SkinService
         }
     }
 
+    internal static bool IsDirectCharacterRuntimeProviderSelected(
+        string providerId,
+        string characterTypeName)
+    {
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null || string.IsNullOrWhiteSpace(characterTypeName))
+            {
+                return true;
+            }
+
+            var group = catalog.Groups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(characterTypeName, StringComparison.OrdinalIgnoreCase) ||
+                candidate.DisplayName.Equals(characterTypeName, StringComparison.OrdinalIgnoreCase));
+            if (group == null)
+            {
+                // Unknown names belong to a future character or a provider-specific alias. Do
+                // not suppress those paths; the route is only a safety gate for known groups.
+                return true;
+            }
+
+            return catalog.ProviderUsesDirectCharacterRuntime(providerId) &&
+                   catalog.SelectionUsesVisualProvider(
+                       group.Id,
+                       GetVisualSelection(group.Id),
+                       providerId);
+        }
+    }
+
     public static string? GetSelectedFullRuntimeProvider(string groupId)
     {
         lock (Sync)
@@ -5458,7 +5488,8 @@ internal static partial class SkinService
         IEnumerable<string> activeRuntimeProviders)
     {
         foreach (var providerId in activeRuntimeProviders
-                     .Where(catalog.ProviderUsesScopedMonsterRuntime)
+                     .Where(provider => catalog.ProviderUsesScopedMonsterRuntime(provider) ||
+                                        catalog.ProviderUsesDirectCharacterRuntime(provider))
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             foreach (var resourcePackPath in catalog.GetProviderResourcePackPaths(providerId))
@@ -5574,6 +5605,9 @@ internal static partial class SkinService
                 catalog.GetSelectedInteractiveRuntimeProviders(localSelections),
                 StringComparer.OrdinalIgnoreCase)
             .Union(
+                catalog.GetSelectedDirectCharacterRuntimeProviders(localSelections),
+                StringComparer.OrdinalIgnoreCase)
+            .Union(
                 catalog.GetSelectedScopedMonsterRuntimeProviders(localSelections),
                 StringComparer.OrdinalIgnoreCase)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -5581,6 +5615,7 @@ internal static partial class SkinService
         {
             selectedProviders.UnionWith(catalog.GetFullySelectedFullRuntimeProviders(selections));
             selectedProviders.UnionWith(catalog.GetSelectedInteractiveRuntimeProviders(selections));
+            selectedProviders.UnionWith(catalog.GetSelectedDirectCharacterRuntimeProviders(selections));
             selectedProviders.UnionWith(catalog.GetSelectedScopedMonsterRuntimeProviders(selections));
         }
         if (_runtimeProviderBehaviorScope is { } scope)

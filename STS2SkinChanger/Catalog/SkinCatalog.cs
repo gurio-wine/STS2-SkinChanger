@@ -39,6 +39,7 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlySet<string> _cosmeticLocalizationPaths;
     private readonly IReadOnlyDictionary<string, ResourceFile> _passthroughLocalizationFiles;
     private readonly IReadOnlySet<string> _fullRuntimeProviders;
+    private readonly IReadOnlySet<string> _directCharacterRuntimeProviders;
     private readonly IReadOnlySet<string> _scopedMonsterRuntimeProviders;
     private readonly IReadOnlySet<string> _interactiveRuntimeProviders;
     private readonly IReadOnlySet<string> _characterAppearanceGroupIds;
@@ -213,6 +214,17 @@ internal sealed partial class SkinCatalog : IDisposable
         _scopedMonsterRuntimeProviders = _scopedMonsterRuntimeProviderGroups.Keys
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // A direct character runtime provider exposes one independently addressable target
+        // per character (for example a Spine registry keyed by Ironclad/Silent/...).  It is not
+        // an inseparable all-character bundle: selecting it for one group must not rewrite every
+        // other character's selection.  Keep this marker separate from IsRuntimeProvider because
+        // monster and full-package runtime options use the same flag for different semantics.
+        _directCharacterRuntimeProviders = _groups
+            .SelectMany(group => group.Options)
+            .Where(option => option.IsDirectCharacterRuntimeProvider)
+            .Select(option => option.EffectiveProviderId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         // Card ownership and runtime behaviour are two independent concerns. A character skin can
         // bundle selectable card art while still relying on its DLL for voice, character-select
         // animation and battle presentation nodes. Keep such a provider's character bundle active,
@@ -223,6 +235,7 @@ internal sealed partial class SkinCatalog : IDisposable
             .Select(index => index.Mod.Id)
             .Where(providerId =>
                 visualGroupsByProvider.ContainsKey(providerId) &&
+                !_directCharacterRuntimeProviders.Contains(providerId) &&
                 !independentManagedAncientProviders.Contains(providerId) &&
                 !_scopedMonsterRuntimeProviders.Contains(providerId) &&
                 (!cardProviderIds.Contains(providerId) ||
@@ -1481,6 +1494,17 @@ internal sealed partial class SkinCatalog : IDisposable
     public bool ProviderUsesInteractiveRuntime(string optionId) =>
         _interactiveRuntimeProviders.Contains(ResolveVisualProviderId(optionId));
 
+    public bool ProviderUsesDirectCharacterRuntime(string optionId) =>
+        _directCharacterRuntimeProviders.Contains(ResolveVisualProviderId(optionId));
+
+    public IReadOnlySet<string> GetSelectedDirectCharacterRuntimeProviders(
+        IReadOnlyDictionary<string, string> selections) =>
+        _directCharacterRuntimeProviders
+            .Where(providerId => _groups.Any(group =>
+                selections.TryGetValue(group.Id, out var selectedId) &&
+                SelectionUsesProvider(group.Id, selectedId, providerId)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Providers with scene behaviour or managed Godot scripts must keep their exported package
     /// intact. Splitting only the selected scene into an alias overlay can strand public atlas,
@@ -1489,7 +1513,8 @@ internal sealed partial class SkinCatalog : IDisposable
     public bool ProviderRequiresCoherentRuntimePackage(string providerId) =>
         ProviderUsesFullRuntime(providerId) ||
         ProviderUsesInteractiveRuntime(providerId) ||
-        ProviderUsesManagedGodotScripts(providerId);
+        ProviderUsesManagedGodotScripts(providerId) ||
+        ProviderUsesDirectCharacterRuntime(providerId);
 
     public IReadOnlySet<string> GetSelectedInteractiveRuntimeProviders(
         IReadOnlyDictionary<string, string> selections) =>
@@ -1597,9 +1622,10 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var requestedProviderId = ResolveVisualProviderId(optionId);
-        var targetGroupIds = ProviderUsesFullRuntime(requestedProviderId)
-            ? GetFullRuntimeProviderGroups(requestedProviderId)
-            : [groupId];
+        var targetGroupIds = RuntimeProviderScopePolicy.ResolveCharacterSelectionTargets(
+            ProviderUsesFullRuntime(requestedProviderId),
+            GetFullRuntimeProviderGroups(requestedProviderId),
+            groupId);
         var displacedProviders = targetGroupIds
             .Select(targetGroupId => selections.TryGetValue(targetGroupId, out var selectedId)
                 ? ResolveVisualProviderId(selectedId)
@@ -4436,6 +4462,7 @@ internal sealed partial class SkinCatalog : IDisposable
                     group.Options[existingIndex] = group.Options[existingIndex] with
                     {
                         IsRuntimeProvider = true,
+                        IsDirectCharacterRuntimeProvider = true,
                         IsCharacterIconOnly = false
                     };
                     continue;
@@ -4450,7 +4477,8 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Id,
                     index.Mod.Name,
                     new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
-                    IsRuntimeProvider: true));
+                    IsRuntimeProvider: true,
+                    IsDirectCharacterRuntimeProvider: true));
             }
         }
     }
@@ -6616,6 +6644,7 @@ internal sealed partial class SkinCatalog : IDisposable
             composition.Name,
             resolved.Assets,
             IsRuntimeProvider: dynamicSource?.IsRuntimeProvider == true,
+            IsDirectCharacterRuntimeProvider: dynamicSource?.IsDirectCharacterRuntimeProvider == true,
             RuntimeImagePath: dynamicSource?.RuntimeImagePath,
             ManagedMonsterScene: dynamicSource?.ManagedMonsterScene,
             RuntimeMonsterVisualMode: dynamicSource?.RuntimeMonsterVisualMode,
@@ -7290,6 +7319,7 @@ internal sealed record SkinOption(
     string Name,
     IReadOnlyDictionary<string, ResourceAsset> Assets,
     bool IsRuntimeProvider = false,
+    bool IsDirectCharacterRuntimeProvider = false,
     string? RuntimeImagePath = null,
     ResourceAsset? ManagedMonsterScene = null,
     RuntimeMonsterVisualMode? RuntimeMonsterVisualMode = null,

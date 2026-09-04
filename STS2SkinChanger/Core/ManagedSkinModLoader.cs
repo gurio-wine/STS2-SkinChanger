@@ -75,6 +75,8 @@ internal static class ManagedSkinModLoader
     private static readonly HashSet<MethodBase> ScopedMonsterIsEnabledMethods = [];
     private static readonly HashSet<MethodBase> ScopedMonsterSetEnabledMethods = [];
     private static readonly HashSet<MethodBase> RunEnvironmentCallbackMethods = [];
+    private static readonly HashSet<MethodBase> DirectCharacterSkinPathMethods = [];
+    private static readonly Dictionary<MethodBase, Assembly> DirectCharacterSkinPathProviders = new();
     private static readonly HashSet<string> RunEnvironmentProviderIds =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<MethodBase, Func<object, string?>>
@@ -83,6 +85,8 @@ internal static class ManagedSkinModLoader
         new($"{Entry.ModId}.scoped-monster-selection");
     private static readonly Harmony RunEnvironmentCallbackHarmony =
         new($"{Entry.ModId}.run-environment-callbacks");
+    private static readonly Harmony DirectCharacterSkinPathHarmony =
+        new($"{Entry.ModId}.direct-character-runtime");
     // ModInitializer methods are commonly used to subscribe to SceneTree signals.  Harmony can
     // remove the provider's patches when it is deselected, but it cannot undo a direct C# event
     // subscription. Remember successful initializers so a hot re-selection does not register the
@@ -408,6 +412,79 @@ internal static class ManagedSkinModLoader
         }
         catch
         {
+            return true;
+        }
+    }
+
+    private static void EnsureDirectCharacterSkinPathRouter(
+        string providerId,
+        Assembly assembly)
+    {
+        var prefix = new HarmonyMethod(AccessTools.Method(
+            typeof(ManagedSkinModLoader),
+            nameof(DirectCharacterSkinPathPrefix)));
+        var patched = 0;
+        foreach (var method in GetLoadableTypes(assembly)
+                     .SelectMany(type => type.GetMethods(
+                         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic |
+                         BindingFlags.DeclaredOnly))
+                     .Where(IsDirectCharacterSkinPathMethod))
+        {
+            if (!DirectCharacterSkinPathMethods.Add(method))
+            {
+                continue;
+            }
+
+            DirectCharacterSkinPathProviders[method] = assembly;
+            DirectCharacterSkinPathHarmony.Patch(method, prefix: prefix);
+            patched++;
+        }
+
+        if (patched > 0)
+        {
+            ModLog.Info(
+                $"已为 {providerId} 接管 {patched} 个按角色分发的 Spine 外观路径；" +
+                "未选中的角色会得到空路径，不再被同一套运行时皮肤污染。 ");
+        }
+    }
+
+    private static bool IsDirectCharacterSkinPathMethod(MethodInfo method) =>
+        method.ReturnType == typeof(string) &&
+        method.GetParameters() is [{ ParameterType: var parameterType }] &&
+        parameterType == typeof(string) &&
+        method.Name.Contains("SkinPath", StringComparison.OrdinalIgnoreCase);
+
+    private static bool DirectCharacterSkinPathPrefix(
+        MethodBase __originalMethod,
+        object[] __args,
+        ref string __result)
+    {
+        try
+        {
+            if (!DirectCharacterSkinPathProviders.TryGetValue(__originalMethod, out var assembly) ||
+                !ProviderIdsByAssembly.TryGetValue(assembly, out var providerIds))
+            {
+                return true;
+            }
+
+            var characterName = __args.OfType<string>().FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(characterName) ||
+                providerIds.Any(providerId =>
+                    !ActiveProviderRuntimes.ContainsKey(providerId) ||
+                    SkinService.IsDirectCharacterRuntimeProviderSelected(
+                        providerId,
+                        characterName)))
+            {
+                return true;
+            }
+
+            __result = string.Empty;
+            return false;
+        }
+        catch
+        {
+            // A failed route must never prevent the provider's original method from returning a
+            // path. This keeps unknown game-version character names compatible with old packs.
             return true;
         }
     }
@@ -836,6 +913,10 @@ internal static class ManagedSkinModLoader
             }
 
             RegisterProviderAssembly(providerId, assembly);
+            if (SkinService.Catalog?.ProviderUsesDirectCharacterRuntime(providerId) == true)
+            {
+                EnsureDirectCharacterSkinPathRouter(providerId, assembly);
+            }
             ActivatingProviderAssemblies.Add(assembly);
             EnsureProviderNodeMonitor();
             RestoreProviderNodes(assembly);

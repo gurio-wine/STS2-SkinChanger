@@ -35,6 +35,22 @@ internal static class RunEnvironmentRefreshPolicy
 
 internal static class RuntimeProviderScopePolicy
 {
+    public static IReadOnlyCollection<string> ResolveCharacterSelectionTargets(
+        bool isFullRuntimeProvider,
+        IEnumerable<string> providerGroupIds,
+        string requestedGroupId)
+    {
+        if (!isFullRuntimeProvider)
+        {
+            return [requestedGroupId];
+        }
+
+        return providerGroupIds
+            .Where(groupId => !string.IsNullOrWhiteSpace(groupId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public static IReadOnlySet<string> SelectActiveProviders(
         IEnumerable<RuntimeProviderCandidate> candidates,
         RuntimeProviderScope? scope)

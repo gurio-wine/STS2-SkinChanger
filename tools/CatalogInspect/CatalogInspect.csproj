@@ -11,6 +11,7 @@
     <Compile Include="../../STS2SkinChanger/Core/OptionalSkinFrameworkPolicy.cs" Link="OptionalSkinFrameworkPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterGroupEvidencePolicy.cs" Link="CharacterGroupEvidencePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs" Link="DirectCharacterRuntimeTargetPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/RuntimeProviderScopePolicy.cs" Link="RuntimeProviderScopePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/AliasedDependencyCachePolicy.cs" Link="AliasedDependencyCachePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterSkinCompositionPolicy.cs" Link="CharacterSkinCompositionPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Pck/PckArchive.cs" Link="PckArchive.cs" />
