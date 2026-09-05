@@ -1,4 +1,6 @@
 using Godot;
+using Godot.NativeInterop;
+using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui;
 
@@ -12,6 +14,12 @@ internal partial class DragHandleHoverVisibility : Node
     private Color _shownColor;
     private Window? _window;
     private bool _refreshQueued;
+
+    // Plain class-library builds have no Godot script source generator. Register the native
+    // callback names explicitly; Node's existing dispatcher then invokes our C# overrides.
+    protected override bool HasGodotClassMethod(in godot_string_name method) =>
+        method == Node.MethodName._Ready || method == Node.MethodName._Input ||
+        method == Node.MethodName._ExitTree || base.HasGodotClassMethod(method);
 
     internal static void Attach(Control target, Button handle, Func<bool> isDragging)
     {
@@ -45,6 +53,7 @@ internal partial class DragHandleHoverVisibility : Node
         _window.MouseEntered += QueueRefresh;
         _window.MouseExited += OnWindowUnavailable;
         OnVisibilityChanged();
+        ModLog.Info("拖拽柄悬停事件已接入：" + _target.Name);
     }
 
     public override void _Input(InputEvent input)
