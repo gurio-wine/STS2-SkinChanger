@@ -86,6 +86,7 @@ internal static partial class ContextualSkinControls
 
     public static void ShowCharacter(NCharacterSelectScreen screen, CharacterModel character)
     {
+        CharacterModelPreviewControls.Hide(screen);
         CaptureCharacterBackgroundHostLayout(screen);
         CancelCharacterDropdownSelection(screen);
         // Restore while the old provider is still active. FocusRuntimeProviderBehaviorsOnCharacters
@@ -138,6 +139,7 @@ internal static partial class ContextualSkinControls
                     MultiplayerSkinSync.OnLocalCharacterSelectionChanged(group.Id)).CallDeferred();
             }
         }
+        else CharacterModelPreviewControls.Refresh(screen, character);
     }
 
     private static bool IsMultiplayerCharacterSelect(NCharacterSelectScreen screen)
@@ -623,6 +625,7 @@ internal static partial class ContextualSkinControls
 
     internal static void HideCharacterSelector(NCharacterSelectScreen screen)
     {
+        CharacterModelPreviewControls.Hide(screen);
         CharacterSkinCompositionControls.Hide(screen);
         CharacterSkinBundleControls.Hide(screen);
         var selector = FindCharacterSelector(screen);
@@ -1356,6 +1359,7 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
+        CharacterModelPreviewControls.Hide(screen);
         // A behavior-driven provider can replace the title/description and hide the original
         // background without changing a canonical scene. Always restore the game presentation
         // first so switching *away* from such a provider is just as complete as switching to it.
@@ -1368,6 +1372,7 @@ internal static partial class ContextualSkinControls
             RebuildRuntimeProviderCharacterDisplay(screen, character);
             ReplaySelectedCharacterPresentation(screen, character, groupId);
             RefreshLocalLobbyAvatar(screen);
+            CharacterModelPreviewControls.Refresh(screen, character);
             return;
         }
 
@@ -1400,6 +1405,7 @@ internal static partial class ContextualSkinControls
                 characterSelectPath,
                 characterSelectTextures);
             RefreshLocalLobbyAvatar(screen);
+            CharacterModelPreviewControls.Refresh(screen, character);
             return;
         }
 
@@ -1426,6 +1432,7 @@ internal static partial class ContextualSkinControls
             },
             includeProviderDependencies: true);
         RefreshLocalLobbyAvatar(screen);
+        CharacterModelPreviewControls.Refresh(screen, character);
         ModLog.Info($"已完整重建 {character.Id.Entry} 的选角展示。");
     }
 

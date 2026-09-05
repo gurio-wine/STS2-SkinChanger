@@ -213,6 +213,9 @@ foreach (var type in new[] { "Patches.PowerIcon", "Patches.CustomOrbSprite", "Pa
 var retained = Harmony.GetAllPatchedMethods().Where(target => Harmony.GetPatchInfo(target)!.Owners.Contains(nativeHarmony.Id)).ToArray();
 Require(retained.Length == 4, "实包的四种功能回调必须实际安装后才检查保留。");
 bridgeType.GetMethod("Bind")!.Invoke(null, [original]);
+var standalonePreview = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.CharacterModelPreviewControls", true)!;
+Require(!(bool)AccessTools.PropertyGetter(standalonePreview, "IsEnabled").Invoke(null, null)!,
+    "已加载实际原管理器并建立协作后，SC 自带模型框不能再出现。");
 Require(!(bool)usesFallback.Invoke(null, [contract])!, "原管理器负责已登记皮肤时不能再叠加 SC 的同一套能量/登场动画等呈现。");
 Require(retained.All(target => Harmony.GetPatchInfo(target)!.Owners.Contains(nativeHarmony.Id)),
     "绑定协作不得移除原能力图标、自定义球、小刀颜色或 UI 注入补丁。");

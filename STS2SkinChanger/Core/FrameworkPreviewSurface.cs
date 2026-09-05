@@ -71,6 +71,18 @@ internal partial class FrameworkPreviewSurface : Node2D
         else FrameworkModelPreview.StartAnimations(_owner, _groupId);
     }
 
+    internal void RefreshLayout()
+    {
+        if (_exited || !_started || !Alive(this)) return;
+        // A window/UI resize needs a new camera fit, not another skin load or model instance.
+        _framing?.Cancel();
+        _framing = null;
+        _presentNextFrame = false;
+        _finished = false;
+        _display.Visible = false;
+        UpdateVisibility();
+    }
+
     private void UpdateVisibility()
     {
         if (_exited || !_started || !Alive(this)) return;
@@ -148,7 +160,7 @@ internal partial class FrameworkPreviewSurface : Node2D
             (inverse * footer.GetGlobalTransform()) * new Rect2(Vector2.Zero, footer.Size);
         var area = FrameworkModelPreview.PreviewArea(panelRect, footerRect);
         if (!area.HasArea() || !area.Position.IsFinite() || !area.Size.IsFinite())
-            throw new InvalidOperationException("原管理器预览区域尚未就绪。");
+            throw new InvalidOperationException("小模型预览区域尚未就绪。");
         var screenTransform = _container.GetScreenTransform();
         var physical = area.Size * new Vector2(screenTransform.X.Length(), screenTransform.Y.Length());
         if (!physical.IsFinite() || physical.X <= 0 || physical.Y <= 0) physical = area.Size;

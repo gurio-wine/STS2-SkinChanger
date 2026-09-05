@@ -13,7 +13,7 @@ using System.Reflection;
 
 namespace STS2SkinChanger.Core;
 
-/// <summary>Model-loading bridge inside the original manager's existing preview control.</summary>
+/// <summary>Shared model renderer for SC's preview and the optional original manager's control.</summary>
 internal static class FrameworkModelPreview
 {
     public static void Refresh(Node selector, CharacterModel character)
@@ -53,14 +53,14 @@ internal static class FrameworkModelPreview
             }
             staged.Name = "PreviewSprite";
             staged.BeginCapture();
-            ModLog.Info($"已刷新原管理器小模型：{character.Id.Entry}/{(groupId == null ? "unmanaged" : SkinService.Config.GetSelection(groupId))}；" +
+            ModLog.Info($"已刷新选角小模型：{character.Id.Entry}/{(groupId == null ? "unmanaged" : SkinService.Config.GetSelection(groupId))}；" +
                         $"模型类型={visuals.GetType().Name}；完整模型子节点={visuals.GetChildCount()}。");
             staged = null;
             visuals = null;
         }
         catch (Exception exception)
         {
-            ModLog.Warn($"原管理器小模型加载失败 {character.Id.Entry}/{scenePath}：{exception.GetBaseException().Message}");
+            ModLog.Warn($"选角小模型加载失败 {character.Id.Entry}/{scenePath}：{exception.GetBaseException().Message}");
         }
         finally
         {
@@ -93,7 +93,7 @@ internal static class FrameworkModelPreview
             throw new InvalidOperationException($"预览路径不是完整 Spine 骨骼资源：{path}");
         body.SetSkeletonDataRes(new MegaSkeletonDataResource(resource));
         body.GetSkeleton()?.SetSlotsToSetupPose();
-        ModLog.Info($"原管理器小模型已应用运行时骨骼：{groupId}/{path}。");
+        ModLog.Info($"选角小模型已应用运行时骨骼：{groupId}/{path}。");
     }
 
     internal static string? ResolveCombatSpinePath(IEnumerable<MethodInfo> methods, string characterName)
@@ -232,7 +232,7 @@ internal static class FrameworkModelPreview
     }
 
     private static void LogAnimationFailure(string groupId, Exception exception) =>
-        ModLog.Warn($"启动 {groupId} 的原管理器预览动画失败：{exception.GetBaseException().Message}");
+        ModLog.Warn($"启动 {groupId} 的小模型预览动画失败：{exception.GetBaseException().Message}");
 
     private static IEnumerable<Node> DescendantsAndSelf(Node root)
     {
