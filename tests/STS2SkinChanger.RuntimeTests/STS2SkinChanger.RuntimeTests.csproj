@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="LegacyMerchantCommandFixture.cs" />
+    <ProjectReference Include="../STS2SkinChanger.SettingsFixture/STS2SkinChanger.SettingsFixture.csproj" />
     <ProjectReference Include="../../STS2SkinChanger/STS2SkinChanger.csproj" />
     <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj" />
     <Reference Include="sts2">

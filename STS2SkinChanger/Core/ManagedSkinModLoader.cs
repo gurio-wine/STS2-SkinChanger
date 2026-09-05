@@ -97,6 +97,8 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> FailedVisualPostfixes =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, bool> ProviderSettingsEligibility =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, OptionalSkinFrameworkEvidence>
         OptionalFrameworkEvidence = new(StringComparer.OrdinalIgnoreCase);
     private static bool _initialized;
@@ -145,6 +147,34 @@ internal static class ManagedSkinModLoader
 
     internal static bool IsProviderAssemblyFor(string providerId, Assembly assembly) =>
         ProviderIdsByAssembly.TryGetValue(assembly, out var providers) && providers.Contains(providerId);
+
+    internal static void EnsureProviderSettings(Mod mod)
+    {
+        // A details-page request may precede the first selection. Do not initialize every DLL
+        // on startup or restore it to ReflectionHelper's global ModTypes registry.
+        if (!ManagedModInstances.Contains(mod) || mod.manifest?.id == null ||
+            !ProvidersByIdentity.TryGetValue(ProviderLookupKey(mod.path, mod.manifest.id), out var probe) ||
+            !ProviderAssemblies.TryGetValue(probe.Id, out var provider)) return;
+        try
+        {
+            // Opening an arbitrary skin's details must not load its executable module. First
+            // inspect only metadata, and load only the supported, rewritten settings contract.
+            if (!ProviderSettingsEligibility.TryGetValue(provider.AssemblyPath, out var eligible))
+            {
+                using var source = File.OpenRead(provider.AssemblyPath);
+                using var adapted = MerchantSettingsAssemblyCompatibility.Rewrite(source, out var changed);
+                eligible = adapted != null && changed > 0;
+                ProviderSettingsEligibility[provider.AssemblyPath] = eligible;
+            }
+            if (!eligible) return;
+            var assembly = GetOrLoadProviderAssembly(provider);
+            if (assembly != null) RegisterProviderAssembly(probe.Id, assembly);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("读取皮肤原设置失败：" + exception.GetBaseException().Message);
+        }
+    }
 
     public static void ConfigureRunEnvironmentProviders(IEnumerable<string> providerIds)
     {
@@ -1016,13 +1046,15 @@ internal static class ManagedSkinModLoader
                 .Where(patch =>
                     IsManagedResourceOwnershipPatch(patch) ||
                     IsManagedCharacterPresentationPatch(patch) ||
-                    IsManagedNodeReadyPresentationPatch(patch))
+                    IsManagedNodeReadyPresentationPatch(patch) ||
+                    ManagedMerchantSettingsBridge.OwnsSettingsPatch(patch.Callback))
                 .ToArray();
             IReadOnlyList<ProviderPatch> behaviorPatches = installedPatches
                 .Where(patch =>
                     !IsManagedResourceOwnershipPatch(patch) &&
                     !IsManagedCharacterPresentationPatch(patch) &&
-                    !IsManagedNodeReadyPresentationPatch(patch))
+                    !IsManagedNodeReadyPresentationPatch(patch) &&
+                    !ManagedMerchantSettingsBridge.OwnsSettingsPatch(patch.Callback))
                 .ToArray();
             if (skippedInitializer &&
                 ProviderRuntimeBlueprints.TryGetValue(providerId, out var behaviorBlueprint))
@@ -1046,7 +1078,8 @@ internal static class ManagedSkinModLoader
                 .Where(patch =>
                     IsManagedResourceOwnershipPatch(patch) ||
                     IsManagedCharacterPresentationPatch(patch) ||
-                    IsManagedNodeReadyPresentationPatch(patch))
+                    IsManagedNodeReadyPresentationPatch(patch) ||
+                    ManagedMerchantSettingsBridge.OwnsSettingsPatch(patch.Callback))
                 .ToArray();
             if (leakedManagedPatches.Length > 0)
             {
@@ -1190,6 +1223,7 @@ internal static class ManagedSkinModLoader
         }
 
         providerIds.Add(providerId);
+        ManagedMerchantSettingsBridge.Install(assembly);
     }
 
     private static void EnsureProviderNodeMonitor()
@@ -2929,8 +2963,9 @@ internal static class ManagedSkinModLoader
         {
             using (rewrittenAssembly)
             {
-                assembly = loadContext?.LoadFromStream(rewrittenAssembly!) ??
-                           Assembly.Load(rewrittenAssembly!.ToArray());
+                using var settingsAssembly = RewriteProviderSettings(rewrittenAssembly!, provider.Name);
+                var input = settingsAssembly ?? rewrittenAssembly!;
+                assembly = loadContext?.LoadFromStream(input) ?? Assembly.Load(input.ToArray());
             }
 
             CacheLoadedProviderAssembly(
@@ -2949,14 +2984,34 @@ internal static class ManagedSkinModLoader
             ModLog.Warn($"检查 {provider.Name} 的跨版本运行时接口失败：{compatibilityFailure}");
         }
 
-        assembly = loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ??
-                   Assembly.LoadFrom(provider.AssemblyPath);
+        using (var source = File.OpenRead(provider.AssemblyPath))
+        using (var settingsAssembly = RewriteProviderSettings(source, provider.Name))
+        {
+            assembly = settingsAssembly != null
+                ? loadContext?.LoadFromStream(settingsAssembly) ?? Assembly.Load(settingsAssembly.ToArray())
+                : loadContext?.LoadFromAssemblyPath(provider.AssemblyPath) ?? Assembly.LoadFrom(provider.AssemblyPath);
+        }
         CacheLoadedProviderAssembly(
             provider.AssemblyPath,
             fingerprint,
             assemblyIdentity,
             assembly);
         return assembly;
+    }
+
+    private static MemoryStream? RewriteProviderSettings(Stream source, string name)
+    {
+        try
+        {
+            var result = MerchantSettingsAssemblyCompatibility.Rewrite(source, out var changed);
+            if (changed > 0) ModLog.Info($"已为 {name} 隔离 {changed} 个原设置全场景入口；原订阅文件未修改。");
+            return result;
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn($"检查 {name} 的原设置接口失败，未放开设置入口：{exception.GetBaseException().Message}");
+            return null;
+        }
     }
 
     private static string ComputeProviderAssemblyFingerprint(string assemblyPath)

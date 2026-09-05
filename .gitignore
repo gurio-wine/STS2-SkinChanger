@@ -14,6 +14,8 @@
 /tests/STS2SkinChanger.LogicTests/obj/
 /tests/STS2SkinChanger.RuntimeTests/bin/
 /tests/STS2SkinChanger.RuntimeTests/obj/
+/tests/STS2SkinChanger.SettingsFixture/bin/
+/tests/STS2SkinChanger.SettingsFixture/obj/
 /compat/ThunninoiSkinManagerCompat/bin/
 /compat/ThunninoiSkinManagerCompat/obj/
 /workshop/content/

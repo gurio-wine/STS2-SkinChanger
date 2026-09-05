@@ -202,13 +202,15 @@ internal static class MerchantRuntimeAppearance
         TrackInventoryProviderAdditions(
             node,
             ManagedSkinModLoader.ReplaySelectedNodeReadyPostfixes(providerId, node));
+        var groupId = ResolveMerchantGroupId(node);
+        if (groupId != null) ManagedMerchantSettingsBridge.Bind(node, groupId, providerId);
         if (node is NMerchantInventory)
         {
             MakeProviderInventoryVisualsPassThrough();
         }
     }
 
-    private static string? ResolveMerchantGroupId(Node node)
+    internal static string? ResolveMerchantGroupId(Node node)
     {
         for (Node? current = node; current != null; current = current.GetParent())
         {
@@ -777,6 +779,8 @@ internal static class MerchantRuntimeAppearance
                     ReplayedInventoryAdditions.Add(new WeakReference<Node>(addedNode));
                 }
 
+                ManagedMerchantSettingsBridge.Bind(room.Inventory, GroupId, providerId);
+
                 // A merchant skin is visual-only. Some providers add a full-size Control to the
                 // inventory root; leaving its default MouseFilter=Stop makes it sit above the
                 // game's BackButton and swallow the click after a hot swap. Keep those provider
@@ -926,6 +930,8 @@ internal static class MerchantRuntimeAppearance
                 _ = ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(
                     providerId,
                     fakeMerchant.Inventory.MerchantHand);
+                ManagedMerchantSettingsBridge.Bind(fakeMerchant.Inventory, FakeMerchantGroupId, providerId);
+                ManagedMerchantSettingsBridge.Bind(fakeMerchant.Inventory.MerchantHand, FakeMerchantGroupId, providerId);
             }
 
             replacement = null;
