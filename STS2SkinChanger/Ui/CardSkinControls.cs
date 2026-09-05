@@ -1220,12 +1220,18 @@ internal static class CardSkinControls
 
             var name = new LineEdit
             {
-                Text = preset.Name,
+                Text = preset.DisplayName,
+                Editable = !preset.IsBundlePreset,
                 MaxLength = SkinService.CardSkinPresetNameMaxLength,
                 CustomMinimumSize = new Vector2(310, 38),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };
             name.AddThemeFontSizeOverride("font_size", 18);
+            if (preset.IsBundlePreset)
+            {
+                name.AddThemeColorOverride("font_uneditable_color", new Color("efc850"));
+                name.TooltipText = ModLocalization.BundlePresetLocked;
+            }
             row.AddChild(name);
 
             var apply = CreatePresetActionButton(
@@ -1263,6 +1269,7 @@ internal static class CardSkinControls
                 () => SkinService.RenameCardSkinPreset(groupId, preset.Name, name.Text),
                 refreshCards: false);
             row.AddChild(rename);
+            rename.Disabled = preset.IsBundlePreset;
 
             var delete = CreatePresetActionButton(
                 ModLocalization.Get(ModText.DeleteCardPreset),
@@ -1285,6 +1292,7 @@ internal static class CardSkinControls
                     refreshCards: false);
             };
             row.AddChild(delete);
+            delete.Disabled = preset.IsBundlePreset;
         }
 
         var close = CreatePresetActionButton(ModLocalization.Get(ModText.Close), 180);

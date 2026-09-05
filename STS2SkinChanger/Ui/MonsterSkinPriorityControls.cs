@@ -578,11 +578,17 @@ internal static partial class ContextualSkinControls
             row.AddChild(active);
             var name = new LineEdit
             {
-                Text = preset.Name,
+                Text = preset.DisplayName,
+                Editable = !preset.IsBundlePreset,
                 MaxLength = SkinService.MonsterSkinPresetNameMaxLength,
                 CustomMinimumSize = new Vector2(310, 38),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };
+            if (preset.IsBundlePreset)
+            {
+                name.AddThemeColorOverride("font_uneditable_color", new Color("efc850"));
+                name.TooltipText = ModLocalization.BundlePresetLocked;
+            }
             row.AddChild(name);
             var apply = CreateMonsterPresetActionButton(
                 preset.Active ? ModLocalization.Get(ModText.ActiveCardPreset) : ModLocalization.Get(ModText.ApplyCardPreset), 112);
@@ -601,6 +607,7 @@ internal static partial class ContextualSkinControls
                 screen, selector, overlay,
                 () => SkinService.RenameMonsterSkinPreset(categoryId, preset.Name, name.Text), false);
             row.AddChild(rename);
+            rename.Disabled = preset.IsBundlePreset;
             var delete = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.DeleteCardPreset), 112);
             var deleteArmed = false;
             delete.Pressed += () =>
@@ -617,6 +624,7 @@ internal static partial class ContextualSkinControls
                     () => SkinService.DeleteMonsterSkinPreset(categoryId, preset.Name), false);
             };
             row.AddChild(delete);
+            delete.Disabled = preset.IsBundlePreset;
         }
         var close = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.Close), 180);
         close.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;

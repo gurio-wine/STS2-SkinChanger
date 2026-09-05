@@ -8,6 +8,7 @@ internal sealed record CardSkinPriorityEntry(
 
 internal sealed class CardSkinPreset
 {
+    public bool AllOriginal { get; set; }
     public string Name { get; set; } = string.Empty;
 
     // Empty for presets written by versions before presets were scoped to a card category.
@@ -19,6 +20,13 @@ internal sealed class CardSkinPreset
 
     public Dictionary<string, string> Selections { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
+
+    internal CardSkinPreset Clone() => new()
+    {
+        Name = Name, CategoryId = CategoryId, AllOriginal = AllOriginal,
+        CardSkinPriorities = CardSkinPriorities.ToDictionary(p => p.Key, p => p.Value.ToList(), StringComparer.OrdinalIgnoreCase),
+        Selections = new(Selections, StringComparer.OrdinalIgnoreCase)
+    };
 }
 
 internal sealed record MonsterSkinPriorityEntry(
@@ -27,12 +35,20 @@ internal sealed record MonsterSkinPriorityEntry(
 
 internal sealed class MonsterSkinPreset
 {
+    public bool AllOriginal { get; set; }
     public string Name { get; set; } = string.Empty;
     public string CategoryId { get; set; } = string.Empty;
     public List<MonsterSkinPriorityEntry> Priority { get; set; } = [];
     public Dictionary<string, string> Selections { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public List<string> FollowingGroupIds { get; set; } = [];
+
+    internal MonsterSkinPreset Clone() => new()
+    {
+        Name = Name, CategoryId = CategoryId, AllOriginal = AllOriginal,
+        Priority = Priority.ToList(), Selections = new(Selections, StringComparer.OrdinalIgnoreCase),
+        FollowingGroupIds = FollowingGroupIds.ToList()
+    };
 }
 
 internal sealed class SkinConfig
@@ -69,6 +85,8 @@ internal sealed class SkinConfig
     public int CardPriorityDefaultsVersion { get; set; }
 
     public List<CardSkinPreset> CardSkinPresets { get; set; } = [];
+    public int CardPresetMigrationRepairVersion { get; set; }
+    public List<CardSkinPreset> ArchivedLegacyCardSkinPresets { get; set; } = [];
 
     // Active preset is now tracked independently for each card catalogue category. Keep the
     // single value below so old configuration files can be migrated without losing the active
@@ -150,6 +168,9 @@ internal sealed class SkinConfig
         copy.CardSkinPriorities = CardSkinPriorities.ToDictionary(
             pair => pair.Key, pair => pair.Value.ToList(), StringComparer.OrdinalIgnoreCase);
         copy.ActiveCardSkinPresets = new(ActiveCardSkinPresets, StringComparer.OrdinalIgnoreCase);
+        copy.CardSkinPresets = CardSkinPresets.Select(preset => preset.Clone()).ToList();
+        copy.ArchivedLegacyCardSkinPresets = ArchivedLegacyCardSkinPresets.Select(preset => preset.Clone()).ToList();
+        copy.MonsterSkinPresets = MonsterSkinPresets.Select(preset => preset.Clone()).ToList();
         copy.MonsterSkinPriorities = MonsterSkinPriorities.ToDictionary(
             pair => pair.Key, pair => pair.Value.ToList(), StringComparer.OrdinalIgnoreCase);
         copy.ActiveMonsterSkinPresets = new(ActiveMonsterSkinPresets, StringComparer.OrdinalIgnoreCase);
@@ -264,6 +285,7 @@ internal sealed class SkinConfig
                 .ToList(),
             StringComparer.OrdinalIgnoreCase);
         config.CardSkinPresets ??= [];
+        config.ArchivedLegacyCardSkinPresets ??= [];
         config.CardSkinPresets = config.CardSkinPresets
             .Where(preset => preset != null && !string.IsNullOrWhiteSpace(preset.Name))
             .Select(preset =>

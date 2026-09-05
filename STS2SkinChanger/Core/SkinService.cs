@@ -276,10 +276,12 @@ internal static partial class SkinService
                     catalog.GetRawCharacterOptions(groupId).Select(option => option.Id),
                     Config.CharacterSkinCompositions)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var hiddenBundleSources = BundlePresetPolicy.HiddenSources(Config, groupId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             return group.Options.Where(option =>
-                    option.IsComposition
+                    !hiddenBundleSources.Contains(option.Id) && (option.IsComposition
                         ? !option.IsSessionComposition
-                        : visibleRawIds.Contains(option.Id))
+                        : visibleRawIds.Contains(option.Id)))
                 .ToArray();
         }
     }
@@ -1141,6 +1143,8 @@ internal static partial class SkinService
                 SanitizeCardSelections();
                 MigrateLegacyCardSkinPresets();
                 SanitizeCardSkinPresets();
+                BundlePresetPolicy.Synchronize(Config, Catalog.CardGroups.Select(group => group.Id),
+                    Config.MonsterSkinCategoryGroups.Keys);
                 MountCardOverlay(Catalog.CardGroups
                     .Select(group => group.Id)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase));
@@ -1736,11 +1740,13 @@ internal static partial class SkinService
                 .Where(preset => preset.CategoryId?.Equals(
                     groupId,
                     StringComparison.OrdinalIgnoreCase) == true)
+                .OrderByDescending(preset => BundlePresetPolicy.IsOwned(preset.Name))
                 .Select(preset => new CardSkinPresetState(
                     preset.Name,
                     preset.Name.Equals(
                         GetActiveCardSkinPreset(groupId),
-                        StringComparison.OrdinalIgnoreCase)))
+                        StringComparison.OrdinalIgnoreCase),
+                    BundlePresetPolicy.IsOwned(preset.Name) ? GetPresetDisplayName(preset.Name) : null))
                 .ToArray();
         }
     }
@@ -1825,6 +1831,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
+            if (!CanRenameOrDeletePreset(currentName)) return false;
             var index = FindCardSkinPresetIndex(groupId, currentName);
             var normalizedName = NormalizeCardSkinPresetName(newName);
             if (index < 0 || normalizedName == null)
@@ -1875,6 +1882,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
+            if (!CanRenameOrDeletePreset(name)) return false;
             var index = FindCardSkinPresetIndex(groupId, name);
             if (index < 0)
             {
@@ -2166,9 +2174,11 @@ internal static partial class SkinService
             var active = Config.ActiveMonsterSkinPresets.GetValueOrDefault(categoryId);
             return Config.MonsterSkinPresets
                 .Where(preset => preset.CategoryId.Equals(categoryId, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(preset => BundlePresetPolicy.IsOwned(preset.Name))
                 .Select(preset => new MonsterSkinPresetState(
                     preset.Name,
-                    preset.Name.Equals(active, StringComparison.OrdinalIgnoreCase)))
+                    preset.Name.Equals(active, StringComparison.OrdinalIgnoreCase),
+                    BundlePresetPolicy.IsOwned(preset.Name) ? GetPresetDisplayName(preset.Name) : null))
                 .ToArray();
         }
     }
@@ -2231,6 +2241,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
+            if (!CanRenameOrDeletePreset(currentName)) return false;
             var index = FindMonsterSkinPresetIndex(categoryId, currentName);
             var normalized = NormalizeMonsterSkinPresetName(newName);
             if (normalized == null)
@@ -2275,6 +2286,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
+            if (!CanRenameOrDeletePreset(name)) return false;
             var index = FindMonsterSkinPresetIndex(categoryId, name);
             if (index < 0)
             {
@@ -2322,7 +2334,7 @@ internal static partial class SkinService
         var categoryId = preset.CategoryId;
         var currentGroupIds = Config.MonsterSkinCategoryGroups[categoryId]
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var safeSelections = preset.Selections
+        var safeSelections = BundlePresetPolicy.MonsterSelections(preset, currentGroupIds)
             .Where(pair => currentGroupIds.Contains(pair.Key))
             .ToDictionary(
                 pair => pair.Key,
@@ -2337,7 +2349,9 @@ internal static partial class SkinService
                         : SkinCatalog.BaseOptionId;
                 },
                 StringComparer.OrdinalIgnoreCase);
-        Config.MonsterSkinPriorities[categoryId] = preset.Priority.ToList();
+        Config.MonsterSkinPriorities[categoryId] = preset.AllOriginal
+            ? GetMonsterPriorityEntriesInternal(categoryId).Select(entry => entry with { Enabled = false }).ToList()
+            : preset.Priority.ToList();
         Config.Selections = MonsterSkinPresetPolicy.Apply(
             new MonsterSkinPresetSnapshot(
                 preset.CategoryId,
@@ -2347,7 +2361,7 @@ internal static partial class SkinService
             Config.Selections);
         foreach (var groupId in Config.MonsterSkinCategoryGroups[categoryId])
         {
-            var follows = preset.FollowingGroupIds.Contains(
+            var follows = !preset.AllOriginal && preset.FollowingGroupIds.Contains(
                 groupId, StringComparer.OrdinalIgnoreCase);
             Config.MonsterGroupsFollowingCategory.RemoveAll(candidate =>
                 candidate.Equals(groupId, StringComparison.OrdinalIgnoreCase));
@@ -6069,6 +6083,7 @@ internal static partial class SkinService
     private static string? NormalizeCardSkinPresetName(string name)
     {
         var normalized = name.Trim();
+        if (!CanRenameOrDeletePreset(normalized)) return null;
         if (normalized.Length == 0 || normalized.Any(char.IsControl))
         {
             LastError = "卡图预设名称不能为空。";
@@ -6087,6 +6102,7 @@ internal static partial class SkinService
     private static string? NormalizeMonsterSkinPresetName(string name)
     {
         var normalized = name.Trim();
+        if (!CanRenameOrDeletePreset(normalized)) return null;
         if (normalized.Length == 0 || normalized.Any(char.IsControl))
         {
             LastError = "怪物皮肤预设名称不能为空。";
@@ -6134,14 +6150,7 @@ internal static partial class SkinService
         };
     }
 
-    private static MonsterSkinPreset CloneMonsterSkinPreset(MonsterSkinPreset preset) => new()
-    {
-        Name = preset.Name,
-        CategoryId = preset.CategoryId,
-        Priority = preset.Priority.ToList(),
-        Selections = new Dictionary<string, string>(preset.Selections, StringComparer.OrdinalIgnoreCase),
-        FollowingGroupIds = preset.FollowingGroupIds.ToList()
-    };
+    private static MonsterSkinPreset CloneMonsterSkinPreset(MonsterSkinPreset preset) => preset.Clone();
 
     private static bool SaveMonsterPresetConfiguration(
         string operation,
@@ -6227,15 +6236,7 @@ internal static partial class SkinService
         };
     }
 
-    private static CardSkinPreset CloneCardSkinPreset(CardSkinPreset preset) => new()
-    {
-        Name = preset.Name,
-        CategoryId = preset.CategoryId,
-        CardSkinPriorities = CloneCardSkinPriorities(preset.CardSkinPriorities),
-        Selections = new Dictionary<string, string>(
-            preset.Selections,
-            StringComparer.OrdinalIgnoreCase)
-    };
+    private static CardSkinPreset CloneCardSkinPreset(CardSkinPreset preset) => preset.Clone();
 
     private static Dictionary<string, List<CardSkinPriorityEntry>> CloneCardSkinPriorities(
         IReadOnlyDictionary<string, List<CardSkinPriorityEntry>> priorities) =>
@@ -6315,88 +6316,14 @@ internal static partial class SkinService
 
     private static void MigrateLegacyCardSkinPresets()
     {
-        if (Catalog == null || Catalog.CardGroups.Count == 0)
-        {
-            if (Catalog?.CardGroups.Count == 0 && Config.CardSkinPresets.Any(preset =>
-                    string.IsNullOrWhiteSpace(preset.CategoryId)))
-            {
-                ModLog.Warn("当前没有可用的卡牌皮肤分类，暂不拆分旧版卡图预设，以免丢失设置。");
-            }
-
-            return;
-        }
-
-        var legacyPresets = Config.CardSkinPresets
-            .Where(preset => string.IsNullOrWhiteSpace(preset.CategoryId))
-            .ToArray();
-        if (legacyPresets.Length == 0)
-        {
-            return;
-        }
-
-        var migrated = Config.CardSkinPresets
-            .Where(preset => !string.IsNullOrWhiteSpace(preset.CategoryId))
-            .ToList();
-        var migratedCount = 0;
-        foreach (var legacy in legacyPresets)
-        {
-            foreach (var group in Catalog.CardGroups)
-            {
-                var name = BuildMigratedPresetName(group.DisplayName, legacy.Name);
-                var disambiguator = 2;
-                while (migrated.Any(preset =>
-                           preset.CategoryId?.Equals(group.Id, StringComparison.OrdinalIgnoreCase) == true &&
-                           preset.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    name = BuildMigratedPresetName(
-                        group.DisplayName,
-                        $"{legacy.Name}-{disambiguator++}");
-                }
-
-                var priority = legacy.CardSkinPriorities.TryGetValue(group.Id, out var entries)
-                    ? entries.ToList()
-                    : GetCardPriorityEntriesInternal(group).ToList();
-                migrated.Add(new CardSkinPreset
-                {
-                    Name = name,
-                    CategoryId = group.Id,
-                    CardSkinPriorities = new Dictionary<string, List<CardSkinPriorityEntry>>(
-                        StringComparer.OrdinalIgnoreCase)
-                    {
-                        [group.Id] = priority
-                    },
-                    Selections = legacy.Selections
-                        .Where(pair => CardSelectionBelongsToGroup(pair.Key, group.Id))
-                        .ToDictionary(
-                            pair => pair.Key,
-                            pair => pair.Value,
-                            StringComparer.OrdinalIgnoreCase)
-                });
-                migratedCount++;
-
-                if (legacy.Name.Equals(
-                        Config.ActiveCardSkinPreset,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    SetActiveCardSkinPreset(group.Id, name);
-                }
-            }
-        }
-
-        Config.CardSkinPresets = migrated;
-        // The old value represented a whole-deck preset. Once split, only the per-category map
-        // is authoritative and the legacy value must not make another category appear active.
-        Config.ActiveCardSkinPreset = null;
-        ModLog.Info($"已将 {legacyPresets.Length} 个整套卡组预设拆分为 {migratedCount} 个分类预设。");
-    }
-
-    private static string BuildMigratedPresetName(string categoryName, string presetName)
-    {
-        var prefix = string.IsNullOrWhiteSpace(categoryName) ? "卡牌" : categoryName.Trim();
-        // Migration names intentionally keep the complete original name. The 40-character input
-        // limit applies to newly created presets; trimming here would make two old presets
-        // indistinguishable and could silently discard one during collision handling.
-        return $"{prefix}-{presetName}";
+        if (Catalog == null || Catalog.CardGroups.Count == 0) return;
+        var cardGroups = ModelDb.AllCards.DistinctBy(IndividualCardSelectionKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(IndividualCardSelectionKey, card => GetCardLookup(card).GroupId, StringComparer.OrdinalIgnoreCase);
+        var result = CardPresetMigrationPolicy.Run(Config,
+            Catalog.CardGroups.ToDictionary(group => group.Id, group => group.DisplayName, StringComparer.OrdinalIgnoreCase), cardGroups);
+        if (result.Split > 0 || result.Archived > 0)
+            ModLog.Info($"卡牌预设兼容修复：按实际旧数据拆分 {result.Split} 项，归档重复回填副本 {result.Archived} 项；" +
+                        "归档保存在 ArchivedLegacyCardSkinPresets，未重置当前卡面选择。");
     }
 
     private static string RuntimeResourceKey(string groupId, string resourcePath) =>
@@ -7276,11 +7203,21 @@ internal sealed record CardPriorityOptionState(
 
 internal sealed record CardSkinPresetState(
     string Name,
-    bool Active);
+    bool Active,
+    string? BundleName = null)
+{
+    public string DisplayName => BundleName ?? Name;
+    public bool IsBundlePreset => BundleName != null;
+}
 
 internal sealed record MonsterSkinPresetState(
     string Name,
-    bool Active);
+    bool Active,
+    string? BundleName = null)
+{
+    public string DisplayName => BundleName ?? Name;
+    public bool IsBundlePreset => BundleName != null;
+}
 
 internal sealed record MonsterPriorityOptionState(
     string OptionId,

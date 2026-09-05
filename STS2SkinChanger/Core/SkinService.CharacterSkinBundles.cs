@@ -9,6 +9,18 @@ internal sealed record SkinPresetCategory(string Id, string DisplayName, IReadOn
 
 internal static partial class SkinService
 {
+    internal static string GetPresetDisplayName(string key) => BundlePresetPolicy.DisplayName(Config, key);
+
+    private static bool CanRenameOrDeletePreset(string key)
+    {
+        if (!BundlePresetPolicy.IsOwned(key)) return true;
+        LastError = ModLocalization.BundlePresetLocked;
+        return false;
+    }
+
+    internal static IReadOnlyList<SkinOption> GetCharacterSkinBundleSourceOptions(string groupId) =>
+        Catalog?.Groups.FirstOrDefault(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.Where(option => !option.IsSessionComposition).ToArray() ?? [];
     private static SkinConfig? _characterSkinBundleRunSnapshot;
     private static HashSet<string> _characterSkinBundleRunVisualGroups =
         new(StringComparer.OrdinalIgnoreCase);
@@ -110,6 +122,7 @@ internal static partial class SkinService
                 return false;
             }
             var next = Config.CloneForBundleTransaction();
+            if (index >= 0) normalized.Id = next.CharacterSkinBundles[index].Id;
             if (index < 0)
             {
                 next.CharacterSkinBundles.Add(normalized);
@@ -123,6 +136,8 @@ internal static partial class SkinService
                     next.ActiveCharacterSkinBundles[normalized.CharacterGroupId] = normalized.Name;
                 }
             }
+            BundlePresetPolicy.Synchronize(next, Catalog?.CardGroups.Select(group => group.Id) ?? [],
+                next.MonsterSkinCategoryGroups.Keys);
             return CommitBundleConfiguration(next, () => { }, () => { }, () => { });
         }
     }
@@ -138,6 +153,7 @@ internal static partial class SkinService
                 return false;
             }
             var next = Config.CloneForBundleTransaction();
+            BundlePresetPolicy.RemoveOwnedPresets(next, next.CharacterSkinBundles[index]);
             next.CharacterSkinBundles.RemoveAt(index);
             if (string.Equals(next.ActiveCharacterSkinBundles.GetValueOrDefault(groupId), name,
                     StringComparison.OrdinalIgnoreCase))
@@ -513,7 +529,12 @@ internal static partial class SkinService
 
     private static void ApplyCardPresetSettings(CardSkinGroup group, CardSkinPreset preset)
     {
-        if (preset.CardSkinPriorities.TryGetValue(group.Id, out var requestedPriority))
+        if (preset.AllOriginal)
+        {
+            Config.CardSkinPriorities[group.Id] = GetCardPriorityEntriesInternal(group)
+                .Select(entry => entry with { Enabled = false }).ToList();
+        }
+        else if (preset.CardSkinPriorities.TryGetValue(group.Id, out var requestedPriority))
         {
             Config.CardSkinPriorities[group.Id] = requestedPriority.ToList();
         }
@@ -521,7 +542,7 @@ internal static partial class SkinService
         {
             Config.CardSkinPriorities.Remove(group.Id);
         }
-        ReplaceCardSelectionsForGroup(group.Id, preset.Selections);
+        ReplaceCardSelectionsForGroup(group.Id, BundlePresetPolicy.CardSelections(preset, group.Id));
         Config.CardPriorityDefaultsVersion = 1;
         SetActiveCardSkinPreset(group.Id, preset.Name);
         GetCardPriorityEntriesInternal(group);

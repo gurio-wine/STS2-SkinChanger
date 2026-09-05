@@ -2,6 +2,8 @@ namespace STS2SkinChanger.Core;
 
 internal sealed class CharacterSkinBundle
 {
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public bool HideSources { get; set; } = true;
     public string Name { get; set; } = string.Empty;
     public string CharacterGroupId { get; set; } = string.Empty;
     public string CharacterOptionId { get; set; } = "__base__";
@@ -69,6 +71,8 @@ internal static class CharacterSkinBundlePolicy
                              !string.IsNullOrWhiteSpace(bundle.CharacterGroupId))
             .Select(bundle => new CharacterSkinBundle
             {
+                Id = string.IsNullOrWhiteSpace(bundle.Id) ? Guid.NewGuid().ToString("N") : bundle.Id.Trim(),
+                HideSources = bundle.HideSources,
                 Name = bundle.Name.Trim(),
                 CharacterGroupId = bundle.CharacterGroupId.Trim().ToLowerInvariant(),
                 CharacterOptionId = string.IsNullOrWhiteSpace(bundle.CharacterOptionId)
@@ -115,6 +119,8 @@ internal static class CharacterSkinBundlePolicy
     internal static CharacterSkinBundle Clone(CharacterSkinBundle bundle) =>
         new()
         {
+            Id = bundle.Id,
+            HideSources = bundle.HideSources,
             Name = bundle.Name,
             CharacterGroupId = bundle.CharacterGroupId,
             CharacterOptionId = bundle.CharacterOptionId,

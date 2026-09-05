@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 2 && args[0] == "--audit-card-presets")
+{
+    CardPresetMigrationTests.Audit(args[1]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--audit-skin-behavior")
 {
     ScopedSkinBehaviorTests.Audit(args[1]);
@@ -89,6 +95,8 @@ AppearanceControlContractTests.Run();
 ProviderLookupTests.Run();
 DuplicateProviderLoadingTests.Run();
 CreatureVisualLifecycleTests.Run();
+BundlePresetTests.Run();
+CardPresetMigrationTests.Run();
 CharacterSkinBundleContractTests.Run();
 CharacterSkinPopupContractTests.Run();
 ScrollListRebuildContractTests.Run();

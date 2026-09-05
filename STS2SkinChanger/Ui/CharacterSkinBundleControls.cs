@@ -155,6 +155,8 @@ internal static class CharacterSkinBundleControls
             CharacterGroupId = state.GroupId,
             CharacterOptionId = SkinService.Config.GetSelection(state.GroupId)
         } : CharacterSkinBundlePolicy.Clone(bundle);
+        if (bundle == null) BundlePresetPolicy.InitializeDraft(state.Draft,
+            state.CardCategories.Select(category => category.Id), state.MonsterCategories.Select(category => category.Id));
         state.Dirty = bundle == null;
         state.PendingDelete = false;
         state.Status = string.Empty;
@@ -162,6 +164,9 @@ internal static class CharacterSkinBundleControls
 
     private static void BuildEditor(EditorState state)
     {
+        state.CardCategories = SkinService.GetCardPresetCategories();
+        state.MonsterCategories = SkinService.GetMonsterPresetCategories();
+        state.RefreshPresetNames.Clear();
         var previousScroll = state.Scroll.ScrollVertical;
         foreach (var child in state.Content.GetChildren())
         {
@@ -204,7 +209,12 @@ internal static class CharacterSkinBundleControls
         };
         CharacterSkinCompositionControls.ApplyLineEditTheme(name);
         name.AddThemeFontSizeOverride("font_size", 20);
-        name.TextChanged += value => { state.Draft.Name = value; MarkDirty(state); };
+        name.TextChanged += value =>
+        {
+            state.Draft.Name = value;
+            MarkDirty(state);
+            foreach (var update in state.RefreshPresetNames) update();
+        };
         state.Content.AddChild(name);
 
         var fields = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -213,7 +223,7 @@ internal static class CharacterSkinBundleControls
         fields.AddChild(CreateLabel(ModLocalization.Get(ModText.BundleCharacterSkin), 21));
         var skins = CreateOptions();
         skins.Name = "BundleCharacterSkin";
-        var options = SkinService.GetCharacterSkinOptions(state.GroupId)
+        var options = SkinService.GetCharacterSkinBundleSourceOptions(state.GroupId)
             .Select(option => (option.Id, Name: ModLocalization.DisplayOptionName(option.Name))).ToList();
         options.Insert(0, (SkinCatalog.BaseOptionId, ModLocalization.Get(ModText.GameDefault)));
         var selected = options.FindIndex(option => option.Id.Equals(state.Draft.CharacterOptionId, StringComparison.OrdinalIgnoreCase));
@@ -233,10 +243,20 @@ internal static class CharacterSkinBundleControls
         skins.Select(selected);
         skins.ItemSelected += index => { state.Draft.CharacterOptionId = options[(int)index].Id; MarkDirty(state); };
         fields.AddChild(skins);
+        var hideSource = new CheckBox
+        {
+            Text = ModLocalization.BundleHideSource,
+            ButtonPressed = state.Draft.HideSources,
+            CustomMinimumSize = new Vector2(0f, 38f)
+        };
+        ContextualSkinControls.ApplyGameTheme(hideSource);
+        hideSource.AddThemeFontSizeOverride("font_size", 18);
+        hideSource.Toggled += value => { state.Draft.HideSources = value; MarkDirty(state); };
+        fields.AddChild(hideSource);
         AddPresetSection(state, fields, ModText.BundleCardPresets, state.CardCategories, state.Draft.CardPresetNames);
         AddPresetSection(state, fields, ModText.BundleMonsterPresets, state.MonsterCategories, state.Draft.MonsterPresetNames);
 
-        var hint = CreateLabel(ModLocalization.Get(ModText.BundleReferenceHint), 16);
+        var hint = CreateLabel(ModLocalization.BundlePresetHint + "\n" + ModLocalization.Get(ModText.BundleReferenceHint), 16);
         hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         hint.AddThemeColorOverride("font_color", new Color("bbb4c0"));
         state.Content.AddChild(hint);
@@ -308,30 +328,39 @@ internal static class CharacterSkinBundleControls
             var picker = CreateOptions();
             picker.Name = "BundlePreset";
             picker.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-            picker.AddItem(ModLocalization.Get(ModText.BundleUnchanged));
-            var names = category.PresetNames.ToList();
+            var ownKey = BundlePresetPolicy.PresetKey(state.Draft);
+            var names = new[] { ownKey }.Concat(category.PresetNames.Where(BundlePresetPolicy.IsOwned))
+                .Concat(new[] { string.Empty }).Concat(category.PresetNames.Where(key => !BundlePresetPolicy.IsOwned(key)))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var current = references.GetValueOrDefault(category.Id);
-            var currentIndex = names.FindIndex(value => value.Equals(current, StringComparison.OrdinalIgnoreCase));
+            var currentIndex = names.FindIndex(value => value.Equals(current ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+            string Display(string key) => key == ownKey
+                ? (string.IsNullOrWhiteSpace(state.Draft.Name) ? ModLocalization.Get(ModText.NewBundle) : state.Draft.Name.Trim())
+                : key.Length == 0 ? ModLocalization.Get(ModText.BundleUnchanged) : SkinService.GetPresetDisplayName(key);
             for (var i = 0; i < names.Count; i++)
             {
-                picker.AddItem(names[i]);
+                picker.AddItem(Display(names[i]));
+                picker.SetItemMetadata(i, names[i]);
             }
             if (current != null && currentIndex < 0)
             {
                 picker.AddItem(current + " · " + ModLocalization.Get(ModText.CharacterSkinSourceUnavailable));
                 names.Add(current);
                 currentIndex = names.Count - 1;
+                picker.SetItemMetadata(currentIndex, current);
             }
-            picker.Select(currentIndex + 1);
+            picker.Select(currentIndex);
+            PresetChoiceColoring.Attach(picker);
+            state.RefreshPresetNames.Add(() => picker.SetItemText(0, Display(ownKey)));
             picker.ItemSelected += index =>
             {
-                if (index == 0)
+                if (names[(int)index].Length == 0)
                 {
                     references.Remove(category.Id);
                 }
                 else
                 {
-                    references[category.Id] = names[(int)index - 1];
+                    references[category.Id] = names[(int)index];
                 }
                 MarkDirty(state);
             };
@@ -477,5 +506,6 @@ internal static class CharacterSkinBundleControls
         public Label StatusLabel = null!;
         public IReadOnlyList<SkinPresetCategory> CardCategories = [];
         public IReadOnlyList<SkinPresetCategory> MonsterCategories = [];
+        public List<Action> RefreshPresetNames = [];
     }
 }
