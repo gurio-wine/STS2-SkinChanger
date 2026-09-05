@@ -9,7 +9,7 @@ internal partial class DraggableSkinControl : Node
 {
     private const string BindingName = "SkinChangerDragBinding";
     private Control _screen = null!;
-    private HBoxContainer _target = null!;
+    private Control _target = null!;
     private Button _handle = null!;
     private Action _defaultPlacement = null!;
     private Func<(float X, float Y)?> _loadPosition = null!;
@@ -29,6 +29,16 @@ internal partial class DraggableSkinControl : Node
     internal static void Attach(
         Control screen, HBoxContainer target, Func<(float X, float Y)?> loadPosition,
         Action<float, float> savePosition, Action resetPosition, Action defaultPlacement)
+        => AttachCore(screen, target, null, loadPosition, savePosition, resetPosition, defaultPlacement);
+
+    internal static void AttachWithHandle(
+        Control screen, Control target, Button handle, Func<(float X, float Y)?> loadPosition,
+        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement)
+        => AttachCore(screen, target, handle, loadPosition, savePosition, resetPosition, defaultPlacement);
+
+    private static void AttachCore(
+        Control screen, Control target, Button? handle, Func<(float X, float Y)?> loadPosition,
+        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement)
     {
         var binding = target.GetNodeOrNull<DraggableSkinControl>(BindingName);
         if (binding != null)
@@ -42,6 +52,7 @@ internal partial class DraggableSkinControl : Node
             Name = BindingName,
             _screen = screen,
             _target = target,
+            _handle = handle!,
             _loadPosition = loadPosition,
             _savePosition = savePosition,
             _resetPosition = resetPosition,
@@ -53,20 +64,23 @@ internal partial class DraggableSkinControl : Node
 
     private void Initialize()
     {
-        _handle = new Button
+        if (_handle == null)
         {
-            Name = "SkinChangerDragHandle",
-            Text = "⋮",
-            CustomMinimumSize = new Vector2(24f, 44f),
-            FocusMode = Control.FocusModeEnum.None,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-            MouseDefaultCursorShape = Control.CursorShape.Move
-        };
-        ContextualSkinControls.ApplyGameTheme(_handle);
-        _handle.AddThemeFontSizeOverride("font_size", 22);
-        _target.AddThemeConstantOverride("separation", 4);
-        _target.AddChild(_handle);
-        _target.MoveChild(_handle, 0);
+            _handle = new Button
+            {
+                Name = "SkinChangerDragHandle",
+                Text = "⋮",
+                CustomMinimumSize = new Vector2(24f, 44f),
+                FocusMode = Control.FocusModeEnum.None,
+                MouseFilter = Control.MouseFilterEnum.Stop,
+                MouseDefaultCursorShape = Control.CursorShape.Move
+            };
+            ContextualSkinControls.ApplyGameTheme(_handle);
+            _handle.AddThemeFontSizeOverride("font_size", 22);
+            _target.AddThemeConstantOverride("separation", 4);
+            _target.AddChild(_handle);
+            _target.MoveChild(_handle, 0);
+        }
         _handle.GuiInput += HandleInput;
         _target.VisibilityChanged += CancelHiddenDrag;
         _target.Resized += ClampAfterLayout;
@@ -148,7 +162,7 @@ internal partial class DraggableSkinControl : Node
 
     private static NormalizedControlPosition ApplyPosition(
         Control screen,
-        HBoxContainer target,
+        Control target,
         float x,
         float y,
         ref bool placing)
@@ -159,6 +173,24 @@ internal partial class DraggableSkinControl : Node
         placing = true;
         try
         {
+            if (target.GetParent() is CanvasItem parent && parent != screen)
+            {
+                // A preview can stay under InfoPanel (and inherit its visibility/fade), while
+                // saved drag coordinates still belong to the entire screen, like other grips.
+                var screenTransform = screen.GetGlobalTransformWithCanvas();
+                if (!screenTransform.IsFinite() || Mathf.IsZeroApprox(screenTransform.Determinant())) return position;
+                var parentToScreen = screenTransform.AffineInverse() *
+                                     parent.GetGlobalTransformWithCanvas();
+                if (ResolveNestedPlacement(size, screen.Size, parentToScreen, new(x, y)) is not { } placement)
+                    return position;
+                var (topLeft, normalized) = placement;
+                target.AnchorLeft = target.AnchorRight = target.AnchorTop = target.AnchorBottom = 0;
+                target.OffsetLeft = topLeft.X;
+                target.OffsetTop = topLeft.Y;
+                target.OffsetRight = topLeft.X + size.X;
+                target.OffsetBottom = topLeft.Y + size.Y;
+                return new NormalizedControlPosition(normalized.X, normalized.Y);
+            }
             target.AnchorLeft = target.AnchorRight = position.X;
             target.AnchorTop = target.AnchorBottom = position.Y;
             target.OffsetLeft = -size.X / 2f;
@@ -171,6 +203,25 @@ internal partial class DraggableSkinControl : Node
             placing = false;
         }
         return position;
+    }
+
+    internal static (Vector2 TopLeft, Vector2 Normalized)? ResolveNestedPlacement(
+        Vector2 size, Vector2 screenSize, Transform2D parentToScreen, Vector2 desired)
+    {
+        if (!parentToScreen.IsFinite() || Mathf.IsZeroApprox(parentToScreen.Determinant()) ||
+            !size.IsFinite() || !screenSize.IsFinite() || screenSize.X <= 0 || screenSize.Y <= 0) return null;
+        var screenBounds = parentToScreen * new Rect2(Vector2.Zero, size);
+        var position = DraggableControlPlacementPolicy.ClampNormalized(desired.X, desired.Y,
+            screenSize.X, screenSize.Y, screenBounds.Size.X, screenBounds.Size.Y);
+        var normalized = new Vector2(position.X, position.Y);
+        var center = parentToScreen.AffineInverse() * (normalized * screenSize);
+        return (center - size / 2, normalized);
+    }
+
+    internal static void RefreshPlacement(Control target)
+    {
+        if (target.GetNodeOrNull<DraggableSkinControl>(BindingName) is { _dragging: false } binding)
+            binding.RestorePosition();
     }
 
     private void RestorePosition()
