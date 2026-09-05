@@ -15,9 +15,9 @@ internal static class StandaloneModelPreviewTests
         var layout = AccessTools.Method(controls, "ResolveLayout");
         foreach (var (info, screen, expected) in new (Rect2, Rect2, Rect2?)[]
         {
-            (new(10, 20, 500, 429), new(0, 0, 1920, 1080), new(514, 20, 324, 429)),
-            (new(10, -24, 500, 858), new(0, 0, 1920, 1080), new(514, -24, 632, 858)),
-            (new(10, 20, 500, 429), new(0, 0, 700, 1080), new(514, 20, 162, 429)),
+            (new(10, 20, 500, 429), new(0, 0, 1920, 1080), new(512, 20, 322, 429)),
+            (new(10, -24, 500, 858), new(0, 0, 1920, 1080), new(512, -24, 630, 858)),
+            (new(10, 20, 500, 429), new(0, 0, 700, 1080), new(512, 20, 164, 429)),
             (new(10, 20, 500, 429), new(0, 0, 560, 1080), null),
             (new(), new(0, 0, 1920, 1080), null),
             (new(float.NaN, 0, 500, 429), new(0, 0, 1920, 1080), null)
@@ -63,7 +63,7 @@ internal static class StandaloneModelPreviewTests
             "开始游戏或选角界面隐藏后必须停用并清理预览，不能让隐藏模型继续运行。");
         CheckPreviewPosition(assembly);
         CheckNestedDragging(assembly);
-        Console.WriteLine("Standalone model preview passed: compact full-height grip, independent saved position, native-manager exclusion and shared renderer.");
+        Console.WriteLine("Standalone model preview passed: compact grip spacing, independent saved position, native-manager exclusion and shared renderer.");
     }
 
     private static void CheckNestedDragging(Assembly assembly)

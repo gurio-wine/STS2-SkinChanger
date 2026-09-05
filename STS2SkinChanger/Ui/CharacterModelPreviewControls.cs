@@ -10,7 +10,7 @@ internal static class CharacterModelPreviewControls
 {
     private const string PanelName = "STS2CharacterModelPreview";
     internal const float GripWidth = 12;
-    internal const float Gap = 4;
+    internal const float Gap = 2;
     internal const float ModelInset = GripWidth + Gap;
 
     internal static bool ShouldShow(IEnumerable<Mod> mods, bool nativeCooperationActive) =>
@@ -104,11 +104,14 @@ internal partial class CharacterModelPreviewPanel : Control
             FocusMode = FocusModeEnum.None,
             MouseFilter = MouseFilterEnum.Stop,
             MouseDefaultCursorShape = CursorShape.Move,
-            AnchorBottom = 1,
+            AnchorTop = .1f,
+            AnchorBottom = .9f,
+            // Match the backdrop opacity without tinting hover feedback or the model.
+            SelfModulate = new Color(1, 1, 1, _background.Modulate.A * _background.SelfModulate.A),
             OffsetRight = CharacterModelPreviewControls.GripWidth
         };
-        foreach (var (state, color) in new[] { ("normal", "000000b8"), ("hover", "161616eb"),
-                     ("pressed", "303030f5"), ("focus", "161616eb"), ("disabled", "00000070") })
+        foreach (var (state, color) in new[] { ("normal", "000000"), ("hover", "161616"),
+                     ("pressed", "303030"), ("focus", "161616"), ("disabled", "000000") })
             _dragHandle.AddThemeStyleboxOverride(state, new StyleBoxFlat
             {
                 BgColor = new Color(color),
