@@ -296,38 +296,38 @@ internal static class CharacterAppearanceRuntime
 
                 if (expectedScopeLease.HasValue)
                 {
-                    return TrackCombatScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                    return TrackCurrentRoomScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
                         expectedScopeLease.Value,
                         groupIds,
                         runEnvironmentProviders,
                         reason,
                         out var scopeLease)
                         ? scopeLease
-                        : 0, refreshCurrentRoom);
+                        : 0, refreshCurrentRoom, activeRun);
                 }
 
-                return TrackCombatScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+                return TrackCurrentRoomScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                     groupIds,
                     runEnvironmentProviders,
-                    reason), refreshCurrentRoom);
+                    reason), refreshCurrentRoom, activeRun);
             }
 
             if (expectedScopeLease.HasValue)
             {
-                return TrackCombatScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
+                return TrackCurrentRoomScopeLease(SkinService.TryFocusRuntimeProviderBehaviorsOnGroups(
                     expectedScopeLease.Value,
                     groupIds,
                     runEnvironmentProviderIds: [],
                     reason,
                     out var scopeLease)
                     ? scopeLease
-                    : 0, refreshCurrentRoom);
+                    : 0, refreshCurrentRoom, activeRun);
             }
 
-            return TrackCombatScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
+            return TrackCurrentRoomScopeLease(SkinService.FocusRuntimeProviderBehaviorsOnGroups(
                 groupIds,
                 runEnvironmentProviderIds: [],
-                reason), refreshCurrentRoom);
+                reason), refreshCurrentRoom, activeRun);
         }
         catch (Exception exception)
         {
@@ -336,14 +336,22 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
-    private static long TrackCombatScopeLease(long scopeLease, bool refreshCurrentRoom)
+    private static long TrackCurrentRoomScopeLease(long scopeLease, bool refreshCurrentRoom, NRun? run)
     {
-        // A newly created room can claim its provider scope before the outgoing combat exits.
-        // Only an explicit refresh of that combat may renew its cleanup lease; never transfer
-        // ownership of a merchant/event room to the old combat merely because it is still alive.
-        if (scopeLease != 0 && _combatRuntimeScopeActive && refreshCurrentRoom)
+        // New rooms can claim their provider scope before the outgoing room exits. Only an
+        // explicit hot reload renews the current room's cleanup lease; new-room creation must
+        // never transfer ownership back to an outgoing combat or merchant that is still alive.
+        if (scopeLease != 0 && refreshCurrentRoom)
         {
-            _combatRuntimeScopeLease = scopeLease;
+            if (_combatRuntimeScopeActive)
+            {
+                _combatRuntimeScopeLease = scopeLease;
+            }
+
+            if (run != null && RunRoomContainerField?.GetValue(run) is NSceneContainer container)
+            {
+                RoomRuntimeScopeOwnership.RefreshTree(container.CurrentScene, scopeLease);
+            }
         }
 
         return scopeLease;

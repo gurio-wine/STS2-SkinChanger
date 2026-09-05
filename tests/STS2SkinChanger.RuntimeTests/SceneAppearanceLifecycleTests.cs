@@ -11,6 +11,7 @@ internal static class SceneAppearanceLifecycleTests
     public static void Run()
     {
         CheckOutgoingCombatCannotOwnIncomingShop();
+        CheckMerchantRoomScopeOwnership();
         CheckHealthAwareIdle();
         CheckUninitializedRunRoom();
         Console.WriteLine("Scene appearance lifecycle passed: shop ownership and health-aware idle.");
@@ -37,7 +38,7 @@ internal static class SceneAppearanceLifecycleTests
             lease.SetValue(null, combatLease);
             var merchantPrefix = assembly.GetType("STS2SkinChanger.Ui.MerchantRoomCreateAppearancePatch", true)!
                 .GetMethod("Prefix", Static)!;
-            merchantPrefix.Invoke(null, null);
+            merchantPrefix.Invoke(null, new object?[merchantPrefix.GetParameters().Length]);
             var shopScope = scope.GetValue(null);
             Require(!ReferenceEquals(savedScope, shopScope) && (long)lease.GetValue(null)! == combatLease,
                 "商店创建时不能把新商店的清理权限交给尚未退出的战斗房间。");
@@ -51,7 +52,7 @@ internal static class SceneAppearanceLifecycleTests
                 [new[] { "merchant" }, Array.Empty<string>(), "test preview"])!;
             active.SetValue(null, true);
             lease.SetValue(null, combatLease);
-            merchantPrefix.Invoke(null, null);
+            merchantPrefix.Invoke(null, new object?[merchantPrefix.GetParameters().Length]);
             shopScope = scope.GetValue(null);
             runtime.GetMethod("ClearCombatRuntimeGroups", Static)!.Invoke(null, null);
             Require(ReferenceEquals(shopScope, scope.GetValue(null)),
@@ -80,6 +81,91 @@ internal static class SceneAppearanceLifecycleTests
             scope.SetValue(null, savedScope);
         }
     }
+
+    private static void CheckMerchantRoomScopeOwnership()
+    {
+        var assembly = typeof(Entry).Assembly;
+        var ownership = assembly.GetType("STS2SkinChanger.Ui.RoomRuntimeScopeOwnership")
+            ?? throw new InvalidOperationException("商人退出缺少房间所有权检查，旧商店会停用新商店的皮肤行为。");
+        var record = ownership.GetMethod("Record", Static)!;
+        var refresh = ownership.GetMethod("Refresh", Static)!;
+        var release = ownership.GetMethod("Release", Static)!;
+        var service = assembly.GetType("STS2SkinChanger.Core.SkinService", true)!;
+        var scope = service.GetField("_runtimeProviderBehaviorScope", Static)!;
+        var focus = service.GetMethod("FocusRuntimeProviderBehaviorsOnGroups", Static)!;
+        var savedScope = scope.GetValue(null);
+        long Claim(string group) => (long)focus.Invoke(null,
+            [new[] { group }, Array.Empty<string>(), "test room ownership"])!;
+        try
+        {
+            foreach (var (outgoing, incoming) in new[]
+            {
+                ("merchant", "merchant"),
+                ("merchant", "monster:test"),
+                ("fake_merchant_monster", "merchant"),
+                ("fake_merchant_monster", "fake_merchant_monster")
+            })
+            {
+                var oldRoom = new object();
+                var newRoom = new object();
+                record.Invoke(null, [oldRoom, Claim(outgoing)]);
+                record.Invoke(null, [newRoom, Claim(incoming)]);
+                var incomingScope = scope.GetValue(null);
+                release.Invoke(null, [oldRoom]);
+                Require(ReferenceEquals(incomingScope, scope.GetValue(null)),
+                    $"{outgoing} 退出不能停用提前创建的 {incoming}，即使两房间使用相同提供者。");
+                release.Invoke(null, [newRoom]);
+                Require(!ReferenceEquals(incomingScope, scope.GetValue(null)),
+                    "当前商人房间正常退出仍须释放范围，不能禁用所有清理来绕过问题。");
+                var clearedScope = scope.GetValue(null);
+                release.Invoke(null, [newRoom]);
+                Require(ReferenceEquals(clearedScope, scope.GetValue(null)), "重复退出不得再次清理范围。");
+            }
+
+            var activeRoom = new object();
+            record.Invoke(null, [activeRoom, Claim("merchant")]);
+            refresh.Invoke(null, [activeRoom, Claim("merchant")]);
+            var refreshedScope = scope.GetValue(null);
+            release.Invoke(null, [activeRoom]);
+            Require(!ReferenceEquals(refreshedScope, scope.GetValue(null)),
+                "当前商店切肤刷新之后，正常退出仍必须释放最新范围。");
+
+            var unownedPreview = new object();
+            refresh.Invoke(null, [unownedPreview, Claim("merchant")]);
+            record.Invoke(null, [unownedPreview, 0L]);
+            var liveScope = scope.GetValue(null);
+            release.Invoke(null, [unownedPreview]);
+            Require(ReferenceEquals(liveScope, scope.GetValue(null)),
+                "图鉴、未登记房间或失败的范围创建不能获取局内房间的清理权限。");
+        }
+        finally
+        {
+            scope.SetValue(null, savedScope);
+        }
+
+        // The state-machine tests above need no native Godot process. Check that the real
+        // Harmony boundaries actually use it, including both possible merchant Create results.
+        foreach (var patchName in new[] { "MerchantRoomPreviewExitTreePatch", "FakeMerchantPreviewExitTreePatch" })
+        {
+            var exit = assembly.GetType("STS2SkinChanger.Ui." + patchName, true)!.GetMethod("Postfix", Static)!;
+            Require(Calls(exit, release), patchName + " 必须按房间所有权退出。");
+        }
+        var create = assembly.GetType("STS2SkinChanger.Ui.MerchantRoomCreateAppearancePatch", true)!;
+        Require(create.GetMethod("Prefix", Static)!.GetParameters().Any(p => p.Name == "__state" && p.IsOut),
+            "商店创建前取得的范围必须通过 Harmony __state 交给实际创建的房间。");
+        Require(PatchProcessor.GetOriginalInstructions(create.GetMethod("Postfix", Static)!)
+                .Count(instruction => Equals(instruction.operand, record)) == 2,
+            "预加载回退房间与当前选择的替代房间都必须登记清理所有权。");
+        var fakeReady = assembly.GetType("STS2SkinChanger.Ui.FakeMerchantAppearancePatch", true)!.GetMethod("Prefix", Static)!;
+        Require(Calls(fakeReady, record), "假商人也必须登记自身的范围所有权。");
+        var runtime = assembly.GetType("STS2SkinChanger.Ui.CharacterAppearanceRuntime", true)!;
+        Require(runtime.GetMethods(Static).Any(method => Calls(method, ownership.GetMethod("RefreshTree", Static)!)),
+            "局内显式刷新必须续期当前房间，不能让正常退出永久失去清理权限。");
+    }
+
+    private static bool Calls(MethodInfo method, MethodInfo target) =>
+        method.GetMethodBody() != null && PatchProcessor.GetOriginalInstructions(method)
+            .Any(instruction => Equals(instruction.operand, target));
 
     private static void CheckUninitializedRunRoom()
     {

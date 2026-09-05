@@ -1437,20 +1437,21 @@ internal static class MerchantRoomCreateAppearancePatch
 {
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
-    private static void Prefix() =>
-        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+    private static void Prefix(out long __state) =>
+        __state = CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
             [MerchantRuntimeAppearance.GroupId],
             "商店");
 
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(ref NMerchantRoom? __result)
+    private static void Postfix(ref NMerchantRoom? __result, long __state)
     {
         if (__result == null || !GodotObject.IsInstanceValid(__result))
         {
             return;
         }
 
+        RoomRuntimeScopeOwnership.Record(__result, __state);
         if (!MerchantRuntimeAppearance.TryCreateCurrentMerchantRoom(
                 __result,
                 out var currentRoom,
@@ -1463,6 +1464,7 @@ internal static class MerchantRoomCreateAppearancePatch
 
         var preloadCreatedRoom = __result;
         __result = currentRoom;
+        RoomRuntimeScopeOwnership.Record(currentRoom, __state);
         preloadCreatedRoom.Free();
         ModLog.Info(
             "商店房间已绕过启动预加载缓存并按当前选择创建：" +
@@ -1544,7 +1546,7 @@ internal static class MerchantRoomPreviewExitTreePatch
     {
         if (!MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
         {
-            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
+            RoomRuntimeScopeOwnership.Release(__instance);
         }
     }
 }
@@ -1561,9 +1563,10 @@ internal static class FakeMerchantAppearancePatch
             return false;
         }
 
-        CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
+        var scopeLease = CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunContext(
             [MerchantRuntimeAppearance.FakeMerchantGroupId],
             "假商人场景");
+        RoomRuntimeScopeOwnership.Record(__instance, scopeLease);
         return true;
     }
 
@@ -1611,7 +1614,7 @@ internal static class FakeMerchantPreviewExitTreePatch
     {
         if (!MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
         {
-            CharacterAppearanceRuntime.FocusRuntimeProviderBehaviorsOnRunCharacters();
+            RoomRuntimeScopeOwnership.Release(__instance);
         }
     }
 }
