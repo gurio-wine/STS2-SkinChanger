@@ -21,6 +21,34 @@ internal static class FrameworkModelPreviewTests
             ?? throw new InvalidOperationException("小模型预览仍未接入按选择隔离的模型创建流程。");
         var create = AccessTools.Method(preview, "CreateVisuals");
         var animation = AccessTools.Method(preview, "ResolveAnimations");
+        var fit = AccessTools.Method(preview, "FitBounds")
+            ?? throw new InvalidOperationException("模型预览没有按实际模型边界适配预览区，仍统一乘固定比例。");
+        foreach (var (bounds, area, expectedScale, expectedPosition) in new (Rect2, Rect2, float, Vector2)[]
+        {
+            (new(-20, -60, 40, 60), new(-100, -300, 200, 300), 5, new(0, 0)),
+            (new(100, 200, 800, 400), new(10, 20, 200, 300), .25f, new(-15, 170)),
+            (new(-10, -40, 20, 40), new(0, 0, 200, 300), 7.5f, new(100, 300))
+        })
+        {
+            var fitted = ((float Scale, Vector2 Position)?)fit.Invoke(null, [bounds, area]);
+            Require(fitted is { } f && Mathf.IsEqualApprox(f.Scale, expectedScale) &&
+                    f.Position.IsEqualApprox(expectedPosition),
+                "预览应保持宽高比、居中落地，并按模型真实尺寸决定缩放，而不是按提供者固定补偿。");
+        }
+        Require(fit.Invoke(null, [new Rect2(), new Rect2(0, 0, 200, 300)]) == null,
+            "未就绪的空边界不能产生无穷缩放。");
+        var areaResolver = AccessTools.Method(preview, "PreviewArea")
+            ?? throw new InvalidOperationException("原管理器根 Control 尺寸为零，预览区必须取实际背景框而非根尺寸。");
+        var nativeArea = (Rect2)areaResolver.Invoke(null,
+            [new Rect2(-161, -337, 308, 429), new Rect2(-142, 10, 275.8f, 52.5f)])!;
+        Require(nativeArea.IsEqualApprox(new Rect2(-149, -325, 284, 323)),
+            "实际原管理器使用负坐标背景和缩放过的页脚，适配必须避开名称与箭头。");
+        var pathResolver = AccessTools.Method(preview, "ResolveCombatSpinePath")
+            ?? throw new InvalidOperationException("预览没有消费按角色分发的战斗骨骼资源。");
+        var routes = typeof(PreviewPathFixture).GetMethods(BindingFlags.Public | BindingFlags.Static);
+        Require((string?)pathResolver.Invoke(null, [routes, "Silent"]) == "res://private/silent.tres" &&
+                pathResolver.Invoke(null, [routes, "Defect"]) == null,
+            "预览只能使用当前角色的战斗骨骼，不能借用休息处/商店或另一角色的路径。");
         foreach (var (names, entry, idle) in new (string[], string?, string?)[]
         {
             (["entry", "idle_loop"], "entry", "idle_loop"),
@@ -95,5 +123,12 @@ internal static class FrameworkModelPreviewTests
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    public static class PreviewPathFixture
+    {
+        public static string GetCombatSkinPath(string character) => character == "Silent" ? "res://private/silent.tres" : "";
+        public static string GetRestSiteSkinPath(string character) => "res://rest/other.tres";
+        public static string GetMerchantSkinPath(string character) => "res://merchant/other.tres";
     }
 }

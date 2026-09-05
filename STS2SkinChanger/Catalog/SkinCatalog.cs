@@ -3340,6 +3340,16 @@ internal sealed partial class SkinCatalog : IDisposable
                   sourcePath.EndsWith(".tscn", StringComparison.OrdinalIgnoreCase)
                     ? selected.ManagedMonsterScene
                     : baseline);
+            // Ready-time character skins can supply only a private skeleton path, without
+            // replacing a canonical scene. An explicitly requested private root must come
+            // from the selected provider and enter the same skeleton/atlas isolation chain.
+            // Do not override game baselines or widen ordinary resource replacement ownership.
+            if (primary == null && selected?.IsDirectCharacterRuntimeProvider == true)
+            {
+                primary = GetSelectionProviderIndexes(selected)
+                    .Select(index => index.Assets.GetValueOrDefault(sourcePath))
+                    .FirstOrDefault(asset => asset != null);
+            }
             if (primary == null)
             {
                 continue;

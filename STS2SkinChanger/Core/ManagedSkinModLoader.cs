@@ -488,6 +488,17 @@ internal static class ManagedSkinModLoader
         parameterType == typeof(string) &&
         method.Name.Contains("SkinPath", StringComparison.OrdinalIgnoreCase);
 
+    internal static IReadOnlyList<MethodInfo> GetSelectedCharacterSkinPathMethods(string groupId)
+    {
+        var providerId = SkinService.GetSelectedCreatureRuntimeProvider(groupId);
+        if (providerId == null || !ActiveProviderRuntimes.TryGetValue(providerId, out var runtime)) return [];
+        // Reuse only path dispatchers already registered for the selected owner. Never search
+        // all loaded assemblies or invoke a whole combat Ready callback from a menu preview.
+        return DirectCharacterSkinPathProviders
+            .Where(pair => ReferenceEquals(pair.Value, runtime.Assembly))
+            .Select(pair => (MethodInfo)pair.Key).ToArray();
+    }
+
     private static bool DirectCharacterSkinPathPrefix(
         MethodBase __originalMethod,
         object[] __args,

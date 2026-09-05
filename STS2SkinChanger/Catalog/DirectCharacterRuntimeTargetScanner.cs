@@ -133,15 +133,13 @@ internal static class DirectCharacterRuntimeTargetScanner
 
         if (targetFields.Count == 0)
         {
-            // Some Spine skin packs keep their target character in a switch expression and
-            // never expose a TargetCharacterId field. In that case, retain only string literals
-            // that exactly match a character group already discovered from the game resources.
-            // This is deliberately gated by the absence of explicit target fields so ordinary
-            // visual patches that merely mention character names cannot create extra groups.
+            // A utility table listing all game characters is NOT a skin declaration. Only
+            // inspect the string -> skin resource dispatch contract used by runtime providers;
+            // resource-backed skins without it are already discovered from their PCK assets.
             foreach (var methodHandle in reader.MethodDefinitions)
             {
                 var method = reader.GetMethodDefinition(methodHandle);
-                if (method.RelativeVirtualAddress == 0)
+                if (method.RelativeVirtualAddress == 0 || !IsSkinPathDispatcher(reader, method))
                 {
                     continue;
                 }
@@ -176,6 +174,17 @@ internal static class DirectCharacterRuntimeTargetScanner
         }
 
         return declarations.Distinct().ToArray();
+    }
+
+    private static bool IsSkinPathDispatcher(MetadataReader reader, MethodDefinition method)
+    {
+        if (!method.Attributes.HasFlag(System.Reflection.MethodAttributes.Static) ||
+            !reader.GetString(method.Name).Contains("SkinPath", StringComparison.OrdinalIgnoreCase)) return false;
+        var signature = reader.GetBlobReader(method.Signature);
+        var header = signature.ReadSignatureHeader();
+        return !header.IsGeneric && signature.ReadCompressedInteger() == 1 &&
+               signature.ReadSignatureTypeCode() == SignatureTypeCode.String &&
+               signature.ReadSignatureTypeCode() == SignatureTypeCode.String;
     }
 
     private static void ReadCharacterStringLiterals(

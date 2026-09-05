@@ -47,6 +47,12 @@ if (args.Length == 2 && args[0] == "--audit-provider-animation")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--audit-character-targets")
+{
+    DirectCharacterRuntimeTests.AuditTargets(args[1], args[2], args[3]);
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--audit-direct-character-runtime")
 {
     DirectCharacterRuntimeTests.Audit(args[1], args[2]);
