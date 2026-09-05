@@ -45,8 +45,8 @@ internal static class FrameworkRegistryCooperation
             foreach (var character in ModelDb.AllCharacters) session.EnsureCharacter(character.Id);
         };
         var selector = assembly.GetType("thunninoiSkinManager.thunninoiSkinManagerCode.SkinSelector", true)!;
-        // Coordinate only conflicting refreshes. The original injector, preview implementation
-        // and presentation patches remain installed and execute their own code.
+        // Retain the native UI and presentation callbacks. Only its preview's model loading
+        // needs the SC factory; the old cached CreateVisuals fails before SC postfixes can run.
         var refreshMethods = new[] { "Refresh", "LoadPreview" }
             .Select(name => AccessTools.Method(selector, name)
                 ?? throw new MissingMethodException(selector.FullName, name)).ToArray();
@@ -65,6 +65,11 @@ internal static class FrameworkRegistryCooperation
                     postfix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(UpdateLabel)));
             foreach (var method in cycleMethods)
                 harmony.Patch(method, prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(CycleControl)));
+            foreach (var method in new[] { "RefreshBg", "RefreshButton", "MultiplayerIconRefresh" })
+                harmony.Patch(AccessTools.Method(selector, method),
+                    prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(CanRefreshMainPresentation)));
+            harmony.Patch(AccessTools.Method(selector, "PlayPreviewSprite"),
+                prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(PlayModelPreview)));
             harmony.Patch(AccessTools.Method(selector, "_Ready"),
                 postfix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(TrackControl)));
             FrameworkNativeUiPatch.Install(assembly, harmony);
@@ -147,7 +152,7 @@ internal static class FrameworkRegistryCooperation
         {
             try
             {
-                if (CanRefreshControl(control)) AccessTools.Method(_selectorType, "Refresh")!.Invoke(control, null);
+                AccessTools.Method(_selectorType, "Refresh")!.Invoke(control, null);
             }
             catch (Exception exception)
             {
@@ -195,7 +200,7 @@ internal static class FrameworkRegistryCooperation
         if (!LiveControls().Any(node => node == __instance)) Controls.Add(new(__instance));
     }
 
-    private static bool CanRefreshControl(Node __instance)
+    private static bool CanRefreshControl(Node __instance, MethodBase __originalMethod)
     {
         TrackControl(__instance);
         if (CharacterId(__instance) is not { } id) return false;
@@ -204,13 +209,21 @@ internal static class FrameworkRegistryCooperation
             if (parent is NCharacterSelectScreen screen && ContextualSkinControls.IsCharacterSelectionLoading(screen)) return false;
         if (Requests.ContainsKey(group)) return false;
         PendingOptions.Remove(group);
-        if (SkinService.TryGetSelectedFrameworkContract(group, out var contract) && UsesNativePresentation(contract) ||
-            SkinService.Config.GetSelection(group) == SkinCatalog.BaseOptionId) return true;
-        // Its preview assumes every foreign model has a child named Visuals and would rebuild
-        // the main backdrop. Keep the manager controls, but do not touch somebody else's model.
-        UpdateLabel(__instance);
+        if (__originalMethod.Name != "LoadPreview") return true;
+        if (_selectorType?.GetProperty("characterModel")?.GetValue(__instance) is CharacterModel character)
+            FrameworkModelPreview.Refresh(__instance, character);
+        return false;
+    }
+
+    private static bool CanRefreshMainPresentation(Node __instance) =>
+        CharacterId(__instance) is { } id &&
+        SkinService.TryGetSelectedFrameworkContract(Normalize(id.Entry), out var contract) &&
+        UsesNativePresentation(contract);
+
+    private static bool PlayModelPreview(Node __instance)
+    {
         if (__instance.GetNodeOrNull<Node>("VisualContainer/PreviewSprite") is { } preview)
-        { preview.GetParent().RemoveChild(preview); preview.QueueFree(); }
+            FrameworkModelPreview.StartAnimations(preview, CharacterId(__instance)?.Entry ?? "unknown");
         return false;
     }
 

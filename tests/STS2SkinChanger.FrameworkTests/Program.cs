@@ -231,7 +231,66 @@ foreach (var refresh in new[] { "Refresh", "LoadPreview" })
     Require(Harmony.GetPatchInfo(AccessTools.Method(controlsType, refresh))!.Postfixes.Any(patch =>
             patch.PatchMethod.DeclaringType == bridgeType && patch.PatchMethod.Name == "UpdateLabel"),
         "原生刷新完成后必须重新同步 SC 名称，不能把外部皮肤和皮肤包显示成 Default。");
+// Execute the real, patched original LoadPreview entry. Only the native node hierarchy and
+// scene renderer are inert; a vanilla/foreign choice must still reach the selected-model bridge.
+var previewBridge = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.FrameworkModelPreview", true)!;
+var previewControl = (Godot.Node)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(controlsType);
+var previewCharacter = (CharacterModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+    typeof(MegaCrit.Sts2.Core.Models.Characters.Ironclad));
+var previewId = new ModelId("CHARACTER", "IRONCLAD");
+AccessTools.Field(typeof(AbstractModel), "<Id>k__BackingField").SetValue(previewCharacter, previewId);
+controlsType.GetProperty("characterId")!.SetValue(previewControl, previewId);
+controlsType.GetProperty("characterModel")!.SetValue(previewControl, previewCharacter);
+NativePreviewIo.Control = previewControl;
+NativePreviewIo.Character = previewCharacter;
+var previewHarmony = new Harmony("tests.native-preview-engine-boundary");
+var serviceType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.SkinService", true)!;
+var scConfig = serviceType.GetProperty("Config")!.GetValue(null)!;
+var scSelections = (IDictionary)scConfig.GetType().GetProperty("Selections")!.GetValue(scConfig)!;
+var previousSelection = scSelections["ironclad"];
+try
+{
+    previewHarmony.Patch(typeof(Godot.Node).GetMethods().Single(method => method.Name == "GetParent" && !method.IsGenericMethod),
+        prefix: new HarmonyMethod(typeof(NativePreviewIo), nameof(NativePreviewIo.Parent)));
+    previewHarmony.Patch(AccessTools.Method(previewBridge, "Refresh"),
+        prefix: new HarmonyMethod(typeof(NativePreviewIo), nameof(NativePreviewIo.Render)));
+    foreach (var option in new[] { "__base__", "external:skin", "composition:skin" })
+    {
+        scSelections["ironclad"] = option;
+        var beforeRender = NativePreviewIo.Renders;
+        AccessTools.Method(controlsType, "LoadPreview").Invoke(previewControl, null);
+        Require(NativePreviewIo.Renders == beforeRender + 1,
+            "原皮、外部皮肤和合并皮肤都必须刷新小模型，不能被不属于原注册表的判断清空。");
+    }
+    foreach (var method in new[] { "RefreshBg", "RefreshButton", "MultiplayerIconRefresh" })
+    {
+        // The real native methods access absent live screens. They must be skipped here,
+        // because an external choice belongs to SC and must not overwrite its main portrait.
+        AccessTools.Method(controlsType, method).Invoke(previewControl, null);
+    }
+}
+finally
+{
+    previewHarmony.UnpatchAll(previewHarmony.Id);
+    if (previousSelection == null) scSelections.Remove("ironclad");
+    else scSelections["ironclad"] = previousSelection;
+}
 Console.WriteLine("Original framework cooperation passed: scoped reads, native mutation/cache/persistence, no echo, idempotent setup, live config, retained callbacks and original UI injector.");
+
+static class NativePreviewIo
+{
+    public static Godot.Node Control = null!;
+    public static CharacterModel Character = null!;
+    public static int Renders;
+    public static bool Parent(ref Godot.Node? __result) { __result = null; return false; }
+    public static bool Render(Godot.Node selector, CharacterModel character)
+    {
+        if (!ReferenceEquals(selector, Control) || !ReferenceEquals(character, Character))
+            throw new InvalidOperationException("预览必须针对原控件当前的角色，不是上一个角色。");
+        Renders++;
+        return false;
+    }
+}
 
 static class NativeIo
 {

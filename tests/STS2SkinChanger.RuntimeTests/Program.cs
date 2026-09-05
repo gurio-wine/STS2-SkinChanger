@@ -72,6 +72,7 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
 }
 
 FrameworkSelectorCycleTests.Run();
+FrameworkModelPreviewTests.Run();
 ScopedSkinBehaviorTests.Run();
 ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
