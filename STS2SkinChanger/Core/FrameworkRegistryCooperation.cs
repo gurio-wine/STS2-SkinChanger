@@ -15,9 +15,16 @@ internal static class FrameworkRegistryCooperation
     private static FrameworkRegistrySession? _session;
     private static Type? _selectorType;
     private static readonly List<WeakReference<Node>> Controls = [];
+    private static readonly Dictionary<string, long> Requests = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> PendingSkins = new(StringComparer.OrdinalIgnoreCase);
+    private static long _requestGeneration;
+    private static bool _refreshQueued;
     private static readonly ConditionalWeakTable<FrameworkCharacterSkinContract,
         Dictionary<int, FrameworkCharacterSkinContract>> Filtered = new();
     public static bool IsActive => _session != null;
+
+    public static bool HasRegistrationCallbacks(Assembly provider) => _session?.HasRegistrationCallbacks(provider) == true;
+    public static void RegisterProvider(Assembly provider) => _session?.RegisterProvider(provider);
 
     public static bool IsNativeProvider(string providerId) => _session != null &&
         SkinService.Catalog?.Groups.SelectMany(group => group.Options).Any(option =>
@@ -38,8 +45,8 @@ internal static class FrameworkRegistryCooperation
             foreach (var character in ModelDb.AllCharacters) session.EnsureCharacter(character.Id);
         };
         var selector = assembly.GetType("thunninoiSkinManager.thunninoiSkinManagerCode.SkinSelector", true)!;
-        // Keep its original arrows/label, but never let a second UI implementation reconstruct
-        // AnimatedBg or lobby icons. Both selectors now request the existing SC hot-reload path.
+        // Coordinate only conflicting refreshes. The original injector, preview implementation
+        // and presentation patches remain installed and execute their own code.
         var refreshMethods = new[] { "Refresh", "LoadPreview" }
             .Select(name => AccessTools.Method(selector, name)
                 ?? throw new MissingMethodException(selector.FullName, name)).ToArray();
@@ -49,16 +56,16 @@ internal static class FrameworkRegistryCooperation
         session.Install();
         _session = session;
         _selectorType = selector;
-        RemoveDuplicatePresentationPatches(assembly);
         var harmony = new Harmony(Entry.ModId + ".native-framework-controls");
         try
         {
             foreach (var method in refreshMethods)
-                harmony.Patch(method, prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(RefreshControl)));
+                harmony.Patch(method, prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(CanRefreshControl)));
             foreach (var method in cycleMethods)
                 harmony.Patch(method, prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(CycleControl)));
-            harmony.Patch(AccessTools.Method(typeof(NCharacterSelectScreen), "SelectCharacter"),
-                postfix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(AttachControl)));
+            harmony.Patch(AccessTools.Method(selector, "_Ready"),
+                postfix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(TrackControl)));
+            FrameworkNativeUiPatch.Install(assembly, harmony);
         }
         catch (Exception exception)
         {
@@ -66,55 +73,23 @@ internal static class FrameworkRegistryCooperation
             ModLog.Warn("原管理器附加入口无法接入；注册/设置协作及 SC 入口继续可用：" +
                         exception.GetBaseException().Message);
         }
-        ModLog.Info("已启用原皮肤管理器协作：保留原生注册、作者设置和控制入口；" +
-                    "皮肤选择、预览与资源由 SC 统一管理，未加载内置同名后备接口。");
+        ModLog.Info("已启用原皮肤管理器协作：原 UI、预览、设置、存档和呈现补丁保留；" +
+                    "双方显式选择经热切换事务同步，未加载内置同名后备接口。");
     }
 
-    public static bool IsControlPatch(MethodInfo method) => _session?.Assembly == method.Module.Assembly &&
-        method.DeclaringType?.Name is "ManagerSetup" or "FinalizeSkinDb";
+    internal static bool UsesNativePresentation(FrameworkCharacterSkinContract contract) =>
+        _session != null && contract.FrameworkAssemblyName == _session.Assembly.GetName().Name &&
+        _session.IsRegistered(contract.TargetGroupId, contract.SkinId);
 
-    private static void AttachControl(NCharacterSelectScreen __instance, CharacterModel __0)
+    public static void SynchronizeLocalSelections(SkinCatalog catalog)
     {
-        if (_selectorType == null) return;
-        try
+        if (_session == null || !ModelDb.Contains(typeof(Ironclad))) return;
+        foreach (var character in ModelDb.AllCharacters)
         {
-            // Instantiate the ORIGINAL control scene. The original injector additionally reads a
-            // hard-coded DEFECT button just to log its children; UI replacements may remove it.
-            // That diagnostic must not make every character selection throw.
-            if (__instance.GetNodeOrNull<Node>("SkinSelector") is { } old)
-            {
-                __instance.RemoveChild(old);
-                old.QueueFree();
-            }
-            if (__0 is RandomCharacter) return;
-            var scene = ResourceLoader.Load<PackedScene>("res://thunninoiSkinManager/SkinSelector.tscn");
-            if (scene == null) return;
-            var control = scene.Instantiate<Control>();
-            control.Name = "SkinSelector";
-            control.Position = new Vector2(910, 710); // Original manager's layout, not a second SC panel.
-            _selectorType.GetProperty("characterModel")!.SetValue(control, __0);
-            _selectorType.GetProperty("characterId")!.SetValue(control, __0.Id);
-            __instance.AddChild(control);
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn("无法显示原管理器控制入口，SC 皮肤选择仍可使用：" + exception.GetBaseException().Message);
-        }
-    }
-
-    private static void RemoveDuplicatePresentationPatches(Assembly assembly)
-    {
-        var harmony = new Harmony(Entry.ModId + ".native-framework-presentation");
-        foreach (var target in Harmony.GetAllPatchedMethods().ToArray())
-        {
-            var info = Harmony.GetPatchInfo(target);
-            if (info == null) continue;
-            foreach (var callback in info.Prefixes.Concat(info.Postfixes).Concat(info.Transpilers)
-                         .Concat(info.Finalizers).Select(patch => patch.PatchMethod).Distinct())
-            {
-                if (callback.Module.Assembly == assembly && !IsControlPatch(callback))
-                    harmony.Unpatch(target, callback);
-            }
+            var group = Normalize(character.Id.Entry);
+            var native = catalog.TryGetSelectedFrameworkContract(group, SkinService.Config.GetSelection(group), out var contract) &&
+                         contract.FrameworkAssemblyName == _session.Assembly.GetName().Name;
+            _session.PublishSelection(character.Id, native ? contract.SkinId : null);
         }
     }
 
@@ -124,10 +99,14 @@ internal static class FrameworkRegistryCooperation
             .FirstOrDefault(group => group.Id == groupId)?.Options
             .FirstOrDefault(option => option.FrameworkContract?.SkinId == skinId)?.Id;
         if (option == null) return;
+        var generation = ++_requestGeneration;
+        Requests[groupId] = generation;
+        PendingSkins[groupId] = skinId;
         // Requests may originate in the framework's settings callbacks. Defer into the selected
         // character screen, recheck the group there, and keep save/multiplayer/preview in one path.
         Callable.From(() =>
         {
+            if (!Requests.TryGetValue(groupId, out var current) || current != generation) return;
             foreach (var node in LiveControls())
             {
                 if (CharacterId(node) is not { } id || Normalize(id.Entry) != groupId) continue;
@@ -137,6 +116,8 @@ internal static class FrameworkRegistryCooperation
                         ContextualSkinControls.RequestFrameworkSelection(screen, groupId, option)) return;
                 }
             }
+            Requests.Remove(groupId);
+            PendingSkins.Remove(groupId);
             ModLog.Info($"已忽略不在当前选角界面中的原管理器切肤请求：{groupId}/{skinId}");
         }).CallDeferred();
     }
@@ -154,7 +135,34 @@ internal static class FrameworkRegistryCooperation
 
     public static void RefreshControls()
     {
-        foreach (var control in LiveControls()) UpdateLabel(control);
+        foreach (var control in LiveControls())
+        {
+            try
+            {
+                if (CanRefreshControl(control)) AccessTools.Method(_selectorType, "Refresh")!.Invoke(control, null);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn("原管理器预览刷新失败，已保留 SC 当前选择：" + exception.GetBaseException().Message);
+            }
+        }
+    }
+
+    public static void SelectionStarting(string groupId, string optionId)
+    {
+        if (_session == null) return;
+        Requests.Remove(groupId);
+        PendingSkins[groupId] = SkinService.Catalog?.TryGetSelectedFrameworkContract(groupId, optionId, out var contract) == true
+            ? contract.SkinId : "default";
+    }
+
+    public static void QueueRefreshControls()
+    {
+        if (_session == null || _refreshQueued) return;
+        _refreshQueued = true;
+        // MountOverlay calls synchronization before replacing resources. Never run native UI
+        // reconstruction on that stack; it must see the completed resource transaction.
+        Callable.From(() => { _refreshQueued = false; RefreshControls(); }).CallDeferred();
     }
 
     private static void UpdateLabel(Node control)
@@ -162,15 +170,33 @@ internal static class FrameworkRegistryCooperation
         if (CharacterId(control) is not { } id) return;
         var group = Normalize(id.Entry);
         var name = SkinService.TryGetSelectedFrameworkContract(group, out var contract)
-            ? contract.DisplayName : "Default";
+            ? contract.DisplayName : SkinService.Catalog?.Groups.FirstOrDefault(candidate => candidate.Id == group)?.Options
+                .FirstOrDefault(option => option.Id == SkinService.Config.GetSelection(group))?.Name ?? "Default";
         if (control.GetNodeOrNull<Label>("HBoxContainer/ScrollTextContainer/SkinName") is { } label)
             label.Text = name;
     }
 
-    private static bool RefreshControl(Node __instance)
+    private static void TrackControl(Node __instance)
     {
         if (!LiveControls().Any(node => node == __instance)) Controls.Add(new(__instance));
+    }
+
+    private static bool CanRefreshControl(Node __instance)
+    {
+        TrackControl(__instance);
+        if (CharacterId(__instance) is not { } id) return false;
+        var group = Normalize(id.Entry);
+        for (Node? parent = __instance; parent != null; parent = parent.GetParent())
+            if (parent is NCharacterSelectScreen screen && ContextualSkinControls.IsCharacterSelectionLoading(screen)) return false;
+        if (Requests.ContainsKey(group)) return false;
+        PendingSkins.Remove(group);
+        if (SkinService.TryGetSelectedFrameworkContract(group, out var contract) && UsesNativePresentation(contract) ||
+            SkinService.Config.GetSelection(group) == SkinCatalog.BaseOptionId) return true;
+        // Its preview assumes every foreign model has a child named Visuals and would rebuild
+        // the main backdrop. Keep the manager controls, but do not touch somebody else's model.
         UpdateLabel(__instance);
+        if (__instance.GetNodeOrNull<Node>("VisualContainer/PreviewSprite") is { } preview)
+        { preview.GetParent().RemoveChild(preview); preview.QueueFree(); }
         return false;
     }
 
@@ -182,7 +208,8 @@ internal static class FrameworkRegistryCooperation
             .Select(option => option.FrameworkContract).OfType<FrameworkCharacterSkinContract>()
             .Where(contract => contract.FrameworkAssemblyName == _session!.Assembly.GetName().Name)
             .Select(contract => contract.SkinId).Distinct().Prepend("default").ToArray() ?? ["default"];
-        var current = SkinService.TryGetSelectedFrameworkContract(groupId, out var selected) ? selected.SkinId : "default";
+        var current = PendingSkins.GetValueOrDefault(groupId) ??
+                      (SkinService.TryGetSelectedFrameworkContract(groupId, out var selected) ? selected.SkinId : "default");
         var offset = __originalMethod.Name == "OnNextPressed" ? 1 : -1;
         var index = Math.Max(0, Array.IndexOf(options, current));
         RequestSelection(groupId, options[(index + options.Length + offset) % options.Length]);

@@ -142,6 +142,7 @@ internal static class FrameworkCompatibilityLayer
             // available (also tolerates symlinked paths), then use the exact loaded location.
             var assembly = original.GetType().GetField("assembly", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                                ?.GetValue(original) as Assembly ??
+                           NativeFrameworkAssemblyLoader.Find(path) ??
                            AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(candidate =>
                 SafeAssemblyLocation(candidate).Equals(path, StringComparison.OrdinalIgnoreCase));
             if (assembly == null) return;
@@ -173,7 +174,7 @@ internal static class FrameworkCompatibilityLayer
         {
             var completed = ProviderRegistrations.RetryPending(
                 isReady: true,
-                _ => _skinDbSetup.Invoke(null, null),
+                RegisterProvider,
                 (providerKey, exception) => ModLog.Warn(
                     $"补做框架皮肤注册 {providerKey} 失败，已保留后续重试资格：" +
                     exception.GetBaseException().Message));
@@ -183,11 +184,11 @@ internal static class FrameworkCompatibilityLayer
             }
         }
 
-        // Native registry queries already read SC's current player/preview scope. Calling its
-        // setter here would turn a read synchronization into a second selection request.
+        // Native rendering reads the current player scope. Persistence only receives local
+        // committed choices; the session publication guard prevents a second selection request.
         if (FrameworkRegistryCooperation.IsActive)
         {
-            FrameworkRegistryCooperation.RefreshControls();
+            FrameworkRegistryCooperation.SynchronizeLocalSelections(catalog);
             return;
         }
 
@@ -213,6 +214,8 @@ internal static class FrameworkCompatibilityLayer
         {
             return;
         }
+        if (FrameworkRegistryCooperation.IsActive && !FrameworkRegistryCooperation.HasRegistrationCallbacks(providerAssembly))
+            return;
 
         var key = providerAssembly.FullName ?? providerAssembly.GetName().Name ?? string.Empty;
         try
@@ -221,7 +224,9 @@ internal static class FrameworkCompatibilityLayer
                 key,
                 providerAssembly,
                 ModelDb.Contains(typeof(Ironclad)),
-                _ => _skinDbSetup.Invoke(null, null));
+                RegisterProvider);
+            if (result != DeferredRegistrationResult.Deferred && FrameworkRegistryCooperation.IsActive && SkinService.Catalog is { } catalog)
+                FrameworkRegistryCooperation.SynchronizeLocalSelections(catalog);
             if (result == DeferredRegistrationResult.Deferred)
             {
                 ModLog.Info(
@@ -250,6 +255,12 @@ internal static class FrameworkCompatibilityLayer
         {
             return string.Empty;
         }
+    }
+
+    private static void RegisterProvider(Assembly provider)
+    {
+        if (FrameworkRegistryCooperation.IsActive) FrameworkRegistryCooperation.RegisterProvider(provider);
+        else _skinDbSetup!.Invoke(null, null);
     }
 
     private static string NormalizeToken(string value) =>

@@ -1,5 +1,7 @@
 # Framework Cooperation Implementation Plan
 
+> 历史 0.10.3.6 记录，不代表当前方案。用户已否定整体替换原呈现和停止原存档的做法；后续执行 `2026-09-05-framework-native-functions.md`，恢复原管理器功能并仅协调冲突。
+
 > **For agentic workers:** Use superpowers:executing-plans inline; user requires master, no worktrees or subagents.
 
 **Goal:** 原管理器可协作，未启用原管理器时保留内置接口后备。

@@ -929,19 +929,23 @@ internal static partial class ContextualSkinControls
     internal static bool RequestFrameworkSelection(NCharacterSelectScreen screen, string groupId, string optionId)
     {
         var selector = FindCharacterSelector(screen);
-        if (selector == null || selector.GetMeta(GroupMeta, string.Empty).AsString() != groupId ||
-            selector.GetMeta(UpdatingMeta, false).AsBool()) return false;
+        if (selector == null || selector.GetMeta(GroupMeta, string.Empty).AsString() != groupId) return false;
         var dropdown = selector.GetNodeOrNull<OptionButton>(DropdownName);
         if (dropdown == null) return false;
         for (var index = 0; index < dropdown.ItemCount; index++)
         {
             if (dropdown.GetItemMetadata(index).AsString() != optionId) continue;
+            // A newer explicit native-manager choice supersedes the pending SC warm-up.
+            CancelCharacterDropdownSelection(screen);
             dropdown.Select(index);
             ApplyDropdownSelection(selector, dropdown, index);
             return true;
         }
         return false;
     }
+
+    internal static bool IsCharacterSelectionLoading(NCharacterSelectScreen screen) =>
+        FindCharacterSelector(screen)?.GetMeta(UpdatingMeta, false).AsBool() == true;
 
     private static void ApplyDropdownSelection(HBoxContainer selector, OptionButton dropdown, int index)
     {
@@ -1068,6 +1072,7 @@ internal static partial class ContextualSkinControls
         string optionId,
         bool preserveCharacterSkinBundle = false)
     {
+        FrameworkRegistryCooperation.SelectionStarting(groupId, optionId);
         var generation = screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() + 1L;
         screen.SetMeta(CharacterLoadingGenerationMeta, generation);
         selector.SetMeta(UpdatingMeta, true);
@@ -1143,6 +1148,7 @@ internal static partial class ContextualSkinControls
                     UpdateCharacterLoadingOverlay(overlay, optionName, 100);
                     dropdown.Disabled = false;
                     selector.SetMeta(UpdatingMeta, false);
+                    FrameworkRegistryCooperation.QueueRefreshControls();
                     ScheduleNextFrame(screen, () => HideCharacterLoadingOverlay(screen, overlay));
                 });
             });

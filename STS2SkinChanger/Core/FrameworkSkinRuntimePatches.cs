@@ -19,8 +19,11 @@ internal static class FrameworkSkinRuntime
         out FrameworkCharacterSkinContract contract)
     {
         groupId = NormalizeToken(model.Id.Entry);
-        return SkinService.TryGetSelectedFrameworkContract(groupId, out contract);
+        return SkinService.TryGetSelectedFrameworkContract(groupId, out contract) && UsesDeclarativePresentation(contract);
     }
+
+    internal static bool UsesDeclarativePresentation(FrameworkCharacterSkinContract contract) =>
+        !FrameworkRegistryCooperation.UsesNativePresentation(contract);
 
     public static bool TryGetCharacterResource(
         CharacterModel model,
@@ -40,6 +43,7 @@ internal static class FrameworkSkinRuntime
         path = string.Empty;
         var groupId = NormalizeToken(pool.Title);
         return SkinService.TryGetSelectedFrameworkContract(groupId, out var contract) &&
+               UsesDeclarativePresentation(contract) &&
                contract.CharacterResources.TryGetValue(propertyName, out path!);
     }
 
@@ -62,6 +66,7 @@ internal static class FrameworkSkinRuntime
         color = default;
         var groupId = NormalizeToken(pool.Title);
         return SkinService.TryGetSelectedFrameworkContract(groupId, out var contract) &&
+               UsesDeclarativePresentation(contract) &&
                contract.CharacterValues.TryGetValue(propertyName, out var value) &&
                TryParseColor(value, out color);
     }
@@ -89,6 +94,7 @@ internal static class FrameworkSkinRuntime
         path = string.Empty;
         var targetName = model.GetType().Name;
         var descriptor = SkinService.GetSelectedFrameworkContracts()
+            .Where(UsesDeclarativePresentation)
             .SelectMany(contract => contract.Orbs)
             .LastOrDefault(candidate => candidate.TargetModelName.Equals(
                 targetName,
@@ -104,6 +110,7 @@ internal static class FrameworkSkinRuntime
         color = default;
         var targetName = model.GetType().Name;
         var descriptor = SkinService.GetSelectedFrameworkContracts()
+            .Where(UsesDeclarativePresentation)
             .SelectMany(contract => contract.Orbs)
             .LastOrDefault(candidate => candidate.TargetModelName.Equals(
                 targetName,
@@ -121,6 +128,7 @@ internal static class FrameworkSkinRuntime
         path = string.Empty;
         var targetName = model.GetType().Name;
         var descriptor = SkinService.GetSelectedFrameworkContracts()
+            .Where(UsesDeclarativePresentation)
             .SelectMany(contract => contract.Relics)
             .LastOrDefault(candidate => candidate.TargetModelName.Equals(
                 targetName,
@@ -133,6 +141,7 @@ internal static class FrameworkSkinRuntime
         bool largeIcon) =>
         FrameworkRelicVisualPolicy.Resolve(
             SkinService.GetSelectedFrameworkContracts()
+                .Where(UsesDeclarativePresentation)
                 .SelectMany(contract => contract.Relics),
             model.GetType().Name,
             largeIcon);
@@ -256,6 +265,7 @@ internal static class FrameworkEnergyIconHelperPatch
     {
         var groupId = FrameworkSkinRuntime.NormalizeToken(prefix);
         if (!SkinService.TryGetSelectedFrameworkContract(groupId, out var contract) ||
+            !FrameworkSkinRuntime.UsesDeclarativePresentation(contract) ||
             !contract.CharacterResources.TryGetValue("EnergyIcon", out var path))
         {
             return true;

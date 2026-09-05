@@ -134,7 +134,8 @@ internal static class ManagedSkinModLoader
 
         try
         {
-            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds);
+            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds,
+                FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id));
         }
         catch
         {
