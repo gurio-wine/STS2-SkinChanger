@@ -149,6 +149,7 @@ internal static class FrameworkModelPreview
         try
         {
             if (selector is not Control control || !wrapper.IsInsideTree()) return;
+            using var textureBounds = new PreviewTextureBounds();
             // Spine world vertices and Container layout are only valid after the first frame.
             // A bounded startup measurement avoids permanent per-frame traversal/resize jitter.
             for (var frame = 0; frame < 4; frame++)
@@ -166,7 +167,7 @@ internal static class FrameworkModelPreview
                 Rect2? footerRect = footer == null ? null :
                     (inverse * footer.GetGlobalTransform()) * new Rect2(Vector2.Zero, footer.Size);
                 var area = PreviewArea(panelRect, footerRect);
-                var bounds = MeasureModel(visuals, wrapper);
+                var bounds = MeasureModel(visuals, wrapper, textureBounds);
                 if (bounds == null || FitBounds(bounds.Value, area) is not { } fit) continue;
                 wrapper.Scale = Vector2.One * fit.Scale;
                 wrapper.Position = fit.Position;
@@ -188,7 +189,7 @@ internal static class FrameworkModelPreview
     private static bool Alive(Node node) => GodotObject.IsInstanceValid(node) &&
         !node.IsQueuedForDeletion() && node.IsInsideTree();
 
-    private static Rect2? MeasureModel(NCreatureVisuals visuals, Node2D wrapper)
+    private static Rect2? MeasureModel(NCreatureVisuals visuals, Node2D wrapper, PreviewTextureBounds textureBounds)
     {
         Rect2? result = null;
         var inverse = wrapper.GlobalTransform.AffineInverse();
@@ -196,13 +197,25 @@ internal static class FrameworkModelPreview
         foreach (var node in DescendantsAndSelf(body).OfType<Node2D>())
         {
             if (!node.IsVisibleInTree() || node.Modulate.A <= 0 || node.SelfModulate.A <= 0) continue;
-            Rect2? rect = node switch
+            Rect2? rect = null;
+            if (node is Sprite2D sprite && sprite.Texture is { } texture)
             {
-                Sprite2D sprite when sprite.Texture != null => sprite.GetRect(),
-                AnimatedSprite2D animated when animated.SpriteFrames?.GetFrameTexture(animated.Animation, animated.Frame) is { } texture =>
-                    new Rect2(animated.Offset - (animated.Centered ? texture.GetSize() / 2 : Vector2.Zero), texture.GetSize()),
-                _ => null
-            };
+                var region = sprite.RegionEnabled ? sprite.RegionRect : new Rect2(Vector2.Zero, texture.GetSize());
+                var frameSize = region.Size / new Vector2(sprite.Hframes, sprite.Vframes);
+                var source = new Rect2(region.Position + (Vector2)sprite.FrameCoords * frameSize, frameSize);
+                rect = PreviewTextureBounds.ToLocal(source, textureBounds.Read(texture, source),
+                    sprite.Offset, sprite.Centered, sprite.FlipH, sprite.FlipV);
+            }
+            else if (node is AnimatedSprite2D animated &&
+                     animated.SpriteFrames?.GetFrameTexture(animated.Animation, animated.Frame) is { } frameTexture)
+            {
+                var source = new Rect2(Vector2.Zero, frameTexture.GetSize());
+                var used = textureBounds.Read(frameTexture, source);
+                rect = PreviewTextureBounds.ToLocal(source, used,
+                    animated.Offset, animated.Centered, animated.FlipH, animated.FlipV);
+                if (used is { } content && !content.IsEqualApprox(source))
+                    ModLog.Info($"小预览序列帧可见边界：画布={source}；可见={content}；节点={animated.Name}。");
+            }
             if (node.GetClass().ToString() == "SpineSprite" && new MegaSprite(node).GetSkeleton() is { } skeleton)
                 rect = MeasureSpine(skeleton);
             if (rect is not { } r || !r.Position.IsFinite() || !r.Size.IsFinite() || r.Size.X <= 0 || r.Size.Y <= 0) continue;

@@ -1631,17 +1631,9 @@ internal static class ManagedSkinModLoader
                 clipChanges);
     }
 
-    private static IEnumerable<Node> EnumerateNodeTree(Node root)
-    {
-        yield return root;
-        foreach (var child in root.GetChildren())
-        {
-            foreach (var descendant in EnumerateNodeTree(child))
-            {
-                yield return descendant;
-            }
-        }
-    }
+    private static IEnumerable<Node> EnumerateNodeTree(Node root) =>
+        PresentationNodeOwnership.Walk(root,
+            static node => node.GetClass().ToString(), static node => node.GetChildren());
 
     private static void RestoreCharacterPresentations(ActiveProviderRuntime runtime)
     {
@@ -1677,7 +1669,8 @@ internal static class ManagedSkinModLoader
         foreach (var addedNodeReference in mutation.AddedRoots)
         {
             if (!addedNodeReference.TryGetTarget(out var addedNode) ||
-                !GodotObject.IsInstanceValid(addedNode))
+                !GodotObject.IsInstanceValid(addedNode) ||
+                PresentationNodeOwnership.IsRendererOwned(addedNode.GetClass().ToString()))
             {
                 continue;
             }
@@ -1694,7 +1687,8 @@ internal static class ManagedSkinModLoader
         foreach (var visibilityChange in mutation.VisibilityChanges)
         {
             if (visibilityChange.Node.TryGetTarget(out var canvasItem) &&
-                GodotObject.IsInstanceValid(canvasItem))
+                GodotObject.IsInstanceValid(canvasItem) &&
+                !PresentationNodeOwnership.IsRendererOwned(canvasItem.GetClass().ToString()))
             {
                 // Preserve a later game/UI update if it replaced the provider's value while the
                 // presentation was active. Only undo the exact value captured from this replay.
@@ -2273,7 +2267,8 @@ internal static class ManagedSkinModLoader
         foreach (var addedReference in mutation.AddedRoots)
         {
             if (!addedReference.TryGetTarget(out var node) ||
-                !GodotObject.IsInstanceValid(node))
+                !GodotObject.IsInstanceValid(node) ||
+                PresentationNodeOwnership.IsRendererOwned(node.GetClass().ToString()))
             {
                 continue;
             }
@@ -2285,7 +2280,8 @@ internal static class ManagedSkinModLoader
         foreach (var change in mutation.Changes)
         {
             if (!change.Node.TryGetTarget(out var node) ||
-                !GodotObject.IsInstanceValid(node))
+                !GodotObject.IsInstanceValid(node) ||
+                PresentationNodeOwnership.IsRendererOwned(node.GetClass().ToString()))
             {
                 continue;
             }

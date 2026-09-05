@@ -77,6 +77,8 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
     return;
 }
 
+PresentationNodeOwnershipTests.Run();
+PreviewTextureBoundsTests.Run();
 FrameworkSelectorCycleTests.Run();
 FrameworkModelPreviewTests.Run();
 ScopedSkinBehaviorTests.Run();
