@@ -284,6 +284,7 @@ internal static class MerchantRuntimeAppearance
         visual.Position = basePosition + new Vector2(transform.OffsetX, transform.OffsetY);
         visual.Scale = baseScale * transform.Scale;
         ApplyProviderRootsTransform(visual, transform);
+        ManagedSlotVisibilityBridge.BindPlayerScene(visual, CharacterAppearanceRuntime.GetLocalPlayer());
     }
 
     internal static void TrackProviderRoots(

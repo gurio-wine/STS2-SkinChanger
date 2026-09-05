@@ -74,6 +74,7 @@ Windows 与 WSL 的还原和中间文件分别写入 `obj/windows`、`obj/unix`�
 - `tools/CatalogInspect`：用实际游戏与 Mod PCK 构建皮肤目录，输出识别结果。
 - `tools/Test-BuildEnvironment.ps1`：通过真实 MSBuild 求值检查五个项目的正式版默认引用、测试版覆盖、跨系统缓存隔离及 AnyCPU，需 PowerShell 7。
 - 运行时测试附加 `-- --audit-provider-animation <皮肤DLL路径>`：对实包进行跨版本动画接口桥接和 JIT 检查，不执行提供者初始化或游戏画面；正式版与测试版分别运行，不能代替实机换肤验证。
+- 运行时测试附加 `-- --audit-slot-toggle <渡鸦疫医DLL路径>`：检查实包的交互显隐脚本，以及选角、战斗、商店角色、休息处骨骼部件映射。部件开关按角色和皮肤保存；同名骨骼部件通用恢复，不同骨骼仅应用已核验的映射。只作用于本机玩家，不会把本机的部件开关套到联机队友；此检查不启动游戏。
 
 ```powershell
 ./tools/Test-BuildEnvironment.ps1

@@ -101,6 +101,11 @@ internal static class MultiplayerRestSiteCreateScopePatch
 [HarmonyPatch(typeof(NRestSiteCharacter), nameof(NRestSiteCharacter._Ready))]
 internal static class MultiplayerRestSiteReadyScopePatch
 {
+    [HarmonyPostfix]
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NRestSiteCharacter __instance) =>
+        ManagedSlotVisibilityBridge.BindPlayerScene(__instance, __instance.Player);
+
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
     private static void Prefix(NRestSiteCharacter __instance, out IDisposable? __state) =>

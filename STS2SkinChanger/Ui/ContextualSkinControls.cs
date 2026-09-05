@@ -1555,6 +1555,7 @@ internal static partial class ContextualSkinControls
         if (sceneRoot != null)
         {
             ManagedCharacterAnimationBridge.TryStartCharacterSelectLoops(sceneRoot, providerId);
+            ManagedSlotVisibilityBridge.BindPreview(sceneRoot, groupId, providerId);
         }
     }
 

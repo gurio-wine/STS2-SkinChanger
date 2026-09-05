@@ -1844,6 +1844,7 @@ internal static class CharacterAppearanceRuntime
         {
             ManagedSkinModLoader.ReplaySelectedNodeReadyBehavior(providerId, creature);
         }
+        ManagedSlotVisibilityBridge.BindPlayerScene(creature.Visuals, creature.Entity.Player);
     }
 
     private static IReadOnlyList<string> GetSelectedCreatureProviderIds(NCreature creature)

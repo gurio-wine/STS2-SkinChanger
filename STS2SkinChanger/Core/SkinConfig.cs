@@ -45,6 +45,8 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public List<SlotVisibilitySelection> SlotVisibilitySelections { get; set; } = [];
+
     // Legacy migration input only. Current versions treat icon packs as ordinary character skins
     // and convert an explicit old icon choice into a saved composition during initialization.
     public Dictionary<string, string> CharacterIconSelections { get; set; } =
@@ -140,6 +142,8 @@ internal sealed class SkinConfig
     {
         var copy = (SkinConfig)MemberwiseClone();
         copy.Selections = new(Selections, StringComparer.OrdinalIgnoreCase);
+        copy.SlotVisibilitySelections = SlotVisibilitySelections
+            .Select(state => state with { SourceSlots = state.SourceSlots.ToArray() }).ToList();
         copy.VisualProviderPriority = VisualProviderPriority.ToList();
         copy.CharacterSkinBundles = CharacterSkinBundles.Select(CharacterSkinBundlePolicy.Clone).ToList();
         copy.ActiveCharacterSkinBundles = new(ActiveCharacterSkinBundles, StringComparer.OrdinalIgnoreCase);
@@ -230,6 +234,7 @@ internal sealed class SkinConfig
                 StringComparer.OrdinalIgnoreCase);
         config.CharacterSkinCompositions = CharacterSkinCompositionPolicy.Normalize(
             config.CharacterSkinCompositions);
+        config.SlotVisibilitySelections = SlotVisibilityPolicy.Normalize(config.SlotVisibilitySelections);
         config.CharacterSkinBundles = CharacterSkinBundlePolicy.Normalize(
             config.CharacterSkinBundles);
         config.ActiveCharacterSkinBundles ??=

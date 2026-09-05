@@ -143,6 +143,9 @@ internal static class ManagedSkinModLoader
     public static bool IsProviderAssemblyActive(Assembly assembly) =>
         ActiveProviderRuntimes.Values.Any(runtime => ReferenceEquals(runtime.Assembly, assembly));
 
+    internal static bool IsProviderAssemblyFor(string providerId, Assembly assembly) =>
+        ProviderIdsByAssembly.TryGetValue(assembly, out var providers) && providers.Contains(providerId);
+
     public static void ConfigureRunEnvironmentProviders(IEnumerable<string> providerIds)
     {
         var next = providerIds
