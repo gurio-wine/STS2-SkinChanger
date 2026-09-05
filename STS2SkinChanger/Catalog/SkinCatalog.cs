@@ -2076,8 +2076,8 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var group in includedGroups)
         {
             selections.TryGetValue(group.Id, out var selectedId);
-            var selected = group.Options.FirstOrDefault(option =>
-                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase));
+            var selected = FrameworkRegistryCooperation.FilterAssets(group.Options.FirstOrDefault(option =>
+                option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase)));
             var sourcePaths = group.Options
                 .SelectMany(option => option.Assets.Keys)
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -3316,8 +3316,8 @@ internal sealed partial class SkinCatalog : IDisposable
         bool reuseMountedPrivateDependencies = false)
     {
         var group = Groups.First(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase));
-        var selected = group.Options.FirstOrDefault(option =>
-            option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase));
+        var selected = FrameworkRegistryCooperation.FilterAssets(group.Options.FirstOrDefault(option =>
+            option.Id.Equals(selectionId, StringComparison.OrdinalIgnoreCase)));
         // Runtime callers ask for the exact resources needed by the current screen/context.
         // Pulling every asset in the group made a character-select icon request also copy the
         // combat, merchant and rest-site scenes into a new PCK. Dependencies of the requested
@@ -6100,7 +6100,7 @@ internal sealed partial class SkinCatalog : IDisposable
         index.Archive.Paths.Contains(path + ".remap", StringComparer.OrdinalIgnoreCase) ||
         index.Archive.Paths.Contains(path + ".import", StringComparer.OrdinalIgnoreCase);
 
-    private static string? GetFrameworkCharacterCanonicalPath(
+    internal static string? GetFrameworkCharacterCanonicalPath(
         string propertyName,
         string targetGroupId) => propertyName switch
         {

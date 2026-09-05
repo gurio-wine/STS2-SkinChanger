@@ -59,8 +59,9 @@ internal static class OptionalSkinFrameworkPolicy
             return false;
         }
 
-        return !originalFrameworkHostAvailable ||
-               !IsFrameworkHostRequired(frameworkId, evidence, [frameworkId]);
+        // The original host owns this CLR identity when enabled. The bundled API is only a
+        // fallback; replacing an enabled host would discard its registration/configuration UI.
+        return !originalFrameworkHostAvailable;
     }
 }
 

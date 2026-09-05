@@ -954,7 +954,8 @@ internal static class ManagedSkinModLoader
             EnsureProviderNodeMonitor();
             RestoreProviderNodes(assembly);
 
-            var initializerTypes = provider.HasDeclarativeCharacterAssetReplacement
+            var initializerTypes = provider.HasDeclarativeCharacterAssetReplacement &&
+                                   !FrameworkRegistryCooperation.IsNativeProvider(providerId)
                 ? []
                 : GetLoadableTypes(assembly)
                     .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
@@ -969,7 +970,6 @@ internal static class ManagedSkinModLoader
                 EnsureProviderGodotScripts(providerId);
                 new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
                     .PatchAll(assembly);
-                FrameworkCompatibilityLayer.NotifyProviderActivated(assembly);
                 if (provider.HasDeclarativeCharacterAssetReplacement)
                 {
                     ModLog.Info(
@@ -1028,6 +1028,7 @@ internal static class ManagedSkinModLoader
                     }
                 }
             }
+            FrameworkCompatibilityLayer.NotifyProviderActivated(assembly);
             initializedAt = Stopwatch.GetTimestamp();
 
             var installedPatches = CaptureProviderPatches(assembly);
@@ -3695,7 +3696,8 @@ internal static class ManagedSkinModLoader
             if (modId.Equals(assemblyName, StringComparison.OrdinalIgnoreCase))
             {
                 originalFrameworkHostAvailable |=
-                    mod.state is ModLoadState.None or ModLoadState.Loaded;
+                    (mod.state is ModLoadState.None or ModLoadState.Loaded) &&
+                    IsProviderLoadCandidate(mod);
                 continue;
             }
 
@@ -3960,4 +3962,10 @@ internal static class ManagedSkinModLoadPatch
         AccessTools.Method(typeof(ModManager), "TryLoadMod");
 
     private static bool Prefix(Mod mod) => !ManagedSkinModLoader.TryManage(mod);
+
+    private static void Postfix(Mod mod)
+    {
+        if (FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id))
+            FrameworkCompatibilityLayer.TryBindOriginalFramework();
+    }
 }

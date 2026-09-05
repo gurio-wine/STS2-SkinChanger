@@ -926,6 +926,23 @@ internal static partial class ContextualSkinControls
         }
     }
 
+    internal static bool RequestFrameworkSelection(NCharacterSelectScreen screen, string groupId, string optionId)
+    {
+        var selector = FindCharacterSelector(screen);
+        if (selector == null || selector.GetMeta(GroupMeta, string.Empty).AsString() != groupId ||
+            selector.GetMeta(UpdatingMeta, false).AsBool()) return false;
+        var dropdown = selector.GetNodeOrNull<OptionButton>(DropdownName);
+        if (dropdown == null) return false;
+        for (var index = 0; index < dropdown.ItemCount; index++)
+        {
+            if (dropdown.GetItemMetadata(index).AsString() != optionId) continue;
+            dropdown.Select(index);
+            ApplyDropdownSelection(selector, dropdown, index);
+            return true;
+        }
+        return false;
+    }
+
     private static void ApplyDropdownSelection(HBoxContainer selector, OptionButton dropdown, int index)
     {
         if (selector.GetMeta(UpdatingMeta, false).AsBool())

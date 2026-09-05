@@ -6,9 +6,8 @@ using STS2SkinChanger.Catalog;
 namespace STS2SkinChanger.Core;
 
 /// <summary>
-/// Loads bundled, behaviour-free API compatibility assemblies before third-party skin DLLs.
-/// The adapters only satisfy CLR type contracts and expose a selection registry; Skin Changer
-/// remains the sole owner of UI, resource routing and hot reload.
+/// Uses an enabled original framework cooperatively; otherwise supplies the behavior-free API
+/// fallback. Only one assembly may own a framework identity in the game's load context.
 /// </summary>
 internal static class FrameworkCompatibilityLayer
 {
@@ -55,11 +54,14 @@ internal static class FrameworkCompatibilityLayer
 
             KnownFrameworkAssemblies.Add(assemblyName);
 
+            TryBindOriginalFramework();
+            if (FrameworkRegistryCooperation.IsActive) return;
+
             if (!ManagedSkinModLoader.CanInstallFrameworkCompatibilityAssembly(assemblyName))
             {
                 ModLog.Info(
                     $"未启用内置皮肤框架兼容层 {assemblyName}：" +
-                    "当前没有需要它的完整皮肤契约，或仍有依赖者必须使用原框架。");
+                    "原管理器已启用，或当前没有需要后备接口的完整皮肤契约。");
                 return;
             }
 
@@ -126,11 +128,38 @@ internal static class FrameworkCompatibilityLayer
     public static bool IsKnownFrameworkHost(string? modId) =>
         modId != null && KnownFrameworkAssemblies.Contains(modId);
 
+    public static void TryBindOriginalFramework()
+    {
+        if (AvailableAssemblies.Count != 0) return;
+        try
+        {
+            var original = MegaCrit.Sts2.Core.Modding.ModManager.Mods.FirstOrDefault(mod =>
+                mod.state == MegaCrit.Sts2.Core.Modding.ModLoadState.Loaded &&
+                IsKnownFrameworkHost(mod.manifest?.id));
+            if (original == null) return;
+            var path = Path.GetFullPath(Path.Combine(original.path, BundledAdapterFileName));
+            // Formal exposes the assembly on Mod; beta removed that field. Prefer it when
+            // available (also tolerates symlinked paths), then use the exact loaded location.
+            var assembly = original.GetType().GetField("assembly", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                               ?.GetValue(original) as Assembly ??
+                           AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(candidate =>
+                SafeAssemblyLocation(candidate).Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (assembly == null) return;
+            FrameworkRegistryCooperation.Bind(assembly);
+            _adapterAssembly = assembly;
+            _skinDbSetup = assembly.GetType(RegistryTypeName, true)!.GetMethod("SkinDbSetup");
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("原皮肤管理器协作绑定失败，未加载同名后备 DLL：" + exception.GetBaseException().Message);
+        }
+    }
+
     public static void SynchronizeSelections(
         SkinCatalog catalog,
         IReadOnlyDictionary<string, string> selections)
     {
-        if (_setActiveSkin == null)
+        if (_setActiveSkin == null && !FrameworkRegistryCooperation.IsActive)
         {
             return;
         }
@@ -154,6 +183,14 @@ internal static class FrameworkCompatibilityLayer
             }
         }
 
+        // Native registry queries already read SC's current player/preview scope. Calling its
+        // setter here would turn a read synchronization into a second selection request.
+        if (FrameworkRegistryCooperation.IsActive)
+        {
+            FrameworkRegistryCooperation.RefreshControls();
+            return;
+        }
+
         var registeredCharacters = modelDatabaseReady
             ? ModelDb.AllCharacters
             : Enumerable.Empty<CharacterModel>();
@@ -167,7 +204,7 @@ internal static class FrameworkCompatibilityLayer
                 ? selected.SkinId
                 : null,
             (character, skinId) =>
-                _setActiveSkin.Invoke(null, [character.Id, skinId]));
+                _setActiveSkin!.Invoke(null, [character.Id, skinId]));
     }
 
     public static void NotifyProviderActivated(Assembly providerAssembly)

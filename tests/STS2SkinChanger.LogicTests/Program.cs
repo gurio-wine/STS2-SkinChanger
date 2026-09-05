@@ -1230,6 +1230,10 @@ Require(
         []),
     "没有任何皮肤需要兼容框架时不应抢先加载同名程序集。");
 Require(
+    !OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
+        "example.skin.framework", [compatibleFramework], originalFrameworkHostAvailable: true),
+    "原管理器已启用时必须保留其程序集身份，不能因全部皮肤可接管就抢先加载内置同名 DLL。");
+Require(
     OptionalSkinFrameworkPolicy.CanInstallCompatibilityAssembly(
         "example.skin.framework",
         [compatibleFramework, compatibleFramework with

@@ -147,10 +147,12 @@ internal static partial class SkinService
         lock (Sync)
         {
             contract = null!;
-            return Catalog != null && Catalog.TryGetSelectedFrameworkContract(
+            var found = Catalog != null && Catalog.TryGetSelectedFrameworkContract(
                 groupId,
                 GetVisualSelection(groupId),
                 out contract);
+            if (found) contract = FrameworkRegistryCooperation.Filter(contract);
+            return found;
         }
     }
 
@@ -173,6 +175,7 @@ internal static partial class SkinService
                     : null)
                 .Where(contract => contract != null)
                 .Cast<FrameworkCharacterSkinContract>()
+                .Select(FrameworkRegistryCooperation.Filter)
                 .ToArray();
         }
     }
@@ -5288,6 +5291,10 @@ internal static partial class SkinService
         // a stale AssetCache/TakeOverPath callback can immediately reclaim the path being restored.
         ManagedSkinModLoader.DeactivateProvidersExcept(activeRuntimeProviders);
         EnsureScopedRuntimeProviderResourcesMounted(catalog, activeRuntimeProviders);
+        // Native framework initializers register author settings (including persisted values).
+        // Read them before building the correction overlay, not one selection too late.
+        ManagedSkinModLoader.ActivateSelectedProviders(
+            activeRuntimeProviders.Where(FrameworkRegistryCooperation.IsNativeProvider));
         var largeProviderMountPlan = MountSelectedLargeRuntimeProviderPacks(catalog, groups);
         var promotedPackResourcePaths = largeProviderMountPlan.PromotedPackPaths
             .Where(MountedLargeRuntimeProviderPacks.ContainsKey)
@@ -6399,7 +6406,8 @@ internal static partial class SkinService
         string groupId,
         string selection,
         string resourcePath) =>
-        groupId + "\n" + selection + "\n" + resourcePath;
+        groupId + "\n" + selection + "\n" + resourcePath +
+        FrameworkRegistryCooperation.CacheSuffix(groupId, selection);
 
     private static string RuntimeOverlayKey(
         string groupId,
@@ -6410,7 +6418,7 @@ internal static partial class SkinService
         bool isolateRelicCanonicalPaths = false) =>
         groupId + "\n" + selection + "\n" + includeProviderDependencies + "\n" +
         reuseMountedPrivateDependencies + "\n" + isolateRelicCanonicalPaths + "\n" +
-        string.Join("\n", resourcePaths);
+        string.Join("\n", resourcePaths) + FrameworkRegistryCooperation.CacheSuffix(groupId, selection);
 
     private static string[] CharacterSelectResourcePaths(string characterId) =>
     [
