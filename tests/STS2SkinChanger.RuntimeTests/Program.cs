@@ -87,6 +87,7 @@ PresentationNodeOwnershipTests.Run();
 RenderedPreviewFramingTests.Run();
 FrameworkSelectorCycleTests.Run();
 FrameworkModelPreviewTests.Run();
+DragHandleHoverTests.Run();
 StandaloneModelPreviewTests.Run();
 ScopedSkinBehaviorTests.Run();
 ProviderSettingsTests.Run();

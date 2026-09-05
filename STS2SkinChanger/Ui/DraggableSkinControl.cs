@@ -82,6 +82,7 @@ internal partial class DraggableSkinControl : Node
             _target.MoveChild(_handle, 0);
         }
         _handle.GuiInput += HandleInput;
+        DragHandleHoverVisibility.Attach(_target, _handle, () => _dragging);
         _target.VisibilityChanged += CancelHiddenDrag;
         _target.Resized += ClampAfterLayout;
         _screen.Resized += RestorePosition;

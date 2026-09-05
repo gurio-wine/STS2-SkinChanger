@@ -1964,6 +1964,7 @@ internal static class CardInspectSkinControls
         selector.AddChild(dragHandle);
         selector.AddChild(dropdown);
         screen.AddChild(selector);
+        DragHandleHoverVisibility.Attach(selector, dragHandle, () => dragging);
         ApplyStoredSelectorPosition(screen, selector);
         ModLocalization.Bind(screen, () =>
         {

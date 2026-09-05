@@ -10,7 +10,7 @@ internal static class CharacterModelPreviewControls
 {
     private const string PanelName = "STS2CharacterModelPreview";
     internal const float GripWidth = 12;
-    internal const float Gap = 2;
+    internal const float Gap = 1;
     internal const float ModelInset = GripWidth + Gap;
 
     internal static bool ShouldShow(IEnumerable<Mod> mods, bool nativeCooperationActive) =>
@@ -67,7 +67,8 @@ internal partial class CharacterModelPreviewPanel : Control
         _screen = screen;
         _info = info;
         _frame = info.GetNodeOrNull<Control>("NinePatchRect") ?? info;
-        MouseFilter = MouseFilterEnum.Ignore;
+        // A passive hover target for the grip; clicks still propagate and do not change skins.
+        MouseFilter = MouseFilterEnum.Pass;
         ClipContents = true;
         BuildInterface();
         DraggableSkinControl.AttachWithHandle(screen, this, _dragHandle,
