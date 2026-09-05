@@ -19,12 +19,12 @@ internal static class FrameworkModelPreview
     public static void Refresh(Node selector, CharacterModel character)
     {
         var container = selector.GetNodeOrNull<Node2D>("VisualContainer");
-        if (container == null) return;
+        if (container == null || selector is not Control control) return;
         var groupId = ContextualSkinControls.FindGroup(character.Id.Entry, character.GetType().Name)?.Id;
         var scenePath = groupId != null
             ? ContextualSkinControls.CanonicalScenePath("creature_visuals/" + character.Id.Entry.ToLowerInvariant())
             : (string)AccessTools.PropertyGetter(typeof(CharacterModel), "VisualsPath").Invoke(character, null)!;
-        Node2D? staged = null;
+        FrameworkPreviewSurface? staged = null;
         NCreatureVisuals? visuals = null;
         try
         {
@@ -32,19 +32,19 @@ internal static class FrameworkModelPreview
             using var scope = groupId == null ? null : SkinService.BeginRuntimeResourceScope(groupId, scenePath);
             var player = CreatePreviewPlayer(character, UnlockState.all);
             visuals = CreateVisuals(character, groupId, scenePath, player.Creature);
-            staged = new Node2D { Name = "SkinChangerPendingPreview", Visible = false };
+            staged = new FrameworkPreviewSurface { Name = "SkinChangerPendingPreview" };
             // Keep the complete fresh model: extracting/duplicating only a node named Visuals
             // discards sibling sprites, model offsets and animation controllers, and leaks the root.
             var owner = new FrameworkPreviewCreature();
             owner.Initialize(player, visuals);
-            staged.AddChild(owner);
+            staged.Initialize(control, container, owner, groupId ?? character.Id.Entry);
             container.AddChild(staged);
             ApplyRuntimeSpine(visuals, character, groupId);
             // Same selected, node-local cosmetic finishing as a live hot swap. Never replay
             // NCombatRoom callbacks or the original NCreature lifecycle in a menu preview.
             CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(owner);
-            foreach (var control in DescendantsAndSelf(staged).OfType<Control>())
-                control.MouseFilter = Control.MouseFilterEnum.Ignore;
+            foreach (var childControl in DescendantsAndSelf(staged).OfType<Control>())
+                childControl.MouseFilter = Control.MouseFilterEnum.Ignore;
             var previous = container.GetNodeOrNull<Node>("PreviewSprite");
             if (previous != null)
             {
@@ -52,10 +52,7 @@ internal static class FrameworkModelPreview
                 previous.QueueFree();
             }
             staged.Name = "PreviewSprite";
-            staged.Visible = true;
-            // Measure the idle pose, not a transient entry frame (some start off-screen/tiny).
-            StartAnimations(staged, groupId ?? character.Id.Entry, playEntry: false);
-            ScheduleFit(selector, container, staged, visuals, groupId ?? character.Id.Entry);
+            staged.BeginCapture();
             ModLog.Info($"已刷新原管理器小模型：{character.Id.Entry}/{(groupId == null ? "unmanaged" : SkinService.Config.GetSelection(groupId))}；" +
                         $"模型类型={visuals.GetType().Name}；完整模型子节点={visuals.GetChildCount()}。");
             staged = null;
@@ -130,164 +127,33 @@ internal static class FrameworkModelPreview
         return area;
     }
 
-    private static void ScheduleFit(Node selector, Node2D container, Node2D wrapper,
-        NCreatureVisuals visuals, string groupId)
-    {
-        void Fit()
-        {
-            if (Alive(wrapper)) _ = FitWhenReady(selector, container, wrapper, visuals, groupId);
-        }
-        // Large skeletons can become ready later than the UI. Start the bounded layout
-        // measurement after actual Spine readiness, not after an assumed loading duration.
-        if (visuals.SpineBody is { } body) wrapper.RunWhenSpineReady(body, _ => Fit());
-        else Fit();
-    }
-
-    private static async Task FitWhenReady(Node selector, Node2D container, Node2D wrapper,
-        NCreatureVisuals visuals, string groupId)
-    {
-        try
-        {
-            if (selector is not Control control || !wrapper.IsInsideTree()) return;
-            using var textureBounds = new PreviewTextureBounds();
-            // Spine world vertices and Container layout are only valid after the first frame.
-            // A bounded startup measurement avoids permanent per-frame traversal/resize jitter.
-            for (var frame = 0; frame < 4; frame++)
-            {
-                // ProcessFrame is emitted BEFORE node animation updates. At that point a
-                // skeleton can still have its setup pose (including off-stage attachments).
-                await RenderingServer.Singleton.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-                if (!Alive(control) || !Alive(container) || !Alive(wrapper) || !Alive(visuals)) return;
-                // The native scene's root is a zero-size positioning anchor. Its actual
-                // NinePatchRect sits above that origin; do not assume positive coordinates.
-                var panel = control.GetNodeOrNull<Control>("NinePatchRect") ?? control;
-                var inverse = container.GlobalTransform.AffineInverse();
-                var panelRect = (inverse * panel.GetGlobalTransform()) * new Rect2(Vector2.Zero, panel.Size);
-                var footer = control.GetNodeOrNull<Control>("HBoxContainer");
-                Rect2? footerRect = footer == null ? null :
-                    (inverse * footer.GetGlobalTransform()) * new Rect2(Vector2.Zero, footer.Size);
-                var area = PreviewArea(panelRect, footerRect);
-                var bounds = MeasureModel(visuals, wrapper, textureBounds);
-                if (bounds == null || FitBounds(bounds.Value, area) is not { } fit) continue;
-                wrapper.Scale = Vector2.One * fit.Scale;
-                wrapper.Position = fit.Position;
-                ModLog.Info($"原管理器小模型尺寸适配：模型={bounds}；预览区={area}；比例={fit.Scale:0.###}。");
-                return;
-            }
-            ModLog.Warn("原管理器小模型边界或预览区尚未就绪，保留模型原始变换。");
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn("原管理器小模型尺寸适配失败：" + exception.GetBaseException().Message);
-        }
-        finally
-        {
-            if (Alive(wrapper)) StartAnimations(wrapper, groupId);
-        }
-    }
-
-    private static bool Alive(Node node) => GodotObject.IsInstanceValid(node) &&
-        !node.IsQueuedForDeletion() && node.IsInsideTree();
-
-    private static Rect2? MeasureModel(NCreatureVisuals visuals, Node2D wrapper, PreviewTextureBounds textureBounds)
+    internal static Rect2 MeasureCaptureSeed(NCreatureVisuals visuals)
     {
         Rect2? result = null;
-        var inverse = wrapper.GlobalTransform.AffineInverse();
-        var body = visuals.GetNodeOrNull<Node2D>("%Visuals") ?? visuals.GetNodeOrNull<Node2D>("Visuals") ?? visuals;
-        foreach (var node in DescendantsAndSelf(body).OfType<Node2D>())
+        // Only a broad first camera position, before any pixels have been read. Include the
+        // complete model (not just a child named Visuals); the renderer decides what is visible.
+        // GetGlobalTransform is in this isolated viewport's canvas coordinates. Do not remove
+        // the owner's transform: providers may move/scale the owner as well as its model.
+        foreach (var node in DescendantsAndSelf(visuals).OfType<Node2D>())
         {
             if (!node.IsVisibleInTree() || node.Modulate.A <= 0 || node.SelfModulate.A <= 0) continue;
-            Rect2? rect = null;
-            if (node is Sprite2D sprite && sprite.Texture is { } texture)
+            Rect2? rect = node switch
             {
-                var region = sprite.RegionEnabled ? sprite.RegionRect : new Rect2(Vector2.Zero, texture.GetSize());
-                var frameSize = region.Size / new Vector2(sprite.Hframes, sprite.Vframes);
-                var source = new Rect2(region.Position + (Vector2)sprite.FrameCoords * frameSize, frameSize);
-                rect = PreviewTextureBounds.ToLocal(source, textureBounds.Read(texture, source),
-                    sprite.Offset, sprite.Centered, sprite.FlipH, sprite.FlipV);
-            }
-            else if (node is AnimatedSprite2D animated &&
-                     animated.SpriteFrames?.GetFrameTexture(animated.Animation, animated.Frame) is { } frameTexture)
-            {
-                var source = new Rect2(Vector2.Zero, frameTexture.GetSize());
-                var used = textureBounds.Read(frameTexture, source);
-                rect = PreviewTextureBounds.ToLocal(source, used,
-                    animated.Offset, animated.Centered, animated.FlipH, animated.FlipV);
-                if (used is { } content && !content.IsEqualApprox(source))
-                    ModLog.Info($"小预览序列帧可见边界：画布={source}；可见={content}；节点={animated.Name}。");
-            }
+                Sprite2D sprite when sprite.Texture != null => sprite.GetRect(),
+                AnimatedSprite2D animated when animated.SpriteFrames?.GetFrameTexture(animated.Animation, animated.Frame) is { } texture =>
+                    new Rect2(animated.Offset - (animated.Centered ? texture.GetSize() / 2 : Vector2.Zero), texture.GetSize()),
+                _ => null
+            };
             if (node.GetClass().ToString() == "SpineSprite" && new MegaSprite(node).GetSkeleton() is { } skeleton)
-                rect = MeasureSpine(skeleton);
+                rect = skeleton.GetBounds();
             if (rect is not { } r || !r.Position.IsFinite() || !r.Size.IsFinite() || r.Size.X <= 0 || r.Size.Y <= 0) continue;
-            var transformed = (inverse * node.GlobalTransform) * r;
+            var transformed = node.GlobalTransform * r;
             result = result?.Merge(transformed) ?? transformed;
         }
-        return result;
-    }
-
-    private static Rect2 MeasureSpine(MegaSkeleton skeleton)
-    {
-        var raw = skeleton.GetBounds();
-        var native = skeleton.BoundObject;
-        if (!native.HasMethod("get_slots")) return raw;
-        using var slots = native.Call("get_slots");
-        var hidden = slots.AsGodotArray().Select(value => value.AsGodotObject())
-            .Where(slot => slot != null && slot.HasMethod("get_color") &&
-                slot.HasMethod("get_attachment") && slot.HasMethod("set_attachment") &&
-                slot.HasMethod("get_deform") && slot.HasMethod("set_deform") &&
-                slot.HasMethod("get_sequence_index") && slot.HasMethod("set_sequence_index") &&
-                slot.HasMethod("get_attachment_state") && slot.HasMethod("set_attachment_state") &&
-                slot.Call("get_color").AsColor().A <= 0).Cast<GodotObject>().ToArray();
-        if (hidden.Length == 0) return raw;
-        var bounds = MeasureWithoutHiddenAttachments(hidden, TemporarilyDetach, skeleton.GetBounds);
-        ModLog.Info($"小预览可见边界：全部={raw}；可见={bounds}；透明槽位={hidden.Length}。");
-        return bounds;
-    }
-
-    // Spine's get_bounds includes fully transparent slots. Exclude them only during this
-    // synchronous measurement, restoring deformation and sequence state as well as attachment.
-    // Never change shared skeleton data, wait a frame, or render with these slots detached.
-    private static Action TemporarilyDetach(GodotObject slot)
-    {
-        var attachment = slot.Call("get_attachment");
-        var deform = slot.Call("get_deform");
-        var sequence = slot.Call("get_sequence_index");
-        var state = slot.Call("get_attachment_state");
-        void Restore()
-        {
-            try
-            {
-                slot.Call("set_attachment", attachment);
-                slot.Call("set_deform", deform);
-                slot.Call("set_sequence_index", sequence);
-                slot.Call("set_attachment_state", state);
-            }
-            finally { attachment.Dispose(); deform.Dispose(); sequence.Dispose(); state.Dispose(); }
-        }
-        try { slot.Call("set_attachment", default(Variant)); }
-        catch { Restore(); throw; }
-        return Restore;
-    }
-
-    internal static Rect2 MeasureWithoutHiddenAttachments<T>(IEnumerable<T> slots,
-        Func<T, Action> exclude, Func<Rect2> measure)
-    {
-        var restores = new Stack<Action>();
-        try
-        {
-            foreach (var slot in slots) restores.Push(exclude(slot));
-            return measure();
-        }
-        finally
-        {
-            List<Exception>? errors = null;
-            foreach (var restore in restores)
-            {
-                try { restore(); }
-                catch (Exception exception) { (errors ??= []).Add(exception); }
-            }
-            if (errors != null) throw new AggregateException("恢复预览测量临时状态失败。", errors);
-        }
+        if (result != null) return result.Value;
+        if (visuals.Bounds is { } bounds && GodotObject.IsInstanceValid(bounds))
+            return bounds.GetGlobalTransform() * new Rect2(Vector2.Zero, bounds.Size);
+        return new Rect2(-200, -400, 400, 400);
     }
 
     internal static NCreatureVisuals CreateVisuals(CharacterModel character, string? groupId, string scenePath,

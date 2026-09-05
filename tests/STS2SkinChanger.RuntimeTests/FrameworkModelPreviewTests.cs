@@ -39,7 +39,6 @@ internal static class FrameworkModelPreviewTests
         }
         Require(fit.Invoke(null, [new Rect2(), new Rect2(0, 0, 200, 300)]) == null,
             "未就绪的空边界不能产生无穷缩放。");
-        CheckVisibleBounds(preview);
         var areaResolver = AccessTools.Method(preview, "PreviewArea")
             ?? throw new InvalidOperationException("原管理器根 Control 尺寸为零，预览区必须取实际背景框而非根尺寸。");
         var nativeArea = (Rect2)areaResolver.Invoke(null,
@@ -145,32 +144,6 @@ internal static class FrameworkModelPreviewTests
             "生物级收尾必须沿用同一个模型和角色，且在角色级处理之后执行。");
         _creatureConfigured = true;
         return false;
-    }
-
-    private static void CheckVisibleBounds(Type preview)
-    {
-        var measure = AccessTools.Method(preview, "MeasureWithoutHiddenAttachments")
-            ?? throw new InvalidOperationException("透明附件仍计入预览边界，人物会被不可见部件挤小。");
-        var method = measure.MakeGenericMethod(typeof(int));
-        var attached = new HashSet<int> { 1, 2, 3 };
-        var boxes = new[] { new Rect2(), new Rect2(-100, -300, 200, 300),
-            new Rect2(1000, -100, 500, 100), new Rect2(-800, -100, 500, 100) };
-        Func<int, Action> exclude = index =>
-        {
-            attached.Remove(index);
-            return () => attached.Add(index);
-        };
-        Func<Rect2> bounds = () => attached.Select(index => boxes[index]).Aggregate((a, b) => a.Merge(b));
-        var result = (Rect2)method.Invoke(null, [new[] { 2, 3 }, exclude, bounds])!;
-        Require(result.IsEqualApprox(new Rect2(-100, -300, 200, 300)) && attached.SetEquals([1, 2, 3]),
-            "测量应排除透明部件，但测量结束必须恢复完整附件状态，不能改变动画。");
-        try
-        {
-            method.Invoke(null, [new[] { 2, 3 }, exclude, (Func<Rect2>)(() => throw new InvalidOperationException("render unavailable"))]);
-            throw new Exception("测量异常应保留给上层安全回退。");
-        }
-        catch (TargetInvocationException exception) when (exception.InnerException?.Message == "render unavailable") { }
-        Require(attached.SetEquals([1, 2, 3]), "测量失败也不能遗留缺失部件。");
     }
 
     private static bool ManagedFactory(string groupId, string scenePath,

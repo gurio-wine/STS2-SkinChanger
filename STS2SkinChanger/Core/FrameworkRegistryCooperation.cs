@@ -222,7 +222,9 @@ internal static class FrameworkRegistryCooperation
 
     private static bool PlayModelPreview(Node __instance)
     {
-        if (__instance.GetNodeOrNull<Node>("VisualContainer/PreviewSprite") is { } preview)
+        if (__instance.GetNodeOrNull<Node>("VisualContainer/PreviewSprite") is FrameworkPreviewSurface surface)
+            surface.PlayEntry();
+        else if (__instance.GetNodeOrNull<Node>("VisualContainer/PreviewSprite") is { } preview)
             FrameworkModelPreview.StartAnimations(preview, CharacterId(__instance)?.Entry ?? "unknown");
         return false;
     }
