@@ -9,6 +9,7 @@ using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Saves;
+using MegaCrit.Sts2.Core.Saves.Managers;
 using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui.LoadOrderWarning;
@@ -180,9 +181,14 @@ internal static class LoadOrderWarningController
             throw new InvalidOperationException("当前 Mod 列表中找不到需要调整顺序的皮肤 Mod。");
         }
 
-        var settings = SaveManager.Instance.SettingsSave;
-        settings.ModSettings ??= new ModSettings();
-        var modList = settings.ModSettings.ModList;
+        var saveManager = SaveManager.Instance;
+        var settings = saveManager.SettingsSave;
+        var previousModSettings = settings.ModSettings;
+        var modSettings = previousModSettings ?? new ModSettings();
+        var previousOrder = modSettings.ModList;
+        // Build the complete candidate before touching live settings. A stale/missing source
+        // must not remove our entry from a list that other settings screens can later save.
+        var modList = previousOrder.ToList();
         var wasEnabled = modList
             .FirstOrDefault(entry => Entry.IsSelfModId(entry.Id) && entry.Source == self.modSource)?
             .IsEnabled ?? true;
@@ -204,7 +210,23 @@ internal static class LoadOrderWarningController
         }
 
         modList.Insert(insertionIndex, new SettingsSaveMod(self) { IsEnabled = wasEnabled });
-        SaveManager.Instance.SaveSettings();
+        var persistence = AccessTools.Field(typeof(SaveManager), "_settingsSaveManager")?
+            .GetValue(saveManager) as SettingsSaveManager ??
+            throw new InvalidOperationException("无法取得游戏设置保存接口，保留原 Mod 加载顺序。");
+        settings.ModSettings = modSettings;
+        modSettings.ModList = modList;
+        try
+        {
+            // SaveManager.SaveSettings catches IO failures and returns void. Use the same
+            // native settings writer directly so Schedule only reports success after saving.
+            persistence.SaveSettings();
+        }
+        catch
+        {
+            modSettings.ModList = previousOrder;
+            settings.ModSettings = previousModSettings;
+            throw;
+        }
     }
 
 }
