@@ -9,7 +9,31 @@ internal sealed record SkinPresetCategory(string Id, string DisplayName, IReadOn
 
 internal static partial class SkinService
 {
-    internal static string GetPresetDisplayName(string key) => BundlePresetPolicy.DisplayName(Config, key);
+    internal static string GetPresetDisplayName(string key) =>
+        BundlePresetPolicy.DisplayName(Config, key, GetBundleCharacterName);
+
+    internal static string GetBundlePresetDisplayName(CharacterSkinBundle bundle) =>
+        GetBundleCharacterName(bundle.CharacterGroupId) + "-" +
+        (string.IsNullOrWhiteSpace(bundle.Name) ? ModLocalization.Get(ModText.NewBundle) : bundle.Name.Trim());
+
+    private static string GetBundleCharacterName(string groupId)
+    {
+        try
+        {
+            var character = ModelDb.AllCharacters.FirstOrDefault(model =>
+                model.Id.Entry.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            if (character != null) return character.Title.GetFormattedText();
+        }
+        catch { /* Models/localization may not be available during early initialization. */ }
+        return Catalog?.Groups.FirstOrDefault(group => group.Id.Equals(groupId,
+            StringComparison.OrdinalIgnoreCase))?.DisplayName ?? groupId;
+    }
+
+    private static IEnumerable<CardSkinGroup> GetBundleCardGroups() =>
+        Catalog?.CardGroups.Where(group => group.Options.Count > 0) ?? [];
+
+    private static IEnumerable<string> GetBundleMonsterCategoryIds() =>
+        Config.MonsterSkinCategoryGroups.Keys.Where(id => GetMonsterCategoryOptionsInternal(id).Count > 0);
 
     private static bool CanRenameOrDeletePreset(string key)
     {
@@ -55,9 +79,9 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
-            return Catalog?.CardGroups.Select(group => new SkinPresetCategory(
+            return GetBundleCardGroups().Select(group => new SkinPresetCategory(
                 group.Id, group.DisplayName, GetCardSkinPresets(group.Id).Select(preset => preset.Name).ToArray()))
-                .ToArray() ?? [];
+                .ToArray();
         }
     }
 
@@ -69,7 +93,7 @@ internal static partial class SkinService
                 act => "act:" + act.Id.Entry.ToLowerInvariant(),
                 act => act.Title.GetFormattedText(), StringComparer.OrdinalIgnoreCase);
             titles["events"] = new LocString("bestiary", "EVENTS.title").GetFormattedText();
-            return Config.MonsterSkinCategoryGroups.Keys.Select(id => new SkinPresetCategory(
+            return GetBundleMonsterCategoryIds().Select(id => new SkinPresetCategory(
                 id, titles.GetValueOrDefault(id, id), GetMonsterSkinPresets(id).Select(preset => preset.Name).ToArray()))
                 .ToArray();
         }
@@ -295,8 +319,16 @@ internal static partial class SkinService
 
             void Prepare()
             {
+                // Repair again at the consumption boundary, including changes since the editor
+                // was last opened. Missing choices always resolve to the owner's saved preset.
+                BundlePresetPolicy.Synchronize(Config, catalog.CardGroups.Select(group => group.Id),
+                    Config.MonsterSkinCategoryGroups.Keys);
+                bundle = CharacterSkinBundlePolicy.Clone(Config.CharacterSkinBundles[index]);
+                var availableCards = GetBundleCardGroups().Select(group => group.Id)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var availableMonsters = GetBundleMonsterCategoryIds().ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var requestedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var reference in bundle.CardPresetNames)
+                foreach (var reference in bundle.CardPresetNames.Where(pair => availableCards.Contains(pair.Key)))
                 {
                     var presetIndex = FindCardSkinPresetIndex(reference.Key, reference.Value);
                     var group = catalog.CardGroups.FirstOrDefault(candidate =>
@@ -309,7 +341,7 @@ internal static partial class SkinService
                     ApplyCardPresetSettings(group, Config.CardSkinPresets[presetIndex]);
                     cardGroups.Add(group.Id);
                 }
-                foreach (var reference in bundle.MonsterPresetNames)
+                foreach (var reference in bundle.MonsterPresetNames.Where(pair => availableMonsters.Contains(pair.Key)))
                 {
                     var presetIndex = FindMonsterSkinPresetIndex(reference.Key, reference.Value);
                     if (presetIndex < 0 || !Config.MonsterSkinCategoryGroups.ContainsKey(reference.Key))

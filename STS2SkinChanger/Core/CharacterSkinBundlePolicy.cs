@@ -3,6 +3,7 @@ namespace STS2SkinChanger.Core;
 internal sealed class CharacterSkinBundle
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    internal string PresetKey => "__bundle_preset__:" + Id;
     public bool HideSources { get; set; } = true;
     public string Name { get; set; } = string.Empty;
     public string CharacterGroupId { get; set; } = string.Empty;
@@ -112,7 +113,7 @@ internal static class CharacterSkinBundlePolicy
         if (references.TryGetValue(categoryId, out var current) &&
             current.Equals(presetName, StringComparison.OrdinalIgnoreCase))
         {
-            references.Remove(categoryId);
+            references[categoryId] = bundle.PresetKey;
         }
     }
 

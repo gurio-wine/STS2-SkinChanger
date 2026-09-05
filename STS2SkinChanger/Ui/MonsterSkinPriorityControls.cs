@@ -580,7 +580,7 @@ internal static partial class ContextualSkinControls
             {
                 Text = preset.DisplayName,
                 Editable = !preset.IsBundlePreset,
-                MaxLength = SkinService.MonsterSkinPresetNameMaxLength,
+                MaxLength = preset.IsBundlePreset ? 0 : SkinService.MonsterSkinPresetNameMaxLength,
                 CustomMinimumSize = new Vector2(310, 38),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };

@@ -74,10 +74,10 @@ internal static class CharacterSkinBundleControls
             MouseFilter = Control.MouseFilterEnum.Stop,
             AnchorLeft = 0.5f,
             AnchorRight = 0.5f,
-            AnchorTop = 0.05f,
-            AnchorBottom = 0.95f,
-            OffsetLeft = -440f,
-            OffsetRight = 440f,
+            AnchorTop = 0.1f,
+            AnchorBottom = 0.9f,
+            OffsetLeft = -430f,
+            OffsetRight = 430f,
             OffsetTop = 0f,
             OffsetBottom = 0f,
             ClipContents = true
@@ -86,31 +86,20 @@ internal static class CharacterSkinBundleControls
             new Color("241a30"), new Color("79547e"), 2));
         overlay.AddChild(panel);
         var margin = new MarginContainer();
-        foreach (var edge in new[] { "left", "right", "top", "bottom" })
-        {
-            margin.AddThemeConstantOverride("margin_" + edge, 20);
-        }
+        margin.AddThemeConstantOverride("margin_left", 22);
+        margin.AddThemeConstantOverride("margin_right", 22);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
         panel.AddChild(margin);
-        var scroll = new ScrollContainer
-        {
-            Name = "BundleScroll",
-            CustomMinimumSize = Vector2.Zero,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
-            VerticalScrollMode = ScrollContainer.ScrollMode.Auto
-        };
-        margin.AddChild(scroll);
         var content = new VBoxContainer
         {
             Name = "BundleContent",
-            CustomMinimumSize = new Vector2(820f, 0f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill
         };
-        content.AddThemeConstantOverride("separation", 12);
-        scroll.AddChild(content);
-        var state = new EditorState(screen, entry, overlay, scroll, content);
+        content.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(content);
+        var state = new EditorState(screen, entry, overlay, content);
         button.Pressed += () => Open(state);
         mask.GuiInput += input =>
         {
@@ -167,17 +156,15 @@ internal static class CharacterSkinBundleControls
         state.CardCategories = SkinService.GetCardPresetCategories();
         state.MonsterCategories = SkinService.GetMonsterPresetCategories();
         state.RefreshPresetNames.Clear();
-        var previousScroll = state.Scroll.ScrollVertical;
-        foreach (var child in state.Content.GetChildren())
-        {
-            state.Content.RemoveChild(child);
-            child.QueueFree();
-        }
-        var title = CreateLabel(state.DisplayName + " · " + ModLocalization.Get(ModText.CharacterSkinBundle), 25);
+        var scroll = ScrollListRebuild.Begin(state.Content, state.GroupId + ":" + state.Draft.Id);
+        var title = CreateLabel(state.DisplayName + " · " + ModLocalization.Get(ModText.CharacterSkinBundle), 27);
         title.HorizontalAlignment = HorizontalAlignment.Center;
         title.AddThemeColorOverride("font_color", new Color("efc850"));
         state.Content.AddChild(title);
 
+        var profileRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        profileRow.AddThemeConstantOverride("separation", 10);
+        state.Content.AddChild(profileRow);
         var profiles = CreateOptions();
         profiles.Name = "BundleProfiles";
         profiles.AddItem(ModLocalization.Get(ModText.NewBundle));
@@ -195,7 +182,12 @@ internal static class CharacterSkinBundleControls
             LoadDraft(state, index == 0 ? null : bundles[(int)index - 1]);
             BuildEditor(state);
         };
-        state.Content.AddChild(profiles);
+        profileRow.AddChild(profiles);
+        var save = CreateButton(ModText.SaveCharacterSkinMerge);
+        save.Name = "SaveBundle";
+        save.CustomMinimumSize = new Vector2(138f, 42f);
+        save.Pressed += () => Save(state);
+        profileRow.AddChild(save);
 
         var name = new LineEdit
         {
@@ -217,10 +209,12 @@ internal static class CharacterSkinBundleControls
         };
         state.Content.AddChild(name);
 
-        var fields = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        fields.AddThemeConstantOverride("separation", 10);
-        state.Content.AddChild(fields);
-        fields.AddChild(CreateLabel(ModLocalization.Get(ModText.BundleCharacterSkin), 21));
+        var skinRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        skinRow.AddThemeConstantOverride("separation", 12);
+        state.Content.AddChild(skinRow);
+        var skinLabel = CreateLabel(ModLocalization.Get(ModText.BundleCharacterSkin), 19);
+        skinLabel.CustomMinimumSize = new Vector2(250f, 42f);
+        skinRow.AddChild(skinLabel);
         var skins = CreateOptions();
         skins.Name = "BundleCharacterSkin";
         var options = SkinService.GetCharacterSkinBundleSourceOptions(state.GroupId)
@@ -242,7 +236,24 @@ internal static class CharacterSkinBundleControls
         }
         skins.Select(selected);
         skins.ItemSelected += index => { state.Draft.CharacterOptionId = options[(int)index].Id; MarkDirty(state); };
-        fields.AddChild(skins);
+        skinRow.AddChild(skins);
+
+        scroll.CustomMinimumSize = Vector2.Zero;
+        scroll.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+        scroll.VerticalScrollMode = ScrollContainer.ScrollMode.Auto;
+        ScrollListRebuild.PlaceAfterHeader(scroll);
+        var fields = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
+        };
+        fields.AddThemeConstantOverride("separation", 10);
+        scroll.AddChild(fields);
+        AddPresetSection(state, fields, ModText.BundleCardPresets, state.CardCategories, state.Draft.CardPresetNames);
+        AddPresetSection(state, fields, ModText.BundleMonsterPresets, state.MonsterCategories, state.Draft.MonsterPresetNames);
+
         var hideSource = new CheckBox
         {
             Text = ModLocalization.BundleHideSource,
@@ -252,17 +263,12 @@ internal static class CharacterSkinBundleControls
         ContextualSkinControls.ApplyGameTheme(hideSource);
         hideSource.AddThemeFontSizeOverride("font_size", 18);
         hideSource.Toggled += value => { state.Draft.HideSources = value; MarkDirty(state); };
-        fields.AddChild(hideSource);
-        AddPresetSection(state, fields, ModText.BundleCardPresets, state.CardCategories, state.Draft.CardPresetNames);
-        AddPresetSection(state, fields, ModText.BundleMonsterPresets, state.MonsterCategories, state.Draft.MonsterPresetNames);
-
-        var hint = CreateLabel(ModLocalization.BundlePresetHint + "\n" + ModLocalization.Get(ModText.BundleReferenceHint), 16);
-        hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        hint.AddThemeColorOverride("font_color", new Color("bbb4c0"));
-        state.Content.AddChild(hint);
+        state.Content.AddChild(hideSource);
         var status = CreateLabel(state.Status, 17);
         status.Name = "BundleStatus";
         status.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        status.HorizontalAlignment = HorizontalAlignment.Center;
+        status.CustomMinimumSize = new Vector2(0f, 25f);
         status.AddThemeColorOverride("font_color", new Color("efc850"));
         state.Content.AddChild(status);
         state.StatusLabel = status;
@@ -272,7 +278,8 @@ internal static class CharacterSkinBundleControls
         state.Content.AddChild(actions);
         var delete = CreateButton(state.PendingDelete ? ModText.ConfirmDeleteCharacterSkinMerge : ModText.DeleteCharacterSkinMerge);
         delete.Name = "DeleteBundle";
-        delete.Disabled = state.EditingName == null;
+        delete.Visible = state.EditingName != null;
+        delete.CustomMinimumSize = new Vector2(190f, 42f);
         if (state.PendingDelete)
         {
             ApplyDeleteWarning(delete);
@@ -281,42 +288,20 @@ internal static class CharacterSkinBundleControls
         actions.AddChild(delete);
         state.DeleteButton = delete;
         actions.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-        var save = CreateButton(ModText.SaveCharacterSkinMerge);
-        save.Name = "SaveBundle";
-        save.Pressed += () => Save(state);
-        actions.AddChild(save);
         var close = CreateButton(ModText.Close);
+        close.CustomMinimumSize = new Vector2(190f, 42f);
         close.Pressed += () => state.Overlay.Hide();
         actions.AddChild(close);
-
-        Callable.From(() =>
-        {
-            if (!GodotObject.IsInstanceValid(state.Scroll))
-            {
-                return;
-            }
-            state.Scroll.QueueSort();
-            Callable.From(() =>
-            {
-                if (GodotObject.IsInstanceValid(state.Scroll))
-                {
-                    state.Scroll.ScrollVertical = previousScroll;
-                }
-            }).CallDeferred();
-        }).CallDeferred();
     }
 
     private static void AddPresetSection(EditorState state, VBoxContainer fields, ModText title,
         IReadOnlyList<SkinPresetCategory> categories, Dictionary<string, string> references)
     {
+        if (categories.Count == 0) return;
         fields.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 8f), MouseFilter = Control.MouseFilterEnum.Ignore });
         fields.AddChild(CreateLabel(ModLocalization.Get(title), 21));
-        // Keep references to unavailable categories visible/editable instead of silently
-        // dropping them when a Mod has been temporarily disabled.
-        var rows = categories.Concat(references.Keys.Where(id => categories.All(category =>
-                !category.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
-            .Select(id => new SkinPresetCategory(id, id, [])));
-        foreach (var category in rows)
+        // Unavailable categories remain saved, but must not occupy the editor.
+        foreach (var category in categories)
         {
             var row = new HBoxContainer();
             row.AddThemeConstantOverride("separation", 12);
@@ -330,38 +315,24 @@ internal static class CharacterSkinBundleControls
             picker.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             var ownKey = BundlePresetPolicy.PresetKey(state.Draft);
             var names = new[] { ownKey }.Concat(category.PresetNames.Where(BundlePresetPolicy.IsOwned))
-                .Concat(new[] { string.Empty }).Concat(category.PresetNames.Where(key => !BundlePresetPolicy.IsOwned(key)))
+                .Concat(category.PresetNames.Where(key => !BundlePresetPolicy.IsOwned(key)))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var current = references.GetValueOrDefault(category.Id);
-            var currentIndex = names.FindIndex(value => value.Equals(current ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+            var current = BundlePresetPolicy.ResolveReference(state.Draft, references.GetValueOrDefault(category.Id), names);
+            references[category.Id] = current;
+            var currentIndex = names.FindIndex(value => value.Equals(current, StringComparison.OrdinalIgnoreCase));
             string Display(string key) => key == ownKey
-                ? (string.IsNullOrWhiteSpace(state.Draft.Name) ? ModLocalization.Get(ModText.NewBundle) : state.Draft.Name.Trim())
-                : key.Length == 0 ? ModLocalization.Get(ModText.BundleUnchanged) : SkinService.GetPresetDisplayName(key);
+                ? SkinService.GetBundlePresetDisplayName(state.Draft) : SkinService.GetPresetDisplayName(key);
             for (var i = 0; i < names.Count; i++)
             {
                 picker.AddItem(Display(names[i]));
                 picker.SetItemMetadata(i, names[i]);
-            }
-            if (current != null && currentIndex < 0)
-            {
-                picker.AddItem(current + " · " + ModLocalization.Get(ModText.CharacterSkinSourceUnavailable));
-                names.Add(current);
-                currentIndex = names.Count - 1;
-                picker.SetItemMetadata(currentIndex, current);
             }
             picker.Select(currentIndex);
             PresetChoiceColoring.Attach(picker);
             state.RefreshPresetNames.Add(() => picker.SetItemText(0, Display(ownKey)));
             picker.ItemSelected += index =>
             {
-                if (names[(int)index].Length == 0)
-                {
-                    references.Remove(category.Id);
-                }
-                else
-                {
-                    references[category.Id] = names[(int)index];
-                }
+                references[category.Id] = names[(int)index];
                 MarkDirty(state);
             };
             row.AddChild(picker);
@@ -486,13 +457,11 @@ internal static class CharacterSkinBundleControls
         NCharacterSelectScreen screen,
         HBoxContainer entry,
         Control overlay,
-        ScrollContainer scroll,
         VBoxContainer content)
     {
         public NCharacterSelectScreen Screen { get; } = screen;
         public HBoxContainer Entry { get; } = entry;
         public Control Overlay { get; } = overlay;
-        public ScrollContainer Scroll { get; } = scroll;
         public VBoxContainer Content { get; } = content;
         public string GroupId = string.Empty;
         public string DisplayName = string.Empty;

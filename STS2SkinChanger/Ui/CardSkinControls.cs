@@ -1222,7 +1222,7 @@ internal static class CardSkinControls
             {
                 Text = preset.DisplayName,
                 Editable = !preset.IsBundlePreset,
-                MaxLength = SkinService.CardSkinPresetNameMaxLength,
+                MaxLength = preset.IsBundlePreset ? 0 : SkinService.CardSkinPresetNameMaxLength,
                 CustomMinimumSize = new Vector2(310, 38),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };

@@ -659,8 +659,8 @@ Require(referencedBundle.CardPresetNames["regent"] == "Cards B",
     "卡牌预设重命名必须同步更新皮肤包引用。 ");
 CharacterSkinBundlePolicy.RemovePresetReference(
     referencedBundle, monsterPreset: true, "act:one", "Monsters A");
-Require(!referencedBundle.MonsterPresetNames.ContainsKey("act:one"),
-    "怪物预设删除后，皮肤包对应地区必须自动变为不修改。 ");
+Require(referencedBundle.MonsterPresetNames.GetValueOrDefault("act:one") == "__bundle_preset__:" + referencedBundle.Id,
+    "怪物预设删除后，皮肤包对应地区必须自动回退为自身包预设。 ");
 var normalizedBundles = CharacterSkinBundlePolicy.Normalize(
     [referencedBundle, new CharacterSkinBundle { Name = "综合包", CharacterGroupId = "regent" }]);
 Require(normalizedBundles.Count == 1 &&

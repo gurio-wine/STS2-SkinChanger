@@ -4,7 +4,7 @@ namespace STS2SkinChanger.Core;
 internal static class BundlePresetPolicy
 {
     private const string Prefix = "__bundle_preset__:";
-    internal static string PresetKey(CharacterSkinBundle bundle) => Prefix + bundle.Id;
+    internal static string PresetKey(CharacterSkinBundle bundle) => bundle.PresetKey;
     internal static bool IsOwned(string key) => key.StartsWith(Prefix, StringComparison.Ordinal);
 
     internal static Dictionary<string, string> CardSelections(CardSkinPreset preset, string groupId) =>
@@ -15,8 +15,15 @@ internal static class BundlePresetPolicy
         preset.AllOriginal ? groups.ToDictionary(id => id, _ => "__base__", StringComparer.OrdinalIgnoreCase)
             : new(preset.Selections, StringComparer.OrdinalIgnoreCase);
 
-    internal static string DisplayName(SkinConfig config, string key) =>
-        config.CharacterSkinBundles.FirstOrDefault(bundle => PresetKey(bundle) == key)?.Name ?? key;
+    internal static string DisplayName(SkinConfig config, string key, Func<string, string> characterName)
+    {
+        var bundle = config.CharacterSkinBundles.FirstOrDefault(bundle => PresetKey(bundle) == key);
+        return bundle == null ? key : characterName(bundle.CharacterGroupId) + "-" + bundle.Name;
+    }
+
+    internal static string ResolveReference(CharacterSkinBundle bundle, string? requested,
+        IEnumerable<string> availableNames) => !string.IsNullOrWhiteSpace(requested) &&
+        availableNames.Contains(requested, StringComparer.OrdinalIgnoreCase) ? requested : PresetKey(bundle);
 
     internal static IEnumerable<string> HiddenSources(SkinConfig config, string groupId) =>
         config.CharacterSkinBundles.Where(bundle => bundle.HideSources &&
@@ -53,6 +60,20 @@ internal static class BundlePresetPolicy
                     config.MonsterSkinPresets.Add(new MonsterSkinPreset
                         { Name = key, CategoryId = category, AllOriginal = true });
         }
+        // Resolve only after all owners exist: bundles may reference another bundle's preset.
+        foreach (var bundle in config.CharacterSkinBundles)
+        {
+            foreach (var category in cards)
+                bundle.CardPresetNames[category] = ResolveReference(bundle,
+                    bundle.CardPresetNames.GetValueOrDefault(category),
+                    config.CardSkinPresets.Where(p => string.Equals(p.CategoryId, category,
+                        StringComparison.OrdinalIgnoreCase)).Select(p => p.Name));
+            foreach (var category in monsters)
+                bundle.MonsterPresetNames[category] = ResolveReference(bundle,
+                    bundle.MonsterPresetNames.GetValueOrDefault(category),
+                    config.MonsterSkinPresets.Where(p => p.CategoryId.Equals(category,
+                        StringComparison.OrdinalIgnoreCase)).Select(p => p.Name));
+        }
     }
 
     internal static void InitializeDraft(CharacterSkinBundle bundle, IEnumerable<string> cards, IEnumerable<string> monsters)
@@ -69,8 +90,9 @@ internal static class BundlePresetPolicy
         config.MonsterSkinPresets.RemoveAll(p => p.Name == key);
         foreach (var active in new[] { config.ActiveCardSkinPresets, config.ActiveMonsterSkinPresets })
             foreach (var category in active.Where(p => p.Value == key).Select(p => p.Key).ToArray()) active.Remove(category);
-        foreach (var other in config.CharacterSkinBundles)
+        foreach (var other in config.CharacterSkinBundles.Where(other => other.Id != bundle.Id))
             foreach (var references in new[] { other.CardPresetNames, other.MonsterPresetNames })
-                foreach (var category in references.Where(p => p.Value == key).Select(p => p.Key).ToArray()) references.Remove(category);
+                foreach (var category in references.Where(p => p.Value == key).Select(p => p.Key).ToArray())
+                    references[category] = PresetKey(other);
     }
 }
