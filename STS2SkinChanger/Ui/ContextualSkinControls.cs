@@ -724,15 +724,10 @@ internal static partial class ContextualSkinControls
         }
         ConfigureCharacterBundlePopupList(selector, dropdown, bundles.Count);
 
-        var activeBundle = characterScreen != null
-            ? SkinService.Config.ActiveCharacterSkinBundles.GetValueOrDefault(group.Id)
-            : null;
-        var selected = !string.IsNullOrWhiteSpace(activeBundle) &&
-                       bundles.Any(bundle => bundle.Name.Equals(activeBundle, StringComparison.OrdinalIgnoreCase))
-            ? CharacterSkinBundlePolicy.CreateSelectionOptionId(activeBundle)
-            : hasMonsterPriorityContext
-                ? SkinService.GetMonsterOverrideSelection(group.Id)
-                : SkinService.Config.GetSelection(group.Id);
+        var selected = hasMonsterPriorityContext
+            ? SkinService.GetMonsterOverrideSelection(group.Id)
+            : characterScreen != null ? SkinService.GetCharacterSelectionOptionId(group.Id)
+            : SkinService.Config.GetSelection(group.Id);
         if (dropdown.ItemCount > 0)
         {
             var selectedIndex = Enumerable.Range(0, dropdown.ItemCount)
@@ -945,7 +940,7 @@ internal static partial class ContextualSkinControls
             .Select(index => dropdown.GetItemMetadata(index).AsString()).ToArray();
         var current = pendingOptionId != null && options.Contains(pendingOptionId, StringComparer.OrdinalIgnoreCase)
             ? pendingOptionId
-            : dropdown.Selected >= 0 && dropdown.Selected < options.Length ? options[dropdown.Selected] : null;
+            : SkinService.GetCharacterSelectionOptionId(groupId);
         return SkinOptionCycle.NextOption(options, current, direction);
     }
 
@@ -954,11 +949,11 @@ internal static partial class ContextualSkinControls
     {
         var dropdown = FindFrameworkDropdown(screen, groupId);
         if (dropdown == null) return null;
+        var current = pendingOptionId ?? SkinService.GetCharacterSelectionOptionId(groupId);
         for (var index = 0; index < dropdown.ItemCount; index++)
-            if (dropdown.GetItemMetadata(index).AsString().Equals(pendingOptionId, StringComparison.OrdinalIgnoreCase))
+            if (dropdown.GetItemMetadata(index).AsString().Equals(current, StringComparison.OrdinalIgnoreCase))
                 return dropdown.GetItemText(index);
-        return dropdown.Selected >= 0 && dropdown.Selected < dropdown.ItemCount
-            ? dropdown.GetItemText(dropdown.Selected) : null;
+        return null;
     }
 
     internal static bool RequestFrameworkSelection(NCharacterSelectScreen screen, string groupId, string optionId)
@@ -1164,14 +1159,13 @@ internal static partial class ContextualSkinControls
                     groupId,
                     optionId,
                     preserveCharacterSkinBundle);
-                if (preserveCharacterSkinBundle)
+                if (preserveCharacterSkinBundle && !applied)
                 {
-                    if (!applied)
-                    {
-                        SkinService.ClearSelectedCharacterSkinBundle(groupId);
-                    }
-                    Populate(selector, FindGroup(groupId));
+                    SkinService.ClearSelectedCharacterSkinBundle(groupId);
                 }
+                // Mounting can repopulate the selector before the old bundle is cleared.
+                // Finish both bundle and ordinary selections from the committed state.
+                Populate(selector, FindGroup(groupId));
                 UpdateCharacterLoadingOverlay(overlay, optionName, 94);
                 ScheduleNextFrame(screen, () =>
                 {

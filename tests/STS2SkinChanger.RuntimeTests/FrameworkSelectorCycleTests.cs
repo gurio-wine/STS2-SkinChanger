@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Collections;
+using HarmonyLib;
 using STS2SkinChanger;
 
 internal static class FrameworkSelectorCycleTests
@@ -26,7 +28,35 @@ internal static class FrameworkSelectorCycleTests
         Require(Next(["vanilla"], "vanilla", 1) == "vanilla", "只有原皮时不能越界。");
         Require(Next([], null, 1) == null, "空列表不能生成虚假皮肤请求。");
         Require(Next(visible, "foreign:one", 0) == "foreign:one", "没有方向时应保留当前选择。");
+        CheckCommittedSelection();
         Console.WriteLine("Framework selector cycle passed: shared SC order, packs, compositions, pending choices and wraparound.");
+    }
+
+    private static void CheckCommittedSelection()
+    {
+        var service = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.SkinService", true)!;
+        var read = AccessTools.Method(service, "GetCharacterSelectionOptionId")
+            ?? throw new InvalidOperationException("箭头仍从可能滞后的下拉框读取选择，没有读取已提交的皮肤包/皮肤状态。");
+        var property = service.GetProperty("Config")!;
+        var previous = property.GetValue(null);
+        var configType = property.PropertyType;
+        var config = AccessTools.Method(configType, "Deserialize").Invoke(null, ["""
+            {"Selections":{"ironclad":"skin:new","silent":"skin:other"},
+             "CharacterSkinBundles":[{"Name":"one","CharacterGroupId":"ironclad","CharacterOptionId":"skin:old"}],
+             "ActiveCharacterSkinBundles":{"ironclad":"one"}}
+            """]);
+        try
+        {
+            property.SetValue(null, config);
+            Require((string?)read.Invoke(null, ["ironclad"]) == "__skin_bundle__:one", "皮肤包的索引不能被解析成原材料索引。");
+            ((IDictionary)configType.GetProperty("ActiveCharacterSkinBundles")!.GetValue(config)!).Remove("ironclad");
+            Require((string?)read.Invoke(null, ["ironclad"]) == "skin:new", "切走皮肤包后必须读取新皮肤，不能保留旧下拉行。");
+            var cycle = AccessTools.Method(typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.SkinOptionCycle"), "NextOption");
+            Require((string?)cycle.Invoke(null, [new[] { "__skin_bundle__:one", "skin:new", "skin:other" },
+                    read.Invoke(null, ["ironclad"]), -1]) == "__skin_bundle__:one", "反向必须能立即回到皮肤包。");
+            Require((string?)read.Invoke(null, ["silent"]) == "skin:other", "不能借用另一角色的皮肤包状态。");
+        }
+        finally { property.SetValue(null, previous); }
     }
 
     private static void Require(bool value, string message)

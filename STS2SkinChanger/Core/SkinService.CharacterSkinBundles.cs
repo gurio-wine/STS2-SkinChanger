@@ -28,6 +28,17 @@ internal static partial class SkinService
         }
     }
 
+    internal static string GetCharacterSelectionOptionId(string groupId)
+    {
+        lock (Sync)
+        {
+            var bundle = Config.ActiveCharacterSkinBundles.GetValueOrDefault(groupId);
+            return !string.IsNullOrWhiteSpace(bundle) && FindCharacterSkinBundleIndex(groupId, bundle) >= 0
+                ? CharacterSkinBundlePolicy.CreateSelectionOptionId(bundle)
+                : Config.GetSelection(groupId);
+        }
+    }
+
     public static IReadOnlyList<SkinPresetCategory> GetCardPresetCategories()
     {
         lock (Sync)

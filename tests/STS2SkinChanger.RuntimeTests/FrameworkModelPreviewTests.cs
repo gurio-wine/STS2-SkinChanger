@@ -13,6 +13,8 @@ internal static class FrameworkModelPreviewTests
     private static int _originalCalls;
     private static NCreatureVisuals _visuals = null!;
     private static CharacterModel _character = null!;
+    private static MegaCrit.Sts2.Core.Entities.Creatures.Creature _creature = null!;
+    private static bool _creatureConfigured, _ownerAttached;
 
     public static void Run()
     {
@@ -37,6 +39,7 @@ internal static class FrameworkModelPreviewTests
         }
         Require(fit.Invoke(null, [new Rect2(), new Rect2(0, 0, 200, 300)]) == null,
             "未就绪的空边界不能产生无穷缩放。");
+        CheckVisibleBounds(preview);
         var areaResolver = AccessTools.Method(preview, "PreviewArea")
             ?? throw new InvalidOperationException("原管理器根 Control 尺寸为零，预览区必须取实际背景框而非根尺寸。");
         var nativeArea = (Rect2)areaResolver.Invoke(null,
@@ -66,7 +69,24 @@ internal static class FrameworkModelPreviewTests
         _character = (CharacterModel)RuntimeHelpers.GetUninitializedObject(typeof(Ironclad));
         AccessTools.Field(typeof(AbstractModel), "<Id>k__BackingField")
             .SetValue(_character, new ModelId("CHARACTER", "IRONCLAD"));
+        var playerFactory = AccessTools.Method(preview, "CreatePreviewPlayer")
+            ?? throw new InvalidOperationException("小预览没有独立角色归属，依赖 NCreature.Entity.Player 的皮肤初始化仍会跳过。");
+        var constructorBoundary = new Harmony("tests.framework-preview-save-boundary");
+        MegaCrit.Sts2.Core.Entities.Players.Player player;
+        try
+        {
+            // The real Player constructor reads the native save account for ascension only.
+            constructorBoundary.Patch(AccessTools.PropertyGetter(typeof(MegaCrit.Sts2.Core.Saves.SaveManager), "Instance"),
+                prefix: new HarmonyMethod(typeof(FrameworkModelPreviewTests), nameof(NoSaveAccount)));
+            player = (MegaCrit.Sts2.Core.Entities.Players.Player)playerFactory.Invoke(null, [_character, null])!;
+        }
+        finally { constructorBoundary.UnpatchAll(constructorBoundary.Id); }
+        Require(ReferenceEquals(player.Character, _character) && ReferenceEquals(player.Creature.Player, player) &&
+                player.Creature.CurrentHp == player.Creature.MaxHp && player.Creature.CurrentHp > 0 &&
+                player.Deck.Cards.Count == 0 && player.Relics.Count == 0 && player.Creature.CombatState == null,
+            "预览必须有正确满血的所属角色，但不能创建卡组、遗物或加入战斗。");
         _visuals = (NCreatureVisuals)RuntimeHelpers.GetUninitializedObject(typeof(NCreatureVisuals));
+        _creature = player.Creature;
         var service = assembly.GetType("STS2SkinChanger.Core.SkinService", true)!;
         var controls = assembly.GetType("STS2SkinChanger.Ui.ContextualSkinControls", true)!;
         var harmony = new Harmony("tests.framework-model-preview");
@@ -78,19 +98,79 @@ internal static class FrameworkModelPreviewTests
                 prefix: new HarmonyMethod(typeof(FrameworkModelPreviewTests), nameof(ManagedFactory)));
             harmony.Patch(AccessTools.Method(controls, "ApplySelectedProviderVisualPostfix"),
                 prefix: new HarmonyMethod(typeof(FrameworkModelPreviewTests), nameof(Configure)));
+            harmony.Patch(AccessTools.Method(controls, "ApplySelectedCreatureVisualPostfix"),
+                prefix: new HarmonyMethod(typeof(FrameworkModelPreviewTests), nameof(ConfigureCreature)));
             harmony.Patch(AccessTools.Method(typeof(CharacterModel), "CreateVisuals"),
                 prefix: new HarmonyMethod(typeof(FrameworkModelPreviewTests), nameof(OriginalFactory)));
             _managed = true; _configured = false; _originalCalls = 0;
-            var result = create.Invoke(null, [_character, "ironclad", "res://scenes/creature_visuals/ironclad.tscn"]);
+            var result = create.Invoke(null, [_character, "ironclad", "res://scenes/creature_visuals/ironclad.tscn", null]);
             Require(ReferenceEquals(result, _visuals) && _configured && _originalCalls == 0,
                 "原皮及受管理场景必须先使用隔离工厂并执行所选后处理，不能先进入会抛类型转换异常的共享缓存工厂。");
             _managed = false; _configured = false;
-            result = create.Invoke(null, [_character, "ironclad", "res://scenes/creature_visuals/ironclad.tscn"]);
+            result = create.Invoke(null, [_character, "ironclad", "res://scenes/creature_visuals/ironclad.tscn", null]);
             Require(ReferenceEquals(result, _visuals) && !_configured && _originalCalls == 1,
                 "纯运行时模型仍需原工厂，不能丢掉它的构造回调或重复应用后处理。");
+            _managed = true; _configured = false; _creatureConfigured = false;
+            result = create.Invoke(null, [_character, "ironclad", "res://scenes/creature_visuals/ironclad.tscn", _creature]);
+            Require(ReferenceEquals(result, _visuals) && _configured && _creatureConfigured,
+                "独立预览需要同时完成角色级和生物级所选皮肤处理，不能只处理角色资源。");
+            harmony.Patch(AccessTools.Method(typeof(Node), nameof(Node.AddChild)),
+                prefix: new HarmonyMethod(typeof(FrameworkModelPreviewTests), nameof(ObserveOwnerAttachment)));
+            var ownerType = assembly.GetType("STS2SkinChanger.Core.FrameworkPreviewCreature", true)!;
+            var owner = (NCreature)RuntimeHelpers.GetUninitializedObject(ownerType);
+            _ownerAttached = false;
+            AccessTools.Method(ownerType, "Initialize").Invoke(owner, [player, _visuals]);
+            Require(_ownerAttached, "完整预览树必须把模型挂在 NCreature 所属节点下面。");
+            // Preview lifecycle must not touch the game's native UI or combat subscriptions.
+            owner._EnterTree();
+            owner._Ready();
         }
         finally { harmony.UnpatchAll(harmony.Id); }
         Console.WriteLine("Framework model preview passed: managed-before-cache, selected finishing, runtime fallback and animation names.");
+    }
+
+    private static bool ObserveOwnerAttachment(Node __instance, Node node)
+    {
+        Require(__instance is NCreature owner && ReferenceEquals(owner.Entity, _creature) &&
+                ReferenceEquals(owner.Visuals, _visuals) && ReferenceEquals(node, _visuals) &&
+                ReferenceEquals(owner.Entity.Player?.Character, _character),
+            "作者的模型 Ready 触发前，父级就必须暴露正确的 Entity、Player 和最终 Visuals。");
+        _ownerAttached = true;
+        return false;
+    }
+
+    private static bool ConfigureCreature(MegaCrit.Sts2.Core.Entities.Creatures.Creature creature, ref NCreatureVisuals? visuals)
+    {
+        Require(_configured && ReferenceEquals(creature, _creature) && ReferenceEquals(visuals, _visuals),
+            "生物级收尾必须沿用同一个模型和角色，且在角色级处理之后执行。");
+        _creatureConfigured = true;
+        return false;
+    }
+
+    private static void CheckVisibleBounds(Type preview)
+    {
+        var measure = AccessTools.Method(preview, "MeasureWithoutHiddenAttachments")
+            ?? throw new InvalidOperationException("透明附件仍计入预览边界，人物会被不可见部件挤小。");
+        var method = measure.MakeGenericMethod(typeof(int));
+        var attached = new HashSet<int> { 1, 2, 3 };
+        var boxes = new[] { new Rect2(), new Rect2(-100, -300, 200, 300),
+            new Rect2(1000, -100, 500, 100), new Rect2(-800, -100, 500, 100) };
+        Func<int, Action> exclude = index =>
+        {
+            attached.Remove(index);
+            return () => attached.Add(index);
+        };
+        Func<Rect2> bounds = () => attached.Select(index => boxes[index]).Aggregate((a, b) => a.Merge(b));
+        var result = (Rect2)method.Invoke(null, [new[] { 2, 3 }, exclude, bounds])!;
+        Require(result.IsEqualApprox(new Rect2(-100, -300, 200, 300)) && attached.SetEquals([1, 2, 3]),
+            "测量应排除透明部件，但测量结束必须恢复完整附件状态，不能改变动画。");
+        try
+        {
+            method.Invoke(null, [new[] { 2, 3 }, exclude, (Func<Rect2>)(() => throw new InvalidOperationException("render unavailable"))]);
+            throw new Exception("测量异常应保留给上层安全回退。");
+        }
+        catch (TargetInvocationException exception) when (exception.InnerException?.Message == "render unavailable") { }
+        Require(attached.SetEquals([1, 2, 3]), "测量失败也不能遗留缺失部件。");
     }
 
     private static bool ManagedFactory(string groupId, string scenePath,
@@ -117,6 +197,12 @@ internal static class FrameworkModelPreviewTests
         _originalCalls++;
         if (_managed) throw new InvalidCastException("stale plain Node2D in shared cache");
         __result = _visuals;
+        return false;
+    }
+
+    private static bool NoSaveAccount(ref MegaCrit.Sts2.Core.Saves.SaveManager __result)
+    {
+        __result = null!;
         return false;
     }
 

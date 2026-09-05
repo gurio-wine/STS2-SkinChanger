@@ -2,6 +2,10 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Unlocks;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using STS2SkinChanger.Ui;
@@ -26,13 +30,19 @@ internal static class FrameworkModelPreview
         {
             // Keep the selected private dependencies mounted through creation AND Ready.
             using var scope = groupId == null ? null : SkinService.BeginRuntimeResourceScope(groupId, scenePath);
-            visuals = CreateVisuals(character, groupId, scenePath);
+            var player = CreatePreviewPlayer(character, UnlockState.all);
+            visuals = CreateVisuals(character, groupId, scenePath, player.Creature);
             staged = new Node2D { Name = "SkinChangerPendingPreview", Visible = false };
             // Keep the complete fresh model: extracting/duplicating only a node named Visuals
             // discards sibling sprites, model offsets and animation controllers, and leaks the root.
-            staged.AddChild(visuals);
+            var owner = new FrameworkPreviewCreature();
+            owner.Initialize(player, visuals);
+            staged.AddChild(owner);
             container.AddChild(staged);
             ApplyRuntimeSpine(visuals, character, groupId);
+            // Same selected, node-local cosmetic finishing as a live hot swap. Never replay
+            // NCombatRoom callbacks or the original NCreature lifecycle in a menu preview.
+            CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(owner);
             foreach (var control in DescendantsAndSelf(staged).OfType<Control>())
                 control.MouseFilter = Control.MouseFilterEnum.Ignore;
             var previous = container.GetNodeOrNull<Node>("PreviewSprite");
@@ -60,6 +70,18 @@ internal static class FrameworkModelPreview
             if (staged != null) staged.QueueFree();
             else if (visuals != null && visuals.GetParent() == null) visuals.Free();
         }
+    }
+
+    internal static Player CreatePreviewPlayer(CharacterModel character, UnlockState unlockState)
+    {
+        // Both supported game versions expose the same constructor. CreateForNewRun also
+        // populates the deck/relics and runs their hooks; a cosmetic preview must not do that.
+        var constructor = typeof(Player).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(ctor => ctor.GetParameters() is { Length: 15 } parameters &&
+                parameters[0].ParameterType == typeof(CharacterModel) && parameters[1].ParameterType == typeof(ulong));
+        return (Player)constructor.Invoke([character, 0UL, character.StartingHp, character.StartingHp,
+            character.MaxEnergy, 0, 0, character.BaseOrbSlotCount, new RelicGrabBag(), unlockState,
+            null, null, null, null, null]);
     }
 
     private static void ApplyRuntimeSpine(NCreatureVisuals visuals, CharacterModel character, string? groupId)
@@ -127,12 +149,13 @@ internal static class FrameworkModelPreview
         try
         {
             if (selector is not Control control || !wrapper.IsInsideTree()) return;
-            var tree = wrapper.GetTree();
             // Spine world vertices and Container layout are only valid after the first frame.
             // A bounded startup measurement avoids permanent per-frame traversal/resize jitter.
             for (var frame = 0; frame < 4; frame++)
             {
-                await tree.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
+                // ProcessFrame is emitted BEFORE node animation updates. At that point a
+                // skeleton can still have its setup pose (including off-stage attachments).
+                await RenderingServer.Singleton.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
                 if (!Alive(control) || !Alive(container) || !Alive(wrapper) || !Alive(visuals)) return;
                 // The native scene's root is a zero-size positioning anchor. Its actual
                 // NinePatchRect sits above that origin; do not assume positive coordinates.
@@ -172,7 +195,7 @@ internal static class FrameworkModelPreview
         var body = visuals.GetNodeOrNull<Node2D>("%Visuals") ?? visuals.GetNodeOrNull<Node2D>("Visuals") ?? visuals;
         foreach (var node in DescendantsAndSelf(body).OfType<Node2D>())
         {
-            if (!node.IsVisibleInTree()) continue;
+            if (!node.IsVisibleInTree() || node.Modulate.A <= 0 || node.SelfModulate.A <= 0) continue;
             Rect2? rect = node switch
             {
                 Sprite2D sprite when sprite.Texture != null => sprite.GetRect(),
@@ -180,7 +203,8 @@ internal static class FrameworkModelPreview
                     new Rect2(animated.Offset - (animated.Centered ? texture.GetSize() / 2 : Vector2.Zero), texture.GetSize()),
                 _ => null
             };
-            if (node.GetClass().ToString() == "SpineSprite") rect = new MegaSprite(node).GetSkeleton()?.GetBounds();
+            if (node.GetClass().ToString() == "SpineSprite" && new MegaSprite(node).GetSkeleton() is { } skeleton)
+                rect = MeasureSpine(skeleton);
             if (rect is not { } r || !r.Position.IsFinite() || !r.Size.IsFinite() || r.Size.X <= 0 || r.Size.Y <= 0) continue;
             var transformed = (inverse * node.GlobalTransform) * r;
             result = result?.Merge(transformed) ?? transformed;
@@ -188,18 +212,87 @@ internal static class FrameworkModelPreview
         return result;
     }
 
-    internal static NCreatureVisuals CreateVisuals(CharacterModel character, string? groupId, string scenePath)
+    private static Rect2 MeasureSpine(MegaSkeleton skeleton)
+    {
+        var raw = skeleton.GetBounds();
+        var native = skeleton.BoundObject;
+        if (!native.HasMethod("get_slots")) return raw;
+        using var slots = native.Call("get_slots");
+        var hidden = slots.AsGodotArray().Select(value => value.AsGodotObject())
+            .Where(slot => slot != null && slot.HasMethod("get_color") &&
+                slot.HasMethod("get_attachment") && slot.HasMethod("set_attachment") &&
+                slot.HasMethod("get_deform") && slot.HasMethod("set_deform") &&
+                slot.HasMethod("get_sequence_index") && slot.HasMethod("set_sequence_index") &&
+                slot.HasMethod("get_attachment_state") && slot.HasMethod("set_attachment_state") &&
+                slot.Call("get_color").AsColor().A <= 0).Cast<GodotObject>().ToArray();
+        if (hidden.Length == 0) return raw;
+        var bounds = MeasureWithoutHiddenAttachments(hidden, TemporarilyDetach, skeleton.GetBounds);
+        ModLog.Info($"小预览可见边界：全部={raw}；可见={bounds}；透明槽位={hidden.Length}。");
+        return bounds;
+    }
+
+    // Spine's get_bounds includes fully transparent slots. Exclude them only during this
+    // synchronous measurement, restoring deformation and sequence state as well as attachment.
+    // Never change shared skeleton data, wait a frame, or render with these slots detached.
+    private static Action TemporarilyDetach(GodotObject slot)
+    {
+        var attachment = slot.Call("get_attachment");
+        var deform = slot.Call("get_deform");
+        var sequence = slot.Call("get_sequence_index");
+        var state = slot.Call("get_attachment_state");
+        void Restore()
+        {
+            try
+            {
+                slot.Call("set_attachment", attachment);
+                slot.Call("set_deform", deform);
+                slot.Call("set_sequence_index", sequence);
+                slot.Call("set_attachment_state", state);
+            }
+            finally { attachment.Dispose(); deform.Dispose(); sequence.Dispose(); state.Dispose(); }
+        }
+        try { slot.Call("set_attachment", default(Variant)); }
+        catch { Restore(); throw; }
+        return Restore;
+    }
+
+    internal static Rect2 MeasureWithoutHiddenAttachments<T>(IEnumerable<T> slots,
+        Func<T, Action> exclude, Func<Rect2> measure)
+    {
+        var restores = new Stack<Action>();
+        try
+        {
+            foreach (var slot in slots) restores.Push(exclude(slot));
+            return measure();
+        }
+        finally
+        {
+            List<Exception>? errors = null;
+            foreach (var restore in restores)
+            {
+                try { restore(); }
+                catch (Exception exception) { (errors ??= []).Add(exception); }
+            }
+            if (errors != null) throw new AggregateException("恢复预览测量临时状态失败。", errors);
+        }
+    }
+
+    internal static NCreatureVisuals CreateVisuals(CharacterModel character, string? groupId, string scenePath,
+        Creature? creature = null)
     {
         if (groupId != null && SkinService.TryInstantiateSelectedCharacterCreatureVisuals(
                 groupId, scenePath, visuals =>
                 {
                     ContextualSkinControls.ApplySelectedProviderVisualPostfix(
                         character.Id.Entry, character.GetType().Name, character, ref visuals);
-                    return visuals;
+                    NCreatureVisuals? completed = visuals;
+                    if (creature != null) ContextualSkinControls.ApplySelectedCreatureVisualPostfix(creature, ref completed);
+                    return completed ?? throw new InvalidOperationException("所选皮肤未返回预览模型。");
                 }, out var result)) return result;
         // Pure runtime providers and characters outside SC keep their original creation logic.
         // This call already runs CharacterVisualResultPatch; do not apply its postfix twice.
-        return character.CreateVisuals();
+        return (creature != null ? creature.CreateVisuals() : character.CreateVisuals())
+            ?? throw new InvalidOperationException("角色未返回预览模型。");
     }
 
     internal static (string? Entry, string? Idle) ResolveAnimations(IReadOnlyList<string> names)
