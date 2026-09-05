@@ -6,6 +6,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="RegisteredSkinProfile.cs" />
     <Compile Include="../STS2SkinChanger.RuntimeTests/LegacyMerchantCommandFixture.cs" Link="LegacyMerchantCommandFixture.cs" />
     <Reference Include="sts2"><HintPath>$(GameAssemblyDir)/sts2.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="GodotSharp"><HintPath>$(GameAssemblyDir)/GodotSharp.dll</HintPath><Private>false</Private></Reference>

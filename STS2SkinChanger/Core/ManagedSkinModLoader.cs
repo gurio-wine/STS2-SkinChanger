@@ -1224,6 +1224,7 @@ internal static class ManagedSkinModLoader
 
         providerIds.Add(providerId);
         ManagedMerchantSettingsBridge.Install(assembly);
+        ManagedSkinBehaviorBridge.Install(assembly);
     }
 
     private static void EnsureProviderNodeMonitor()

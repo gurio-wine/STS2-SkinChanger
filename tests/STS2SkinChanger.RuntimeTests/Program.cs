@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 2 && args[0] == "--audit-skin-behavior")
+{
+    ScopedSkinBehaviorTests.Audit(args[1]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--audit-provider-settings")
 {
     ProviderSettingsTests.Audit(args[1]);
@@ -65,6 +71,7 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
     return;
 }
 
+ScopedSkinBehaviorTests.Run();
 ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();

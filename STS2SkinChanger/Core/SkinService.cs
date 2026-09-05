@@ -113,6 +113,7 @@ internal static partial class SkinService
     private static bool _loadOrderAutoReorderLogged;
     private static string? _mountedLocalizationSignature;
     private static ConditionalWeakTable<CardModel, CardLookup> _cardLookupCache = new();
+    private static readonly ConditionalWeakTable<SkinCatalog, Dictionary<Type, string>> CharacterBehaviorGroups = new();
 
     public static SkinCatalog? Catalog { get; private set; }
     public static SkinConfig Config { get; private set; } = new();
@@ -4310,6 +4311,34 @@ internal static partial class SkinService
                    Catalog.IsFullRuntimeProviderFullySelected(providerId, GetVisualSelections())
                 ? providerId
                 : null;
+        }
+    }
+
+    internal static bool? IsCharacterBehaviorSelected(
+        System.Reflection.Assembly assembly,
+        MegaCrit.Sts2.Core.Models.CharacterModel character,
+        MegaCrit.Sts2.Core.Entities.Players.Player? player)
+    {
+        // Player -> CharacterModel predicates inherit their caller's identity. Use the same
+        // selection overlay as avatar/creature hot reload, not this computer's saved selection
+        // for every instance of that character. This does not mount or load any resources.
+        using var scope = player == null ? null : MultiplayerSkinSync.BeginPlayerSelectionScope(player.NetId);
+        lock (Sync)
+        {
+            var catalog = Catalog;
+            if (catalog == null) return null;
+            // Predicates may run frequently during effects. Cache only stable type -> group
+            // identity, never a selection result; no scene scan, disk access or reload here.
+            var groups = CharacterBehaviorGroups.GetValue(catalog, static _ => new());
+            var characterType = character.GetType();
+            if (!groups.TryGetValue(characterType, out var groupId))
+            {
+                var group = Ui.ContextualSkinControls.FindGroup(character.Id.Entry, characterType.Name);
+                if (group == null) return null;
+                groups[characterType] = groupId = group.Id;
+            }
+            var providerId = GetSelectedRuntimeProvider(groupId);
+            return providerId != null && ManagedSkinModLoader.IsProviderAssemblyFor(providerId, assembly);
         }
     }
 
