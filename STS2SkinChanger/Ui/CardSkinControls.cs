@@ -1032,9 +1032,9 @@ internal static class CardSkinControls
         button.Text = string.Format(
             ModLocalization.Get(ModText.CardSkinPriority),
             options.Count(option => option.Enabled));
-        button.TooltipText = ModLocalization.Get(ModText.CardPriorityTooltip);
+        button.TooltipText = string.Empty;
         presetButton.Text = ModLocalization.Get(ModText.CardPresets);
-        presetButton.TooltipText = ModLocalization.Get(ModText.CardPresetTooltip);
+        presetButton.TooltipText = string.Empty;
         selector.Visible = true;
     }
 
@@ -1230,7 +1230,6 @@ internal static class CardSkinControls
             if (preset.IsBundlePreset)
             {
                 name.AddThemeColorOverride("font_uneditable_color", new Color("efc850"));
-                name.TooltipText = ModLocalization.BundlePresetLocked;
             }
             row.AddChild(name);
 
@@ -2062,7 +2061,7 @@ internal static class CardInspectSkinControls
         selector.SetMeta(UpdatingMeta, true);
         selector.RemoveMeta(OptionsCardMeta);
         dropdown.Clear();
-        dropdown.TooltipText = ModLocalization.Get(ModText.IndividualCardTooltip);
+        dropdown.TooltipText = string.Empty;
         var selected = SkinService.GetCardOverrideSelection(card);
         dropdown.AddItem(SelectionDisplayName(selected));
         dropdown.SetItemMetadata(0, selected);

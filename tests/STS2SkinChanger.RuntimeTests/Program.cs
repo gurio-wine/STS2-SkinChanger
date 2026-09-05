@@ -92,6 +92,7 @@ ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
 AppearanceControlContractTests.Run();
+AppearanceSelectionHintTests.Run();
 ProviderLookupTests.Run();
 DuplicateProviderLoadingTests.Run();
 CreatureVisualLifecycleTests.Run();

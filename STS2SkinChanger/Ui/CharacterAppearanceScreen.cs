@@ -132,6 +132,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Stop;
         BuildInterface();
+        // Sample only while selecting, not every frame or while playing/adjusting a model.
+        _selectionHintTimer = new Godot.Timer { WaitTime = 0.35, ProcessMode = ProcessModeEnum.Always };
+        _selectionHintTimer.Timeout += RefreshSelectionHint;
+        AddChild(_selectionHintTimer);
         ConnectSignals();
         ModLocalization.Bind(this, RefreshLocalizedText);
     }
@@ -681,7 +685,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         _selectionReticleResetButton.Text = ModLocalization.Get(ModText.Reset);
         _restorePlayerButton.Text = ModLocalization.Get(ModText.RestorePlayerPosition);
         RefreshDragHint();
-        _selectionHint.Text = ModLocalization.Get(ModText.SelectAppearanceTarget);
+        RefreshSelectionHint();
         PopulateSkinDropdown();
         RefreshStatusForCurrentContext();
     }
@@ -1131,105 +1135,17 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private bool TrySelectTarget(Vector2 localPosition)
     {
-        var creatureTarget = NCombatRoom.Instance?.CreatureNodes
-            .Where(creature =>
-                GodotObject.IsInstanceValid(creature) &&
-                creature.IsVisibleInTree() &&
-                !creature.IsPlayingDeathAnimation &&
-                CharacterAppearanceRuntime.TryGetCreatureAppearance(creature, out _))
-            .Select(creature => new
-            {
-                Creature = creature,
-                HasRect = _dragSurface.TryGetCreatureTargetRect(creature, out var rect),
-                Rect = rect
-            })
-            .Where(candidate => candidate.HasRect && candidate.Rect.HasPoint(localPosition))
-            .OrderBy(candidate => candidate.Rect.Size.X * candidate.Rect.Size.Y)
+        var target = GetSelectableTargets()
+            .Where(candidate => candidate.Rect.HasPoint(localPosition))
+            .OrderBy(candidate => candidate.Priority)
+            .ThenBy(candidate => candidate.Rect.Size.X * candidate.Rect.Size.Y)
             .ThenBy(candidate => candidate.Rect.GetCenter().DistanceSquaredTo(localPosition))
             .FirstOrDefault();
-        if (creatureTarget != null)
-        {
-            return SelectCreatureTarget(creatureTarget.Creature, creatureTarget.Rect.GetCenter());
-        }
+        return target?.Select(localPosition) == true;
+    }
 
-        var shopPlayerVisual = MerchantRuntimeAppearance.GetLocalPlayerVisual();
-        if (_player != null &&
-            shopPlayerVisual != null &&
-            _dragSurface.TryGetNode2DTargetRect(
-                shopPlayerVisual,
-                new Rect2(-190f, -450f, 380f, 520f),
-                out var shopPlayerRect) &&
-            shopPlayerRect.HasPoint(localPosition))
-        {
-            return SelectShopPlayerTarget(shopPlayerVisual, shopPlayerRect.GetCenter());
-        }
-
-        var merchantButton = NMerchantRoom.Instance?.MerchantButton;
-        if (merchantButton != null &&
-            GodotObject.IsInstanceValid(merchantButton) &&
-            SkinService.Catalog?.Groups.Any(group => group.Id.Equals(
-                MerchantRuntimeAppearance.GroupId,
-                StringComparison.OrdinalIgnoreCase)) == true &&
-            _dragSurface.TryGetCanvasRect(merchantButton, 8f, out var merchantRect) &&
-            merchantRect.HasPoint(localPosition))
-        {
-            return SelectMerchantTarget(merchantButton, merchantRect.GetCenter());
-        }
-
-        var fakeMerchant = NEventRoom.Instance?.CustomEventNode as NFakeMerchant;
-        var fakeMerchantButton = fakeMerchant?.MerchantButton;
-        if (fakeMerchantButton != null &&
-            GodotObject.IsInstanceValid(fakeMerchantButton) &&
-            fakeMerchantButton.IsVisibleInTree() &&
-            SkinService.Catalog?.Groups.Any(group => group.Id.Equals(
-                "fake_merchant_monster",
-                StringComparison.OrdinalIgnoreCase)) == true &&
-            _dragSurface.TryGetCanvasRect(fakeMerchantButton, 8f, out var fakeMerchantRect) &&
-            fakeMerchantRect.HasPoint(localPosition))
-        {
-            return SelectMerchantTarget(
-                fakeMerchantButton,
-                fakeMerchantRect.GetCenter(),
-                "fake_merchant_monster",
-                fakeMerchant);
-        }
-
-        var bossTarget = NMapScreen.Instance is { } mapScreen && mapScreen.IsVisibleInTree()
-            ? EnumerateDescendants<NBossMapPoint>(mapScreen)
-                .Where(point =>
-                    GodotObject.IsInstanceValid(point) &&
-                    point.IsVisibleInTree())
-                .Select(point => new
-                {
-                    Point = point,
-                    HasRect = _dragSurface.TryGetCanvasRect(point, 8f, out var rect),
-                    Rect = rect
-                })
-                .Where(candidate => candidate.HasRect && candidate.Rect.HasPoint(localPosition))
-                .OrderBy(candidate => candidate.Rect.Size.X * candidate.Rect.Size.Y)
-                .FirstOrDefault()
-            : null;
-        if (bossTarget != null)
-        {
-            return SelectBossMapTarget(bossTarget.Point, bossTarget.Rect.GetCenter());
-        }
-
-        if (!AncientRuntimeAppearance.TryGetCurrent(
-                out var ancient,
-                out var layout,
-                out var ancientGroup))
-        {
-            return false;
-        }
-
-        var background = AncientRuntimeAppearance.GetBackgroundTarget(layout);
-        if (background == null ||
-            !_dragSurface.TryGetCanvasRect(background, 0f, out var ancientRect) ||
-            !ancientRect.HasPoint(localPosition))
-        {
-            return false;
-        }
-
+    private bool SelectAncientTarget(AncientEventModel ancient, SkinGroup ancientGroup, Vector2 localPosition)
+    {
         _selectionMode = false;
         EndSelectionReticlePreview();
         _targetAncient = ancient;
@@ -1787,6 +1703,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         RefreshHintPulse(_hint, showDragHint, ref _hintPulseTween);
         _compareButton.Disabled = creature == null;
         RefreshDragHint();
+        UpdateSelectionHintRefresh();
     }
 
     private bool CanRestoreLocalPlayerModelTransform()
@@ -1813,6 +1730,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private void StopHintPulseAnimations()
     {
+        _selectionHintTimer?.Stop();
         StopHintPulse(_selectionHint, ref _selectionHintPulseTween);
         StopHintPulse(_hint, ref _hintPulseTween);
     }

@@ -216,7 +216,7 @@ internal static partial class ContextualSkinControls
         header.Visible = options.Count > 0;
         regionLabel.Text = selector.GetMeta(MonsterCategoryNameMeta, string.Empty).AsString();
         button.Text = ModLocalization.Get(ModText.MonsterSkinPriority);
-        button.TooltipText = ModLocalization.Get(ModText.MonsterPriorityTooltip);
+        button.TooltipText = string.Empty;
         presetButton.Text = ModLocalization.Get(ModText.CardPresets);
     }
 
@@ -587,7 +587,6 @@ internal static partial class ContextualSkinControls
             if (preset.IsBundlePreset)
             {
                 name.AddThemeColorOverride("font_uneditable_color", new Color("efc850"));
-                name.TooltipText = ModLocalization.BundlePresetLocked;
             }
             row.AddChild(name);
             var apply = CreateMonsterPresetActionButton(
