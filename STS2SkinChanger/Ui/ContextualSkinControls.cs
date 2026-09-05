@@ -926,15 +926,49 @@ internal static partial class ContextualSkinControls
         }
     }
 
-    internal static bool RequestFrameworkSelection(NCharacterSelectScreen screen, string groupId, string optionId)
+    private static OptionButton? FindFrameworkDropdown(NCharacterSelectScreen screen, string groupId)
     {
         var selector = FindCharacterSelector(screen);
-        if (selector == null || selector.GetMeta(GroupMeta, string.Empty).AsString() != groupId) return false;
-        var dropdown = selector.GetNodeOrNull<OptionButton>(DropdownName);
+        if (selector == null || !selector.GetMeta(GroupMeta, string.Empty).AsString()
+                .Equals(groupId, StringComparison.OrdinalIgnoreCase)) return null;
+        return selector.GetNodeOrNull<OptionButton>(DropdownName);
+    }
+
+    internal static string? GetFrameworkCycleOption(
+        NCharacterSelectScreen screen, string groupId, string? pendingOptionId, int direction)
+    {
+        var dropdown = FindFrameworkDropdown(screen, groupId);
+        if (dropdown == null) return null;
+        // Read the same items the player sees; packs, merges and hidden ingredients have
+        // already been handled by Populate. Never expand the native SkinData registry.
+        var options = Enumerable.Range(0, dropdown.ItemCount)
+            .Select(index => dropdown.GetItemMetadata(index).AsString()).ToArray();
+        var current = pendingOptionId != null && options.Contains(pendingOptionId, StringComparer.OrdinalIgnoreCase)
+            ? pendingOptionId
+            : dropdown.Selected >= 0 && dropdown.Selected < options.Length ? options[dropdown.Selected] : null;
+        return SkinOptionCycle.NextOption(options, current, direction);
+    }
+
+    internal static string? GetFrameworkSelectionName(
+        NCharacterSelectScreen screen, string groupId, string? pendingOptionId)
+    {
+        var dropdown = FindFrameworkDropdown(screen, groupId);
+        if (dropdown == null) return null;
+        for (var index = 0; index < dropdown.ItemCount; index++)
+            if (dropdown.GetItemMetadata(index).AsString().Equals(pendingOptionId, StringComparison.OrdinalIgnoreCase))
+                return dropdown.GetItemText(index);
+        return dropdown.Selected >= 0 && dropdown.Selected < dropdown.ItemCount
+            ? dropdown.GetItemText(dropdown.Selected) : null;
+    }
+
+    internal static bool RequestFrameworkSelection(NCharacterSelectScreen screen, string groupId, string optionId)
+    {
+        var dropdown = FindFrameworkDropdown(screen, groupId);
         if (dropdown == null) return false;
+        var selector = (HBoxContainer)dropdown.GetParent();
         for (var index = 0; index < dropdown.ItemCount; index++)
         {
-            if (dropdown.GetItemMetadata(index).AsString() != optionId) continue;
+            if (!dropdown.GetItemMetadata(index).AsString().Equals(optionId, StringComparison.OrdinalIgnoreCase)) continue;
             // A newer explicit native-manager choice supersedes the pending SC warm-up.
             CancelCharacterDropdownSelection(screen);
             dropdown.Select(index);
@@ -1072,7 +1106,9 @@ internal static partial class ContextualSkinControls
         string optionId,
         bool preserveCharacterSkinBundle = false)
     {
-        FrameworkRegistryCooperation.SelectionStarting(groupId, optionId);
+        // Keep the visible bundle ID while warming its underlying character skin, so a
+        // second arrow click advances from the bundle rather than from its ingredient.
+        FrameworkRegistryCooperation.SelectionStarting(groupId, dropdown.GetItemMetadata(index).AsString());
         var generation = screen.GetMeta(CharacterLoadingGenerationMeta, 0L).AsInt64() + 1L;
         screen.SetMeta(CharacterLoadingGenerationMeta, generation);
         selector.SetMeta(UpdatingMeta, true);

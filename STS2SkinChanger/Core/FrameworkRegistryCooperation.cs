@@ -16,7 +16,7 @@ internal static class FrameworkRegistryCooperation
     private static Type? _selectorType;
     private static readonly List<WeakReference<Node>> Controls = [];
     private static readonly Dictionary<string, long> Requests = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, string> PendingSkins = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> PendingOptions = new(StringComparer.OrdinalIgnoreCase);
     private static long _requestGeneration;
     private static bool _refreshQueued;
     private static readonly ConditionalWeakTable<FrameworkCharacterSkinContract,
@@ -60,7 +60,9 @@ internal static class FrameworkRegistryCooperation
         try
         {
             foreach (var method in refreshMethods)
-                harmony.Patch(method, prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(CanRefreshControl)));
+                harmony.Patch(method,
+                    prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(CanRefreshControl)),
+                    postfix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(UpdateLabel)));
             foreach (var method in cycleMethods)
                 harmony.Patch(method, prefix: new HarmonyMethod(typeof(FrameworkRegistryCooperation), nameof(CycleControl)));
             harmony.Patch(AccessTools.Method(selector, "_Ready"),
@@ -97,11 +99,17 @@ internal static class FrameworkRegistryCooperation
     {
         var option = skinId == "default" ? SkinCatalog.BaseOptionId : SkinService.Catalog?.Groups
             .FirstOrDefault(group => group.Id == groupId)?.Options
-            .FirstOrDefault(option => option.FrameworkContract?.SkinId == skinId)?.Id;
+            .FirstOrDefault(option => option.FrameworkContract is { } contract && contract.SkinId == skinId &&
+                contract.FrameworkAssemblyName == _session?.Assembly.GetName().Name)?.Id;
         if (option == null) return;
+        RequestOptionSelection(groupId, option);
+    }
+
+    private static void RequestOptionSelection(string groupId, string optionId)
+    {
         var generation = ++_requestGeneration;
         Requests[groupId] = generation;
-        PendingSkins[groupId] = skinId;
+        PendingOptions[groupId] = optionId;
         // Requests may originate in the framework's settings callbacks. Defer into the selected
         // character screen, recheck the group there, and keep save/multiplayer/preview in one path.
         Callable.From(() =>
@@ -113,12 +121,12 @@ internal static class FrameworkRegistryCooperation
                 for (Node? parent = node; parent != null; parent = parent.GetParent())
                 {
                     if (parent is MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen screen &&
-                        ContextualSkinControls.RequestFrameworkSelection(screen, groupId, option)) return;
+                        ContextualSkinControls.RequestFrameworkSelection(screen, groupId, optionId)) return;
                 }
             }
             Requests.Remove(groupId);
-            PendingSkins.Remove(groupId);
-            ModLog.Info($"已忽略不在当前选角界面中的原管理器切肤请求：{groupId}/{skinId}");
+            PendingOptions.Remove(groupId);
+            ModLog.Info($"已忽略不在当前选角界面中的原管理器切肤请求：{groupId}/{optionId}");
         }).CallDeferred();
     }
 
@@ -145,6 +153,8 @@ internal static class FrameworkRegistryCooperation
             {
                 ModLog.Warn("原管理器预览刷新失败，已保留 SC 当前选择：" + exception.GetBaseException().Message);
             }
+            // A failed native preview must not leave its label naming the previous skin.
+            UpdateLabel(control);
         }
     }
 
@@ -152,8 +162,7 @@ internal static class FrameworkRegistryCooperation
     {
         if (_session == null) return;
         Requests.Remove(groupId);
-        PendingSkins[groupId] = SkinService.Catalog?.TryGetSelectedFrameworkContract(groupId, optionId, out var contract) == true
-            ? contract.SkinId : "default";
+        PendingOptions[groupId] = optionId;
     }
 
     public static void QueueRefreshControls()
@@ -165,14 +174,19 @@ internal static class FrameworkRegistryCooperation
         Callable.From(() => { _refreshQueued = false; RefreshControls(); }).CallDeferred();
     }
 
-    private static void UpdateLabel(Node control)
+    private static NCharacterSelectScreen? CharacterScreen(Node control)
     {
-        if (CharacterId(control) is not { } id) return;
+        for (Node? parent = control; parent != null; parent = parent.GetParent())
+            if (parent is NCharacterSelectScreen screen) return screen;
+        return null;
+    }
+
+    private static void UpdateLabel(Node __instance)
+    {
+        if (CharacterId(__instance) is not { } id || CharacterScreen(__instance) is not { } screen) return;
         var group = Normalize(id.Entry);
-        var name = SkinService.TryGetSelectedFrameworkContract(group, out var contract)
-            ? contract.DisplayName : SkinService.Catalog?.Groups.FirstOrDefault(candidate => candidate.Id == group)?.Options
-                .FirstOrDefault(option => option.Id == SkinService.Config.GetSelection(group))?.Name ?? "Default";
-        if (control.GetNodeOrNull<Label>("HBoxContainer/ScrollTextContainer/SkinName") is { } label)
+        var name = ContextualSkinControls.GetFrameworkSelectionName(screen, group, PendingOptions.GetValueOrDefault(group));
+        if (name != null && __instance.GetNodeOrNull<Label>("HBoxContainer/ScrollTextContainer/SkinName") is { } label)
             label.Text = name;
     }
 
@@ -189,7 +203,7 @@ internal static class FrameworkRegistryCooperation
         for (Node? parent = __instance; parent != null; parent = parent.GetParent())
             if (parent is NCharacterSelectScreen screen && ContextualSkinControls.IsCharacterSelectionLoading(screen)) return false;
         if (Requests.ContainsKey(group)) return false;
-        PendingSkins.Remove(group);
+        PendingOptions.Remove(group);
         if (SkinService.TryGetSelectedFrameworkContract(group, out var contract) && UsesNativePresentation(contract) ||
             SkinService.Config.GetSelection(group) == SkinCatalog.BaseOptionId) return true;
         // Its preview assumes every foreign model has a child named Visuals and would rebuild
@@ -202,17 +216,12 @@ internal static class FrameworkRegistryCooperation
 
     private static bool CycleControl(Node __instance, MethodBase __originalMethod)
     {
-        if (CharacterId(__instance) is not { } id) return false;
+        if (CharacterId(__instance) is not { } id || CharacterScreen(__instance) is not { } screen) return false;
         var groupId = Normalize(id.Entry);
-        var options = SkinService.Catalog?.Groups.FirstOrDefault(group => group.Id == groupId)?.Options
-            .Select(option => option.FrameworkContract).OfType<FrameworkCharacterSkinContract>()
-            .Where(contract => contract.FrameworkAssemblyName == _session!.Assembly.GetName().Name)
-            .Select(contract => contract.SkinId).Distinct().Prepend("default").ToArray() ?? ["default"];
-        var current = PendingSkins.GetValueOrDefault(groupId) ??
-                      (SkinService.TryGetSelectedFrameworkContract(groupId, out var selected) ? selected.SkinId : "default");
         var offset = __originalMethod.Name == "OnNextPressed" ? 1 : -1;
-        var index = Math.Max(0, Array.IndexOf(options, current));
-        RequestSelection(groupId, options[(index + options.Length + offset) % options.Length]);
+        var option = ContextualSkinControls.GetFrameworkCycleOption(
+            screen, groupId, PendingOptions.GetValueOrDefault(groupId), offset);
+        if (option != null) RequestOptionSelection(groupId, option);
         return false;
     }
 

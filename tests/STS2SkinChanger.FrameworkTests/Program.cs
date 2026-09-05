@@ -223,6 +223,14 @@ Require(injectorBody.Any(instruction => instruction.operand is MethodInfo method
     "应保留原生控件的实际创建调用，只去掉会因其它 UI Mod 路径变化而报错的调试尾部。");
 Require(Harmony.GetPatchInfo(AccessTools.Method(controlsType, "Refresh"))!.Prefixes.Count == 1,
     "原 Refresh 只安装冲突保护，不应被多个替代控件入口重复拦截。");
+foreach (var arrow in new[] { "OnPrevPressed", "OnNextPressed" })
+    Require(Harmony.GetPatchInfo(AccessTools.Method(controlsType, arrow))!.Prefixes.Any(patch =>
+            patch.PatchMethod.DeclaringType == bridgeType && patch.PatchMethod.Name == "CycleControl"),
+        "原管理器的两个箭头都必须实际接入 SC，不能只添加循环规则却未绑定原按钮。");
+foreach (var refresh in new[] { "Refresh", "LoadPreview" })
+    Require(Harmony.GetPatchInfo(AccessTools.Method(controlsType, refresh))!.Postfixes.Any(patch =>
+            patch.PatchMethod.DeclaringType == bridgeType && patch.PatchMethod.Name == "UpdateLabel"),
+        "原生刷新完成后必须重新同步 SC 名称，不能把外部皮肤和皮肤包显示成 Default。");
 Console.WriteLine("Original framework cooperation passed: scoped reads, native mutation/cache/persistence, no echo, idempotent setup, live config, retained callbacks and original UI injector.");
 
 static class NativeIo
