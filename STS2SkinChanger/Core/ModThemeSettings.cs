@@ -167,6 +167,5 @@ internal sealed class ModThemeSession(ModThemeSettings saved)
         Changed?.Invoke();
     }
     public void Revert() => Preview(_saved);
-    public void Reset() => Preview(new());
     public void Save(string path) { ModThemeStore.Save(path, Current); _saved = Current; }
 }

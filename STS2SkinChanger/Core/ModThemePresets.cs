@@ -16,6 +16,13 @@ internal sealed class ModThemePresets
 
     public ModThemePresets(string path) { _path = path; _users = Load(path); }
 
+    public string? FindMatchingId(ModThemeSettings current, string? preferredId)
+    {
+        var normalized = current.Normalize();
+        var matches = Presets.Where(p => p.Settings == normalized).ToArray();
+        return matches.FirstOrDefault(p => p.Id == preferredId)?.Id ?? matches.FirstOrDefault()?.Id;
+    }
+
     public string Create(string name, ModThemeSettings settings)
     {
         var preset = new ModThemePreset(Guid.NewGuid().ToString("N"), ValidName(name), settings.Normalize());

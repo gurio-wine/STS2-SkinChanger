@@ -73,6 +73,7 @@ internal partial class ModThemeEditor : CanvasLayer
         _dragging = false;
         CancelSaveFeedback();
         CancelPresetDelete();
+        if (!_panel.Visible) HidePresetPanel();
         if (_panel.Visible) { ReadValues(); ClampPanel(); }
         ModLog.Info($"主题调节窗口：visible={_panel.Visible}, size={_panel.Size}, position={_panel.Position}");
     }
@@ -106,6 +107,7 @@ internal partial class ModThemeEditor : CanvasLayer
         _collapse.Pressed += () =>
         {
             _collapsed = !_collapsed; _body.Visible = !_collapsed;
+            if (_collapsed) HidePresetPanel();
             _collapse.Text = ModThemeLocalization.Get(_collapsed ? ThemeText.Expand : ThemeText.Collapse);
             _panel.Size = new Vector2(540, _collapsed ? 72 : Math.Min(750, _root.Size.Y - 40));
             ClampPanel();
@@ -120,7 +122,6 @@ internal partial class ModThemeEditor : CanvasLayer
         _body.AddChild(_scroll);
         var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         rows.AddThemeConstantOverride("separation", 8); _scroll.AddChild(rows);
-        BuildPresetSection(rows);
         var section = Section(rows, ThemeText.Panel);
         ColorRow(section, ThemeText.Color, s => s.PanelColor, (s, v) => s with { PanelColor = v });
         NumberRow(section, ThemeText.Opacity, 0, 100, 1, s => s.PanelOpacity * 100, (s, v) => s with { PanelOpacity = (float)v / 100 }, "%");
@@ -172,7 +173,8 @@ internal partial class ModThemeEditor : CanvasLayer
         NumberRow(section, ThemeText.OffsetY, -12, 12, 1, s => s.TextShadowOffsetY, (s, v) => s with { TextShadowOffsetY = (int)v });
         NumberRow(section, ThemeText.ShadowSize, 0, 8, 1, s => s.TextShadowSize, (s, v) => s with { TextShadowSize = (int)v });
         var footer = new HBoxContainer(); _body.AddChild(footer);
-        var reset = MakeButton(() => ModLocalization.Get(ModText.Reset)); reset.Pressed += ModThemeRuntime.Session.Reset; footer.AddChild(reset);
+        var presets = MakeButton(() => ModThemeLocalization.Get(ThemeText.Presets));
+        presets.Pressed += TogglePresetPanel; footer.AddChild(presets);
         var revert = MakeButton(() => ModThemeLocalization.Get(ThemeText.Revert)); revert.Pressed += ModThemeRuntime.Session.Revert; footer.AddChild(revert);
         _save = MakeButton(SaveCaption);
         _save.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -201,7 +203,7 @@ internal partial class ModThemeEditor : CanvasLayer
         _connected = false;
         _dragging = false;
         _saveFeedback.Cancel();
-        CancelPresetDelete();
+        HidePresetPanel();
         ModThemeRuntime.Session.Changed -= ReadValues;
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
         _window = null;
@@ -225,6 +227,7 @@ internal partial class ModThemeEditor : CanvasLayer
         _panel.Size = new Vector2(Math.Min(540, _root.Size.X - 24), _collapsed ? 72 : Math.Min(750, _root.Size.Y - 24));
         _panel.Position = new Vector2(Math.Clamp(_panel.Position.X, 12, Math.Max(12, _root.Size.X - _panel.Size.X - 12)),
             Math.Clamp(_panel.Position.Y, 12, Math.Max(12, _root.Size.Y - _panel.Size.Y - 12)));
+        PositionPresetPanel();
     }
 
     private void ReadValues()
@@ -234,6 +237,8 @@ internal partial class ModThemeEditor : CanvasLayer
         {
             CancelSaveFeedback();
             foreach (var read in _readValues) read(ModThemeRuntime.Current);
+            RefreshPresetStates();
+            PositionPresetPanel();
             if (_status != null) { _status.Text = ""; _status.Hide(); }
         }
         finally { _reading = false; }
@@ -274,11 +279,12 @@ internal partial class ModThemeEditor : CanvasLayer
         catch (Exception e) { ShowThemeError(e); }
     }
 
-    private void ShowThemeError(Exception error)
+    private void ShowThemeError(Exception error, Label? target = null)
     {
         CancelSaveFeedback();
-        _status.Text = ModThemeLocalization.Get(error is ArgumentException ? ThemeText.InvalidPresetName : ThemeText.SaveFailed);
-        _status.Show();
+        var status = target ?? _status;
+        status.Text = ModThemeLocalization.Get(error is ArgumentException ? ThemeText.InvalidPresetName : ThemeText.SaveFailed);
+        status.Show();
         ModLog.Error("主题操作失败：" + error);
     }
 

@@ -17,6 +17,7 @@ internal static class ModThemeTests
         var normalize = settings!.GetMethod("Normalize")!;
         object Parse(string json) => normalize.Invoke(JsonSerializer.Deserialize(json, settings), null)!;
         var defaults = Parse("{}");
+        ThemePresetPanelTests.Run(assembly);
         ModThemePresetTests.Run(assembly, Parse);
         ModThemeInteractionTests.Run(assembly, Parse);
         VerifyDropdownBlur(assembly, Parse);
@@ -85,8 +86,8 @@ internal static class ModThemeTests
             VerifyDropdownMigration(store, temp.FullName);
             Require((float)Property(restored, "ButtonBlur") == 1.5f && (bool)Property(restored, "TextShadowEnabled") &&
                     (int)Property(restored, "TextShadowOffsetX") == -2, "新阴影/按钮模糊设置保存后必须完整恢复。");
-            sessionType.GetMethod("Reset")!.Invoke(session, null);
-            Require((string)Property(Property(session, "Current"), "ButtonColor") != "#123456", "恢复默认立即预览。");
+            sessionType.GetMethod("Preview")!.Invoke(session, [defaults]);
+            Require((string)Property(Property(session, "Current"), "ButtonColor") != "#123456", "应用默认预设立即预览。");
             sessionType.GetMethod("Revert")!.Invoke(session, null);
             Require((string)Property(Property(session, "Current"), "ButtonColor") == "#123456", "撤销回到已保存主题。");
             File.WriteAllText(path, "invalid json");

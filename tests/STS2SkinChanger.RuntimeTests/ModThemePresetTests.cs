@@ -37,6 +37,13 @@ internal static class ModThemePresetTests
             var firstTheme = parse("{\"PanelColor\":\"#123456\",\"DropdownBlur\":1.1}");
             var id = (string)Call(library, "Create", " 夜间 ", firstTheme)!;
             var second = (string)Call(library, "Create", "备选", parse("{\"AccentColor\":\"#ABCDEF\"}"))!;
+            Require((string?)Call(library, "FindMatchingId", firstTheme, id) == id &&
+                    Call(library, "FindMatchingId", parse("{\"PanelColor\":\"#998877\"}"), id) == null,
+                "应用预设后才能标为已应用；继续修改参数后不能保留过期的已应用标记。");
+            var duplicate = (string)Call(library, "Create", "相同主题", firstTheme)!;
+            Require((string?)Call(library, "FindMatchingId", firstTheme, duplicate) == duplicate,
+                "内容相同的预设应优先标记刚选择的那项，不能任意跳到第一项。");
+            Call(library, "Delete", duplicate);
             Require(Items(Load(path)).Count == 3 && (string)Property(Items(library)[1], "Name") == "夜间",
                 "新建须保存当前完整主题，名称修剪后可重开恢复。");
             Require((bool)Call(library, "Rename", id, "测试")! &&
@@ -84,10 +91,10 @@ internal static class ModThemePresetTests
                 instructions[timer - 3].opcode == System.Reflection.Emit.OpCodes.Ldc_I4_1,
             "写盘后才开始一秒反馈，计时必须忽略暂停和游戏时间缩放。");
         var runtime = assembly.GetType("STS2SkinChanger.Ui.ModThemeRuntime", true)!;
-        Require(Calls(AccessTools.Method(editor, "BuildPresetSection"), runtime, "Input") &&
-                Calls(AccessTools.Method(editor, "BuildPresetSection"), runtime, "Popup") &&
+        Require(Calls(AccessTools.Method(editor, "BuildPresetRows"), runtime, "Input") &&
+                Calls(AccessTools.Method(editor, "BuildPresetRow"), runtime, "Input") &&
                 Calls(AccessTools.Method(editor, "RefreshSaveButton"), runtime, "TextControl"),
-            "预设输入/下拉和保存反馈都须走公共主题，不使用固定强调色。");
+            "预设新建/重命名输入和保存反馈都须走公共主题，不使用固定强调色。");
         var state = Activator.CreateInstance(feedback!)!;
         var old = Call(state, "Begin")!;
         var latest = Call(state, "Begin")!;
