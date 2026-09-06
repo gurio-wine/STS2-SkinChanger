@@ -2,6 +2,7 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Animation;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
+using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
@@ -561,10 +562,23 @@ internal static class FrameworkEntryAnimationPatch
 
     private static IEnumerable<MethodBase> TargetMethods() =>
         AccessTools.AllTypes()
-            .Where(type => !type.IsAbstract && typeof(CharacterModel).IsAssignableFrom(type))
-            .Select(type => AccessTools.Method(type, "GenerateAnimator"))
-            .Where(method => method != null)
-            .Cast<MethodBase>()
+            .Where(type => !type.IsAbstract && !type.ContainsGenericParameters &&
+                           typeof(CharacterModel).IsAssignableFrom(type))
+            // A modded character may declare helper/generic overloads beside the game's
+            // GenerateAnimator(MegaSprite[, Creature]). A name-only lookup throws AmbiguousMatchException
+            // and aborts PatchAll, removing every SC hook including its UI and initialization.
+            .SelectMany(type => type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            .Where(method => method.Name == nameof(CharacterModel.GenerateAnimator) &&
+                             !method.IsAbstract && !method.ContainsGenericParameters &&
+                             typeof(CreatureAnimator).IsAssignableFrom(method.ReturnType) &&
+                             method.GetParameters() is var parameters &&
+                             (parameters.Length == 1 ||
+                              (parameters.Length == 2 && parameters[1].ParameterType == typeof(Creature))) &&
+                             parameters[0].ParameterType == typeof(MegaSprite))
+            // Inherited MethodInfo objects may differ by ReflectedType while describing the
+            // same body. Preserve distinct overrides/closed generic owners, but patch each body once.
+            .Select(method => (MethodInfo)MethodBase.GetMethodFromHandle(
+                method.MethodHandle, method.DeclaringType!.TypeHandle)!)
             .Distinct();
 
     [HarmonyPostfix]

@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-animator-discovery")
+{
+    AnimatorPatchDiscoveryTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-character-catalog")
 {
     CharacterCatalogOwnershipTests.Run();
@@ -111,6 +117,7 @@ PresentationNodeOwnershipTests.Run();
 RenderedPreviewFramingTests.Run();
 FrameworkSelectorCycleTests.Run();
 FrameworkModelPreviewTests.Run();
+AnimatorPatchDiscoveryTests.Run();
 MultiplayerAppearanceIdentityTests.Run();
 OptionalCharacterVfxTests.Run();
 CombatHudLifecycleTests.Run();
