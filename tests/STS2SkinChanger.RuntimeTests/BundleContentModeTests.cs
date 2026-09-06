@@ -64,14 +64,27 @@ internal static class BundleContentModeTests
             var before = Json(config);
             var newBundle = Activator.CreateInstance(BundleType)!;
             var initialPriority = (IList)AccessTools.Method(Service, "GetBundleModPriority").Invoke(null, [newBundle, false])!;
-            Require(initialPriority.Count == 3 && initialPriority.Cast<object>().All(e => (bool)Get(e, "Enabled")!) &&
+            Require(initialPriority.Count == 3 && initialPriority.Cast<object>().All(e => !(bool)Get(e, "Enabled")!) &&
                     List(newBundle, "CardModPriority").Count == 0,
-                "新建 Mod 模式默认启用全部已安装来源，读取本身不修改草稿或全局。");
+                "新建 Mod 模式默认关闭全部已安装来源，读取本身不修改草稿或全局。");
+            var initialMonsters = (IList)AccessTools.Method(Service, "GetBundleModPriority").Invoke(null, [newBundle, true])!;
+            Require(initialMonsters.Count == 2 && initialMonsters.Cast<object>().All(e => !(bool)Get(e, "Enabled")!),
+                "怪物的 Mod 优先级也必须默认全关闭。");
+            SetMode(newBundle, "CardMode", 1);
+            Require(Resolve("ResolveBundleCardPresets", newBundle).Cast<object>().All(p =>
+                    Priority(p, Text(p, "CategoryId")).All(e => e.EndsWith(":off")) &&
+                    (string?)((IDictionary)Get(p, "Selections")!)["cards:" + Text(p, "CategoryId")] == "__base__"),
+                "未勾选来源的新包进入 Mod 模式后应使用原版，不得隐式应用任何卡图。");
             List(newBundle, "CardModPriority").Add(initialPriority[0]);
             AccessTools.Property(initialPriority[0]!.GetType(), "Enabled").SetValue(initialPriority[0], false);
             var disabledPriority = (IList)AccessTools.Method(Service, "GetBundleModPriority").Invoke(null, [newBundle, false])!;
             Require(disabledPriority.Cast<object>().All(e => !(bool)Get(e, "Enabled")!),
                 "明确全禁用的模式遇到新增来源，也不能自动开启皮肤。");
+            AccessTools.Property(initialPriority[0]!.GetType(), "Enabled").SetValue(initialPriority[0], true);
+            var withNewSources = (IList)AccessTools.Method(Service, "GetBundleModPriority").Invoke(null, [newBundle, false])!;
+            Require((bool)Get(withNewSources[0]!, "Enabled")! &&
+                    withNewSources.Cast<object>().Skip(1).All(e => !(bool)Get(e, "Enabled")!),
+                "已保存的启用状态保持不变，新发现的其它来源仍默认关闭。");
             var cardPresets = Resolve("ResolveBundleCardPresets", bundle);
             Require(cardPresets.Count == 2, "Mod 优先级模式应覆盖所有有卡图的分类，不只当前角色或已有预设引用。");
             var silent = cardPresets.Cast<object>().Single(p => Text(p, "CategoryId") == "silent");

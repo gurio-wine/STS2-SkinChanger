@@ -160,9 +160,8 @@ internal static class CharacterSkinBundlePolicy
     {
         var entries = NormalizePriority(stored);
         var known = entries.Select(entry => entry.OptionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var enableNew = entries.Count == 0 || entries.Any(entry => entry.Enabled);
         foreach (var id in available)
-            if (known.Add(id)) entries.Add(new(id, enableNew));
+            if (known.Add(id)) entries.Add(new(id, Enabled: false));
         return entries;
     }
 
