@@ -17,6 +17,8 @@ internal static class ModThemeTests
         var normalize = settings!.GetMethod("Normalize")!;
         object Parse(string json) => normalize.Invoke(JsonSerializer.Deserialize(json, settings), null)!;
         var defaults = Parse("{}");
+        VerifyDropdownIsolation(assembly, Parse);
+        VerifyBlurSampling(assembly);
         Require(settings.GetProperty("ButtonBlur") != null && settings.GetProperty("TextShadowEnabled") != null,
             "按钮背景必须有独立模糊，文字阴影必须可以在主题中调节。");
         var effects = Parse("{\"ButtonBlur\":100,\"TextShadowEnabled\":true,\"TextShadowColor\":\"invalid\",\"TextShadowOpacity\":3,\"TextShadowOffsetX\":-100,\"TextShadowOffsetY\":100,\"TextShadowSize\":99}");
@@ -76,6 +78,7 @@ internal static class ModThemeTests
             var store = assembly.GetType("STS2SkinChanger.Core.ModThemeStore", true)!;
             var restored = store.GetMethod("Load")!.Invoke(null, [path])!;
             Require((string)Property(restored, "ButtonColor") == "#123456", "保存并重开必须保留主题草稿。");
+            VerifyDropdownMigration(store, temp.FullName);
             Require((float)Property(restored, "ButtonBlur") == 1.5f && (bool)Property(restored, "TextShadowEnabled") &&
                     (int)Property(restored, "TextShadowOffsetX") == -2, "新阴影/按钮模糊设置保存后必须完整恢复。");
             sessionType.GetMethod("Reset")!.Invoke(session, null);
@@ -96,6 +99,67 @@ internal static class ModThemeTests
     }
 
     private static object Property(object target, string name) => target.GetType().GetProperty(name)!.GetValue(target)!;
+
+    private static void VerifyDropdownIsolation(Assembly assembly, Func<string, object> parse)
+    {
+        var runtime = assembly.GetType("STS2SkinChanger.Ui.ModThemeRuntime", true)!;
+        var tint = HarmonyLib.AccessTools.Method(runtime, "DropdownTint");
+        Require(tint != null, "下拉列表必须使用独立主题，不能读取面板/普通按钮的颜色与透明度。");
+        const string dropdown = "\"DropdownColor\":\"#123456\",\"DropdownOpacity\":0.6,\"DropdownHoverColor\":\"#456789\",\"DropdownHoverOpacity\":0.2,\"DropdownSelectionColor\":\"#789ABC\",\"DropdownSelectionOpacity\":0.7";
+        var first = parse("{" + dropdown + ",\"PanelColor\":\"#FFFFFF\",\"PanelOpacity\":0.1}");
+        var second = parse("{" + dropdown + ",\"PanelColor\":\"#000000\",\"PanelOpacity\":1,\"HoverColor\":\"#FFFF00\",\"SelectionOpacity\":0}");
+        foreach (var (hovered, selected, expected) in new[]
+        {
+            (false, false, new Godot.Color(new Godot.Color("123456"), .6f)),
+            (true, false, new Godot.Color(new Godot.Color("456789"), .2f)),
+            (false, true, new Godot.Color(new Godot.Color("789abc"), .7f))
+        })
+        {
+            Require((Godot.Color)tint!.Invoke(null, [first, hovered, selected])! == expected &&
+                    (Godot.Color)tint.Invoke(null, [second, hovered, selected])! == expected,
+                "修改面板/普通按钮/图鉴选中项后，下拉背景和各状态必须保持自身配置。");
+        }
+        var invalid = parse("{\"DropdownOpacity\":-1,\"DropdownHoverOpacity\":4,\"DropdownSelectionOpacity\":-2,\"DropdownCornerRadius\":99,\"DropdownBorderWidth\":-2,\"DropdownColor\":\"bad\"}");
+        Require((float)Property(invalid, "DropdownOpacity") == 0 && (float)Property(invalid, "DropdownHoverOpacity") == 1 &&
+                (float)Property(invalid, "DropdownSelectionOpacity") == 0 && (int)Property(invalid, "DropdownCornerRadius") == 24 &&
+                (int)Property(invalid, "DropdownBorderWidth") == 0 && (string)Property(invalid, "DropdownColor") == "#FFFFFF",
+            "下拉配置同样要处理非法颜色、透明度、边框与圆角。");
+    }
+
+    private static void VerifyDropdownMigration(Type store, string directory)
+    {
+        var path = System.IO.Path.Combine(directory, "legacy-dropdown.json");
+        File.WriteAllText(path, "{\"PanelColor\":\"#123456\",\"PanelOpacity\":0.47,\"HoverColor\":\"#654321\",\"ButtonOpacity\":0.81,\"CornerRadius\":7,\"DropdownOpacity\":0.3}");
+        var loaded = store.GetMethod("Load")!.Invoke(null, [path])!;
+        Require((string)Property(loaded, "DropdownColor") == "#123456" &&
+                (float)Property(loaded, "DropdownOpacity") == .3f && (float)Property(loaded, "DropdownHoverOpacity") == .81f &&
+                (int)Property(loaded, "DropdownCornerRadius") == 7,
+            "旧主题只初始化缺失的下拉设置，保留已有独立值，不能强制重置玩家调好的主题。");
+        store.GetMethod("Save")!.Invoke(null, [path, loaded]);
+        var saved = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+        saved["PanelColor"] = "#FFFFFF";
+        saved["CornerRadius"] = 0;
+        File.WriteAllText(path, saved.ToJsonString());
+        loaded = store.GetMethod("Load")!.Invoke(null, [path])!;
+        Require((string)Property(loaded, "DropdownColor") == "#123456" && (int)Property(loaded, "DropdownCornerRadius") == 7,
+            "迁移保存后更改面板不能再次覆盖下拉设置。");
+    }
+
+    private static void VerifyBlurSampling(Assembly assembly)
+    {
+        var sampling = HarmonyLib.AccessTools.Method(assembly.GetType("STS2SkinChanger.Ui.ModThemeBackdrop", true)!, "BlurSampling");
+        Require(sampling != null, "高斯模糊需要按采样层级扩大取屏边距，不能沿用九点偏移的边距。");
+        foreach (var (input, expectedLod, minimumPadding) in new[]
+        {
+            (0f, 0f, 2f), (1f, 1f, 6f), (2.5f, 2.5f, 30f), (5f, 5f, 126f),
+            (100f, 5f, 126f), (float.NaN, 0f, 2f)
+        })
+        {
+            var (lod, padding) = ((float, float))sampling!.Invoke(null, [input])!;
+            Require(lod == expectedLod && padding >= minimumPadding && padding <= 130,
+                "小数模糊强度应平滑插值，取屏边距需覆盖高斯级联，异常参数不能制造无界开销。");
+        }
+    }
 
     private static void VerifyBackdropCoordinates(Assembly assembly)
     {

@@ -10,16 +10,11 @@ internal sealed class ModThemeBackdrop
     private static readonly ConditionalWeakTable<Control, ModThemeBackdrop> Instances = new();
     private static readonly Lazy<Shader> FlatShader = new(() => new Shader { Code = Header + Mask + "void fragment() { COLOR = tint * vec4(1.0, 1.0, 1.0, coverage(UV)) * COLOR; }" });
     private static readonly Lazy<Shader> BlurShader = new(() => new Shader { Code = Header + """
-        uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear;
-        uniform float blur_radius = 0.0;
+        uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;
+        uniform float blur_lod = 0.0;
         """ + Mask + """
         void fragment() {
-            vec2 d = SCREEN_PIXEL_SIZE * blur_radius;
-            vec3 b = texture(screen_texture, SCREEN_UV).rgb * 0.25;
-            b += (texture(screen_texture, SCREEN_UV + vec2(d.x, 0)).rgb + texture(screen_texture, SCREEN_UV - vec2(d.x, 0)).rgb
-                + texture(screen_texture, SCREEN_UV + vec2(0, d.y)).rgb + texture(screen_texture, SCREEN_UV - vec2(0, d.y)).rgb) * 0.125;
-            b += (texture(screen_texture, SCREEN_UV + d).rgb + texture(screen_texture, SCREEN_UV - d).rgb
-                + texture(screen_texture, SCREEN_UV + vec2(d.x, -d.y)).rgb + texture(screen_texture, SCREEN_UV + vec2(-d.x, d.y)).rgb) * 0.0625;
+            vec3 b = textureLod(screen_texture, SCREEN_UV, blur_lod).rgb;
             COLOR = vec4(mix(b, tint.rgb, tint.a), coverage(UV)) * COLOR;
         }
         """ });
@@ -87,10 +82,11 @@ internal sealed class ModThemeBackdrop
         _material.Shader = blur > 0 ? BlurShader.Value : FlatShader.Value;
         _material.SetShaderParameter("tint", tint);
         _material.SetShaderParameter("corner_radius", radius);
-        // Fixed nine taps, no per-button full-viewport mipmap generation.
-        var pixelRadius = MathF.Pow(2, blur) - 1;
-        if (blur > 0) _material.SetShaderParameter("blur_radius", pixelRadius);
-        _padding = pixelRadius + 2;
+        // Godot generates Gaussian mipmaps for the explicit copy region. Fractional LODs
+        // interpolate continuously instead of separating nine sharp copies of the image.
+        var (lod, padding) = BlurSampling(blur);
+        if (blur > 0) _material.SetShaderParameter("blur_lod", lod);
+        _padding = padding;
         _surface.Visible = visible && (blur > 0 || tint.A > 0);
         Resize();
     }
@@ -150,5 +146,13 @@ internal sealed class ModThemeBackdrop
         var start = bounds.Position.Floor();
         var end = bounds.End.Ceil();
         return (new Rect2(start, end - start).Grow(padding), toViewport.AffineInverse());
+    }
+
+    internal static (float Lod, float Padding) BlurSampling(float strength)
+    {
+        var lod = float.IsFinite(strength) ? Math.Clamp(strength, 0, 5) : 0;
+        // Include the cumulative Gaussian footprint and bilinear interpolation at the next
+        // mip level. A local padded copy avoids rebuilding full-screen mipmaps per button.
+        return (lod, 4 * (MathF.Pow(2, MathF.Ceiling(lod)) - 1) + 2);
     }
 }

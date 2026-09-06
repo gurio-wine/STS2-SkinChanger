@@ -130,6 +130,16 @@ internal partial class ModThemeEditor : CanvasLayer
         NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.ButtonOpacity * 100, (s, v) => s with { ButtonOpacity = (float)v / 100 }, "%");
         NumberRow(rows, ThemeText.Blur, 0, 5, .1, s => s.ButtonBlur, (s, v) => s with { ButtonBlur = (float)v });
         ColorRow(rows, ThemeText.HoverColor, s => s.HoverColor, (s, v) => s with { HoverColor = v });
+        Section(rows, ThemeText.Dropdown);
+        ColorRow(rows, ThemeText.Color, s => s.DropdownColor, (s, v) => s with { DropdownColor = v });
+        NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.DropdownOpacity * 100, (s, v) => s with { DropdownOpacity = (float)v / 100 }, "%");
+        ColorRow(rows, ThemeText.HoverColor, s => s.DropdownHoverColor, (s, v) => s with { DropdownHoverColor = v });
+        NumberRow(rows, ThemeText.HoverOpacity, 0, 100, 1, s => s.DropdownHoverOpacity * 100, (s, v) => s with { DropdownHoverOpacity = (float)v / 100 }, "%");
+        ColorRow(rows, ThemeText.SelectionColor, s => s.DropdownSelectionColor, (s, v) => s with { DropdownSelectionColor = v });
+        NumberRow(rows, ThemeText.SelectionOpacity, 0, 100, 1, s => s.DropdownSelectionOpacity * 100, (s, v) => s with { DropdownSelectionOpacity = (float)v / 100 }, "%");
+        ColorRow(rows, ThemeText.BorderColor, s => s.DropdownBorderColor, (s, v) => s with { DropdownBorderColor = v });
+        NumberRow(rows, ThemeText.BorderWidth, 0, 5, 1, s => s.DropdownBorderWidth, (s, v) => s with { DropdownBorderWidth = (int)v });
+        NumberRow(rows, ThemeText.Radius, 0, 24, 1, s => s.DropdownCornerRadius, (s, v) => s with { DropdownCornerRadius = (int)v });
         Section(rows, ThemeText.TextBorder);
         ColorRow(rows, ThemeText.TextColor, s => s.TextColor, (s, v) => s with { TextColor = v });
         ColorRow(rows, ThemeText.AccentColor, s => s.AccentColor, (s, v) => s with { AccentColor = v });

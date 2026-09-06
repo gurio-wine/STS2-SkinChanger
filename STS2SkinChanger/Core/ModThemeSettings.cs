@@ -15,6 +15,15 @@ internal sealed record ModThemeSettings
     public float ButtonOpacity { get; init; } = .85f;
     public float ButtonBlur { get; init; } = 0f;
     public string HoverColor { get; init; } = "#4B7392";
+    public string DropdownColor { get; init; } = "#FFFFFF";
+    public float DropdownOpacity { get; init; } = .18f;
+    public string DropdownHoverColor { get; init; } = "#4B7392";
+    public float DropdownHoverOpacity { get; init; } = .85f;
+    public string DropdownSelectionColor { get; init; } = "#FFFFFF";
+    public float DropdownSelectionOpacity { get; init; } = .28f;
+    public string DropdownBorderColor { get; init; } = "#7394AD";
+    public int DropdownBorderWidth { get; init; } = 1;
+    public int DropdownCornerRadius { get; init; } = 12;
     public string TextColor { get; init; } = "#FFF6E2";
     public string AccentColor { get; init; } = "#EFC850";
     public string BorderColor { get; init; } = "#7394AD";
@@ -38,6 +47,15 @@ internal sealed record ModThemeSettings
             SelectionColor = Hex(SelectionColor, defaults.SelectionColor),
             ButtonColor = Hex(ButtonColor, defaults.ButtonColor),
             HoverColor = Hex(HoverColor, defaults.HoverColor),
+            DropdownColor = Hex(DropdownColor, defaults.DropdownColor),
+            DropdownHoverColor = Hex(DropdownHoverColor, defaults.DropdownHoverColor),
+            DropdownSelectionColor = Hex(DropdownSelectionColor, defaults.DropdownSelectionColor),
+            DropdownBorderColor = Hex(DropdownBorderColor, defaults.DropdownBorderColor),
+            DropdownOpacity = Number(DropdownOpacity, 0, 1, defaults.DropdownOpacity),
+            DropdownHoverOpacity = Number(DropdownHoverOpacity, 0, 1, defaults.DropdownHoverOpacity),
+            DropdownSelectionOpacity = Number(DropdownSelectionOpacity, 0, 1, defaults.DropdownSelectionOpacity),
+            DropdownBorderWidth = Math.Clamp(DropdownBorderWidth, 0, 5),
+            DropdownCornerRadius = Math.Clamp(DropdownCornerRadius, 0, 24),
             TextColor = Hex(TextColor, defaults.TextColor),
             AccentColor = Hex(AccentColor, defaults.AccentColor),
             BorderColor = Hex(BorderColor, defaults.BorderColor),
@@ -72,11 +90,33 @@ internal static class ModThemeStore
         foreach (var candidate in new[] { path, path + ".bak" })
         {
             if (!File.Exists(candidate)) continue;
-            try { return (JsonSerializer.Deserialize<ModThemeSettings>(File.ReadAllText(candidate), Options) ?? new()).Normalize(); }
+            try { return Decode(File.ReadAllText(candidate)); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
             { System.Diagnostics.Trace.TraceWarning("读取界面主题失败，将尝试备份/默认主题：" + e.Message); }
         }
         return new();
+    }
+
+    private static ModThemeSettings Decode(string json)
+    {
+        var settings = (JsonSerializer.Deserialize<ModThemeSettings>(json, Options) ?? new()).Normalize();
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Object) return settings;
+        var keys = document.RootElement.EnumerateObject().Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // One-time initialization only: saved independent fields never inherit later edits
+        // to the panel, buttons or compendium selection theme.
+        return settings with
+        {
+            DropdownColor = keys.Contains(nameof(settings.DropdownColor)) ? settings.DropdownColor : settings.PanelColor,
+            DropdownOpacity = keys.Contains(nameof(settings.DropdownOpacity)) ? settings.DropdownOpacity : settings.PanelOpacity,
+            DropdownHoverColor = keys.Contains(nameof(settings.DropdownHoverColor)) ? settings.DropdownHoverColor : settings.HoverColor,
+            DropdownHoverOpacity = keys.Contains(nameof(settings.DropdownHoverOpacity)) ? settings.DropdownHoverOpacity : settings.ButtonOpacity,
+            DropdownSelectionColor = keys.Contains(nameof(settings.DropdownSelectionColor)) ? settings.DropdownSelectionColor : settings.SelectionColor,
+            DropdownSelectionOpacity = keys.Contains(nameof(settings.DropdownSelectionOpacity)) ? settings.DropdownSelectionOpacity : settings.SelectionOpacity,
+            DropdownBorderColor = keys.Contains(nameof(settings.DropdownBorderColor)) ? settings.DropdownBorderColor : settings.BorderColor,
+            DropdownBorderWidth = keys.Contains(nameof(settings.DropdownBorderWidth)) ? settings.DropdownBorderWidth : settings.BorderWidth,
+            DropdownCornerRadius = keys.Contains(nameof(settings.DropdownCornerRadius)) ? settings.DropdownCornerRadius : settings.CornerRadius
+        };
     }
 
     public static void Save(string path, ModThemeSettings settings)

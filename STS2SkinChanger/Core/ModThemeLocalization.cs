@@ -5,13 +5,18 @@ internal enum ThemeText
     Theme, Editor, Panel, Selection, Buttons, TextBorder, Color, Opacity, Blur,
     HoverColor, TextColor, AccentColor, BorderColor, BorderWidth, Radius, FontScale,
     Outline, Revert, Collapse, Expand, Saved, SaveFailed,
-    Shadow, EnableShadow, OffsetX, OffsetY, ShadowSize
+    Shadow, EnableShadow, OffsetX, OffsetY, ShadowSize,
+    Dropdown, HoverOpacity, SelectionColor, SelectionOpacity
 }
 
 internal static class ModThemeLocalization
 {
-    internal static readonly IReadOnlyDictionary<string, string[]> Packs = new Dictionary<string, string[]>
+    internal static readonly IReadOnlyDictionary<string, string[]> Packs = BuildPacks();
+
+    private static IReadOnlyDictionary<string, string[]> BuildPacks()
     {
+        var packs = new Dictionary<string, string[]>
+        {
         ["eng"] = "Theme|Theme tuning|Panel|Selected item|Buttons|Text and borders|Color|Opacity|Blur|Hover color|Text color|Accent color|Border color|Border width|Corner radius|Text size|Text outline|Revert|Collapse|Expand|Saved|Save failed|Text shadow|Enable shadow|Horizontal offset|Vertical offset|Shadow spread".Split('|'),
         ["zhs"] = "主题|主题调节|面板|选中项|按钮|文字与边框|颜色|不透明度|模糊|悬停颜色|文字颜色|强调颜色|边框颜色|边框宽度|圆角|文字大小|文字描边|撤销|收起|展开|已保存|保存失败|文字阴影|启用阴影|水平偏移|垂直偏移|阴影扩散".Split('|'),
         ["zht"] = "主題|主題調整|面板|選取項目|按鈕|文字與邊框|顏色|不透明度|模糊|懸停顏色|文字顏色|強調顏色|邊框顏色|邊框寬度|圓角|文字大小|文字描邊|復原|收合|展開|已儲存|儲存失敗|文字陰影|啟用陰影|水平偏移|垂直偏移|陰影擴散".Split('|'),
@@ -27,6 +32,27 @@ internal static class ModThemeLocalization
         ["rus"] = "Тема|Настройка темы|Панель|Выбор|Кнопки|Текст и рамки|Цвет|Непрозрачность|Размытие|Цвет наведения|Цвет текста|Цвет акцента|Цвет рамки|Толщина рамки|Скругление|Размер текста|Обводка текста|Отменить|Свернуть|Развернуть|Сохранено|Ошибка сохранения|Тень текста|Включить тень|Смещение по горизонтали|Смещение по вертикали|Размер тени".Split('|'),
         ["tha"] = "ธีม|ปรับแต่งธีม|แผง|รายการที่เลือก|ปุ่ม|ข้อความและขอบ|สี|ความทึบ|ความเบลอ|สีเมื่อชี้|สีข้อความ|สีเน้น|สีขอบ|ความหนาขอบ|มุมโค้ง|ขนาดข้อความ|เส้นขอบข้อความ|ย้อนกลับ|ย่อ|ขยาย|บันทึกแล้ว|บันทึกไม่สำเร็จ|เงาข้อความ|เปิดใช้เงา|ระยะเลื่อนแนวนอน|ระยะเลื่อนแนวตั้ง|ขนาดเงา".Split('|'),
         ["tur"] = "Tema|Tema ayarı|Panel|Seçim|Düğmeler|Metin ve kenarlık|Renk|Opaklık|Bulanıklık|Üzerine gelme rengi|Metin rengi|Vurgu rengi|Kenarlık rengi|Kenarlık kalınlığı|Köşe yuvarlaklığı|Metin boyutu|Metin çizgisi|Geri al|Daralt|Genişlet|Kaydedildi|Kaydetme başarısız|Metin gölgesi|Gölgeyi etkinleştir|Yatay kaydırma|Dikey kaydırma|Gölge yayılımı".Split('|')
-    };
+        };
+        var dropdown = new Dictionary<string, string>
+        {
+            ["eng"] = "Dropdown options|Hover opacity|Selected color|Selected opacity",
+            ["zhs"] = "下拉选项|悬停不透明度|选中颜色|选中不透明度",
+            ["zht"] = "下拉選項|懸停不透明度|選取顏色|選取不透明度",
+            ["deu"] = "Auswahllisten|Hover-Deckkraft|Auswahlfarbe|Auswahl-Deckkraft",
+            ["esp"] = "Opciones desplegables|Opacidad al señalar|Color de selección|Opacidad de selección",
+            ["spa"] = "Opciones desplegables|Opacidad al señalar|Color de selección|Opacidad de selección",
+            ["fra"] = "Listes déroulantes|Opacité au survol|Couleur de sélection|Opacité de sélection",
+            ["ita"] = "Menu a discesa|Opacità al passaggio|Colore selezione|Opacità selezione",
+            ["jpn"] = "ドロップダウン項目|ホバーの不透明度|選択色|選択の不透明度",
+            ["kor"] = "드롭다운 항목|호버 불투명도|선택 색상|선택 불투명도",
+            ["pol"] = "Listy rozwijane|Krycie po najechaniu|Kolor zaznaczenia|Krycie zaznaczenia",
+            ["ptb"] = "Listas suspensas|Opacidade ao apontar|Cor da seleção|Opacidade da seleção",
+            ["rus"] = "Выпадающие списки|Непрозрачность наведения|Цвет выбора|Непрозрачность выбора",
+            ["tha"] = "รายการแบบเลื่อนลง|ความทึบเมื่อชี้|สีรายการที่เลือก|ความทึบรายการที่เลือก",
+            ["tur"] = "Açılır listeler|Üzerine gelme opaklığı|Seçim rengi|Seçim opaklığı"
+        };
+        foreach (var (language, values) in dropdown) packs[language] = [.. packs[language], .. values.Split('|')];
+        return packs;
+    }
     public static string Get(ThemeText text) => (Packs.TryGetValue(ModLocalization.CurrentLanguage, out var pack) ? pack : Packs["eng"])[(int)text];
 }

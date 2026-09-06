@@ -237,8 +237,8 @@ internal static class ModThemeRuntime
         popup.AddThemeStyleboxOverride("hover", hover);
         Bind(popup, "popup", theme =>
         {
-            ApplyStyle(panel, ModThemeSurface.Panel, theme);
-            ApplyStyle(hover, ModThemeSurface.Hover, theme);
+            ApplyDropdownStyle(panel, theme);
+            ApplyDropdownStyle(hover, theme, hovered: true);
             popup.AddThemeColorOverride("font_color", new Color(theme.TextColor));
             popup.AddThemeColorOverride("font_hover_color", new Color(theme.TextColor));
             popup.AddThemeColorOverride("font_separator_color", new Color(theme.AccentColor));
@@ -250,20 +250,71 @@ internal static class ModThemeRuntime
 
     public static void ItemList(ItemList list)
     {
-        var background = ModThemeBackdrop.For(list);
         var styles = new[] { new StyleBoxFlat(), new StyleBoxFlat(), new StyleBoxFlat() };
         list.AddThemeStyleboxOverride("panel", styles[0]);
         list.AddThemeStyleboxOverride("hovered", styles[1]);
         list.AddThemeStyleboxOverride("selected", styles[2]);
+        list.AddThemeStyleboxOverride("selected_focus", styles[2]);
+        var focus = new StyleBoxFlat();
+        list.AddThemeStyleboxOverride("focus", focus);
         Bind(list, "list", theme =>
         {
-            ApplyStyle(styles[0], ModThemeSurface.Panel, theme);
-            styles[0].DrawCenter = false;
-            background.Update(Tint(theme.PanelColor, theme.PanelOpacity), theme.PanelBlur, theme.CornerRadius);
-            ApplyStyle(styles[1], ModThemeSurface.Hover, theme);
-            ApplyStyle(styles[2], ModThemeSurface.Selected, theme);
+            // PopupMenu is its own viewport. Sampling its screen texture blurs the native
+            // menu under the custom list, not the scene, and duplicates text/opacity.
+            ApplyDropdownStyle(styles[0], theme);
+            ApplyDropdownStyle(styles[1], theme, hovered: true);
+            ApplyDropdownStyle(styles[2], theme, selected: true);
+            ApplyDropdownStyle(focus, theme);
+            focus.DrawCenter = false;
+            list.AddThemeColorOverride("font_hovered_color", new Color(theme.TextColor));
+            list.AddThemeColorOverride("font_selected_color", new Color(theme.TextColor));
         });
+        AttachDropdownListHost(list);
         TextControl(list, 19);
+    }
+
+    internal static Color DropdownTint(ModThemeSettings theme, bool hovered, bool selected) =>
+        selected ? Tint(theme.DropdownSelectionColor, theme.DropdownSelectionOpacity) :
+        hovered ? Tint(theme.DropdownHoverColor, theme.DropdownHoverOpacity) : Tint(theme.DropdownColor, theme.DropdownOpacity);
+
+    private static void ApplyDropdownStyle(StyleBoxFlat style, ModThemeSettings theme, bool hovered = false, bool selected = false)
+    {
+        style.BgColor = DropdownTint(theme, hovered, selected);
+        style.BorderColor = new Color(theme.DropdownBorderColor);
+        style.BorderWidthLeft = style.BorderWidthRight = style.BorderWidthTop = style.BorderWidthBottom = theme.DropdownBorderWidth;
+        style.CornerRadiusTopLeft = style.CornerRadiusTopRight = style.CornerRadiusBottomLeft = style.CornerRadiusBottomRight = theme.DropdownCornerRadius;
+        style.ContentMarginLeft = style.ContentMarginRight = 12;
+    }
+
+    private static void AttachDropdownListHost(ItemList list)
+    {
+        if (list.HasMeta("sc_theme_list_host")) return;
+        list.SetMeta("sc_theme_list_host", true);
+        PanelContainer? nativePanel = null;
+        var original = Colors.White;
+        void Restore()
+        {
+            if (GodotObject.IsInstanceValid(nativePanel)) nativePanel!.Modulate = original;
+            nativePanel = null;
+        }
+        void Refresh()
+        {
+            if (list.GetParent() is not PopupMenu popup) return;
+            // Godot's internal PanelContainer owns the native menu drawing; leave its
+            // layout and input alive, but let the colored ItemList draw exactly once.
+            if (nativePanel == null)
+            {
+                nativePanel = popup.GetChildren(includeInternal: true).OfType<PanelContainer>().FirstOrDefault();
+                if (nativePanel == null) return;
+                original = nativePanel.Modulate;
+            }
+            if (GodotObject.IsInstanceValid(nativePanel))
+                nativePanel.Modulate = list.Visible ? new Color(original, 0) : original;
+        }
+        list.TreeEntered += Refresh;
+        list.VisibilityChanged += Refresh;
+        list.TreeExiting += Restore;
+        Refresh();
     }
 }
 
