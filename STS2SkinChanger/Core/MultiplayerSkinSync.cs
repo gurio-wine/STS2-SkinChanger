@@ -200,7 +200,7 @@ internal static class MultiplayerSkinSync
         }
 
         var player = creature.Player ?? creature.PetOwner;
-        if (player == null)
+        if (player == null || FrameworkModelPreview.IsPreviewPlayer(player))
         {
             return SkinService.Config.GetSelection(groupId);
         }
@@ -422,13 +422,14 @@ internal static class MultiplayerSkinSync
             PendingIconRefreshes.Add(owner.NetId);
             _runtimeProvidersDirty = true;
         }
+        ModLog.Info($"本机手动为联机玩家 {owner.NetId} 设置替代外观：{groupId}/{optionId}；不是该玩家发送的选择。");
         return true;
     }
 
     internal static IDisposable? BeginCreatureSelectionScope(Creature creature)
     {
         var player = creature.Player ?? creature.PetOwner;
-        if (player == null)
+        if (player == null || FrameworkModelPreview.IsPreviewPlayer(player))
         {
             return null;
         }
@@ -590,6 +591,7 @@ internal static class MultiplayerSkinSync
     internal static void AttachToRun()
     {
         var service = RunManager.Instance.NetService;
+        var changedPhase = !_inRun || !ReferenceEquals(_netService, service);
         _lobby = null;
         _needsLobbyRoundReset = false;
         var participation = MultiplayerSkinSyncParticipationPolicy.Resolve(
@@ -607,7 +609,14 @@ internal static class MultiplayerSkinSync
         _resumeRunWhenEnabled = false;
         AttachToService(service, "对局");
         _inRun = true;
-        RememberLocalAdvertisement();
+        if (changedPhase)
+        {
+            // Lobby and run normally share the connection. Its initial snapshots have already
+            // finished; random character resolution is only final at this phase boundary.
+            _snapshotElapsed = 0;
+            _snapshotStage = 0;
+            PublishLocalCharacterSelection("进入对局");
+        }
         // Lobby avatar nodes are intentionally discarded when the run scene is created. Queue
         // every already-known remote player once more so the first combat HUD construction uses
         // that player's selected icon instead of the lobby/base texture.
@@ -1163,6 +1172,38 @@ internal static class MultiplayerSkinSync
         // listener does not call NRemoteLobbyPlayer.RefreshVisuals.  Refresh the local row from
         // the normal process path instead of waiting for a character change packet.
         ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
+    }
+
+    internal static void OnLobbyCharacterChanged(StartRunLobby lobby, ulong playerId, bool randomResolution)
+    {
+        // Each client resolves all random characters. Only the owner may advertise their choice;
+        // never publish this machine's default for somebody else's resolved character.
+        if (!ReferenceEquals(_lobby, lobby) || _netService?.Type.IsMultiplayer() != true ||
+            playerId != _netService.NetId)
+            return;
+        PublishLocalCharacterSelection(randomResolution ? "随机角色已确定" : "大厅角色改变");
+        lock (Sync) PendingIconRefreshes.Add(playerId);
+    }
+
+    private static void PublishLocalCharacterSelection(string reason)
+    {
+        try
+        {
+            if (!RememberLocalAdvertisement()) return;
+            SendLocalAdvertisement();
+            if (!SkinService.ShouldSendMultiplayerSkinChanges()) return;
+            lock (Sync)
+            {
+                if (_netService != null && AdvertisedSelections.TryGetValue(_netService.NetId, out var message))
+                    ModLog.Info($"已提交本机联机皮肤同步（{reason}）：玩家={message.PlayerNetId}；" +
+                                $"角色={message.CharacterId}；皮肤={message.OptionId}；来源={message.SourceOptionManifest}。");
+            }
+        }
+        catch (Exception exception)
+        {
+            // Selection delivery is cosmetic; a failing transport must not abort NRun.Ready.
+            ModLog.Warn($"联机皮肤同步失败（{reason}），保留阶段快照重试：{exception.GetBaseException().Message}");
+        }
     }
 
     internal static void OnReceivePreferenceChanged(bool enabled)
@@ -1850,6 +1891,7 @@ internal static class MultiplayerSkinSync
             ModLog.Info(
                 $"已应用联机玩家 {message.PlayerNetId} 的角色 {message.CharacterId}：" +
                 $"皮肤={effectiveOptionId}，参数项={transforms.Count}，" +
+                $"对方声明={message.OptionId}，已加载对方外观={ownerAppearanceLoaded}，" +
                 $"头像刷新={(appearanceChanged ? "等待节点刷新" : "仅参数刷新")}。 ");
         }
 
@@ -1888,11 +1930,11 @@ internal static class MultiplayerSkinSync
 
     internal static bool IsReadyGateActiveForOnlineCache() => false;
 
-    private static void RememberLocalAdvertisement(bool baseOnly = false)
+    private static bool RememberLocalAdvertisement(bool baseOnly = false)
     {
         if (!TryGetLocalCharacter(out var playerNetId, out var character))
         {
-            return;
+            return false;
         }
 
         var group = ContextualSkinControls.FindGroup(
@@ -1900,7 +1942,10 @@ internal static class MultiplayerSkinSync
             character.GetType().Name);
         if (group == null)
         {
-            return;
+            // In particular RandomCharacter is not a visual group. Do not keep relaying the
+            // previously selected character while waiting for the game to resolve the random.
+            lock (Sync) AdvertisedSelections.Remove(playerNetId);
+            return false;
         }
 
         var message = new SkinChangerNetMessage
@@ -1925,6 +1970,7 @@ internal static class MultiplayerSkinSync
                 message.GroupId,
                 message.OptionId));
         RememberAdvertisement(message);
+        return true;
     }
 
     internal static void RetryCachedSelection(
@@ -2247,6 +2293,25 @@ internal static class MultiplayerSkinLobbyAttachPatch
 internal static class MultiplayerSkinLobbyTickPatch
 {
     private static void Postfix(double delta) => MultiplayerSkinSync.Tick(delta);
+}
+
+[HarmonyPatch(typeof(StartRunLobby), "ChangeCharacter")]
+internal static class MultiplayerLobbyCharacterChangedPatch
+{
+    // Both supported versions call this after resolving a random character, even though the
+    // character-select UI intentionally skips its usual selection event on that path.
+    private static void Postfix(StartRunLobby __instance, ulong playerId, bool isRandomCharacterResolution)
+    {
+        try
+        {
+            MultiplayerSkinSync.OnLobbyCharacterChanged(__instance, playerId, isRandomCharacterResolution);
+        }
+        catch (Exception exception)
+        {
+            // A cosmetic broadcast must not prevent the original lobby from starting the run.
+            ModLog.Warn("大厅角色改变后的皮肤同步失败，将在进入对局后重试：" + exception.GetBaseException().Message);
+        }
+    }
 }
 
 [HarmonyPatch(typeof(NRun), nameof(NRun._Process))]

@@ -10,12 +10,18 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using STS2SkinChanger.Ui;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace STS2SkinChanger.Core;
 
 /// <summary>Shared model renderer for SC's preview and the optional original manager's control.</summary>
 internal static class FrameworkModelPreview
 {
+    // A cosmetic owner is not a network participant. Track object identity rather than a
+    // reserved NetId: zero is a valid real player ID on some transports.
+    private static readonly ConditionalWeakTable<Player, object> PreviewPlayers = new();
+    internal static bool IsPreviewPlayer(Player player) => PreviewPlayers.TryGetValue(player, out _);
+
     public static void Refresh(Node selector, CharacterModel character)
     {
         var container = selector.GetNodeOrNull<Node2D>("VisualContainer");
@@ -76,9 +82,11 @@ internal static class FrameworkModelPreview
         var constructor = typeof(Player).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
             .Single(ctor => ctor.GetParameters() is { Length: 15 } parameters &&
                 parameters[0].ParameterType == typeof(CharacterModel) && parameters[1].ParameterType == typeof(ulong));
-        return (Player)constructor.Invoke([character, 0UL, character.StartingHp, character.StartingHp,
+        var player = (Player)constructor.Invoke([character, 0UL, character.StartingHp, character.StartingHp,
             character.MaxEnergy, 0, 0, character.BaseOrbSlotCount, new RelicGrabBag(), unlockState,
             null, null, null, null, null]);
+        PreviewPlayers.Add(player, new object());
+        return player;
     }
 
     private static void ApplyRuntimeSpine(NCreatureVisuals visuals, CharacterModel character, string? groupId)

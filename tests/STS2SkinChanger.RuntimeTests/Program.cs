@@ -87,6 +87,8 @@ PresentationNodeOwnershipTests.Run();
 RenderedPreviewFramingTests.Run();
 FrameworkSelectorCycleTests.Run();
 FrameworkModelPreviewTests.Run();
+MultiplayerAppearanceIdentityTests.Run();
+OptionalCharacterVfxTests.Run();
 DragHandleHoverTests.Run();
 StandaloneModelPreviewTests.Run();
 ScopedSkinBehaviorTests.Run();
