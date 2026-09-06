@@ -22,7 +22,11 @@ internal partial class ModThemeEditor
         QueueThemePresetAction(() =>
         {
             if (ThemePresetCode.LooksLikeCode(input)) ImportThemePreset(input);
-            else _activePresetId = _selectedPresetId = _presets!.Create(input, current);
+            else
+            {
+                _activePresetId = _selectedPresetId = _presets!.Create(input, current);
+                ModThemeRuntime.Session.ApplyPreset(current);
+            }
             if (_presetNewName.Text == input) _presetNewName.Text = "";
         });
     }
@@ -32,7 +36,7 @@ internal partial class ModThemeEditor
         var preset = _presets!.ImportCode(code, ModThemeLocalization.Get(ThemeText.ImportPreset));
         _activePresetId = _selectedPresetId = preset.Id;
         // Only apply after the new preset was successfully persisted.
-        ModThemeRuntime.Session.Preview(preset.Settings);
+        ModThemeRuntime.Session.ApplyPreset(preset.Settings);
     }
 
     private string CopyPresetCaption() => _copyFeedback.Active

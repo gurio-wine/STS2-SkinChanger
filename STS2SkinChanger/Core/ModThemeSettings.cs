@@ -156,7 +156,10 @@ internal static class ModThemeStore
 
 internal sealed class ModThemeSession(ModThemeSettings saved)
 {
-    private ModThemeSettings _saved = saved.Normalize();
+    // Saving the active theme and selecting a preset are independent operations.
+    // Revert returns to the selected preset (or startup theme before any selection),
+    // even when an edited variant has since been saved for the next launch.
+    private ModThemeSettings _revertBaseline = saved.Normalize();
     public ModThemeSettings Current { get; private set; } = saved.Normalize();
     public event Action? Changed;
     public void Preview(ModThemeSettings settings)
@@ -166,6 +169,11 @@ internal sealed class ModThemeSession(ModThemeSettings saved)
         Current = next;
         Changed?.Invoke();
     }
-    public void Revert() => Preview(_saved);
-    public void Save(string path) { ModThemeStore.Save(path, Current); _saved = Current; }
+    public void ApplyPreset(ModThemeSettings settings)
+    {
+        _revertBaseline = settings.Normalize();
+        Preview(_revertBaseline);
+    }
+    public void Revert() => Preview(_revertBaseline);
+    public void Save(string path) => ModThemeStore.Save(path, Current);
 }

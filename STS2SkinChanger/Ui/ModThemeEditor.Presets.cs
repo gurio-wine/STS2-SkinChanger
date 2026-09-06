@@ -153,12 +153,12 @@ internal partial class ModThemeEditor
         ModThemeRuntime.AccentText(active);
         row.AddChild(active);
 
-        var name = new LineEdit { Text = readOnly ? ModLocalization.Get(ModText.DefaultVariant) :
+        var name = new LineEdit { Text = readOnly ? ModThemeLocalization.Get(ThemeText.CoolJade) :
                 _presetNameDrafts.GetValueOrDefault(preset.Id, preset.Name),
             Editable = !readOnly, MaxLength = 100, CustomMinimumSize = new Vector2(0, 38),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         ModThemeRuntime.Input(name, 18, accent: readOnly);
-        if (readOnly) ModLocalization.Bind(name, () => name.Text = ModLocalization.Get(ModText.DefaultVariant));
+        if (readOnly) ModLocalization.Bind(name, () => name.Text = ModThemeLocalization.Get(ThemeText.CoolJade));
         name.TextChanged += value => { _presetNameDrafts[preset.Id] = value; CancelPresetDelete(); };
         row.AddChild(name);
         var apply = PresetButton(() => ModLocalization.Get(_activePresetId == preset.Id
@@ -167,7 +167,7 @@ internal partial class ModThemeEditor
         {
             _activePresetId = _selectedPresetId = preset.Id;
             CancelCopyFeedback();
-            ModThemeRuntime.Session.Preview(preset.Settings);
+            ModThemeRuntime.Session.ApplyPreset(preset.Settings);
         }, rebuild: false);
         row.AddChild(apply);
 
@@ -177,6 +177,7 @@ internal partial class ModThemeEditor
         {
             _presets!.Overwrite(preset.Id, ModThemeRuntime.Current);
             _activePresetId = _selectedPresetId = preset.Id;
+            ModThemeRuntime.Session.ApplyPreset(ModThemeRuntime.Current);
         });
         row.AddChild(overwrite);
         var rename = PresetButton(() => ModLocalization.Get(ModText.RenameCardPreset), 100);

@@ -87,7 +87,7 @@ internal static class ThemePresetCodeTests
         var editor = assembly.GetType("STS2SkinChanger.Ui.ModThemeEditor", true)!;
         var importedInstructions = PatchProcessor.GetOriginalInstructions(AccessTools.Method(editor, "ImportThemePreset"));
         var importAt = importedInstructions.FindIndex(i => i.operand is MethodInfo m && m.Name == "ImportCode");
-        var applyAt = importedInstructions.FindIndex(i => i.operand is MethodInfo m && m.Name == "Preview");
+        var applyAt = importedInstructions.FindIndex(i => i.operand is MethodInfo m && m.Name == "ApplyPreset");
         Require(importAt >= 0 && applyAt > importAt, "界面必须在导入写盘成功后应用，失败时保留当前主题。");
         var copyInstructions = PatchProcessor.GetOriginalInstructions(AccessTools.Method(editor, "CopyThemePreset"));
         Require(copyInstructions.Any(i => i.operand is FieldInfo f && f.Name == "_selectedPresetId") &&

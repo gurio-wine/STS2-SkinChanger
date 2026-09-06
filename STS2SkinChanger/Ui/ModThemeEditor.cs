@@ -330,7 +330,13 @@ internal partial class ModThemeEditor : CanvasLayer
         var picker = new ColorPickerButton { EditAlpha = false, CustomMinimumSize = new Vector2(64, 32) }; row.AddChild(picker);
         ModThemeRuntime.Button(picker, 18);
         var hex = MakeLabel(() => get(ModThemeRuntime.Current)); row.AddChild(hex);
-        picker.ColorChanged += value => { if (!_reading) ModThemeRuntime.Session.Preview(set(ModThemeRuntime.Current, "#" + value.ToHtml(false))); };
+        // Keep color dragging local to the picker. Rebuild themed surfaces once,
+        // after dismissal, instead of on every mouse movement inside the popup.
+        picker.PopupClosed += () =>
+        {
+            if (_reading || !_connected || !IsInsideTree() || IsQueuedForDeletion()) return;
+            ModThemeRuntime.Session.Preview(set(ModThemeRuntime.Current, "#" + picker.Color.ToHtml(false)));
+        };
         _readValues.Add(theme => { picker.Color = new Color(get(theme)); hex.Text = get(theme); });
     }
 

@@ -9,7 +9,8 @@ internal enum ThemeText
     Dropdown, HoverOpacity, SelectionColor, SelectionOpacity,
     HoverBlur, SelectedHoverColor, SelectedHoverOpacity,
     Presets, InvalidPresetName,
-    PresetNameOrCode, CopyPresetCode, ImportPreset, InvalidPresetCode, Copied, CopyFailed
+    PresetNameOrCode, CopyPresetCode, ImportPreset, InvalidPresetCode, Copied, CopyFailed,
+    CoolJade
 }
 
 internal static class ModThemeLocalization
@@ -112,6 +113,25 @@ internal static class ModThemeLocalization
             ["tur"] = "Ön ayar adı/kodu|Ön ayar kodunu kopyala|Ön ayarı içe aktar|Kod bozuk veya desteklenmiyor.|Kopyalandı|Kopyalama başarısız"
         };
         foreach (var (language, values) in codes) packs[language] = [.. packs[language], .. values.Split('|')];
+        var builtinNames = new Dictionary<string, string>
+        {
+            ["eng"] = "Cool Jade",
+            ["zhs"] = "凉玉",
+            ["zht"] = "涼玉",
+            ["deu"] = "Kühle Jade",
+            ["esp"] = "Jade fresco",
+            ["spa"] = "Jade fresco",
+            ["fra"] = "Fraîcheur de jade",
+            ["ita"] = "Giada fresca",
+            ["jpn"] = "涼やかな翡翠",
+            ["kor"] = "서늘한 옥빛",
+            ["pol"] = "Chłodny jadeit",
+            ["ptb"] = "Jade fresco",
+            ["rus"] = "Прохладный нефрит",
+            ["tha"] = "หยกเย็น",
+            ["tur"] = "Serin Yeşim"
+        };
+        foreach (var (language, name) in builtinNames) packs[language] = [.. packs[language], name];
         return packs;
     }
     public static string Get(ThemeText text) => (Packs.TryGetValue(ModLocalization.CurrentLanguage, out var pack) ? pack : Packs["eng"])[(int)text];

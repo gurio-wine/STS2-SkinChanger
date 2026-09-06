@@ -17,6 +17,7 @@ internal static class ModThemeTests
         var normalize = settings!.GetMethod("Normalize")!;
         object Parse(string json) => normalize.Invoke(JsonSerializer.Deserialize(json, settings), null)!;
         var defaults = Parse("{}");
+        ThemeEditingBaselineTests.Run(assembly, Parse);
         ThemePresetCodeTests.Run(assembly, Parse);
         ThemePresetPanelTests.Run(assembly);
         ModThemePresetTests.Run(assembly, Parse);
@@ -88,17 +89,17 @@ internal static class ModThemeTests
             Require((float)Property(restored, "ButtonBlur") == 1.5f && (bool)Property(restored, "TextShadowEnabled") &&
                     (int)Property(restored, "TextShadowOffsetX") == -2, "新阴影/按钮模糊设置保存后必须完整恢复。");
             sessionType.GetMethod("Preview")!.Invoke(session, [defaults]);
-            Require((string)Property(Property(session, "Current"), "ButtonColor") != "#123456", "应用默认预设立即预览。");
+            Require((string)Property(Property(session, "Current"), "ButtonColor") != "#123456", "预览另一组主题立即应用。");
             sessionType.GetMethod("Revert")!.Invoke(session, null);
-            Require((string)Property(Property(session, "Current"), "ButtonColor") == "#123456", "撤销回到已保存主题。");
+            Require(Property(session, "Current").Equals(defaults), "尚未选择预设时，撤销回到本次启动的主题，保存不改写基准。");
             File.WriteAllText(path, "invalid json");
             restored = store.GetMethod("Load")!.Invoke(null, [path])!;
             Require((string)Property(restored, "ButtonColor") == "#123456", "主主题文件损坏须恢复备份。");
-            sessionType.GetMethod("Preview")!.Invoke(session, [defaults]);
+            sessionType.GetMethod("Preview")!.Invoke(session, [draft]);
             try { sessionType.GetMethod("Save")!.Invoke(session, [temp.FullName]); }
             catch (TargetInvocationException) { }
             sessionType.GetMethod("Revert")!.Invoke(session, null);
-            Require((string)Property(Property(session, "Current"), "ButtonColor") == "#123456", "保存失败不能把草稿冒充已保存主题。");
+            Require(Property(session, "Current").Equals(defaults), "保存失败不能把草稿冒充撤销基准。");
         }
         finally { temp.Delete(true); }
         Console.WriteLine("Live theme passed: white defaults, normalization, preview, persistence, rollback and recovery.");
