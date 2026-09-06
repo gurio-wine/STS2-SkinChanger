@@ -33,10 +33,8 @@ internal static class EventCompendiumPreview
         var host = new Control { Name = "EventSkinPreview", Size = new Vector2(1920, 1080) };
         var layout = PreloadManager.Cache.GetScene(NEventLayout.defaultScenePath).Instantiate<NEventLayout>();
         PreviewNodes.Add(layout, new object());
-        layout.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
-        layout.Position = new Vector2(0, 70);
-        layout.Size = new Vector2(1920, 1080);
-        layout.Scale = new Vector2(0.78f, 0.78f);
+        // Preserve the native full-screen anchors, portrait/VFX alignment and scale. Shrinking
+        // the whole layout to fit the sidebar also shrank the event's background to 78%.
         host.AddChild(layout);
         var keys = LocManager.Instance.GetTable(model.LocTable).Keys.ToArray();
         var pages = EventPreviewPolicy.Pages(model.Id.Entry, keys);
@@ -59,14 +57,15 @@ internal static class EventCompendiumPreview
             // Keep the game's typography/button visuals but scroll a long page rather than
             // let its options run behind the fixed skin selector or beyond the viewport.
             var column = layout.GetNode<VBoxContainer>("VBoxContainer");
+            var bounds = EventPreviewPolicy.TextBounds(host.Size, column.GetRect(), 380f, 826f);
             var scroll = new ScrollContainer
             {
-                Name = "EventPageScroll", Position = column.Position,
-                Size = new Vector2(Math.Max(800, column.Size.X), 670),
+                Name = "EventPageScroll", Position = bounds.Position, Size = bounds.Size,
                 HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled
             };
             layout.AddChild(scroll);
             column.Reparent(scroll, keepGlobalTransform: false);
+            column.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
             column.CustomMinimumSize = new Vector2(800, 0);
             column.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             try

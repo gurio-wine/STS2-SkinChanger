@@ -600,6 +600,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private readonly Dictionary<string, Button> _otherEntryButtons =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<OtherCategory, Button> _categoryButtons = [];
+    private CompendiumBackdrop _backdrop = null!;
     private VBoxContainer _entryList = null!;
     private Label _nameLabel = null!;
     private Label _epithetLabel = null!;
@@ -755,8 +756,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _otherActionSelector.Position = new Vector2(650f, 430f);
         AddChild(_otherActionSelector);
 
-        var sidebar = new MarginContainer
+        var sidebar = new Control
         {
+            Name = "OtherCompendiumSidebar",
             AnchorLeft = 1,
             AnchorTop = 0,
             AnchorRight = 1,
@@ -767,15 +769,20 @@ internal partial class AncientCompendiumScreen : NSubmenu
             OffsetBottom = 0
         };
         AddChild(sidebar);
+        _backdrop = new CompendiumBackdrop();
+        _backdrop.AddPanel(sidebar);
 
-        sidebar.AddThemeConstantOverride("margin_left", 34);
-        sidebar.AddThemeConstantOverride("margin_top", 58);
-        sidebar.AddThemeConstantOverride("margin_right", 34);
-        sidebar.AddThemeConstantOverride("margin_bottom", 90);
+        var sidebarMargin = new MarginContainer();
+        sidebarMargin.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        sidebar.AddChild(sidebarMargin);
+        sidebarMargin.AddThemeConstantOverride("margin_left", 34);
+        sidebarMargin.AddThemeConstantOverride("margin_top", 58);
+        sidebarMargin.AddThemeConstantOverride("margin_right", 34);
+        sidebarMargin.AddThemeConstantOverride("margin_bottom", 90);
 
         var sidebarContent = new VBoxContainer();
         sidebarContent.AddThemeConstantOverride("separation", 22);
-        sidebar.AddChild(sidebarContent);
+        sidebarMargin.AddChild(sidebarContent);
 
         _headingLabel = BuildLabel(30, new Color("efc850"));
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
@@ -1768,8 +1775,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             group.Id.Equals(lookup, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static void ApplyCategoryTheme(Button button, bool selected)
+    private void ApplyCategoryTheme(Button button, bool selected)
     {
+        _backdrop.SetSelected(button, selected);
         var ivory = new Color("fff6e2");
         var gold = new Color("efc850");
         button.AddThemeColorOverride("font_color", selected ? gold : ivory);
@@ -2376,8 +2384,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         return label;
     }
 
-    private static void ApplyEntryTheme(Button button, bool selected)
+    private void ApplyEntryTheme(Button button, bool selected)
     {
+        _backdrop.SetSelected(button, selected);
         var ivory = new Color("fff6e2");
         var gold = new Color("efc850");
         button.AddThemeColorOverride("font_color", selected ? gold : ivory);

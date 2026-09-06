@@ -17,6 +17,18 @@ internal static class EventSkinTests
             ["ALPHA", new[] { "ALPHA.pages.NEXT.description", "ALPHA.pages.INITIAL.description",
                 "ALPHA_BETA.pages.OTHER.description", "ALPHA.pages.NEXT.options.PAY.title" }])!;
         Require(pages.SequenceEqual(new[] { "INITIAL", "NEXT" }), "只列出本事件页面，初始页置顶。");
+        var textBounds = previewPolicy.GetMethod("TextBounds");
+        Require(textBounds != null, "全屏事件预览须独立安排正文，不能通过缩小整幅背景避让菜单。");
+        var bounds = (Godot.Rect2)textBounds!.Invoke(null,
+            [new Godot.Vector2(1920, 1080), new Godot.Rect2(922, 255, 800, 40), 380f, 826f])!;
+        Require(bounds.Position.X >= 0 && bounds.End.X <= 1540 - 24 && bounds.End.Y <= 826 - 24,
+            "原生正文必须避开右侧菜单和底部皮肤选择器。");
+        Require(bounds.Size.X >= 820 && bounds.Size.Y >= 500,
+            "保留原生 800 宽选项和滚动条空间，不能靠压窄按钮或缩小文字适配。");
+        var narrow = (Godot.Rect2)textBounds.Invoke(null,
+            [new Godot.Vector2(1920, 1080), new Godot.Rect2(922, 255, 800, 40), 440f, 826f])!;
+        Require(narrow.End.X <= 1480 - 24 && narrow.Size == bounds.Size,
+            "侧栏变宽时只移动正文区域，不缩放整套事件场景。");
         var directory = Directory.CreateTempSubdirectory("sc-event-skins-");
         try
         {
