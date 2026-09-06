@@ -17,6 +17,7 @@ internal static class ModThemeTests
         var normalize = settings!.GetMethod("Normalize")!;
         object Parse(string json) => normalize.Invoke(JsonSerializer.Deserialize(json, settings), null)!;
         var defaults = Parse("{}");
+        ModThemePresetTests.Run(assembly, Parse);
         ModThemeInteractionTests.Run(assembly, Parse);
         VerifyDropdownBlur(assembly, Parse);
         VerifyDropdownIsolation(assembly, Parse);
@@ -31,7 +32,7 @@ internal static class ModThemeTests
         var tint = assembly.GetType("STS2SkinChanger.Ui.ModThemeRuntime", true)!
             .GetMethod("ButtonTint", BindingFlags.NonPublic | BindingFlags.Static);
         Require(tint != null, "按钮状态必须统一计算本层颜色，不预先覆盖/累加面板的不透明度。");
-        var layerTheme = Parse("{\"PanelOpacity\":0.2,\"ButtonOpacity\":0.3,\"SelectionOpacity\":0.4,\"ButtonColor\":\"#123456\",\"HoverColor\":\"#654321\"}");
+        var layerTheme = Parse("{\"PanelOpacity\":0.2,\"ButtonOpacity\":0.3,\"SelectionOpacity\":0.4,\"SelectionHoverOpacity\":0.4,\"ButtonColor\":\"#123456\",\"HoverColor\":\"#654321\"}");
         var normal = (Godot.Color)tint!.Invoke(null, [layerTheme, false, false, false])!;
         var hover = (Godot.Color)tint.Invoke(null, [layerTheme, true, false, false])!;
         var pressed = (Godot.Color)tint.Invoke(null, [layerTheme, true, true, false])!;
@@ -108,7 +109,7 @@ internal static class ModThemeTests
         var theme = parse("{\"PanelBlur\":5,\"ButtonBlur\":4,\"DropdownBlur\":2.25}");
         Require(theme.GetType().GetProperty("DropdownBlur") != null, "下拉主题缺少独立模糊参数。");
         Require((float)Property(theme, "DropdownBlur") == 2.25f &&
-                (float)Property(parse("{\"PanelBlur\":5}"), "DropdownBlur") == 0 &&
+                (float)Property(parse("{\"PanelBlur\":5}"), "DropdownBlur") == 3 &&
                 (float)Property(parse("{\"DropdownBlur\":-1}"), "DropdownBlur") == 0 &&
                 (float)Property(parse("{\"DropdownBlur\":100}"), "DropdownBlur") == 5,
             "下拉模糊不能继承面板；0 关闭，过大/负值需归一化。");
@@ -265,7 +266,7 @@ internal static class ModThemeTests
         var connect = editor.GetMethod("Connect", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var disconnect = editor.GetMethod("Disconnect", BindingFlags.NonPublic | BindingFlags.Instance)!;
         Require(Calls(connect, "add_WindowInput") && Calls(disconnect, "remove_WindowInput"),
-            "主题快捷键必须连接原生输入事件，并在退出时解绑。");
+            "主题拖动必须连接原生输入事件，并在退出时解绑。");
         var binding = assembly.GetType("STS2SkinChanger.Ui.ModThemeBinding", true)!;
         var constructor = binding.GetConstructor(Type.EmptyTypes)!;
         Require(Calls(constructor, "add_TreeEntered") && Calls(constructor, "add_TreeExiting"),

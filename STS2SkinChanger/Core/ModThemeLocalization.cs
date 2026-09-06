@@ -7,7 +7,8 @@ internal enum ThemeText
     Outline, Revert, Collapse, Expand, Saved, SaveFailed,
     Shadow, EnableShadow, OffsetX, OffsetY, ShadowSize,
     Dropdown, HoverOpacity, SelectionColor, SelectionOpacity,
-    HoverBlur, SelectedHoverColor, SelectedHoverOpacity
+    HoverBlur, SelectedHoverColor, SelectedHoverOpacity,
+    Presets, InvalidPresetName
 }
 
 internal static class ModThemeLocalization
@@ -72,6 +73,25 @@ internal static class ModThemeLocalization
             ["tur"] = "Üzerine gelme bulanıklığı|Seçili öğe üzerine gelme rengi|Seçili öğe üzerine gelme opaklığı"
         };
         foreach (var (language, values) in selectedHover) packs[language] = [.. packs[language], .. values.Split('|')];
+        var presets = new Dictionary<string, string>
+        {
+            ["eng"] = "Presets|Use a unique name of 1–100 characters.",
+            ["zhs"] = "预设|名称须为 1–100 个字符，且不能重复。",
+            ["zht"] = "預設|名稱須為 1–100 個字元，且不能重複。",
+            ["deu"] = "Vorlagen|Verwende einen eindeutigen Namen mit 1–100 Zeichen.",
+            ["esp"] = "Preajustes|Usa un nombre único de 1 a 100 caracteres.",
+            ["spa"] = "Preajustes|Usa un nombre único de 1 a 100 caracteres.",
+            ["fra"] = "Préréglages|Utilisez un nom unique de 1 à 100 caractères.",
+            ["ita"] = "Preimpostazioni|Usa un nome univoco da 1 a 100 caratteri.",
+            ["jpn"] = "プリセット|重複しない1～100文字の名前を入力してください。",
+            ["kor"] = "프리셋|중복되지 않는 1~100자 이름을 입력하세요.",
+            ["pol"] = "Zestawy|Użyj unikalnej nazwy o długości 1–100 znaków.",
+            ["ptb"] = "Predefinições|Use um nome único de 1 a 100 caracteres.",
+            ["rus"] = "Пресеты|Введите уникальное имя длиной от 1 до 100 символов.",
+            ["tha"] = "ค่าที่ตั้งไว้|ใช้ชื่อที่ไม่ซ้ำกัน ความยาว 1–100 ตัวอักษร",
+            ["tur"] = "Ön ayarlar|1–100 karakterlik benzersiz bir ad kullanın."
+        };
+        foreach (var (language, values) in presets) packs[language] = [.. packs[language], .. values.Split('|')];
         return packs;
     }
     public static string Get(ThemeText text) => (Packs.TryGetValue(ModLocalization.CurrentLanguage, out var pack) ? pack : Packs["eng"])[(int)text];

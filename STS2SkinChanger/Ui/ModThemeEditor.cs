@@ -13,6 +13,8 @@ internal partial class ModThemeEditor : CanvasLayer
     private VBoxContainer _body = null!;
     private ScrollContainer _scroll = null!;
     private Button _collapse = null!;
+    private Button _save = null!;
+    private readonly ThemeSaveFeedback _saveFeedback = new();
     private Label _status = null!;
     private readonly List<Action<ModThemeSettings>> _readValues = [];
     private bool _reading;
@@ -69,6 +71,8 @@ internal partial class ModThemeEditor : CanvasLayer
     {
         _panel.Visible = !_panel.Visible;
         _dragging = false;
+        CancelSaveFeedback();
+        CancelPresetDelete();
         if (_panel.Visible) { ReadValues(); ClampPanel(); }
         ModLog.Info($"主题调节窗口：visible={_panel.Visible}, size={_panel.Size}, position={_panel.Position}");
     }
@@ -87,7 +91,7 @@ internal partial class ModThemeEditor : CanvasLayer
         _panel.AddChild(margin);
         var content = new VBoxContainer(); content.AddThemeConstantOverride("separation", 12); margin.AddChild(content);
         var header = new HBoxContainer(); content.AddChild(header);
-        var grip = MakeButton(() => ModThemeLocalization.Get(ThemeText.Editor));
+        var grip = MakeButton(() => ModThemeLocalization.Get(ThemeText.Theme));
         grip.Flat = true; grip.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         grip.MouseDefaultCursorShape = Control.CursorShape.Move;
         grip.GuiInput += input =>
@@ -116,6 +120,7 @@ internal partial class ModThemeEditor : CanvasLayer
         _body.AddChild(_scroll);
         var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         rows.AddThemeConstantOverride("separation", 8); _scroll.AddChild(rows);
+        BuildPresetSection(rows);
         var section = Section(rows, ThemeText.Panel);
         ColorRow(section, ThemeText.Color, s => s.PanelColor, (s, v) => s with { PanelColor = v });
         NumberRow(section, ThemeText.Opacity, 0, 100, 1, s => s.PanelOpacity * 100, (s, v) => s with { PanelOpacity = (float)v / 100 }, "%");
@@ -169,15 +174,13 @@ internal partial class ModThemeEditor : CanvasLayer
         var footer = new HBoxContainer(); _body.AddChild(footer);
         var reset = MakeButton(() => ModLocalization.Get(ModText.Reset)); reset.Pressed += ModThemeRuntime.Session.Reset; footer.AddChild(reset);
         var revert = MakeButton(() => ModThemeLocalization.Get(ThemeText.Revert)); revert.Pressed += ModThemeRuntime.Session.Revert; footer.AddChild(revert);
-        var save = MakeButton(() => ModLocalization.Get(ModText.SaveCharacterSkinMerge));
-        save.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        save.Pressed += () =>
-        {
-            try { ModThemeRuntime.Session.Save(ModThemeRuntime.Path); _status.Text = ModThemeLocalization.Get(ThemeText.Saved); }
-            catch (Exception e) { _status.Text = ModThemeLocalization.Get(ThemeText.SaveFailed); ModLog.Error("保存界面主题失败：" + e); }
-        };
-        footer.AddChild(save);
-        _status = MakeLabel(() => ""); _body.AddChild(_status);
+        _save = MakeButton(SaveCaption);
+        _save.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        _save.Pressed += SaveTheme;
+        footer.AddChild(_save);
+        _status = MakeLabel(() => "");
+        _status.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _status.Hide(); _body.AddChild(_status);
         _root.Resized += ClampPanel;
         ReadValues();
     }
@@ -197,6 +200,8 @@ internal partial class ModThemeEditor : CanvasLayer
         if (!_connected) return;
         _connected = false;
         _dragging = false;
+        _saveFeedback.Cancel();
+        CancelPresetDelete();
         ModThemeRuntime.Session.Changed -= ReadValues;
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
         _window = null;
@@ -204,9 +209,6 @@ internal partial class ModThemeEditor : CanvasLayer
 
     private void HandleInput(InputEvent input)
     {
-        if (input is InputEventKey { Pressed: true, Echo: false, ShiftPressed: true } key &&
-            (key.CtrlPressed || key.MetaPressed) && (key.Keycode == Key.T || key.PhysicalKeycode == Key.T))
-        { Toggle(); GetViewport().SetInputAsHandled(); return; }
         if (!_panel.Visible || !_dragging) return;
         if (input is InputEventMouseMotion)
         {
@@ -228,8 +230,56 @@ internal partial class ModThemeEditor : CanvasLayer
     private void ReadValues()
     {
         _reading = true;
-        try { foreach (var read in _readValues) read(ModThemeRuntime.Current); if (_status != null) _status.Text = ""; }
+        try
+        {
+            CancelSaveFeedback();
+            foreach (var read in _readValues) read(ModThemeRuntime.Current);
+            if (_status != null) { _status.Text = ""; _status.Hide(); }
+        }
         finally { _reading = false; }
+    }
+
+    private string SaveCaption() => _saveFeedback.Active
+        ? ModThemeLocalization.Get(ThemeText.Saved) + "✓" : ModLocalization.Get(ModText.SaveCharacterSkinMerge);
+
+    private void RefreshSaveButton()
+    {
+        if (!GodotObject.IsInstanceValid(_save)) return;
+        _save.Text = SaveCaption();
+        ModThemeRuntime.TextControl(_save, 18, accent: _saveFeedback.Active);
+    }
+
+    private void CancelSaveFeedback()
+    {
+        _saveFeedback.Cancel();
+        RefreshSaveButton();
+    }
+
+    private void SaveTheme()
+    {
+        CancelSaveFeedback();
+        try
+        {
+            ModThemeRuntime.Session.Save(ModThemeRuntime.Path);
+            _status.Hide();
+            var revision = _saveFeedback.Begin();
+            RefreshSaveButton();
+            // Real time, including paused gameplay; old saves cannot expire a newer one.
+            GetTree().CreateTimer(ThemeSaveFeedback.DurationSeconds, true, false, true).Timeout += () =>
+            {
+                if (!GodotObject.IsInstanceValid(this) || !IsInsideTree() || IsQueuedForDeletion()) return;
+                if (_saveFeedback.Expire(revision)) RefreshSaveButton();
+            };
+        }
+        catch (Exception e) { ShowThemeError(e); }
+    }
+
+    private void ShowThemeError(Exception error)
+    {
+        CancelSaveFeedback();
+        _status.Text = ModThemeLocalization.Get(error is ArgumentException ? ThemeText.InvalidPresetName : ThemeText.SaveFailed);
+        _status.Show();
+        ModLog.Error("主题操作失败：" + error);
     }
 
     private VBoxContainer Section(VBoxContainer rows, ThemeText title)
