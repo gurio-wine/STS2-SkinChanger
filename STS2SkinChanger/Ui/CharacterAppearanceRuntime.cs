@@ -2212,8 +2212,25 @@ internal static class CharacterAppearanceRuntime
     private static void RefreshCurrentEnergyCounter(Player player)
     {
         var combatUi = NCombatRoom.Instance?.Ui;
-        if (combatUi == null ||
-            EnergyCounterField?.GetValue(combatUi) is not NEnergyCounter oldCounter)
+        if (combatUi != null) RefreshEnergyCounter(combatUi, player);
+    }
+
+    internal static void RefreshEnergyCounter(NCombatUi combatUi, Player player)
+    {
+        try
+        {
+            using var hudBinding = CombatHudResourceLifecycle.BeforeEnergyCounterReplacement(combatUi);
+            ReplaceEnergyCounterCore(combatUi, player);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("刷新实战能量界面失败，未释放无法安全交接的原控件：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static void ReplaceEnergyCounterCore(NCombatUi combatUi, Player player)
+    {
+        if (EnergyCounterField?.GetValue(combatUi) is not NEnergyCounter oldCounter)
         {
             return;
         }

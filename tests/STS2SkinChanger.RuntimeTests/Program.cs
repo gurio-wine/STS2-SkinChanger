@@ -23,6 +23,18 @@ if (args.Length == 2 && args[0] == "--audit-card-presets")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-combat-hud")
+{
+    CombatHudLifecycleTests.Run();
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--audit-combat-hud")
+{
+    CombatHudLifecycleTests.Audit(args[1]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--audit-skin-behavior")
 {
     ScopedSkinBehaviorTests.Audit(args[1]);
@@ -89,6 +101,7 @@ FrameworkSelectorCycleTests.Run();
 FrameworkModelPreviewTests.Run();
 MultiplayerAppearanceIdentityTests.Run();
 OptionalCharacterVfxTests.Run();
+CombatHudLifecycleTests.Run();
 DragHandleHoverTests.Run();
 StandaloneModelPreviewTests.Run();
 ScopedSkinBehaviorTests.Run();
