@@ -157,6 +157,24 @@ internal static class CharacterSkinBundleContractTests
         Require(packs.Count == languages.Length && languages.All(language =>
             packs.TryGetValue(language, out var values) && values.Length == last - first + 1 &&
             values.All(value => !string.IsNullOrWhiteSpace(value))), "皮肤包的全部文本必须覆盖工坊全部 15 种语言。");
+        var contentTexts = (IReadOnlyDictionary<string, (string, string, string, string)>)localization.GetField(
+            "BundleContentTexts", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        Require(contentTexts.Count == languages.Length && languages.All(language =>
+            contentTexts.TryGetValue(language, out var text) &&
+            new[] { text.Item1, text.Item2, text.Item3, text.Item4 }.All(value => !string.IsNullOrWhiteSpace(value))),
+            "卡牌、怪物、两种模式名称必须覆盖全部 15 种语言。");
+        var editor = assembly.GetType("STS2SkinChanger.Ui.CharacterSkinBundleControls", true)!;
+        var sections = HarmonyLib.PatchProcessor.GetOriginalInstructions(editor.GetMethod(
+            "AddContentSection", BindingFlags.Static | BindingFlags.NonPublic)!);
+        Require(new[] { "get_CardMode", "get_MonsterMode", "AddPresetRows", "AddModPriorityRows" }.All(name =>
+                sections.Any(instruction => instruction.operand is MethodInfo called && called.Name == name)),
+            "编辑器应读取两种独立模式，只渲染所选的对应模块。");
+        var priorityRows = HarmonyLib.PatchProcessor.GetOriginalInstructions(editor.GetMethod(
+            "AddModPriorityRows", BindingFlags.Static | BindingFlags.NonPublic)!);
+        Require(priorityRows.Any(instruction => instruction.operand is MethodInfo called && called.Name == "GetBundleModPriority") &&
+                priorityRows.All(instruction => instruction.operand is not MethodInfo called ||
+                    called.Name is not ("MountOverlay" or "MountCardOverlay" or "SetCardPriorityOptionEnabled" or "SetMonsterPriorityOptionEnabled")),
+            "包的优先级编辑只能改变草稿，不能热加载资源或修改全局优先级。");
         var missingPresetIndex = (int)Enum.Parse(textType, "BundleMissingPreset") - first;
         Require(packs.Values.All(values => string.Format(values[missingPresetIndex], "PresetName").Contains("PresetName")),
             "每种语言的缺失预设提示必须包含实际预设名称。");

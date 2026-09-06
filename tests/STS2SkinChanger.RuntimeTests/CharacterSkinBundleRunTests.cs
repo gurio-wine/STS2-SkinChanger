@@ -3,12 +3,15 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger;
 
 internal static class CharacterSkinBundleRunTests
 {
     private static string _directory = string.Empty;
     private static bool SkipEngine() => false;
+    private static bool Characters(ref IEnumerable<CharacterModel> __result) { __result = []; return false; }
+    private static bool LogError(object[] __args) { if (!_failMount) Console.WriteLine("Bundle transaction log: " + __args[0]); return false; }
     private static bool _failMount;
     private static bool MountBoundary()
     {
@@ -65,13 +68,15 @@ internal static class CharacterSkinBundleRunTests
         var harmony = new Harmony("sc-tests.bundle-resume");
         try
         {
+            harmony.Patch(AccessTools.PropertyGetter(typeof(ModelDb), "AllCharacters"),
+                prefix: new HarmonyMethod(typeof(CharacterSkinBundleRunTests), nameof(Characters)));
             harmony.Patch(AccessTools.PropertyGetter(service, "ConfigPath"), prefix: new HarmonyMethod(typeof(CharacterSkinBundleRunTests), nameof(ConfigPath)));
             harmony.Patch(AccessTools.PropertyGetter(service, "CharacterSkinBundleRunSnapshotPath"), prefix: new HarmonyMethod(typeof(CharacterSkinBundleRunTests), nameof(RestorePath)));
             foreach (var name in new[] { "MountOverlay", "MountCardOverlay" })
                 harmony.Patch(AccessTools.Method(service, name), prefix: new HarmonyMethod(typeof(CharacterSkinBundleRunTests), nameof(MountBoundary)));
             var log = assembly.GetType("STS2SkinChanger.Core.ModLog", true)!;
             foreach (var method in log.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Where(m => m.Name is "Info" or "Warn" or "Error"))
-                harmony.Patch(method, prefix: new HarmonyMethod(typeof(CharacterSkinBundleRunTests), nameof(SkipEngine)));
+                harmony.Patch(method, prefix: new HarmonyMethod(typeof(CharacterSkinBundleRunTests), method.Name == "Error" ? nameof(LogError) : nameof(SkipEngine)));
             var global = Config("""
                 {"Selections":{"silent":"character:keep","monster:a":"__base__","cards:silent":"__base__","merchant":"merchant:keep"},
                  "CardPriorityDefaultsVersion":1,"MonsterPriorityDefaultsVersion":2,
@@ -134,6 +139,7 @@ internal static class CharacterSkinBundleRunTests
                     JsonSerializer.Serialize(configProperty.GetValue(null), configType) == before,
                 "恢复时资源加载失败必须回滚全局配置，不能留下半个包预设。");
             _failMount = false;
+            VerifyModPriorityRun(assembly, service, configType, configProperty, path);
             AccessTools.Method(store, "Save").Invoke(null, [path, State("run-B")]);
             Require(AccessTools.Method(store, "LoadMatching").Invoke(null, [path, "run-A"]) == null,
                 "新开局覆盖该存档槽之后，旧局记录不能继续生效。");
@@ -149,6 +155,55 @@ internal static class CharacterSkinBundleRunTests
         }
         VerifyGameHooks(assembly);
         Console.WriteLine("Bundle run resume passed: persistent run identity, card/monster restoration, global isolation and repeated continue.");
+    }
+
+    private static void VerifyModPriorityRun(Assembly assembly, Type service, Type configType,
+        PropertyInfo configProperty, string path)
+    {
+        var config = AccessTools.Method(configType, "Deserialize").Invoke(null, ["""
+            {"Selections":{"silent":"character:keep","merchant":"merchant:keep","monster:a":"__base__","cards:silent":"__base__"},
+             "MonsterSkinCategoryGroups":{"act:one":["monster:a"]},
+             "CardPriorityDefaultsVersion":1,"MonsterPriorityDefaultsVersion":2,
+             "CharacterSkinBundles":[{"Id":"modes","Name":"模式包","CharacterGroupId":"silent",
+                 "CardMode":1,"MonsterMode":1,"CardModPriority":[{"OptionId":"skin:a","Enabled":true}],
+                 "MonsterModPriority":[{"OptionId":"skin:a","Enabled":true}]}],
+             "ActiveCharacterSkinBundles":{"silent":"模式包"}}
+            """])!;
+        configProperty.SetValue(null, config);
+        var before = JsonSerializer.Serialize(config, configType);
+        object?[] arguments = ["silent", null];
+        _failMount = true;
+        Require(!(bool)AccessTools.Method(service, "ApplySelectedCharacterSkinBundleForRun").Invoke(null, arguments)! &&
+                JsonSerializer.Serialize(configProperty.GetValue(null), configType) == before &&
+                AccessTools.Field(service, "_characterSkinBundleRunSnapshot").GetValue(null) == null,
+            "Mod 模式开局挂载失败必须回滚，不能留下本局半应用状态。");
+        _failMount = false;
+        Require((bool)AccessTools.Method(service, "ApplySelectedCharacterSkinBundleForRun").Invoke(null, arguments)!,
+            "Mod 优先级应能通过真实开局事务应用：" + AccessTools.Property(service, "LastError").GetValue(null));
+        var active = configProperty.GetValue(null)!;
+        var selections = (IDictionary)configType.GetProperty("Selections")!.GetValue(active)!;
+        Require((string?)selections["cards:silent"] == "skin:a" && (string?)selections["monster:a"] == "skin:a",
+            "开局必须应用所选 Mod 模式，不能仍读取未启用的包预设引用。");
+        Require((string?)selections["silent"] == "character:keep" && (string?)selections["merchant"] == "merchant:keep",
+            "Mod 模式不能重新挂载角色、改变商人或混入角色资源。");
+        AccessTools.Field(service, "_characterSkinBundleRunSavePath").SetValue(null, path);
+        AccessTools.Method(service, "SaveCharacterSkinBundleRunPresets").Invoke(null, null);
+        var stateType = assembly.GetType("STS2SkinChanger.Core.CharacterSkinBundleRunState", true)!;
+        var saved = JsonSerializer.Deserialize(File.ReadAllText(path), stateType)!;
+        Require(((IList)stateType.GetProperty("Cards")!.GetValue(saved)!).Count == 1 &&
+                ((IList)stateType.GetProperty("Monsters")!.GetValue(saved)!).Count == 1,
+            "没有手工预设引用的 Mod 模式，也必须保存所有实际应用分类的快照。");
+        AccessTools.Method(service, "RestoreCharacterSkinBundleAfterRun").Invoke(null, null);
+        Require(JsonSerializer.Serialize(configProperty.GetValue(null), configType) == before,
+            "Mod 模式离开本局应完整恢复全局配置。");
+        // Continue consumes the captured settings, not the bundle's now-edited mode or order.
+        ((IList)configType.GetProperty("CharacterSkinBundles")!.GetValue(config)!).Clear();
+        Require((bool)AccessTools.Method(service, "ResumeCharacterSkinBundleForRun").Invoke(null, [saved])!,
+            "编辑或删除皮肤包后仍必须能恢复原局的实际 Mod 优先级。");
+        var resumed = (IDictionary)configType.GetProperty("Selections")!.GetValue(configProperty.GetValue(null))!;
+        Require((string?)resumed["cards:silent"] == "skin:a" && (string?)resumed["monster:a"] == "skin:a",
+            "继续游戏不能丢掉 Mod 模式的卡牌和怪物选择。");
+        AccessTools.Method(service, "RestoreCharacterSkinBundleAfterRun").Invoke(null, null);
     }
 
     private static void VerifyGameHooks(Assembly assembly)
@@ -188,6 +243,11 @@ internal static class CharacterSkinBundleRunTests
             groups.Add(group);
             AccessTools.Field(catalogType, field).SetValue(catalog, groups);
         }
+        var identities = AccessTools.Field(catalogType, "_providerInstanceIdentities");
+        identities.SetValue(catalog, Array.CreateInstance(identities.FieldType.GenericTypeArguments[0], 0));
+        AccessTools.Field(catalogType, "_fullRuntimeProviders").SetValue(catalog, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        AccessTools.Field(catalogType, "_fullRuntimeProviderGroups").SetValue(catalog,
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
         return catalog;
     }
 

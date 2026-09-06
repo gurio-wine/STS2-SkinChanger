@@ -316,6 +316,7 @@ internal static partial class SkinService
             var next = original.CloneForBundleTransaction();
             var visualGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var cardGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var monsterCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             void Prepare()
             {
@@ -324,34 +325,20 @@ internal static partial class SkinService
                 BundlePresetPolicy.Synchronize(Config, catalog.CardGroups.Select(group => group.Id),
                     Config.MonsterSkinCategoryGroups.Keys);
                 bundle = CharacterSkinBundlePolicy.Clone(Config.CharacterSkinBundles[index]);
-                var availableCards = GetBundleCardGroups().Select(group => group.Id)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var availableMonsters = GetBundleMonsterCategoryIds().ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var requestedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var reference in bundle.CardPresetNames.Where(pair => availableCards.Contains(pair.Key)))
+                foreach (var preset in ResolveBundleCardPresets(bundle))
                 {
-                    var presetIndex = FindCardSkinPresetIndex(reference.Key, reference.Value);
-                    var group = catalog.CardGroups.FirstOrDefault(candidate =>
-                        candidate.Id.Equals(reference.Key, StringComparison.OrdinalIgnoreCase));
-                    if (presetIndex < 0 || group == null)
-                    {
-                        notices.Add(string.Format(ModLocalization.Get(ModText.BundleMissingPreset), reference.Value));
-                        continue;
-                    }
-                    ApplyCardPresetSettings(group, Config.CardSkinPresets[presetIndex]);
+                    var group = catalog.CardGroups.First(candidate =>
+                        candidate.Id.Equals(preset.CategoryId, StringComparison.OrdinalIgnoreCase));
+                    ApplyCardPresetSettings(group, preset);
                     cardGroups.Add(group.Id);
                 }
-                foreach (var reference in bundle.MonsterPresetNames.Where(pair => availableMonsters.Contains(pair.Key)))
+                foreach (var preset in ResolveBundleMonsterPresets(bundle))
                 {
-                    var presetIndex = FindMonsterSkinPresetIndex(reference.Key, reference.Value);
-                    if (presetIndex < 0 || !Config.MonsterSkinCategoryGroups.ContainsKey(reference.Key))
-                    {
-                        notices.Add(string.Format(ModLocalization.Get(ModText.BundleMissingPreset), reference.Value));
-                        continue;
-                    }
-                    ApplyMonsterPresetSettings(Config.MonsterSkinPresets[presetIndex]);
-                    requestedGroups.UnionWith(Config.MonsterSkinCategoryGroups[reference.Key]);
-                    visualGroups.UnionWith(ApplyMonsterCategoryPriorityToSelections(reference.Key));
+                    ApplyMonsterPresetSettings(preset);
+                    monsterCategories.Add(preset.CategoryId);
+                    requestedGroups.UnionWith(Config.MonsterSkinCategoryGroups[preset.CategoryId]);
+                    visualGroups.UnionWith(ApplyMonsterCategoryPriorityToSelections(preset.CategoryId));
                 }
                 // A run package may only touch the explicitly referenced monster regions. Most
                 // importantly, the character is intentionally absent here: it was already
@@ -445,7 +432,7 @@ internal static partial class SkinService
                 BundleName = bundle.Name,
                 Cards = cardGroups.Select(id => CaptureCurrentCardSkinPreset(id,
                     Config.ActiveCardSkinPresets.GetValueOrDefault(id, string.Empty))).ToList(),
-                Monsters = bundle.MonsterPresetNames.Keys.Where(id => GetBundleMonsterCategoryIds().Contains(id))
+                Monsters = monsterCategories
                     .Select(id => CaptureCurrentMonsterSkinPreset(id,
                         Config.ActiveMonsterSkinPresets.GetValueOrDefault(id, string.Empty))).ToList()
             };

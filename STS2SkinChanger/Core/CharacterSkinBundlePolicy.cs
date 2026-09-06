@@ -1,5 +1,9 @@
 namespace STS2SkinChanger.Core;
 
+internal enum BundleContentMode { MultiplePresets, ModPriority }
+
+internal sealed record BundleModPriorityEntry(string OptionId, bool Enabled);
+
 internal sealed class CharacterSkinBundle
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -8,6 +12,10 @@ internal sealed class CharacterSkinBundle
     public string Name { get; set; } = string.Empty;
     public string CharacterGroupId { get; set; } = string.Empty;
     public string CharacterOptionId { get; set; } = "__base__";
+    public BundleContentMode CardMode { get; set; }
+    public BundleContentMode MonsterMode { get; set; }
+    public List<BundleModPriorityEntry> CardModPriority { get; set; } = [];
+    public List<BundleModPriorityEntry> MonsterModPriority { get; set; } = [];
     public Dictionary<string, string> CardPresetNames { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> MonsterPresetNames { get; set; } =
@@ -79,6 +87,10 @@ internal static class CharacterSkinBundlePolicy
                 CharacterOptionId = string.IsNullOrWhiteSpace(bundle.CharacterOptionId)
                     ? "__base__"
                     : bundle.CharacterOptionId.Trim(),
+                CardMode = NormalizeMode(bundle.CardMode),
+                MonsterMode = NormalizeMode(bundle.MonsterMode),
+                CardModPriority = NormalizePriority(bundle.CardModPriority),
+                MonsterModPriority = NormalizePriority(bundle.MonsterModPriority),
                 CardPresetNames = NormalizeReferences(bundle.CardPresetNames),
                 MonsterPresetNames = NormalizeReferences(bundle.MonsterPresetNames)
             })
@@ -125,11 +137,46 @@ internal static class CharacterSkinBundlePolicy
             Name = bundle.Name,
             CharacterGroupId = bundle.CharacterGroupId,
             CharacterOptionId = bundle.CharacterOptionId,
+            CardMode = NormalizeMode(bundle.CardMode),
+            MonsterMode = NormalizeMode(bundle.MonsterMode),
+            CardModPriority = NormalizePriority(bundle.CardModPriority),
+            MonsterModPriority = NormalizePriority(bundle.MonsterModPriority),
             CardPresetNames = new Dictionary<string, string>(
                 bundle.CardPresetNames, StringComparer.OrdinalIgnoreCase),
             MonsterPresetNames = new Dictionary<string, string>(
                 bundle.MonsterPresetNames, StringComparer.OrdinalIgnoreCase)
         };
+
+    private static BundleContentMode NormalizeMode(BundleContentMode mode) =>
+        mode == BundleContentMode.ModPriority ? mode : BundleContentMode.MultiplePresets;
+
+    internal static List<BundleModPriorityEntry> NormalizePriority(IEnumerable<BundleModPriorityEntry>? entries) =>
+        (entries ?? []).Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.OptionId))
+            .Select(entry => entry with { OptionId = entry.OptionId.Trim() })
+            .DistinctBy(entry => entry.OptionId, StringComparer.OrdinalIgnoreCase).ToList();
+
+    internal static List<BundleModPriorityEntry> CompletePriority(
+        IEnumerable<BundleModPriorityEntry>? stored, IEnumerable<string> available)
+    {
+        var entries = NormalizePriority(stored);
+        var known = entries.Select(entry => entry.OptionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var enableNew = entries.Count == 0 || entries.Any(entry => entry.Enabled);
+        foreach (var id in available)
+            if (known.Add(id)) entries.Add(new(id, enableNew));
+        return entries;
+    }
+
+    // Explicitly include disabled category sources: the normal priority readers otherwise
+    // auto-enable missing entries, which would leak the previous/global selection into a run.
+    internal static List<BundleModPriorityEntry> ProjectPriority(
+        IReadOnlyList<BundleModPriorityEntry> entries, IEnumerable<string> categorySources)
+    {
+        var ids = categorySources.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var result = entries.Where(entry => ids.Contains(entry.OptionId)).ToList();
+        var included = result.Select(entry => entry.OptionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        result.AddRange(ids.Where(id => !included.Contains(id)).Select(id => new BundleModPriorityEntry(id, false)));
+        return result;
+    }
 
     private static Dictionary<string, string> NormalizeReferences(
         IReadOnlyDictionary<string, string>? references) =>

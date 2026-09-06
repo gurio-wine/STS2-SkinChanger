@@ -6,7 +6,7 @@ using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui;
 
-internal static class CharacterSkinBundleControls
+internal static partial class CharacterSkinBundleControls
 {
     private static readonly ConditionalWeakTable<NCharacterSelectScreen, EditorState> States = new();
 
@@ -249,8 +249,8 @@ internal static class CharacterSkinBundleControls
         };
         fields.AddThemeConstantOverride("separation", 10);
         scroll.AddChild(fields);
-        AddPresetSection(state, fields, ModText.BundleCardPresets, state.CardCategories, state.Draft.CardPresetNames);
-        AddPresetSection(state, fields, ModText.BundleMonsterPresets, state.MonsterCategories, state.Draft.MonsterPresetNames);
+        AddContentSection(state, fields, monsters: false);
+        AddContentSection(state, fields, monsters: true);
 
         var hideSource = new CheckBox
         {
@@ -292,12 +292,9 @@ internal static class CharacterSkinBundleControls
         actions.AddChild(close);
     }
 
-    private static void AddPresetSection(EditorState state, VBoxContainer fields, ModText title,
+    private static void AddPresetRows(EditorState state, VBoxContainer fields,
         IReadOnlyList<SkinPresetCategory> categories, Dictionary<string, string> references)
     {
-        if (categories.Count == 0) return;
-        fields.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 8f), MouseFilter = Control.MouseFilterEnum.Ignore });
-        fields.AddChild(CreateLabel(ModLocalization.Get(title), 21));
         // Unavailable categories remain saved, but must not occupy the editor.
         foreach (var category in categories)
         {
