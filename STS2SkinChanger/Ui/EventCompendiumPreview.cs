@@ -50,14 +50,17 @@ internal static class EventCompendiumPreview
         pageSelector.Select(Array.IndexOf(pages, page));
         pageSelector.Visible = pages.Length > 1;
         host.AddChild(pageSelector);
+        ScrollContainer? pageScroll = null;
+        Action? resizeText = null;
         pageSelector.ItemSelected += index => Populate(pages[checked((int)index)]);
         // Ready occurs after the host is attached by the compendium, not while building it.
         host.Ready += () =>
         {
-            // Keep the game's typography/button visuals but scroll a long page rather than
-            // let its options run behind the fixed skin selector or beyond the viewport.
+            // Keep the game's typography and use the available viewport height. A long page
+            // first moves into unused space above, and scrolls only when it still cannot fit.
             var column = layout.GetNode<VBoxContainer>("VBoxContainer");
-            var bounds = EventPreviewPolicy.TextBounds(host.Size, column.GetRect(), 380f, 826f);
+            var nativeBounds = column.GetRect();
+            var bounds = EventPreviewPolicy.TextBounds(host.Size, nativeBounds, 0);
             var scroll = new ScrollContainer
             {
                 Name = "EventPageScroll", Position = bounds.Position, Size = bounds.Size,
@@ -68,6 +71,23 @@ internal static class EventCompendiumPreview
             column.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
             column.CustomMinimumSize = new Vector2(800, 0);
             column.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            pageScroll = scroll;
+            var resizeQueued = false;
+            resizeText = () =>
+            {
+                if (resizeQueued) return;
+                resizeQueued = true;
+                Callable.From(() =>
+                {
+                    resizeQueued = false;
+                    if (!GodotObject.IsInstanceValid(host) || !host.IsInsideTree() || host.IsQueuedForDeletion()) return;
+                    var next = EventPreviewPolicy.TextBounds(host.Size, nativeBounds, column.GetCombinedMinimumSize().Y);
+                    scroll.Position = next.Position;
+                    scroll.Size = next.Size;
+                }).CallDeferred();
+            };
+            column.MinimumSizeChanged += () => resizeText();
+            host.Resized += () => resizeText();
             try
             {
                 var path = $"res://images/events/{model.Id.Entry.ToLowerInvariant()}.png";
@@ -120,6 +140,8 @@ internal static class EventCompendiumPreview
                 option.GetNode<MegaRichTextLabel>("%Text").SetTextAutoSize(
                     $"[gold][b]{optionTitle}[/b][/gold]\n{optionDescription}");
             }
+            if (pageScroll != null) pageScroll.ScrollVertical = 0;
+            resizeText?.Invoke();
         }
     }
 

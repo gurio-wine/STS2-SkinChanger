@@ -601,6 +601,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<OtherCategory, Button> _categoryButtons = [];
     private CompendiumBackdrop _backdrop = null!;
+    private CompendiumSidebarDrawer? _sidebarDrawer;
     private VBoxContainer _entryList = null!;
     private Label _nameLabel = null!;
     private Label _epithetLabel = null!;
@@ -811,6 +812,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         AddCategoryButton(categoryRow, OtherCategory.Creatures, ModText.OtherCategoryCreatures);
         AddCategoryButton(categoryRow, OtherCategory.Events, ModText.OtherCategoryEvents);
         sidebarContent.AddChild(categoryRow);
+        BuildEventRegionSelector(sidebarContent);
 
         var scroll = new ScrollContainer
         {
@@ -825,6 +827,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
         };
         _entryList.AddThemeConstantOverride("separation", 10);
         ModThemeListHover.AddScrollList(scroll, _entryList);
+        _sidebarDrawer = new CompendiumSidebarDrawer(sidebar, () => !_merchantInventoryOpen);
+        _sidebarDrawer.KeepOpenFor(_eventRegionSelector);
 
         _compendiumBackButton = PreloadManager.Cache
             .GetScene(SceneHelper.GetScenePath("ui/back_button"))
@@ -864,6 +868,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void RefreshLocalizedText()
     {
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
+        RefreshEventRegions();
         foreach (var action in _otherActionButtons)
         {
             action.Button.Text = GetOtherActionText(action.Action.Kind);
@@ -1468,6 +1473,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void SetMerchantInventoryOpen(bool isOpen)
     {
         _merchantInventoryOpen = isOpen;
+        _sidebarDrawer?.Refresh();
         ApplyMerchantPreviewLayerState();
     }
 
@@ -1577,6 +1583,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void RefreshAncients()
     {
+        RefreshEventRegions();
         foreach (var child in _entryList.GetChildren())
         {
             _entryList.RemoveChild(child);
@@ -1611,6 +1618,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         var entries = GetOtherEntries(_selectedCategory);
+        if (_selectedCategory == OtherCategory.Events)
+            entries = entries.Where(entry => _eventRegionMembers.Contains(entry.Id[EventSkinPolicy.Prefix.Length..])).ToArray();
         foreach (var entry in entries)
         {
             var button = CreateEntryButton(entry.Title);
