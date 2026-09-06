@@ -268,6 +268,7 @@ internal static partial class ContextualSkinControls
         panel.AddThemeStyleboxOverride(
             "panel",
             CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        ModThemeRuntime.Panel(panel);
         overlay.AddChild(panel);
         var margin = new MarginContainer { Name = MonsterPriorityMarginName };
         margin.AddThemeConstantOverride("margin_left", 20);
@@ -476,6 +477,7 @@ internal static partial class ContextualSkinControls
         };
         panel.AddThemeStyleboxOverride(
             "panel", CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        ModThemeRuntime.Panel(panel);
         overlay.AddChild(panel);
         var margin = new MarginContainer { Name = MonsterPresetMarginName };
         margin.AddThemeConstantOverride("margin_left", 20);

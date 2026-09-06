@@ -567,60 +567,19 @@ internal static partial class ContextualSkinControls
 
     internal static void ApplyGameTheme(OptionButton dropdown)
     {
-        var font = GameFont;
-        var ivory = new Color("fff6e2");
-        var gold = new Color("efc850");
-        dropdown.AddThemeColorOverride("font_color", ivory);
-        dropdown.AddThemeColorOverride("font_hover_color", Colors.White);
-        dropdown.AddThemeColorOverride("font_pressed_color", gold);
-        dropdown.AddThemeColorOverride("font_focus_color", Colors.White);
-        dropdown.AddThemeFontSizeOverride("font_size", 23);
-        if (font != null)
+        if (GameFont is { } font)
         {
             dropdown.AddThemeFontOverride("font", font);
+            dropdown.GetPopup().AddThemeFontOverride("font", font);
         }
-
-        dropdown.AddThemeStyleboxOverride("normal", CreateStyleBox(new Color("3c5f82"), new Color("7394ad")));
-        dropdown.AddThemeStyleboxOverride("hover", CreateStyleBox(new Color("4b7392"), new Color("afcdde")));
-        dropdown.AddThemeStyleboxOverride("pressed", CreateStyleBox(new Color("45104e"), gold));
-        dropdown.AddThemeStyleboxOverride("focus", CreateStyleBox(new Color("3c5f82"), gold, 2));
-        dropdown.AddThemeStyleboxOverride("disabled", CreateStyleBox(new Color("293b4c"), new Color("50606b")));
-
-        var popup = dropdown.GetPopup();
-        popup.AddThemeColorOverride("font_color", ivory);
-        popup.AddThemeColorOverride("font_hover_color", Colors.White);
-        popup.AddThemeColorOverride("font_separator_color", gold);
-        popup.AddThemeFontSizeOverride("font_size", 22);
-        popup.AddThemeStyleboxOverride("panel", CreateStyleBox(new Color("45104e"), new Color("79547e"), 2));
-        popup.AddThemeStyleboxOverride("hover", CreateStyleBox(new Color("2c586f"), new Color("afcdde")));
-        if (font != null)
-        {
-            popup.AddThemeFontOverride("font", font);
-        }
+        ModThemeRuntime.Button(dropdown, 23);
+        ModThemeRuntime.Popup(dropdown.GetPopup());
     }
 
     internal static void ApplyGameTheme(Button button)
     {
-        var font = GameFont;
-        var ivory = new Color("fff6e2");
-        var gold = new Color("efc850");
-        button.AddThemeColorOverride("font_color", ivory);
-        button.AddThemeColorOverride("font_hover_color", Colors.White);
-        button.AddThemeColorOverride("font_pressed_color", gold);
-        button.AddThemeColorOverride("font_hover_pressed_color", Colors.White);
-        button.AddThemeColorOverride("font_focus_color", Colors.White);
-        button.AddThemeFontSizeOverride("font_size", 21);
-        if (font != null)
-        {
-            button.AddThemeFontOverride("font", font);
-        }
-
-        button.AddThemeStyleboxOverride("normal", CreateStyleBox(new Color("3c5f82"), new Color("7394ad")));
-        button.AddThemeStyleboxOverride("hover", CreateStyleBox(new Color("4b7392"), new Color("afcdde")));
-        button.AddThemeStyleboxOverride("pressed", CreateStyleBox(new Color("45104e"), gold));
-        button.AddThemeStyleboxOverride("hover_pressed", CreateStyleBox(new Color("58205f"), gold, 2));
-        button.AddThemeStyleboxOverride("focus", CreateStyleBox(new Color("3c5f82"), gold, 2));
-        button.AddThemeStyleboxOverride("disabled", CreateStyleBox(new Color("293b4c"), new Color("50606b")));
+        if (GameFont is { } font) button.AddThemeFontOverride("font", font);
+        ModThemeRuntime.Button(button, 21);
     }
 
     internal static void HideCharacterSelector(NCharacterSelectScreen screen)
@@ -797,6 +756,7 @@ internal static partial class ContextualSkinControls
                 "hovered", CreateStyleBox(new Color("2c586f"), new Color("afcdde")));
             list.AddThemeStyleboxOverride(
                 "selected", CreateStyleBox(new Color("58205f"), new Color("efc850"), 2));
+            ModThemeRuntime.ItemList(list);
             if (GameFont != null)
             {
                 list.AddThemeFontOverride("font", GameFont);

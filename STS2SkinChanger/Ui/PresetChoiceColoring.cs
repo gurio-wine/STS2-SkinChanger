@@ -25,6 +25,7 @@ internal static class PresetChoiceColoring
             new Color("2c586f"), new Color("afcdde")));
         list.AddThemeStyleboxOverride("selected", ContextualSkinControls.CreateStyleBox(
             new Color("58205f"), new Color("efc850"), 2));
+        ModThemeRuntime.ItemList(list);
         bool Owned(int index) => index >= 0 && index < picker.ItemCount &&
             BundlePresetPolicy.IsOwned(picker.GetItemMetadata(index).AsString());
         void StyleSelection()

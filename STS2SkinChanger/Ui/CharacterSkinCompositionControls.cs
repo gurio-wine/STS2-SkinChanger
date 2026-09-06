@@ -150,6 +150,7 @@ internal static class CharacterSkinCompositionControls
                 new Color("241a30"),
                 new Color("79547e"),
                 2));
+        ModThemeRuntime.Panel(panel);
         overlay.AddChild(panel);
 
         var margin = new MarginContainer { Name = MarginName };

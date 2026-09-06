@@ -17,6 +17,11 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-theme")
+{
+    ModThemeTests.Run();
+    return;
+}
 if (args.Length == 1 && args[0] == "--test-event-skins")
 {
     EventSkinTests.Run();
@@ -157,6 +162,7 @@ ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
 AppearanceControlContractTests.Run();
+ModThemeTests.Run();
 AppearanceSelectionHintTests.Run();
 ProviderLookupTests.Run();
 CharacterCatalogOwnershipTests.Run();

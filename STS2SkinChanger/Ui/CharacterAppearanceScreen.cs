@@ -325,6 +325,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
                 new Color(0.10f, 0.16f, 0.22f, 0.94f),
                 new Color("7394ad"),
                 2));
+        ModThemeRuntime.Panel(_panel);
         AddChild(_panel);
 
         var margin = new MarginContainer();
@@ -2073,6 +2074,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         button.AddThemeStyleboxOverride(
             "pressed",
             ContextualSkinControls.CreateStyleBox(new Color("45104e"), new Color("efc850"), 2));
+        ModThemeRuntime.Button(button, 19);
         return button;
     }
 
@@ -2084,6 +2086,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         control.AddThemeColorOverride("font_outline_color", new Color("332f27"));
         control.AddThemeConstantOverride("outline_size", 4);
         control.AddThemeFontSizeOverride("font_size", fontSize);
+        ModThemeRuntime.TextControl(control, fontSize);
         if (ContextualSkinControls.GameFont != null)
         {
             control.AddThemeFontOverride("font", ContextualSkinControls.GameFont);

@@ -1120,6 +1120,7 @@ internal static class CardSkinControls
         panel.AddThemeStyleboxOverride(
             "panel",
             ContextualSkinControls.CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        ModThemeRuntime.Panel(panel);
         overlay.AddChild(panel);
         var margin = new MarginContainer { Name = PresetPanelMarginName };
         margin.AddThemeConstantOverride("margin_left", 20);
@@ -1420,6 +1421,7 @@ internal static class CardSkinControls
         panel.AddThemeStyleboxOverride(
             "panel",
             ContextualSkinControls.CreateStyleBox(new Color("241a30"), new Color("79547e"), 2));
+        ModThemeRuntime.Panel(panel);
         overlay.AddChild(panel);
         var margin = new MarginContainer { Name = PriorityPanelMarginName };
         margin.AddThemeConstantOverride("margin_left", 20);

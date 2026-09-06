@@ -787,7 +787,17 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _headingLabel = BuildLabel(30, new Color("efc850"));
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
         _headingLabel.CustomMinimumSize = new Vector2(0, 54);
-        sidebarContent.AddChild(_headingLabel);
+        _headingLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _headingLabel.ClipText = true;
+        var headingRow = new HBoxContainer();
+        sidebarContent.AddChild(headingRow);
+        headingRow.AddChild(_headingLabel);
+        var themeButton = new Button { CustomMinimumSize = new Vector2(74, 40),
+            SizeFlagsVertical = SizeFlags.ShrinkCenter };
+        ContextualSkinControls.ApplyGameTheme(themeButton);
+        themeButton.Pressed += () => ModThemeEditor.Toggle(this);
+        ModLocalization.Bind(themeButton, () => themeButton.Text = ModThemeLocalization.Get(ThemeText.Theme));
+        headingRow.AddChild(themeButton);
 
         var divider = new HSeparator();
         divider.AddThemeConstantOverride("separation", 12);
@@ -1778,31 +1788,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void ApplyCategoryTheme(Button button, bool selected)
     {
         _backdrop.SetSelected(button, selected);
-        var ivory = new Color("fff6e2");
-        var gold = new Color("efc850");
-        button.AddThemeColorOverride("font_color", selected ? gold : ivory);
-        button.AddThemeColorOverride("font_hover_color", Colors.White);
-        button.AddThemeFontSizeOverride("font_size", 19);
-        button.AddThemeStyleboxOverride(
-            "normal",
-            ContextualSkinControls.CreateStyleBox(
-                Colors.Transparent,
-                Colors.Transparent,
-                0));
-        button.AddThemeStyleboxOverride(
-            "hover",
-            ContextualSkinControls.CreateStyleBox(new Color("3c627e44"), Colors.Transparent, 0));
-        button.AddThemeStyleboxOverride(
-            "pressed",
-            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
-        button.AddThemeStyleboxOverride(
-            "focus",
-            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
-        var font = ContextualSkinControls.GameFont;
-        if (font != null)
-        {
-            button.AddThemeFontOverride("font", font);
-        }
+        ModThemeRuntime.ListButton(button, selected, 19);
     }
 
     private void SelectAncient(AncientEventModel ancient)
@@ -2380,40 +2366,14 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             label.AddThemeFontOverride("font", font);
         }
-
+        ModThemeRuntime.TextControl(label, fontSize, color == new Color("efc850"));
         return label;
     }
 
     private void ApplyEntryTheme(Button button, bool selected)
     {
         _backdrop.SetSelected(button, selected);
-        var ivory = new Color("fff6e2");
-        var gold = new Color("efc850");
-        button.AddThemeColorOverride("font_color", selected ? gold : ivory);
-        button.AddThemeColorOverride("font_hover_color", Colors.White);
-        button.AddThemeColorOverride("font_pressed_color", gold);
-        button.AddThemeFontSizeOverride("font_size", 24);
-        var font = ContextualSkinControls.GameFont;
-        if (font != null)
-        {
-            button.AddThemeFontOverride("font", font);
-        }
-
-        button.AddThemeStyleboxOverride(
-            "normal",
-            ContextualSkinControls.CreateStyleBox(
-                Colors.Transparent,
-                Colors.Transparent,
-                0));
-        button.AddThemeStyleboxOverride(
-            "hover",
-            ContextualSkinControls.CreateStyleBox(new Color("3c627e44"), Colors.Transparent, 0));
-        button.AddThemeStyleboxOverride(
-            "pressed",
-            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
-        button.AddThemeStyleboxOverride(
-            "focus",
-            ContextualSkinControls.CreateStyleBox(Colors.Transparent, gold, 1));
+        ModThemeRuntime.ListButton(button, selected, 24);
     }
 
 }

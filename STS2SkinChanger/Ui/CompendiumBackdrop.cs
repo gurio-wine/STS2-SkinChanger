@@ -26,8 +26,8 @@ internal sealed class CompendiumBackdrop
                 }
                 """
         };
-        _panel = Material(shader, 2.5f, new Color(0.055f, 0.070f, 0.085f, 0.68f));
-        _selection = Material(shader, 3.1f, new Color(0.14f, 0.16f, 0.17f, 0.76f));
+        _panel = new ShaderMaterial { Shader = shader };
+        _selection = new ShaderMaterial { Shader = shader };
     }
 
     public void AddPanel(Control parent)
@@ -36,6 +36,13 @@ internal sealed class CompendiumBackdrop
         // read SCREEN_TEXTURE earlier in this canvas; relying on that cached copy is unsafe.
         parent.AddChild(new BackBufferCopy { Name = "CompendiumBackdropCopy", CopyMode = BackBufferCopy.CopyModeEnum.Viewport });
         parent.AddChild(Create("CompendiumPanelBackdrop", _panel));
+        ModThemeRuntime.Bind(parent, "backdrop", theme =>
+        {
+            _panel.SetShaderParameter("blur_lod", theme.PanelBlur);
+            _panel.SetShaderParameter("tint", ModThemeRuntime.Tint(theme.PanelColor, theme.PanelOpacity));
+            _selection.SetShaderParameter("blur_lod", theme.SelectionBlur);
+            _selection.SetShaderParameter("tint", ModThemeRuntime.Tint(theme.SelectionColor, theme.SelectionOpacity));
+        });
     }
 
     public void SetSelected(Button button, bool selected)
@@ -48,14 +55,6 @@ internal sealed class CompendiumBackdrop
             button.AddChild(background);
         }
         if (background != null) background.Visible = selected;
-    }
-
-    private static ShaderMaterial Material(Shader shader, float blur, Color tint)
-    {
-        var material = new ShaderMaterial { Shader = shader };
-        material.SetShaderParameter("blur_lod", blur);
-        material.SetShaderParameter("tint", tint);
-        return material;
     }
 
     private static ColorRect Create(string name, ShaderMaterial material)

@@ -84,6 +84,7 @@ internal static partial class CharacterSkinBundleControls
         };
         panel.AddThemeStyleboxOverride("panel", ContextualSkinControls.CreateStyleBox(
             new Color("241a30"), new Color("79547e"), 2));
+        ModThemeRuntime.Panel(panel);
         overlay.AddChild(panel);
         var margin = new MarginContainer();
         margin.AddThemeConstantOverride("margin_left", 22);
