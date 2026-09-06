@@ -63,7 +63,65 @@ internal static class StandaloneModelPreviewTests
             "开始游戏或选角界面隐藏后必须停用并清理预览，不能让隐藏模型继续运行。");
         CheckPreviewPosition(assembly);
         CheckNestedDragging(assembly);
-        Console.WriteLine("Standalone model preview passed: compact grip spacing, independent saved position, native-manager exclusion and shared renderer.");
+        CheckDocking(assembly, controls, panel);
+        Console.WriteLine("Standalone model preview passed: saved docking, load suppression, hover grip, nested dragging and shared renderer.");
+    }
+
+    private static void CheckDocking(Assembly assembly, Type controls, Type panel)
+    {
+        var dockArea = AccessTools.Method(controls, "ResolveDockArea")
+            ?? throw new InvalidOperationException("模型预览尚未提供跟随角色信息框的左侧收纳区。");
+        var hit = AccessTools.Method(controls, "IsGripDocked");
+        var placement = AccessTools.Method(controls, "ResolveDockLayout");
+        foreach (var info in new[] { new Rect2(300, 200, 500, 400), new Rect2(150, -80, 700, 600) })
+        {
+            var area = (Rect2)dockArea.Invoke(null, [info])!;
+            Require(area.End.X < info.Position.X && area.Size.X == 38 &&
+                    Mathf.IsEqualApprox(area.GetCenter().Y, info.GetCenter().Y) &&
+                    Mathf.IsEqualApprox(area.Size.Y, info.Size.Y * .8f),
+                "收纳区应贴在实际信息框左边，跟随框的位置、高度和父节点坐标，不能固定在截图像素。");
+            var parked = (Rect2)placement.Invoke(null, [info])!;
+            var gripCenter = parked.Position + new Vector2(6, parked.Size.Y / 2);
+            Require(gripCenter.IsEqualApprox(area.GetCenter()) && parked.Size.Y == info.Size.Y &&
+                    (bool)hit.Invoke(null, [info, gripCenter])!,
+                "再次进入选角时，已收起的拖拽条必须仍在收纳区中心且与信息框对齐。");
+            foreach (var point in new[] { info.GetCenter(), area.Position - Vector2.One,
+                         area.End + Vector2.One, new Vector2(float.NaN, 0) })
+                Require(!(bool)hit.Invoke(null, [info, point])!, "拖出收纳区应恢复，不能把信息框本身算作收纳区。");
+        }
+        Require(dockArea.Invoke(null, [new Rect2()]) == null &&
+                dockArea.Invoke(null, [new Rect2(0, 0, float.NaN, 400)]) == null,
+            "零尺寸/无效布局不能触发收纳。");
+        var shouldLoad = AccessTools.Method(controls, "ShouldLoadModel");
+        foreach (var docked in new[] { false, true })
+        foreach (var hasCharacter in new[] { false, true })
+        foreach (var enabled in new[] { false, true })
+        foreach (var visible in new[] { false, true })
+            Require((bool)shouldLoad.Invoke(null, [docked, hasCharacter, enabled, visible])! ==
+                    (!docked && hasCharacter && enabled && visible),
+                "收起时不允许加载；拖出后仅在选角仍可见且有当前角色时恢复加载。");
+
+        Require(Calls(AccessTools.Method(panel, "QueueRefresh"), panel.Name, "CanLoadModel") &&
+                Calls(AccessTools.Method(panel, "RefreshModel"), panel.Name, "CanLoadModel") &&
+                Calls(AccessTools.Method(panel, "CanLoadModel"), controls.Name, "ShouldLoadModel"),
+            "刷新入队和执行时都要检查收纳状态，避免收起前排队的刷新又加载模型。");
+        Require(Calls(AccessTools.Method(panel, "SetDocked"), panel.Name, "ClearModel") &&
+                Calls(AccessTools.Method(panel, "SetDocked"), panel.Name, "QueueRefresh"),
+            "拖入要释放已有预览，拖出要恢复当前选择，不能只是调透明度。");
+        Require(!Calls(AccessTools.Method(panel, "SetDocked"), panel.Name, "Suspend") &&
+                !PatchProcessor.GetOriginalInstructions(AccessTools.Method(panel, "SetDocked"))
+                    .Any(i => i.opcode == System.Reflection.Emit.OpCodes.Stfld &&
+                              i.operand is FieldInfo field && field.Name == "_character"),
+            "收纳不能清空当前角色，否则收起时切换角色后再拖出会加载过时选择或空白。");
+        var surface = assembly.GetType("STS2SkinChanger.Core.FrameworkPreviewSurface", true)!;
+        Require(Calls(AccessTools.Method(surface, "Initialize"), "Node", "add_TreeExiting"),
+            "离开选角也要通过原生退出信号停止预览采样，不依赖动态程序集的退出虚函数。");
+        var clear = PatchProcessor.GetOriginalInstructions(AccessTools.Method(panel, "ClearModel"));
+        Require(clear.FindIndex(i => i.operand is MethodInfo m && m.Name == "StopCapture") is var stop && stop >= 0 &&
+                stop < clear.FindIndex(i => i.operand is MethodInfo m && m.Name == "RemoveChild"),
+            "移除渲染节点前必须停止取景/逐帧采样，即使 Godot 没有调用脚本的退出虚函数也不能泄漏。");
+        Require(Calls(AccessTools.Method(panel, "SavePlacement"), "SkinService", "SetCharacterModelPreviewPlacement"),
+            "拖拽结束应一次保存位置和收纳状态。");
     }
 
     private static void CheckNestedDragging(Assembly assembly)
@@ -90,6 +148,9 @@ internal static class StandaloneModelPreviewTests
             ?? throw new InvalidOperationException("预览拖动位置尚未独立保存。");
         var set = AccessTools.Method(service, "SetCharacterModelPreviewPosition");
         var reset = AccessTools.Method(service, "ResetCharacterModelPreviewPosition");
+        var isDocked = AccessTools.Method(service, "IsCharacterModelPreviewDocked")
+            ?? throw new InvalidOperationException("收纳状态尚未独立保存，重进后仍会重新加载预览。");
+        var savePlacement = AccessTools.Method(service, "SetCharacterModelPreviewPlacement");
         var configField = AccessTools.Field(service, "<Config>k__BackingField");
         var loadedField = AccessTools.Field(service, "_configLoaded");
         var oldConfig = configField.GetValue(null);
@@ -108,6 +169,7 @@ internal static class StandaloneModelPreviewTests
                 """, configType));
             loadedField.SetValue(null, true);
             Require(get.Invoke(null, null) == null, "旧配置应使用贴近信息框的默认位置。");
+            Require(!(bool)isDocked.Invoke(null, null)!, "旧配置默认展开，不能改变玩家已有预览设置。");
             set.Invoke(null, [.65f, .4f]);
             configField.SetValue(null, JsonSerializer.Deserialize(_saved, configType));
             Require(((float, float)?)get.Invoke(null, null) == (.65f, .4f), "预览位置必须保存并在重进后读取。");
@@ -117,9 +179,22 @@ internal static class StandaloneModelPreviewTests
                 "无效拖动坐标不能写坏设置。");
             set.Invoke(null, [2f, -1f]);
             Require(((float, float)?)get.Invoke(null, null) == (1f, 0f), "保存位置要限制到归一化屏幕范围。");
+            savePlacement.Invoke(null, [.3f, .4f, true]);
+            configField.SetValue(null, JsonSerializer.Deserialize(_saved, configType));
+            Require((bool)isDocked.Invoke(null, null)! && ((float, float)?)get.Invoke(null, null) == (.3f, .4f),
+                "收起和位置必须一起持久化，重进选角/重启游戏后仍应禁止加载。");
+            beforeInvalid = _saved;
+            savePlacement.Invoke(null, [float.NaN, .5f, false]);
+            Require(_saved == beforeInvalid && (bool)isDocked.Invoke(null, null)!,
+                "无效拖出位置不能意外解除收纳。");
+            savePlacement.Invoke(null, [.7f, .4f, false]);
+            configField.SetValue(null, JsonSerializer.Deserialize(_saved, configType));
+            Require(!(bool)isDocked.Invoke(null, null)!, "拖出后必须保存恢复显示的状态。");
+            savePlacement.Invoke(null, [.3f, .4f, true]);
             reset.Invoke(null, null);
             configField.SetValue(null, JsonSerializer.Deserialize(_saved, configType));
             Require(get.Invoke(null, null) == null, "右键复位必须清除保存的位置，而非临时挪回去。");
+            Require(!(bool)isDocked.Invoke(null, null)!, "右键复位还应解除收纳，回到正常预览。");
             using var json = JsonDocument.Parse(_saved);
             Require(json.RootElement.GetProperty("CharacterSkinSelectorX").GetSingle() == .2f &&
                     json.RootElement.GetProperty("CharacterSkinMergeY").GetSingle() == .8f &&

@@ -30,6 +30,24 @@ internal static class CharacterModelPreviewControls
         return width < 64 + ModelInset ? null : new Rect2(x, infoFrame.Position.Y, width, infoFrame.Size.Y);
     }
 
+    internal static Rect2? ResolveDockArea(Rect2 infoFrame)
+    {
+        if (!infoFrame.HasArea() || !infoFrame.Position.IsFinite() || !infoFrame.Size.IsFinite()) return null;
+        var width = GripWidth * 3 + Gap * 2;
+        return new Rect2(infoFrame.Position.X - Gap - width, infoFrame.Position.Y + infoFrame.Size.Y * .1f,
+            width, infoFrame.Size.Y * .8f);
+    }
+
+    internal static Rect2? ResolveDockLayout(Rect2 infoFrame) => ResolveDockArea(infoFrame) is { } area
+        ? new Rect2(area.GetCenter().X - GripWidth / 2, infoFrame.Position.Y,
+            infoFrame.Size.Y * (308f / 429f) + ModelInset, infoFrame.Size.Y) : null;
+
+    internal static bool IsGripDocked(Rect2 infoFrame, Vector2 gripCenter) =>
+        gripCenter.IsFinite() && ResolveDockArea(infoFrame) is { } area && area.HasPoint(gripCenter);
+
+    internal static bool ShouldLoadModel(bool docked, bool hasCharacter, bool enabled, bool visible) =>
+        !docked && hasCharacter && enabled && visible;
+
     public static void Refresh(NCharacterSelectScreen screen, CharacterModel character)
     {
         if (!IsEnabled) { Hide(screen); return; }
@@ -61,6 +79,7 @@ internal partial class CharacterModelPreviewPanel : Control
     private CharacterModel? _character;
     private bool _refreshQueued;
     private bool _layoutQueued;
+    private bool _docked;
 
     internal void Initialize(NCharacterSelectScreen screen, Control info)
     {
@@ -72,8 +91,7 @@ internal partial class CharacterModelPreviewPanel : Control
         ClipContents = true;
         BuildInterface();
         DraggableSkinControl.AttachWithHandle(screen, this, _dragHandle,
-            SkinService.GetCharacterModelPreviewPosition, SkinService.SetCharacterModelPreviewPosition,
-            SkinService.ResetCharacterModelPreviewPosition, ApplyDefaultPlacement);
+            LoadPlacement, SavePlacement, ResetPlacement, ApplyDefaultPlacement, UpdateDockedFromDrag);
         _frame.ItemRectChanged += QueueLayout;
         _info.ItemRectChanged += QueueLayout;
         _screen.Resized += QueueLayout;
@@ -126,6 +144,9 @@ internal partial class CharacterModelPreviewPanel : Control
     internal void ShowCharacter(CharacterModel character)
     {
         _character = character;
+        // Layout also establishes visibility when the parent has not finished opening yet.
+        // A parked preview still needs its grip positioned, but never a model queued.
+        QueueLayout();
         QueueRefresh();
     }
 
@@ -138,7 +159,7 @@ internal partial class CharacterModelPreviewPanel : Control
 
     private void QueueRefresh()
     {
-        if (_refreshQueued || !Alive()) return;
+        if (_refreshQueued || !Alive() || !CanLoadModel(requireVisible: false)) return;
         _refreshQueued = true;
         Callable.From(() =>
         {
@@ -152,12 +173,55 @@ internal partial class CharacterModelPreviewPanel : Control
     private void RefreshModel()
     {
         if (_character == null || !CharacterModelPreviewControls.IsEnabled) { Suspend(); return; }
-        if (!_info.IsVisibleInTree()) return;
+        if (!CanLoadModel()) return;
         ApplyLayout();
-        if (!IsVisibleInTree()) return;
+        if (!IsVisibleInTree() || !CanLoadModel()) return;
         // Do not leave the previous character on screen when the new provider cannot load.
         ClearModel();
         FrameworkModelPreview.Refresh(this, _character);
+    }
+
+    private bool CanLoadModel(bool requireVisible = true) => CharacterModelPreviewControls.ShouldLoadModel(
+        _docked, _character != null, CharacterModelPreviewControls.IsEnabled,
+        !requireVisible || _info.IsVisibleInTree());
+
+    private void SetDocked(bool docked)
+    {
+        if (_docked == docked) return;
+        _docked = docked;
+        // Keep the same host geometry during a drag so the grip cannot jump out from under
+        // the cursor. Only the grip remains hittable while parked over the info panel.
+        _background.Visible = _visualContainer.Visible = !docked;
+        MouseFilter = docked ? MouseFilterEnum.Ignore : MouseFilterEnum.Pass;
+        if (docked) ClearModel();
+        else QueueRefresh();
+    }
+
+    private void UpdateDockedFromDrag()
+    {
+        if (!TryGetLayoutBounds(out var infoRect, out _)) return;
+        var gripCenter = _info.GetGlobalTransformWithCanvas().AffineInverse() *
+                         (_dragHandle.GetGlobalTransformWithCanvas() * (_dragHandle.Size / 2));
+        SetDocked(CharacterModelPreviewControls.IsGripDocked(infoRect, gripCenter));
+    }
+
+    private (float X, float Y)? LoadPlacement()
+    {
+        SetDocked(SkinService.IsCharacterModelPreviewDocked());
+        // Park beside the live info frame even after a resolution/UI-layout change.
+        return _docked ? null : SkinService.GetCharacterModelPreviewPosition();
+    }
+
+    private void SavePlacement(float x, float y)
+    {
+        SkinService.SetCharacterModelPreviewPlacement(x, y, _docked);
+        DraggableSkinControl.RefreshPlacement(this);
+    }
+
+    private void ResetPlacement()
+    {
+        SkinService.ResetCharacterModelPreviewPosition();
+        SetDocked(false);
     }
 
     private void QueueLayout()
@@ -187,12 +251,24 @@ internal partial class CharacterModelPreviewPanel : Control
 
     private Rect2? GetDefaultLayout()
     {
+        if (!TryGetLayoutBounds(out var infoRect, out var screenRect)) return null;
+        var expanded = CharacterModelPreviewControls.ResolveLayout(infoRect, screenRect);
+        if (!_docked) return expanded;
+        if (CharacterModelPreviewControls.ResolveDockLayout(infoRect) is not { } dock) return null;
+        // Preserve the expanded host size across docking, including narrow-screen layouts.
+        // Its background/input surface is disabled, so it cannot cover the info controls.
+        return new Rect2(dock.Position, expanded?.Size ?? dock.Size);
+    }
+
+    private bool TryGetLayoutBounds(out Rect2 infoRect, out Rect2 screenRect)
+    {
+        infoRect = screenRect = default;
         var infoTransform = _info.GetGlobalTransformWithCanvas();
-        if (!infoTransform.IsFinite() || Mathf.IsZeroApprox(infoTransform.Determinant())) return null;
+        if (!infoTransform.IsFinite() || Mathf.IsZeroApprox(infoTransform.Determinant())) return false;
         var inverse = infoTransform.AffineInverse();
-        var infoRect = (inverse * _frame.GetGlobalTransformWithCanvas()) * new Rect2(Vector2.Zero, _frame.Size);
-        var screenRect = (inverse * _screen.GetGlobalTransformWithCanvas()) * new Rect2(Vector2.Zero, _screen.Size);
-        return CharacterModelPreviewControls.ResolveLayout(infoRect, screenRect);
+        infoRect = (inverse * _frame.GetGlobalTransformWithCanvas()) * new Rect2(Vector2.Zero, _frame.Size);
+        screenRect = (inverse * _screen.GetGlobalTransformWithCanvas()) * new Rect2(Vector2.Zero, _screen.Size);
+        return true;
     }
 
     private void ApplyDefaultPlacement()
@@ -213,6 +289,7 @@ internal partial class CharacterModelPreviewPanel : Control
         if (!GodotObject.IsInstanceValid(_visualContainer)) return;
         foreach (var model in _visualContainer.GetChildren())
         {
+            if (model is FrameworkPreviewSurface surface) surface.StopCapture();
             _visualContainer.RemoveChild(model);
             model.QueueFree();
         }

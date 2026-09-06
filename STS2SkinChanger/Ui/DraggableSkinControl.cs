@@ -15,6 +15,7 @@ internal partial class DraggableSkinControl : Node
     private Func<(float X, float Y)?> _loadPosition = null!;
     private Action<float, float> _savePosition = null!;
     private Action _resetPosition = null!;
+    private Action? _dragMoved;
     private bool _dragging;
     private bool _placing;
     private Vector2 _dragOffset;
@@ -33,12 +34,12 @@ internal partial class DraggableSkinControl : Node
 
     internal static void AttachWithHandle(
         Control screen, Control target, Button handle, Func<(float X, float Y)?> loadPosition,
-        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement)
-        => AttachCore(screen, target, handle, loadPosition, savePosition, resetPosition, defaultPlacement);
+        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement, Action? dragMoved = null)
+        => AttachCore(screen, target, handle, loadPosition, savePosition, resetPosition, defaultPlacement, dragMoved);
 
     private static void AttachCore(
         Control screen, Control target, Button? handle, Func<(float X, float Y)?> loadPosition,
-        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement)
+        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement, Action? dragMoved = null)
     {
         var binding = target.GetNodeOrNull<DraggableSkinControl>(BindingName);
         if (binding != null)
@@ -56,6 +57,7 @@ internal partial class DraggableSkinControl : Node
             _loadPosition = loadPosition,
             _savePosition = savePosition,
             _resetPosition = resetPosition,
+            _dragMoved = dragMoved,
             _defaultPlacement = defaultPlacement
         };
         target.AddChild(binding);
@@ -145,8 +147,10 @@ internal partial class DraggableSkinControl : Node
     private NormalizedControlPosition MoveToMouse()
     {
         var center = _screen.GetLocalMousePosition() - _dragOffset;
-        return ApplyPosition(center.X / Math.Max(1f, _screen.Size.X),
+        var position = ApplyPosition(center.X / Math.Max(1f, _screen.Size.X),
             center.Y / Math.Max(1f, _screen.Size.Y));
+        _dragMoved?.Invoke();
+        return position;
     }
 
     private NormalizedControlPosition ApplyPosition(float x, float y)

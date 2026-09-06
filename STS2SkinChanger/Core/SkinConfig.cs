@@ -156,6 +156,8 @@ internal sealed class SkinConfig
 
     public float? CharacterModelPreviewY { get; set; }
 
+    public bool CharacterModelPreviewDocked { get; set; }
+
     public float? IndividualCardSkinSelectorX { get; set; }
 
     public float? IndividualCardSkinSelectorY { get; set; }

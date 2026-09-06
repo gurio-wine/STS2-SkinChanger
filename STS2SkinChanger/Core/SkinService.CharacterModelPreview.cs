@@ -14,6 +14,18 @@ internal static partial class SkinService
     }
 
     internal static void SetCharacterModelPreviewPosition(float x, float y)
+        => SetCharacterModelPreviewPlacement(x, y, false);
+
+    internal static bool IsCharacterModelPreviewDocked()
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            return Config.CharacterModelPreviewDocked;
+        }
+    }
+
+    internal static void SetCharacterModelPreviewPlacement(float x, float y, bool docked)
     {
         if (!float.IsFinite(x) || !float.IsFinite(y)) return;
         lock (Sync)
@@ -21,6 +33,7 @@ internal static partial class SkinService
             EnsureConfigLoaded();
             Config.CharacterModelPreviewX = Math.Clamp(x, 0, 1);
             Config.CharacterModelPreviewY = Math.Clamp(y, 0, 1);
+            Config.CharacterModelPreviewDocked = docked;
             Config.Save(ConfigPath);
         }
     }
@@ -31,6 +44,7 @@ internal static partial class SkinService
         {
             EnsureConfigLoaded();
             Config.CharacterModelPreviewX = Config.CharacterModelPreviewY = null;
+            Config.CharacterModelPreviewDocked = false;
             Config.Save(ConfigPath);
         }
     }

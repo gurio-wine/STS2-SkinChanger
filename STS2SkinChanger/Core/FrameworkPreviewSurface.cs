@@ -45,6 +45,7 @@ internal partial class FrameworkPreviewSurface : Node2D
         _display = new Sprite2D { Name = "ModelImage", Centered = false, Visible = false, Texture = _viewport.GetTexture() };
         AddChild(_display);
         VisibilityChanged += UpdateVisibility;
+        TreeExiting += StopCapture;
     }
 
     internal void BeginCapture()
@@ -203,6 +204,10 @@ internal partial class FrameworkPreviewSurface : Node2D
             _viewport.ProcessMode = ProcessModeEnum.Disabled;
         }
     }
+
+    // Called before detaching a parked SC preview; do not depend on the engine resolving
+    // this mod assembly's virtual _ExitTree callback to stop render-server subscriptions.
+    internal void StopCapture() => CancelCapture();
 
     public override void _ExitTree()
     {
