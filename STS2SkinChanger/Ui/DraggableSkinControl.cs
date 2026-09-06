@@ -16,6 +16,7 @@ internal partial class DraggableSkinControl : Node
     private Action<float, float> _savePosition = null!;
     private Action _resetPosition = null!;
     private Action? _dragMoved;
+    private Action<bool>? _dragStateChanged;
     private bool _dragging;
     private bool _placing;
     private Vector2 _dragOffset;
@@ -34,12 +35,15 @@ internal partial class DraggableSkinControl : Node
 
     internal static void AttachWithHandle(
         Control screen, Control target, Button handle, Func<(float X, float Y)?> loadPosition,
-        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement, Action? dragMoved = null)
-        => AttachCore(screen, target, handle, loadPosition, savePosition, resetPosition, defaultPlacement, dragMoved);
+        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement, Action? dragMoved = null,
+        Action<bool>? dragStateChanged = null)
+        => AttachCore(screen, target, handle, loadPosition, savePosition, resetPosition, defaultPlacement,
+            dragMoved, dragStateChanged);
 
     private static void AttachCore(
         Control screen, Control target, Button? handle, Func<(float X, float Y)?> loadPosition,
-        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement, Action? dragMoved = null)
+        Action<float, float> savePosition, Action resetPosition, Action defaultPlacement, Action? dragMoved = null,
+        Action<bool>? dragStateChanged = null)
     {
         var binding = target.GetNodeOrNull<DraggableSkinControl>(BindingName);
         if (binding != null)
@@ -58,6 +62,7 @@ internal partial class DraggableSkinControl : Node
             _savePosition = savePosition,
             _resetPosition = resetPosition,
             _dragMoved = dragMoved,
+            _dragStateChanged = dragStateChanged,
             _defaultPlacement = defaultPlacement
         };
         target.AddChild(binding);
@@ -102,7 +107,7 @@ internal partial class DraggableSkinControl : Node
             {
                 if (mouse.Pressed)
                 {
-                    _dragging = false;
+                    SetDragging(false);
                     _resetPosition();
                     RestorePosition();
                 }
@@ -119,13 +124,13 @@ internal partial class DraggableSkinControl : Node
                              (_target.GetGlobalTransformWithCanvas() * (_target.Size / 2f));
                 ApplyPosition(center.X / Math.Max(1f, _screen.Size.X),
                     center.Y / Math.Max(1f, _screen.Size.Y));
-                _dragging = true;
+                SetDragging(true);
                 _dragOffset = _screen.GetLocalMousePosition() - center;
                 _handle.GrabClickFocus();
             }
             else if (_dragging)
             {
-                _dragging = false;
+                SetDragging(false);
                 var position = MoveToMouse();
                 _savePosition(position.X, position.Y);
             }
@@ -135,7 +140,7 @@ internal partial class DraggableSkinControl : Node
         {
             if (!Input.IsMouseButtonPressed(MouseButton.Left) || !_screen.GetWindow().HasFocus())
             {
-                _dragging = false;
+                SetDragging(false);
                 RestorePosition();
                 return;
             }
@@ -151,6 +156,19 @@ internal partial class DraggableSkinControl : Node
             center.Y / Math.Max(1f, _screen.Size.Y));
         _dragMoved?.Invoke();
         return position;
+    }
+
+    private void SetDragging(bool dragging)
+    {
+        if (_dragging == dragging) return;
+        _dragging = dragging;
+        _dragStateChanged?.Invoke(dragging);
+    }
+
+    internal static void CancelDrag(Control target)
+    {
+        if (target.GetNodeOrNull<DraggableSkinControl>(BindingName) is { _dragging: true } binding)
+            binding.RestorePosition();
     }
 
     private NormalizedControlPosition ApplyPosition(float x, float y)
@@ -239,7 +257,7 @@ internal partial class DraggableSkinControl : Node
             }
             return;
         }
-        _dragging = false;
+        SetDragging(false);
         if (_loadPosition() is { } position)
         {
             ApplyPosition(position.X, position.Y);
@@ -254,7 +272,7 @@ internal partial class DraggableSkinControl : Node
     {
         if (!_target.IsVisibleInTree())
         {
-            _dragging = false;
+            SetDragging(false);
         }
     }
 
@@ -269,7 +287,7 @@ internal partial class DraggableSkinControl : Node
 
     public override void _ExitTree()
     {
-        _dragging = false;
+        SetDragging(false);
         if (GodotObject.IsInstanceValid(_screen))
         {
             _screen.Resized -= RestorePosition;

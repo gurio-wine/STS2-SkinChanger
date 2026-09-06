@@ -64,7 +64,44 @@ internal static class StandaloneModelPreviewTests
         CheckPreviewPosition(assembly);
         CheckNestedDragging(assembly);
         CheckDocking(assembly, controls, panel);
-        Console.WriteLine("Standalone model preview passed: saved docking, load suppression, hover grip, nested dragging and shared renderer.");
+        CheckDockHint(assembly, controls, panel);
+        Console.WriteLine("Standalone model preview passed: drag-only dock hint, saved docking, load suppression, hover grip and shared renderer.");
+    }
+
+    private static void CheckDockHint(Assembly assembly, Type controls, Type panel)
+    {
+        var hint = AccessTools.Method(controls, "ResolveDockHint")
+            ?? throw new InvalidOperationException("拖动模型预览时尚未显示实际收纳区域。");
+        foreach (var (dragging, visible, expected) in new (bool, bool, Rect2?)[]
+        {
+            (false, true, null), (true, false, null), (false, false, null),
+            (true, true, new Rect2(261, 240, 38, 320))
+        })
+        {
+            var result = (Rect2?)hint.Invoke(null, [new Rect2(300, 200, 500, 400), dragging, visible]);
+            Require(expected is { } rect ? result?.IsEqualApprox(rect) == true : result == null,
+                "仅拖动期间显示收纳区，显示边界必须就是命中边界；松手/隐藏不能残留。");
+        }
+        Require(hint.Invoke(null, [new Rect2(), true, true]) == null, "无效布局不能产生悬空提示框。");
+        var drag = assembly.GetType("STS2SkinChanger.Ui.DraggableSkinControl", true)!;
+        // The drag-state notification is pure managed code; no Godot engine is needed.
+        var binding = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(drag);
+        GC.SuppressFinalize(binding);
+        var notifications = new List<bool>();
+        AccessTools.Field(drag, "_dragStateChanged").SetValue(binding, new Action<bool>(notifications.Add));
+        var setDragging = AccessTools.Method(drag, "SetDragging");
+        foreach (var active in new[] { true, true, false, false, true, false }) setDragging.Invoke(binding, [active]);
+        Require(notifications.SequenceEqual(new[] { true, false, true, false }),
+            "收纳提示必须在按下时出现、结束时隐藏，不能仅在鼠标移动时更新或重复触发。");
+        Require(Calls(AccessTools.Method(panel, "Initialize"), "Window", "add_FocusExited") &&
+                Calls(AccessTools.Method(panel, "Initialize"), "Node", "add_TreeExiting") &&
+                Calls(AccessTools.Method(panel, "CancelPreviewDrag"), drag.Name, "CancelDrag") &&
+                Calls(AccessTools.Method(drag, "CancelDrag"), drag.Name, "RestorePosition"),
+            "失焦或移出场景树须主动取消拖拽，不能等下一次鼠标移动才清理提示。");
+        Require(Calls(AccessTools.Method(panel, "RefreshDockHint"), controls.Name, "ResolveDockHint") &&
+                Calls(AccessTools.Method(panel, "OnDragStateChanged"), panel.Name, "RefreshDockHint") &&
+                Calls(AccessTools.Method(panel, "OnVisibilityChanged"), panel.Name, "RefreshDockHint"),
+            "真实提示层必须接入拖拽状态、界面可见性和同一个收纳命中范围。");
     }
 
     private static void CheckDocking(Assembly assembly, Type controls, Type panel)

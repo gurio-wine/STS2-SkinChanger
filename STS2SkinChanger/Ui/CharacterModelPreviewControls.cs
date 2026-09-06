@@ -45,6 +45,9 @@ internal static class CharacterModelPreviewControls
     internal static bool IsGripDocked(Rect2 infoFrame, Vector2 gripCenter) =>
         gripCenter.IsFinite() && ResolveDockArea(infoFrame) is { } area && area.HasPoint(gripCenter);
 
+    internal static Rect2? ResolveDockHint(Rect2 infoFrame, bool dragging, bool visible) =>
+        dragging && visible ? ResolveDockArea(infoFrame) : null;
+
     internal static bool ShouldLoadModel(bool docked, bool hasCharacter, bool enabled, bool visible) =>
         !docked && hasCharacter && enabled && visible;
 
@@ -80,6 +83,10 @@ internal partial class CharacterModelPreviewPanel : Control
     private bool _refreshQueued;
     private bool _layoutQueued;
     private bool _docked;
+    private Panel _dockHint = null!;
+    private StyleBoxFlat _dockHintStyle = null!;
+    private Window _window = null!;
+    private bool _hintDragging;
 
     internal void Initialize(NCharacterSelectScreen screen, Control info)
     {
@@ -90,12 +97,76 @@ internal partial class CharacterModelPreviewPanel : Control
         MouseFilter = MouseFilterEnum.Pass;
         ClipContents = true;
         BuildInterface();
+        BuildDockHint();
         DraggableSkinControl.AttachWithHandle(screen, this, _dragHandle,
-            LoadPlacement, SavePlacement, ResetPlacement, ApplyDefaultPlacement, UpdateDockedFromDrag);
+            LoadPlacement, SavePlacement, ResetPlacement, ApplyDefaultPlacement, UpdateDockedFromDrag,
+            OnDragStateChanged);
         _frame.ItemRectChanged += QueueLayout;
         _info.ItemRectChanged += QueueLayout;
         _screen.Resized += QueueLayout;
         VisibilityChanged += OnVisibilityChanged;
+        _window = screen.GetWindow();
+        _window.FocusExited += CancelPreviewDrag;
+        TreeExiting += ReleaseDockHint;
+    }
+
+    private void BuildDockHint()
+    {
+        _dockHint = new Panel
+        {
+            Name = "SCModelPreviewDockHint", Visible = false,
+            MouseFilter = MouseFilterEnum.Ignore, FocusMode = FocusModeEnum.None
+        };
+        _dockHintStyle = new StyleBoxFlat
+        {
+            ContentMarginLeft = 0, ContentMarginRight = 0, ContentMarginTop = 0, ContentMarginBottom = 0,
+            BorderWidthLeft = 2, BorderWidthRight = 2, BorderWidthTop = 2, BorderWidthBottom = 2
+        };
+        _dockHint.AddThemeStyleboxOverride("panel", _dockHintStyle);
+        // A sibling shares the info frame's coordinates, stays behind the grip and cannot
+        // be clipped by the moving preview or intercept its captured pointer events.
+        _info.AddChild(_dockHint);
+        ModThemeRuntime.Bind(_dockHint, "preview_dock", ApplyDockHintStyle);
+    }
+
+    private void ApplyDockHintStyle(ModThemeSettings theme)
+    {
+        _dockHintStyle.BgColor = ModThemeRuntime.Tint(theme.AccentColor, _docked ? .32f : .14f);
+        _dockHintStyle.BorderColor = ModThemeRuntime.Tint(theme.AccentColor, .95f);
+        _dockHintStyle.CornerRadiusTopLeft = _dockHintStyle.CornerRadiusTopRight =
+            _dockHintStyle.CornerRadiusBottomLeft = _dockHintStyle.CornerRadiusBottomRight =
+                Math.Min(theme.CornerRadius, 6);
+    }
+
+    private void OnDragStateChanged(bool dragging)
+    {
+        _hintDragging = dragging;
+        RefreshDockHint();
+    }
+
+    private void RefreshDockHint()
+    {
+        if (!GodotObject.IsInstanceValid(_dockHint)) return;
+        var area = Alive() && TryGetLayoutBounds(out var infoRect, out _)
+            ? CharacterModelPreviewControls.ResolveDockHint(infoRect, _hintDragging, IsVisibleInTree()) : null;
+        _dockHint.Visible = area != null;
+        if (area is not { } rect) return;
+        _dockHint.Position = rect.Position;
+        _dockHint.Size = rect.Size;
+        ApplyDockHintStyle(ModThemeRuntime.Current);
+    }
+
+    private void CancelPreviewDrag() => DraggableSkinControl.CancelDrag(this);
+
+    private void ReleaseDockHint()
+    {
+        _hintDragging = false;
+        if (GodotObject.IsInstanceValid(_window)) _window.FocusExited -= CancelPreviewDrag;
+        if (GodotObject.IsInstanceValid(_dockHint))
+        {
+            _dockHint.Hide();
+            _dockHint.QueueFree();
+        }
     }
 
     private void BuildInterface()
@@ -203,6 +274,7 @@ internal partial class CharacterModelPreviewPanel : Control
         var gripCenter = _info.GetGlobalTransformWithCanvas().AffineInverse() *
                          (_dragHandle.GetGlobalTransformWithCanvas() * (_dragHandle.Size / 2));
         SetDocked(CharacterModelPreviewControls.IsGripDocked(infoRect, gripCenter));
+        RefreshDockHint();
     }
 
     private (float X, float Y)? LoadPlacement()
@@ -241,6 +313,7 @@ internal partial class CharacterModelPreviewPanel : Control
         if (!GodotObject.IsInstanceValid(_frame)) return;
         var area = GetDefaultLayout();
         Visible = area != null && _character != null && CharacterModelPreviewControls.IsEnabled;
+        RefreshDockHint();
         if (area is not { } rect || !Visible) return;
         var resized = !Size.IsEqualApprox(rect.Size);
         Size = rect.Size;
@@ -280,6 +353,7 @@ internal partial class CharacterModelPreviewPanel : Control
 
     private void OnVisibilityChanged()
     {
+        RefreshDockHint();
         if (!IsVisibleInTree()) ClearModel();
         else if (_character != null) QueueRefresh();
     }
