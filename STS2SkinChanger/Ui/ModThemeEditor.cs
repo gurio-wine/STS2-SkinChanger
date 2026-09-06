@@ -19,15 +19,49 @@ internal partial class ModThemeEditor : CanvasLayer
     private bool _collapsed;
     private bool _dragging;
     private Vector2 _dragOffset;
+    private bool _initialized;
+    private bool _connected;
+    private Window? _window;
+
+    public ModThemeEditor()
+    {
+        // This DLL has no Godot-generated virtual-method bridge. Use native signals for
+        // re-entry/cleanup, and initialize explicitly before the first toggle.
+        TreeEntered += Connect;
+        TreeExiting += Disconnect;
+    }
 
     public static ModThemeEditor Ensure(Node context)
     {
         var root = context.GetTree().Root;
         var editor = root.GetNodeOrNull<ModThemeEditor>(NodeName);
-        if (editor != null) return editor;
-        editor = new ModThemeEditor { Name = NodeName, Layer = 110, ProcessMode = ProcessModeEnum.Always };
-        root.AddChild(editor);
-        return editor;
+        if (editor == null)
+        {
+            editor = new ModThemeEditor { Name = NodeName, Layer = 110, ProcessMode = ProcessModeEnum.Always };
+            root.AddChild(editor);
+        }
+        try
+        {
+            editor.Initialize();
+            return editor;
+        }
+        catch
+        {
+            // Do not leave a half-built singleton behind after a failed construction.
+            root.RemoveChild(editor);
+            editor.QueueFree();
+            throw;
+        }
+    }
+
+    private void Initialize()
+    {
+        if (!_initialized)
+        {
+            BuildUi();
+            _initialized = true;
+        }
+        Connect();
     }
 
     public static void Toggle(Node context) => Ensure(context).Toggle();
@@ -36,9 +70,10 @@ internal partial class ModThemeEditor : CanvasLayer
         _panel.Visible = !_panel.Visible;
         _dragging = false;
         if (_panel.Visible) { ReadValues(); ClampPanel(); }
+        ModLog.Info($"主题调节窗口：visible={_panel.Visible}, size={_panel.Size}, position={_panel.Position}");
     }
 
-    public override void _Ready()
+    private void BuildUi()
     {
         _root = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
         _root.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
@@ -114,14 +149,31 @@ internal partial class ModThemeEditor : CanvasLayer
         };
         footer.AddChild(save);
         _status = MakeLabel(() => ""); _body.AddChild(_status);
-        ModThemeRuntime.Session.Changed += ReadValues;
         _root.Resized += ClampPanel;
         ReadValues();
     }
 
-    public override void _ExitTree() => ModThemeRuntime.Session.Changed -= ReadValues;
+    private void Connect()
+    {
+        if (!_initialized || _connected || !IsInsideTree()) return;
+        _window = GetWindow();
+        _window.WindowInput += HandleInput;
+        ModThemeRuntime.Session.Changed += ReadValues;
+        _connected = true;
+        ReadValues();
+    }
 
-    public override void _Input(InputEvent input)
+    private void Disconnect()
+    {
+        if (!_connected) return;
+        _connected = false;
+        _dragging = false;
+        ModThemeRuntime.Session.Changed -= ReadValues;
+        if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
+        _window = null;
+    }
+
+    private void HandleInput(InputEvent input)
     {
         if (input is InputEventKey { Pressed: true, Echo: false, ShiftPressed: true } key &&
             (key.CtrlPressed || key.MetaPressed) && (key.Keycode == Key.T || key.PhysicalKeycode == Key.T))

@@ -188,11 +188,34 @@ internal static class ModThemeRuntime
 internal partial class ModThemeBinding : Node
 {
     internal Action<ModThemeSettings> Refresh = _ => { };
-    public override void _EnterTree() { ModThemeRuntime.Session.Changed += Apply; Apply(); }
-    public override void _ExitTree() => ModThemeRuntime.Session.Changed -= Apply;
+    private bool _connected;
+
+    public ModThemeBinding()
+    {
+        // Runtime-created mod nodes have no generated Godot virtual dispatch. Native signals
+        // also cover controls built off-tree, reparented later, or removed and re-entered.
+        TreeEntered += Connect;
+        TreeExiting += Disconnect;
+    }
+
+    private void Connect()
+    {
+        if (_connected) return;
+        _connected = true;
+        ModThemeRuntime.Session.Changed += Apply;
+        Apply();
+    }
+
+    private void Disconnect()
+    {
+        if (!_connected) return;
+        _connected = false;
+        ModThemeRuntime.Session.Changed -= Apply;
+    }
+
     internal void Apply()
     {
-        if (IsQueuedForDeletion() || GetParent()?.IsQueuedForDeletion() == true) return;
+        if (!GodotObject.IsInstanceValid(this) || IsQueuedForDeletion() || GetParent()?.IsQueuedForDeletion() == true) return;
         try { Refresh(ModThemeRuntime.Current); }
         catch (Exception e) { ModLog.Warn("刷新 Mod 主题失败：" + e.GetBaseException().Message); }
     }

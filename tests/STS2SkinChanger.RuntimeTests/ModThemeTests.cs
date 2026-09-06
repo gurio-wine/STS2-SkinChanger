@@ -8,6 +8,7 @@ internal static class ModThemeTests
     internal static void Run()
     {
         var assembly = typeof(Entry).Assembly;
+        VerifyNativeLifecycleWiring(assembly);
         var settings = assembly.GetType("STS2SkinChanger.Core.ModThemeSettings");
         Require(settings != null, "主题需要独立配置，不得把样式实验写进皮肤选择或对局存档。");
         var normalize = settings!.GetMethod("Normalize")!;
@@ -70,5 +71,30 @@ internal static class ModThemeTests
     }
 
     private static object Property(object target, string name) => target.GetType().GetProperty(name)!.GetValue(target)!;
+
+    private static void VerifyNativeLifecycleWiring(Assembly assembly)
+    {
+        // No Godot host in this test: inspect the actual registration boundary, not just whether
+        // the main-menu Harmony patch installs. Plain mod DLLs have no generated virtual bridge.
+        var editor = assembly.GetType("STS2SkinChanger.Ui.ModThemeEditor", true)!;
+        var ensure = editor.GetMethod("Ensure")!;
+        var calls = HarmonyLib.PatchProcessor.GetOriginalInstructions(ensure)
+            .Select(i => i.operand).OfType<MethodInfo>().ToArray();
+        Require(calls.Any(m => m.DeclaringType == editor && m.Name == "Initialize"),
+            "主题入口必须明确初始化窗口，不能依赖未注册的 _Ready，否则点击会空引用。");
+        var connect = editor.GetMethod("Connect", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var disconnect = editor.GetMethod("Disconnect", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        Require(Calls(connect, "add_WindowInput") && Calls(disconnect, "remove_WindowInput"),
+            "主题快捷键必须连接原生输入事件，并在退出时解绑。");
+        var binding = assembly.GetType("STS2SkinChanger.Ui.ModThemeBinding", true)!;
+        var constructor = binding.GetConstructor(Type.EmptyTypes)!;
+        Require(Calls(constructor, "add_TreeEntered") && Calls(constructor, "add_TreeExiting"),
+            "实时主题刷新必须由原生入树/退树事件管理，否则能打开但无法即时应用。");
+
+        static bool Calls(MethodBase method, string name) =>
+            HarmonyLib.PatchProcessor.GetOriginalInstructions(method)
+                .Any(i => i.operand is MethodInfo target && target.Name == name);
+    }
+
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }
