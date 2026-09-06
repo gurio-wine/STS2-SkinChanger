@@ -11,6 +11,7 @@ internal enum ModText
     OtherCategoryAncients,
     OtherCategoryMerchants,
     OtherCategoryCreatures,
+    OtherCategoryEvents,
     GameDefault,
     GameOriginal,
     SkinnedCardsOnly,
@@ -1361,6 +1362,7 @@ internal static partial class ModLocalization
     }
 
     public static string Get(ModText text) =>
+        text == ModText.OtherCategoryEvents ? EventCategoryTexts[CurrentLanguage] :
         text == ModText.NoMonsterPresets
             ? NoMonsterPresetTexts[CurrentLanguage]
         : text == ModText.MultiplayerSkinSync

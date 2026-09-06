@@ -148,7 +148,7 @@ internal sealed partial class SkinCatalog : IDisposable
                             ContainsInteractiveScene(index.Archive))
             .Select(index => index.Mod.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var visualGroupsByProvider = _groups
+        var visualGroupsByProvider = _groups.Where(group => !EventSkinPolicy.IsEventGroup(group.Id))
             .SelectMany(group => group.Options
                 .Where(option => !option.IsCharacterIconOnly)
                 .Select(option =>
@@ -1941,6 +1941,11 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             return assignedGroupId;
         }
+
+        var eventId = !EventSkinPolicy.CouldOwnResource(resourcePath) ? null : EventSkinPolicy.FindResourceOwner(resourcePath,
+            Groups.Where(group => EventSkinPolicy.IsEventGroup(group.Id))
+                .Select(group => group.Id[EventSkinPolicy.Prefix.Length..]));
+        if (eventId != null) return EventSkinPolicy.GroupId(eventId);
 
         var identity = TryGetPrimaryGroup(resourcePath) ??
                        TryGetCharacterSelectIconGroup(resourcePath) ??
@@ -4460,6 +4465,7 @@ internal sealed partial class SkinCatalog : IDisposable
             knownCharacterGroupIds);
         AddManagedMonsterSceneOptions(indexes, groups, knownGroupIds);
         AddRuntimeMonsterVisualModeOptions(indexes, groups);
+        AddEventSkinGroups(indexes, baselines, groups);
 
         foreach (var group in groups.Values)
         {

@@ -17,6 +17,17 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-event-skins")
+{
+    EventSkinTests.Run();
+    return;
+}
+if (args.Length == 3 && args[0] == "--audit-event-skins")
+{
+    EventSkinTests.Audit(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-bundle-content-modes")
 {
     BundleContentModeTests.Run();
@@ -149,6 +160,7 @@ AppearanceControlContractTests.Run();
 AppearanceSelectionHintTests.Run();
 ProviderLookupTests.Run();
 CharacterCatalogOwnershipTests.Run();
+EventSkinTests.Run();
 DuplicateProviderLoadingTests.Run();
 CreatureVisualLifecycleTests.Run();
 BundlePresetTests.Run();

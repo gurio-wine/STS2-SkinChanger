@@ -547,7 +547,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
     {
         Ancients,
         Merchants,
-        Creatures
+        Creatures,
+        Events
     }
 
     private sealed record OtherEntry(
@@ -785,11 +786,13 @@ internal partial class AncientCompendiumScreen : NSubmenu
         divider.AddThemeConstantOverride("separation", 12);
         sidebarContent.AddChild(divider);
 
-        var categoryRow = new HBoxContainer();
-        categoryRow.AddThemeConstantOverride("separation", 8);
+        var categoryRow = new GridContainer { Columns = 2 };
+        categoryRow.AddThemeConstantOverride("h_separation", 8);
+        categoryRow.AddThemeConstantOverride("v_separation", 8);
         AddCategoryButton(categoryRow, OtherCategory.Ancients, ModText.OtherCategoryAncients);
         AddCategoryButton(categoryRow, OtherCategory.Merchants, ModText.OtherCategoryMerchants);
         AddCategoryButton(categoryRow, OtherCategory.Creatures, ModText.OtherCategoryCreatures);
+        AddCategoryButton(categoryRow, OtherCategory.Events, ModText.OtherCategoryEvents);
         sidebarContent.AddChild(categoryRow);
 
         var scroll = new ScrollContainer
@@ -1629,7 +1632,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     }
 
     private void AddCategoryButton(
-        HBoxContainer row,
+        Container row,
         OtherCategory category,
         ModText text)
     {
@@ -1653,6 +1656,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         OtherCategory.Ancients => ModLocalization.Get(ModText.OtherCategoryAncients),
         OtherCategory.Merchants => ModLocalization.Get(ModText.OtherCategoryMerchants),
         OtherCategory.Creatures => ModLocalization.Get(ModText.OtherCategoryCreatures),
+        OtherCategory.Events => ModLocalization.Get(ModText.OtherCategoryEvents),
         _ => string.Empty
     };
 
@@ -1664,6 +1668,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         _selectedCategory = category;
+        _nameLabel.Visible = category != OtherCategory.Events;
         _selectedAncient = null;
         _selectedOther = null;
         _otherPreviewRequest++;
@@ -1701,6 +1706,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
                 // by formal and beta and still contains the MerchantButton node.
                 "res://scenes/events/custom/fake_merchant.tscn")
         ],
+        OtherCategory.Events => EventCompendiumPreview.Events().Select(model => new OtherEntry(
+            EventSkinPolicy.GroupId(model.Id.Entry), EventCompendiumPreview.Title(model),
+            NEventLayout.defaultScenePath)).ToArray(),
         OtherCategory.Creatures => OtherCreatureCatalog.All
             .Select(creature => new OtherEntry(
                 creature.Id,
@@ -1921,6 +1929,17 @@ internal partial class AncientCompendiumScreen : NSubmenu
             ClearPreview();
             _otherPreviewInstance = null;
             _otherPreviewGroupId = null;
+            if (EventSkinPolicy.IsEventGroup(entry.Id))
+            {
+                var model = EventCompendiumPreview.Events().First(candidate =>
+                    EventSkinPolicy.GroupId(candidate.Id.Entry) == entry.Id);
+                _previewContainer.MouseFilter = MouseFilterEnum.Stop;
+                _previewViewport.GuiDisableInput = false;
+                _previewViewport.AddChild(EventCompendiumPreview.Create(model));
+                if (_otherEntryButtons.TryGetValue(entry.Id, out var entryButton))
+                    entryButton.Text = EventCompendiumPreview.Title(model);
+                return;
+            }
             var group = FindOtherGroup(entry);
             var creatureDefinition = OtherCreatureCatalog.Find(entry.Id);
             // PackedScene external resources (notably Spine skeleton data) can resolve lazily

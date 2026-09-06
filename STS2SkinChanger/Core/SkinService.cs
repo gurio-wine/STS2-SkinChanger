@@ -1613,6 +1613,7 @@ internal static partial class SkinService
                 UpdateVisualProviderPriority(groupId, optionId);
                 MountOverlay(affectedGroups);
                 Config.Save(ConfigPath);
+                EventSkinRuntime.RefreshCurrent(groupId);
                 LastError = null;
                 return true;
             }

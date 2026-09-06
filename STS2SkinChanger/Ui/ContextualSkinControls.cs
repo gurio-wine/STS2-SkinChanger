@@ -2398,6 +2398,8 @@ internal static partial class ContextualSkinControls
         {
             result = SkinService.GetOrLoadRuntimeResource(groupId, resourcePath) as Texture2D ??
                      throw new InvalidOperationException($"独立皮肤资源不是贴图：{resourcePath}");
+            if (EventSkinPolicy.IsEventGroup(groupId))
+                result.SetMeta(EventSkinRuntime.TextureSourceMeta, resourcePath);
         }
         catch (Exception exception)
         {
