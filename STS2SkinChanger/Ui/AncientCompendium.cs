@@ -821,11 +821,10 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         _entryList = new VBoxContainer
         {
-            CustomMinimumSize = new Vector2(312, 0),
             SizeFlagsHorizontal = SizeFlags.ExpandFill
         };
         _entryList.AddThemeConstantOverride("separation", 10);
-        scroll.AddChild(_entryList);
+        ModThemeListHover.AddScrollList(scroll, _entryList);
 
         _compendiumBackButton = PreloadManager.Cache
             .GetScene(SceneHelper.GetScenePath("ui/back_button"))
@@ -1642,7 +1641,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var button = new Button
         {
             Text = title,
-            CustomMinimumSize = new Vector2(312, 58),
+            CustomMinimumSize = new Vector2(0, 58),
+            ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
             FocusMode = FocusModeEnum.All,
             Alignment = HorizontalAlignment.Center,
             Flat = true

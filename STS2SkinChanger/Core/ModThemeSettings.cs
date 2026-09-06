@@ -11,6 +11,9 @@ internal sealed record ModThemeSettings
     public string SelectionColor { get; init; } = "#FFFFFF";
     public float SelectionOpacity { get; init; } = .28f;
     public float SelectionBlur { get; init; } = 3.1f;
+    public string SelectionHoverColor { get; init; } = "#FFFFFF";
+    public float SelectionHoverOpacity { get; init; } = .4f;
+    public float SelectionHoverBlur { get; init; } = 3.1f;
     public string ButtonColor { get; init; } = "#3C5F82";
     public float ButtonOpacity { get; init; } = .85f;
     public float ButtonBlur { get; init; } = 0f;
@@ -22,6 +25,8 @@ internal sealed record ModThemeSettings
     public float DropdownHoverOpacity { get; init; } = .85f;
     public string DropdownSelectionColor { get; init; } = "#FFFFFF";
     public float DropdownSelectionOpacity { get; init; } = .28f;
+    public string DropdownSelectionHoverColor { get; init; } = "#4B7392";
+    public float DropdownSelectionHoverOpacity { get; init; } = .85f;
     public string DropdownBorderColor { get; init; } = "#7394AD";
     public int DropdownBorderWidth { get; init; } = 1;
     public int DropdownCornerRadius { get; init; } = 12;
@@ -46,11 +51,16 @@ internal sealed record ModThemeSettings
         {
             PanelColor = Hex(PanelColor, defaults.PanelColor),
             SelectionColor = Hex(SelectionColor, defaults.SelectionColor),
+            SelectionHoverColor = Hex(SelectionHoverColor, defaults.SelectionHoverColor),
+            SelectionHoverOpacity = Number(SelectionHoverOpacity, 0, 1, defaults.SelectionHoverOpacity),
+            SelectionHoverBlur = Number(SelectionHoverBlur, 0, 5, defaults.SelectionHoverBlur),
             ButtonColor = Hex(ButtonColor, defaults.ButtonColor),
             HoverColor = Hex(HoverColor, defaults.HoverColor),
             DropdownColor = Hex(DropdownColor, defaults.DropdownColor),
             DropdownHoverColor = Hex(DropdownHoverColor, defaults.DropdownHoverColor),
             DropdownSelectionColor = Hex(DropdownSelectionColor, defaults.DropdownSelectionColor),
+            DropdownSelectionHoverColor = Hex(DropdownSelectionHoverColor, defaults.DropdownSelectionHoverColor),
+            DropdownSelectionHoverOpacity = Number(DropdownSelectionHoverOpacity, 0, 1, defaults.DropdownSelectionHoverOpacity),
             DropdownBorderColor = Hex(DropdownBorderColor, defaults.DropdownBorderColor),
             DropdownOpacity = Number(DropdownOpacity, 0, 1, defaults.DropdownOpacity),
             DropdownBlur = Number(DropdownBlur, 0, 5, defaults.DropdownBlur),
@@ -109,6 +119,13 @@ internal static class ModThemeStore
         // to the panel, buttons or compendium selection theme.
         return settings with
         {
+            SelectionHoverColor = keys.Contains(nameof(settings.SelectionHoverColor)) ? settings.SelectionHoverColor : settings.SelectionColor,
+            SelectionHoverOpacity = keys.Contains(nameof(settings.SelectionHoverOpacity)) ? settings.SelectionHoverOpacity : settings.SelectionOpacity,
+            SelectionHoverBlur = keys.Contains(nameof(settings.SelectionHoverBlur)) ? settings.SelectionHoverBlur : settings.SelectionBlur,
+            DropdownSelectionHoverColor = keys.Contains(nameof(settings.DropdownSelectionHoverColor)) ? settings.DropdownSelectionHoverColor :
+                keys.Contains(nameof(settings.DropdownHoverColor)) ? settings.DropdownHoverColor : settings.HoverColor,
+            DropdownSelectionHoverOpacity = keys.Contains(nameof(settings.DropdownSelectionHoverOpacity)) ? settings.DropdownSelectionHoverOpacity :
+                keys.Contains(nameof(settings.DropdownHoverOpacity)) ? settings.DropdownHoverOpacity : settings.ButtonOpacity,
             DropdownColor = keys.Contains(nameof(settings.DropdownColor)) ? settings.DropdownColor : settings.PanelColor,
             DropdownOpacity = keys.Contains(nameof(settings.DropdownOpacity)) ? settings.DropdownOpacity : settings.PanelOpacity,
             DropdownHoverColor = keys.Contains(nameof(settings.DropdownHoverColor)) ? settings.DropdownHoverColor : settings.HoverColor,

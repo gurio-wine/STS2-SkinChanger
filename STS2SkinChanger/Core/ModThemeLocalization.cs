@@ -6,7 +6,8 @@ internal enum ThemeText
     HoverColor, TextColor, AccentColor, BorderColor, BorderWidth, Radius, FontScale,
     Outline, Revert, Collapse, Expand, Saved, SaveFailed,
     Shadow, EnableShadow, OffsetX, OffsetY, ShadowSize,
-    Dropdown, HoverOpacity, SelectionColor, SelectionOpacity
+    Dropdown, HoverOpacity, SelectionColor, SelectionOpacity,
+    HoverBlur, SelectedHoverColor, SelectedHoverOpacity
 }
 
 internal static class ModThemeLocalization
@@ -52,6 +53,25 @@ internal static class ModThemeLocalization
             ["tur"] = "Açılır listeler|Üzerine gelme opaklığı|Seçim rengi|Seçim opaklığı"
         };
         foreach (var (language, values) in dropdown) packs[language] = [.. packs[language], .. values.Split('|')];
+        var selectedHover = new Dictionary<string, string>
+        {
+            ["eng"] = "Hover blur|Selected hover color|Selected hover opacity",
+            ["zhs"] = "悬停模糊|选中项悬停颜色|选中项悬停不透明度",
+            ["zht"] = "懸停模糊|選取項目懸停顏色|選取項目懸停不透明度",
+            ["deu"] = "Hover-Unschärfe|Hover-Farbe der Auswahl|Hover-Deckkraft der Auswahl",
+            ["esp"] = "Desenfoque al señalar|Color al señalar selección|Opacidad al señalar selección",
+            ["spa"] = "Desenfoque al señalar|Color al señalar selección|Opacidad al señalar selección",
+            ["fra"] = "Flou au survol|Couleur de sélection au survol|Opacité de sélection au survol",
+            ["ita"] = "Sfocatura al passaggio|Colore selezione al passaggio|Opacità selezione al passaggio",
+            ["jpn"] = "ホバーのぼかし|選択項目のホバー色|選択項目のホバー不透明度",
+            ["kor"] = "호버 흐림|선택 항목 호버 색상|선택 항목 호버 불투명도",
+            ["pol"] = "Rozmycie po najechaniu|Kolor zaznaczenia po najechaniu|Krycie zaznaczenia po najechaniu",
+            ["ptb"] = "Desfoque ao apontar|Cor da seleção ao apontar|Opacidade da seleção ao apontar",
+            ["rus"] = "Размытие при наведении|Цвет выбранного при наведении|Непрозрачность выбранного при наведении",
+            ["tha"] = "ความเบลอเมื่อชี้|สีรายการที่เลือกเมื่อชี้|ความทึบรายการที่เลือกเมื่อชี้",
+            ["tur"] = "Üzerine gelme bulanıklığı|Seçili öğe üzerine gelme rengi|Seçili öğe üzerine gelme opaklığı"
+        };
+        foreach (var (language, values) in selectedHover) packs[language] = [.. packs[language], .. values.Split('|')];
         return packs;
     }
     public static string Get(ThemeText text) => (Packs.TryGetValue(ModLocalization.CurrentLanguage, out var pack) ? pack : Packs["eng"])[(int)text];

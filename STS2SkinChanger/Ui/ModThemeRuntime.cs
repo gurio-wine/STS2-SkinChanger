@@ -129,8 +129,9 @@ internal static class ModThemeRuntime
     }
 
     internal static Color ButtonTint(ModThemeSettings theme, bool hovered, bool pressed, bool disabled) =>
-        Tint(pressed ? theme.SelectionColor : hovered ? theme.HoverColor : theme.ButtonColor,
-            (pressed ? theme.SelectionOpacity : theme.ButtonOpacity) * (disabled ? .4f : 1));
+        Tint(pressed ? hovered && !disabled ? theme.SelectionHoverColor : theme.SelectionColor :
+                hovered && !disabled ? theme.HoverColor : theme.ButtonColor,
+            (pressed ? hovered && !disabled ? theme.SelectionHoverOpacity : theme.SelectionOpacity : theme.ButtonOpacity) * (disabled ? .4f : 1));
 
     public static void Input(LineEdit input, int fontSize, bool accent = false)
     {
@@ -219,11 +220,14 @@ internal static class ModThemeRuntime
         var focus = new StyleBoxFlat();
         button.AddThemeStyleboxOverride("normal", normal);
         button.AddThemeStyleboxOverride("hover", normal);
+        button.AddThemeStyleboxOverride("hover_pressed", normal);
+        button.AddThemeStyleboxOverride("disabled", normal);
         button.AddThemeStyleboxOverride("pressed", focus);
         button.AddThemeStyleboxOverride("focus", focus);
         Bind(button, "row", theme =>
         {
             ApplyStyle(focus, ModThemeSurface.Focus, theme);
+            focus.DrawCenter = false;
         });
         if (ContextualSkinControls.GameFont is { } font) button.AddThemeFontOverride("font", font);
         TextControl(button, fontSize, selected);
@@ -251,11 +255,13 @@ internal static class ModThemeRuntime
 
     public static void ItemList(ItemList list)
     {
-        var styles = new[] { new StyleBoxFlat(), new StyleBoxFlat(), new StyleBoxFlat() };
+        var styles = new[] { new StyleBoxFlat(), new StyleBoxFlat(), new StyleBoxFlat(), new StyleBoxFlat() };
         list.AddThemeStyleboxOverride("panel", styles[0]);
         list.AddThemeStyleboxOverride("hovered", styles[1]);
         list.AddThemeStyleboxOverride("selected", styles[2]);
         list.AddThemeStyleboxOverride("selected_focus", styles[2]);
+        list.AddThemeStyleboxOverride("hovered_selected", styles[3]);
+        list.AddThemeStyleboxOverride("hovered_selected_focus", styles[3]);
         var focus = new StyleBoxFlat();
         list.AddThemeStyleboxOverride("focus", focus);
         Bind(list, "list", theme =>
@@ -265,17 +271,20 @@ internal static class ModThemeRuntime
             ApplyDropdownStyle(styles[0], theme);
             ApplyDropdownStyle(styles[1], theme, hovered: true);
             ApplyDropdownStyle(styles[2], theme, selected: true);
+            ApplyDropdownStyle(styles[3], theme, hovered: true, selected: true);
             ApplyDropdownStyle(focus, theme);
             focus.DrawCenter = false;
             list.AddThemeColorOverride("font_hovered_color", new Color(theme.TextColor));
             list.AddThemeColorOverride("font_selected_color", new Color(theme.TextColor));
+            list.AddThemeColorOverride("font_hovered_selected_color", new Color(theme.TextColor));
         });
         AttachDropdownListHost(list);
         TextControl(list, 19);
     }
 
     internal static Color DropdownTint(ModThemeSettings theme, bool hovered, bool selected) =>
-        selected ? Tint(theme.DropdownSelectionColor, theme.DropdownSelectionOpacity) :
+        selected ? hovered ? Tint(theme.DropdownSelectionHoverColor, theme.DropdownSelectionHoverOpacity) :
+            Tint(theme.DropdownSelectionColor, theme.DropdownSelectionOpacity) :
         hovered ? Tint(theme.DropdownHoverColor, theme.DropdownHoverOpacity) : Tint(theme.DropdownColor, theme.DropdownOpacity);
 
     private static void ApplyDropdownStyle(StyleBoxFlat style, ModThemeSettings theme, bool hovered = false, bool selected = false)

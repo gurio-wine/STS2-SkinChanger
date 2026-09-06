@@ -80,8 +80,7 @@ internal partial class ModThemeEditor : CanvasLayer
         AddChild(_root);
         _panel = new PanelContainer { Position = new Vector2(36, 100), Size = new Vector2(540, 750),
             Visible = false, MouseFilter = Control.MouseFilterEnum.Stop };
-        // The editor deliberately stays readable if the draft is made invisible or low contrast.
-        _panel.AddThemeStyleboxOverride("panel", FixedStyle(new Color(1, 1, 1, .94f)));
+        ModThemeRuntime.Panel(_panel);
         _root.AddChild(_panel);
         var margin = new MarginContainer();
         foreach (var side in new[] { "left", "top", "right", "bottom" }) margin.AddThemeConstantOverride("margin_" + side, 16);
@@ -117,53 +116,56 @@ internal partial class ModThemeEditor : CanvasLayer
         _body.AddChild(_scroll);
         var rows = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         rows.AddThemeConstantOverride("separation", 8); _scroll.AddChild(rows);
-        Section(rows, ThemeText.Panel);
-        ColorRow(rows, ThemeText.Color, s => s.PanelColor, (s, v) => s with { PanelColor = v });
-        NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.PanelOpacity * 100, (s, v) => s with { PanelOpacity = (float)v / 100 }, "%");
-        NumberRow(rows, ThemeText.Blur, 0, 5, .1, s => s.PanelBlur, (s, v) => s with { PanelBlur = (float)v });
-        Section(rows, ThemeText.Selection);
-        ColorRow(rows, ThemeText.Color, s => s.SelectionColor, (s, v) => s with { SelectionColor = v });
-        NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.SelectionOpacity * 100, (s, v) => s with { SelectionOpacity = (float)v / 100 }, "%");
-        NumberRow(rows, ThemeText.Blur, 0, 5, .1, s => s.SelectionBlur, (s, v) => s with { SelectionBlur = (float)v });
-        Section(rows, ThemeText.Buttons);
-        ColorRow(rows, ThemeText.Color, s => s.ButtonColor, (s, v) => s with { ButtonColor = v });
-        NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.ButtonOpacity * 100, (s, v) => s with { ButtonOpacity = (float)v / 100 }, "%");
-        NumberRow(rows, ThemeText.Blur, 0, 5, .1, s => s.ButtonBlur, (s, v) => s with { ButtonBlur = (float)v });
-        ColorRow(rows, ThemeText.HoverColor, s => s.HoverColor, (s, v) => s with { HoverColor = v });
-        Section(rows, ThemeText.Dropdown);
-        ColorRow(rows, ThemeText.Color, s => s.DropdownColor, (s, v) => s with { DropdownColor = v });
-        NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.DropdownOpacity * 100, (s, v) => s with { DropdownOpacity = (float)v / 100 }, "%");
-        NumberRow(rows, ThemeText.Blur, 0, 5, .1, s => s.DropdownBlur, (s, v) => s with { DropdownBlur = (float)v });
-        ColorRow(rows, ThemeText.HoverColor, s => s.DropdownHoverColor, (s, v) => s with { DropdownHoverColor = v });
-        NumberRow(rows, ThemeText.HoverOpacity, 0, 100, 1, s => s.DropdownHoverOpacity * 100, (s, v) => s with { DropdownHoverOpacity = (float)v / 100 }, "%");
-        ColorRow(rows, ThemeText.SelectionColor, s => s.DropdownSelectionColor, (s, v) => s with { DropdownSelectionColor = v });
-        NumberRow(rows, ThemeText.SelectionOpacity, 0, 100, 1, s => s.DropdownSelectionOpacity * 100, (s, v) => s with { DropdownSelectionOpacity = (float)v / 100 }, "%");
-        ColorRow(rows, ThemeText.BorderColor, s => s.DropdownBorderColor, (s, v) => s with { DropdownBorderColor = v });
-        NumberRow(rows, ThemeText.BorderWidth, 0, 5, 1, s => s.DropdownBorderWidth, (s, v) => s with { DropdownBorderWidth = (int)v });
-        NumberRow(rows, ThemeText.Radius, 0, 24, 1, s => s.DropdownCornerRadius, (s, v) => s with { DropdownCornerRadius = (int)v });
-        Section(rows, ThemeText.TextBorder);
-        ColorRow(rows, ThemeText.TextColor, s => s.TextColor, (s, v) => s with { TextColor = v });
-        ColorRow(rows, ThemeText.AccentColor, s => s.AccentColor, (s, v) => s with { AccentColor = v });
-        ColorRow(rows, ThemeText.BorderColor, s => s.BorderColor, (s, v) => s with { BorderColor = v });
-        NumberRow(rows, ThemeText.BorderWidth, 0, 5, 1, s => s.BorderWidth, (s, v) => s with { BorderWidth = (int)v });
-        NumberRow(rows, ThemeText.Radius, 0, 24, 1, s => s.CornerRadius, (s, v) => s with { CornerRadius = (int)v });
-        NumberRow(rows, ThemeText.FontScale, 75, 150, 1, s => s.FontScale * 100, (s, v) => s with { FontScale = (float)v / 100 }, "%");
-        NumberRow(rows, ThemeText.Outline, 0, 8, 1, s => s.TextOutline, (s, v) => s with { TextOutline = (int)v });
-        Section(rows, ThemeText.Shadow);
+        var section = Section(rows, ThemeText.Panel);
+        ColorRow(section, ThemeText.Color, s => s.PanelColor, (s, v) => s with { PanelColor = v });
+        NumberRow(section, ThemeText.Opacity, 0, 100, 1, s => s.PanelOpacity * 100, (s, v) => s with { PanelOpacity = (float)v / 100 }, "%");
+        NumberRow(section, ThemeText.Blur, 0, 5, .1, s => s.PanelBlur, (s, v) => s with { PanelBlur = (float)v });
+        section = Section(rows, ThemeText.Selection);
+        ColorRow(section, ThemeText.Color, s => s.SelectionColor, (s, v) => s with { SelectionColor = v });
+        NumberRow(section, ThemeText.Opacity, 0, 100, 1, s => s.SelectionOpacity * 100, (s, v) => s with { SelectionOpacity = (float)v / 100 }, "%");
+        NumberRow(section, ThemeText.Blur, 0, 5, .1, s => s.SelectionBlur, (s, v) => s with { SelectionBlur = (float)v });
+        ColorRow(section, ThemeText.HoverColor, s => s.SelectionHoverColor, (s, v) => s with { SelectionHoverColor = v });
+        NumberRow(section, ThemeText.HoverOpacity, 0, 100, 1, s => s.SelectionHoverOpacity * 100, (s, v) => s with { SelectionHoverOpacity = (float)v / 100 }, "%");
+        NumberRow(section, ThemeText.HoverBlur, 0, 5, .1, s => s.SelectionHoverBlur, (s, v) => s with { SelectionHoverBlur = (float)v });
+        section = Section(rows, ThemeText.Buttons);
+        ColorRow(section, ThemeText.Color, s => s.ButtonColor, (s, v) => s with { ButtonColor = v });
+        NumberRow(section, ThemeText.Opacity, 0, 100, 1, s => s.ButtonOpacity * 100, (s, v) => s with { ButtonOpacity = (float)v / 100 }, "%");
+        NumberRow(section, ThemeText.Blur, 0, 5, .1, s => s.ButtonBlur, (s, v) => s with { ButtonBlur = (float)v });
+        ColorRow(section, ThemeText.HoverColor, s => s.HoverColor, (s, v) => s with { HoverColor = v });
+        section = Section(rows, ThemeText.Dropdown);
+        ColorRow(section, ThemeText.Color, s => s.DropdownColor, (s, v) => s with { DropdownColor = v });
+        NumberRow(section, ThemeText.Opacity, 0, 100, 1, s => s.DropdownOpacity * 100, (s, v) => s with { DropdownOpacity = (float)v / 100 }, "%");
+        NumberRow(section, ThemeText.Blur, 0, 5, .1, s => s.DropdownBlur, (s, v) => s with { DropdownBlur = (float)v });
+        ColorRow(section, ThemeText.HoverColor, s => s.DropdownHoverColor, (s, v) => s with { DropdownHoverColor = v });
+        NumberRow(section, ThemeText.HoverOpacity, 0, 100, 1, s => s.DropdownHoverOpacity * 100, (s, v) => s with { DropdownHoverOpacity = (float)v / 100 }, "%");
+        ColorRow(section, ThemeText.SelectionColor, s => s.DropdownSelectionColor, (s, v) => s with { DropdownSelectionColor = v });
+        NumberRow(section, ThemeText.SelectionOpacity, 0, 100, 1, s => s.DropdownSelectionOpacity * 100, (s, v) => s with { DropdownSelectionOpacity = (float)v / 100 }, "%");
+        ColorRow(section, ThemeText.SelectedHoverColor, s => s.DropdownSelectionHoverColor, (s, v) => s with { DropdownSelectionHoverColor = v });
+        NumberRow(section, ThemeText.SelectedHoverOpacity, 0, 100, 1, s => s.DropdownSelectionHoverOpacity * 100, (s, v) => s with { DropdownSelectionHoverOpacity = (float)v / 100 }, "%");
+        ColorRow(section, ThemeText.BorderColor, s => s.DropdownBorderColor, (s, v) => s with { DropdownBorderColor = v });
+        NumberRow(section, ThemeText.BorderWidth, 0, 5, 1, s => s.DropdownBorderWidth, (s, v) => s with { DropdownBorderWidth = (int)v });
+        NumberRow(section, ThemeText.Radius, 0, 24, 1, s => s.DropdownCornerRadius, (s, v) => s with { DropdownCornerRadius = (int)v });
+        section = Section(rows, ThemeText.TextBorder);
+        ColorRow(section, ThemeText.TextColor, s => s.TextColor, (s, v) => s with { TextColor = v });
+        ColorRow(section, ThemeText.AccentColor, s => s.AccentColor, (s, v) => s with { AccentColor = v });
+        ColorRow(section, ThemeText.BorderColor, s => s.BorderColor, (s, v) => s with { BorderColor = v });
+        NumberRow(section, ThemeText.BorderWidth, 0, 5, 1, s => s.BorderWidth, (s, v) => s with { BorderWidth = (int)v });
+        NumberRow(section, ThemeText.Radius, 0, 24, 1, s => s.CornerRadius, (s, v) => s with { CornerRadius = (int)v });
+        NumberRow(section, ThemeText.FontScale, 75, 150, 1, s => s.FontScale * 100, (s, v) => s with { FontScale = (float)v / 100 }, "%");
+        NumberRow(section, ThemeText.Outline, 0, 8, 1, s => s.TextOutline, (s, v) => s with { TextOutline = (int)v });
+        section = Section(rows, ThemeText.Shadow);
         var shadow = new CheckButton();
         ModLocalization.Bind(shadow, () => shadow.Text = ModThemeLocalization.Get(ThemeText.EnableShadow));
-        shadow.AddThemeFontSizeOverride("font_size", 18);
+        ModThemeRuntime.Button(shadow, 18);
         if (ContextualSkinControls.GameFont is { } shadowFont) shadow.AddThemeFontOverride("font", shadowFont);
-        shadow.AddThemeColorOverride("font_color", new Color("18222c"));
-        shadow.AddThemeColorOverride("font_hover_color", new Color("18222c"));
         shadow.Toggled += enabled => { if (!_reading) ModThemeRuntime.Session.Preview(ModThemeRuntime.Current with { TextShadowEnabled = enabled }); };
         _readValues.Add(theme => shadow.SetPressedNoSignal(theme.TextShadowEnabled));
-        rows.AddChild(shadow);
-        ColorRow(rows, ThemeText.Color, s => s.TextShadowColor, (s, v) => s with { TextShadowColor = v });
-        NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.TextShadowOpacity * 100, (s, v) => s with { TextShadowOpacity = (float)v / 100 }, "%");
-        NumberRow(rows, ThemeText.OffsetX, -12, 12, 1, s => s.TextShadowOffsetX, (s, v) => s with { TextShadowOffsetX = (int)v });
-        NumberRow(rows, ThemeText.OffsetY, -12, 12, 1, s => s.TextShadowOffsetY, (s, v) => s with { TextShadowOffsetY = (int)v });
-        NumberRow(rows, ThemeText.ShadowSize, 0, 8, 1, s => s.TextShadowSize, (s, v) => s with { TextShadowSize = (int)v });
+        section.AddChild(shadow);
+        ColorRow(section, ThemeText.Color, s => s.TextShadowColor, (s, v) => s with { TextShadowColor = v });
+        NumberRow(section, ThemeText.Opacity, 0, 100, 1, s => s.TextShadowOpacity * 100, (s, v) => s with { TextShadowOpacity = (float)v / 100 }, "%");
+        NumberRow(section, ThemeText.OffsetX, -12, 12, 1, s => s.TextShadowOffsetX, (s, v) => s with { TextShadowOffsetX = (int)v });
+        NumberRow(section, ThemeText.OffsetY, -12, 12, 1, s => s.TextShadowOffsetY, (s, v) => s with { TextShadowOffsetY = (int)v });
+        NumberRow(section, ThemeText.ShadowSize, 0, 8, 1, s => s.TextShadowSize, (s, v) => s with { TextShadowSize = (int)v });
         var footer = new HBoxContainer(); _body.AddChild(footer);
         var reset = MakeButton(() => ModLocalization.Get(ModText.Reset)); reset.Pressed += ModThemeRuntime.Session.Reset; footer.AddChild(reset);
         var revert = MakeButton(() => ModThemeLocalization.Get(ThemeText.Revert)); revert.Pressed += ModThemeRuntime.Session.Revert; footer.AddChild(revert);
@@ -230,10 +232,31 @@ internal partial class ModThemeEditor : CanvasLayer
         finally { _reading = false; }
     }
 
-    private void Section(VBoxContainer rows, ThemeText title)
+    private VBoxContainer Section(VBoxContainer rows, ThemeText title)
     {
-        rows.AddChild(new Control { CustomMinimumSize = new Vector2(0, 8), MouseFilter = Control.MouseFilterEnum.Ignore });
-        var label = MakeLabel(() => ModThemeLocalization.Get(title)); label.AddThemeFontSizeOverride("font_size", 23); rows.AddChild(label);
+        var group = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        group.AddThemeConstantOverride("separation", 8);
+        rows.AddChild(group);
+        var expanded = false;
+        var header = MakeButton(() => (expanded ? "▼ " : "▶ ") + ModThemeLocalization.Get(title));
+        header.ToggleMode = true;
+        header.Alignment = HorizontalAlignment.Left;
+        header.ClipText = true;
+        header.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        header.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        group.AddChild(header);
+        var body = new VBoxContainer();
+        body.AddThemeConstantOverride("separation", 8);
+        body.Hide();
+        group.AddChild(body);
+        header.Toggled += value =>
+        {
+            expanded = value;
+            body.Visible = value;
+            header.Text = (expanded ? "▼ " : "▶ ") + ModThemeLocalization.Get(title);
+            Callable.From(ClampPanel).CallDeferred();
+        };
+        return body;
     }
 
     private HBoxContainer Row(VBoxContainer rows, ThemeText title)
@@ -248,6 +271,7 @@ internal partial class ModThemeEditor : CanvasLayer
     {
         var row = Row(rows, title);
         var picker = new ColorPickerButton { EditAlpha = false, CustomMinimumSize = new Vector2(64, 32) }; row.AddChild(picker);
+        ModThemeRuntime.Button(picker, 18);
         var hex = MakeLabel(() => get(ModThemeRuntime.Current)); row.AddChild(hex);
         picker.ColorChanged += value => { if (!_reading) ModThemeRuntime.Session.Preview(set(ModThemeRuntime.Current, "#" + value.ToHtml(false))); };
         _readValues.Add(theme => { picker.Color = new Color(get(theme)); hex.Text = get(theme); });
@@ -262,6 +286,8 @@ internal partial class ModThemeEditor : CanvasLayer
         row.AddChild(slider);
         var number = new SpinBox { MinValue = min, MaxValue = max, Step = step, Suffix = suffix, CustomMinimumSize = new Vector2(102, 32) };
         row.AddChild(number);
+        ModThemeRuntime.Input(number.GetLineEdit(), 18);
+        ThemeSlider(slider);
         void Change(double value) { if (!_reading) ModThemeRuntime.Session.Preview(set(ModThemeRuntime.Current, value)); }
         slider.ValueChanged += Change; number.ValueChanged += Change;
         _readValues.Add(theme => { slider.SetValueNoSignal(get(theme)); number.SetValueNoSignal(get(theme)); });
@@ -270,7 +296,7 @@ internal partial class ModThemeEditor : CanvasLayer
     private static Label MakeLabel(Func<string> text)
     {
         var label = new Label { VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
-        label.AddThemeFontSizeOverride("font_size", 18); label.AddThemeColorOverride("font_color", new Color("18222c"));
+        ModThemeRuntime.TextControl(label, 18);
         if (ContextualSkinControls.GameFont is { } font) label.AddThemeFontOverride("font", font);
         ModLocalization.Bind(label, () => label.Text = text()); return label;
     }
@@ -278,19 +304,26 @@ internal partial class ModThemeEditor : CanvasLayer
     private static Button MakeButton(Func<string> text)
     {
         var button = new Button { CustomMinimumSize = new Vector2(62, 36), FocusMode = Control.FocusModeEnum.None };
-        button.AddThemeFontSizeOverride("font_size", 18); button.AddThemeColorOverride("font_color", new Color("18222c"));
-        button.AddThemeColorOverride("font_hover_color", new Color("18222c"));
-        button.AddThemeStyleboxOverride("normal", FixedStyle(new Color("e6ebef")));
-        button.AddThemeStyleboxOverride("hover", FixedStyle(new Color("d1deea")));
+        ModThemeRuntime.Button(button, 18);
         if (ContextualSkinControls.GameFont is { } font) button.AddThemeFontOverride("font", font);
         ModLocalization.Bind(button, () => button.Text = text()); return button;
     }
 
-    private static StyleBoxFlat FixedStyle(Color color) => new()
+    private static void ThemeSlider(HSlider slider)
     {
-        BgColor = color, CornerRadiusTopLeft = 8, CornerRadiusTopRight = 8,
-        CornerRadiusBottomLeft = 8, CornerRadiusBottomRight = 8, ContentMarginLeft = 8, ContentMarginRight = 8
-    };
+        var track = new StyleBoxFlat { ContentMarginTop = 2, ContentMarginBottom = 2 };
+        var fill = new StyleBoxFlat { ContentMarginTop = 2, ContentMarginBottom = 2 };
+        var hover = new StyleBoxFlat { ContentMarginTop = 2, ContentMarginBottom = 2 };
+        slider.AddThemeStyleboxOverride("slider", track);
+        slider.AddThemeStyleboxOverride("grabber_area", fill);
+        slider.AddThemeStyleboxOverride("grabber_area_highlight", hover);
+        ModThemeRuntime.Bind(slider, "slider", theme =>
+        {
+            track.BgColor = ModThemeRuntime.Tint(theme.ButtonColor, theme.ButtonOpacity);
+            fill.BgColor = new Color(theme.AccentColor);
+            hover.BgColor = new Color(theme.HoverColor);
+        });
+    }
 }
 
 [HarmonyPatch(typeof(NMainMenu), nameof(NMainMenu._Ready))]

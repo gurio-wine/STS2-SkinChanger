@@ -17,6 +17,7 @@ internal static class ModThemeTests
         var normalize = settings!.GetMethod("Normalize")!;
         object Parse(string json) => normalize.Invoke(JsonSerializer.Deserialize(json, settings), null)!;
         var defaults = Parse("{}");
+        ModThemeInteractionTests.Run(assembly, Parse);
         VerifyDropdownBlur(assembly, Parse);
         VerifyDropdownIsolation(assembly, Parse);
         VerifyBlurSampling(assembly);
