@@ -4412,7 +4412,7 @@ internal sealed partial class SkinCatalog : IDisposable
             }
         }
 
-        AddPckRuntimeProviderOptions(indexes, baselines, groups, knownGroupIds);
+        AddPckRuntimeProviderOptions(indexes, baselines, groups, knownGroupIds, knownCharacterGroupIds);
         AddDirectCharacterRuntimeProviderOptions(
             indexes,
             groups,
@@ -5874,7 +5874,8 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyCollection<PckResourceIndex> indexes,
         IReadOnlyCollection<PckResourceIndex> baselineIndexes,
         IDictionary<string, SkinGroup> groups,
-        IReadOnlySet<string> knownGroupIds)
+        IReadOnlySet<string> knownGroupIds,
+        IReadOnlySet<string> knownCharacterGroupIds)
     {
         foreach (var index in indexes)
         {
@@ -6025,6 +6026,26 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Select(replacement => replacement.TargetGroupId)
                 .Concat(frameworkTargetIds)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Canonical/private resource mapping must honor the same character ownership
+            // evidence as the initial PCK pass. Otherwise an unrelated portrait rejected there
+            // gets re-added here as a full runtime skin. Include explicit registrations and
+            // mapped model roots so genuine private/DLL skins still establish ownership.
+            var anchoredCharacterGroupIds = index.Assets.Keys
+                .Concat(runtimeAssets.Select(pair => pair.Mapping.CanonicalPath))
+                .Select(path => TryGetCharacterVisualAnchorGroup(path, knownCharacterGroupIds))
+                .Where(identity => identity != null)
+                .Select(identity => identity!.Id)
+                .Concat(managedTargetIds.Where(knownCharacterGroupIds.Contains))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var eligibleCharacterGroupIds = CharacterGroupEvidencePolicy.ResolveEligibleGroups(
+                runtimeAssets.Select(pair => pair.Mapping.Identity.Id)
+                    .Concat(managedTargetIds)
+                    .Concat(groups.Values
+                        .Where(group => group.Options.Any(option =>
+                            option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase)))
+                        .Select(group => group.Id))
+                    .Where(knownCharacterGroupIds.Contains),
+                anchoredCharacterGroupIds);
             foreach (var sourceGroup in groups.Values
                          .Where(group => !managedTargetIds.Contains(group.Id))
                          .ToArray())
@@ -6032,8 +6053,10 @@ internal sealed partial class SkinCatalog : IDisposable
                 sourceGroup.Options.RemoveAll(option =>
                     option.Id.Equals(index.Mod.Id, StringComparison.OrdinalIgnoreCase) &&
                     option.Assets.Count > 0 &&
-                    option.Assets.Values.Any(asset =>
-                        declarativeDependencyPaths.Contains(asset.SourcePath)));
+                    ((knownCharacterGroupIds.Contains(sourceGroup.Id) &&
+                      !eligibleCharacterGroupIds.Contains(sourceGroup.Id)) ||
+                     option.Assets.Values.Any(asset =>
+                         declarativeDependencyPaths.Contains(asset.SourcePath))));
                 if (sourceGroup.Options.Count == 0)
                 {
                     groups.Remove(sourceGroup.Id);
@@ -6044,6 +6067,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Select(pair => pair.Mapping.Identity)
                 .Where(identity =>
                     knownGroupIds.Contains(identity.Id) &&
+                    (!knownCharacterGroupIds.Contains(identity.Id) ||
+                     eligibleCharacterGroupIds.Contains(identity.Id)) &&
                     !frameworkTargetIds.Contains(identity.Id) &&
                     (enabledGroupIds == null ||
                      enabledGroupIds.Contains(identity.Id) ||
@@ -6091,7 +6116,9 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Id,
                     index.Mod.Name,
                     mappedAssets,
-                    IsRuntimeProvider: true));
+                    IsRuntimeProvider: true,
+                    IsCharacterIconOnly: knownCharacterGroupIds.Contains(identity.Id) &&
+                                         mappedAssets.Keys.All(IsCharacterIconSourcePath)));
             }
         }
     }

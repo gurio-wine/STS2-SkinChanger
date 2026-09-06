@@ -17,6 +17,18 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-character-catalog")
+{
+    CharacterCatalogOwnershipTests.Run();
+    return;
+}
+
+if (args.Length == 4 && args[0] == "--audit-character-catalog")
+{
+    CharacterCatalogOwnershipTests.Audit(args[1], args[2], args[3]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--audit-card-presets")
 {
     CardPresetMigrationTests.Audit(args[1]);
@@ -111,6 +123,7 @@ ProviderAnimationCompatibilityTests.Run();
 AppearanceControlContractTests.Run();
 AppearanceSelectionHintTests.Run();
 ProviderLookupTests.Run();
+CharacterCatalogOwnershipTests.Run();
 DuplicateProviderLoadingTests.Run();
 CreatureVisualLifecycleTests.Run();
 BundlePresetTests.Run();
