@@ -17,6 +17,7 @@ internal static class ModThemeTests
         var normalize = settings!.GetMethod("Normalize")!;
         object Parse(string json) => normalize.Invoke(JsonSerializer.Deserialize(json, settings), null)!;
         var defaults = Parse("{}");
+        VerifyDropdownBlur(assembly, Parse);
         VerifyDropdownIsolation(assembly, Parse);
         VerifyBlurSampling(assembly);
         Require(settings.GetProperty("ButtonBlur") != null && settings.GetProperty("TextShadowEnabled") != null,
@@ -50,7 +51,7 @@ internal static class ModThemeTests
         var changes = 0;
         Action listener = () => changes++;
         sessionType.GetEvent("Changed")!.AddEventHandler(session, listener);
-        var draft = Parse("{\"PanelOpacity\":0.24,\"ButtonColor\":\"#123456\",\"ButtonBlur\":1.5,\"TextShadowEnabled\":true,\"TextShadowOffsetX\":-2}");
+        var draft = Parse("{\"PanelOpacity\":0.24,\"ButtonColor\":\"#123456\",\"ButtonBlur\":1.5,\"DropdownBlur\":2.25,\"TextShadowEnabled\":true,\"TextShadowOffsetX\":-2}");
         sessionType.GetMethod("Preview")!.Invoke(session, [draft]);
         sessionType.GetMethod("Preview")!.Invoke(session, [draft]);
         Require(changes == 1 && (string)Property(Property(session, "Current"), "ButtonColor") == "#123456",
@@ -78,6 +79,7 @@ internal static class ModThemeTests
             var store = assembly.GetType("STS2SkinChanger.Core.ModThemeStore", true)!;
             var restored = store.GetMethod("Load")!.Invoke(null, [path])!;
             Require((string)Property(restored, "ButtonColor") == "#123456", "保存并重开必须保留主题草稿。");
+            Require((float)Property(restored, "DropdownBlur") == 2.25f, "下拉模糊强度必须独立保存并恢复。");
             VerifyDropdownMigration(store, temp.FullName);
             Require((float)Property(restored, "ButtonBlur") == 1.5f && (bool)Property(restored, "TextShadowEnabled") &&
                     (int)Property(restored, "TextShadowOffsetX") == -2, "新阴影/按钮模糊设置保存后必须完整恢复。");
@@ -99,6 +101,36 @@ internal static class ModThemeTests
     }
 
     private static object Property(object target, string name) => target.GetType().GetProperty(name)!.GetValue(target)!;
+
+    private static void VerifyDropdownBlur(Assembly assembly, Func<string, object> parse)
+    {
+        var theme = parse("{\"PanelBlur\":5,\"ButtonBlur\":4,\"DropdownBlur\":2.25}");
+        Require(theme.GetType().GetProperty("DropdownBlur") != null, "下拉主题缺少独立模糊参数。");
+        Require((float)Property(theme, "DropdownBlur") == 2.25f &&
+                (float)Property(parse("{\"PanelBlur\":5}"), "DropdownBlur") == 0 &&
+                (float)Property(parse("{\"DropdownBlur\":-1}"), "DropdownBlur") == 0 &&
+                (float)Property(parse("{\"DropdownBlur\":100}"), "DropdownBlur") == 5,
+            "下拉模糊不能继承面板；0 关闭，过大/负值需归一化。");
+        var type = assembly.GetType("STS2SkinChanger.Ui.ModThemeDropdownBackdrop");
+        Require(type != null, "下拉模糊需要从承载菜单的游戏视口取背景，不能在菜单内模糊文字。");
+        var placement = HarmonyLib.AccessTools.Method(type, "Placement");
+        var final = new Godot.Transform2D(new(1.5f, 0), new(0, 1.5f), new(20, 10));
+        var (embeddedPosition, embeddedLayer) = ((Godot.Vector2, Godot.Transform2D))placement.Invoke(null,
+            [true, new Godot.Vector2(400, 260), new Godot.Vector2(100, 80), final])!;
+        Require(embeddedPosition == new Godot.Vector2(400, 260) && embeddedLayer == Godot.Transform2D.Identity,
+            "嵌入式菜单坐标已经是承载视口坐标，不能再次除以游戏窗口缩放。");
+        var (nativePosition, nativeLayer) = ((Godot.Vector2, Godot.Transform2D))placement.Invoke(null,
+            [false, new Godot.Vector2(1340, 380), new Godot.Vector2(100, 80), final])!;
+        Require((final * nativeLayer * nativePosition).DistanceTo(new Godot.Vector2(1240, 300)) < .001f,
+            "独立窗口需要减去游戏窗口位置并抵消内容缩放，不能读到另一块屏幕区域。");
+        Require(Calls(HarmonyLib.AccessTools.Method(type, "StartFollowing"), typeof(Godot.RenderingServer), "add_FramePreDraw") &&
+                Calls(HarmonyLib.AccessTools.Method(type, "Release"), typeof(Godot.RenderingServer), "remove_FramePreDraw") &&
+                Calls(HarmonyLib.AccessTools.Method(type, "Release"), typeof(Godot.Node), "QueueFree"),
+            "背景只在菜单打开时更新，关闭/离树后必须停掉绘制监听并释放背景层。");
+        var runtime = assembly.GetType("STS2SkinChanger.Ui.ModThemeRuntime", true)!;
+        Require(Calls(HarmonyLib.AccessTools.Method(runtime, "Popup"), type!, "Attach"),
+            "所有公共皮肤下拉入口都必须接入模糊，而不只是带皮肤包的彩色列表。");
+    }
 
     private static void VerifyDropdownIsolation(Assembly assembly, Func<string, object> parse)
     {

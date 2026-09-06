@@ -17,6 +17,7 @@ internal sealed record ModThemeSettings
     public string HoverColor { get; init; } = "#4B7392";
     public string DropdownColor { get; init; } = "#FFFFFF";
     public float DropdownOpacity { get; init; } = .18f;
+    public float DropdownBlur { get; init; } = 0f;
     public string DropdownHoverColor { get; init; } = "#4B7392";
     public float DropdownHoverOpacity { get; init; } = .85f;
     public string DropdownSelectionColor { get; init; } = "#FFFFFF";
@@ -52,6 +53,7 @@ internal sealed record ModThemeSettings
             DropdownSelectionColor = Hex(DropdownSelectionColor, defaults.DropdownSelectionColor),
             DropdownBorderColor = Hex(DropdownBorderColor, defaults.DropdownBorderColor),
             DropdownOpacity = Number(DropdownOpacity, 0, 1, defaults.DropdownOpacity),
+            DropdownBlur = Number(DropdownBlur, 0, 5, defaults.DropdownBlur),
             DropdownHoverOpacity = Number(DropdownHoverOpacity, 0, 1, defaults.DropdownHoverOpacity),
             DropdownSelectionOpacity = Number(DropdownSelectionOpacity, 0, 1, defaults.DropdownSelectionOpacity),
             DropdownBorderWidth = Math.Clamp(DropdownBorderWidth, 0, 5),

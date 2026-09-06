@@ -231,6 +231,7 @@ internal static class ModThemeRuntime
 
     public static void Popup(PopupMenu popup)
     {
+        ModThemeDropdownBackdrop.Attach(popup);
         var panel = new StyleBoxFlat();
         var hover = new StyleBoxFlat();
         popup.AddThemeStyleboxOverride("panel", panel);

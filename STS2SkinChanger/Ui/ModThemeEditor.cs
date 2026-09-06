@@ -133,6 +133,7 @@ internal partial class ModThemeEditor : CanvasLayer
         Section(rows, ThemeText.Dropdown);
         ColorRow(rows, ThemeText.Color, s => s.DropdownColor, (s, v) => s with { DropdownColor = v });
         NumberRow(rows, ThemeText.Opacity, 0, 100, 1, s => s.DropdownOpacity * 100, (s, v) => s with { DropdownOpacity = (float)v / 100 }, "%");
+        NumberRow(rows, ThemeText.Blur, 0, 5, .1, s => s.DropdownBlur, (s, v) => s with { DropdownBlur = (float)v });
         ColorRow(rows, ThemeText.HoverColor, s => s.DropdownHoverColor, (s, v) => s with { DropdownHoverColor = v });
         NumberRow(rows, ThemeText.HoverOpacity, 0, 100, 1, s => s.DropdownHoverOpacity * 100, (s, v) => s with { DropdownHoverOpacity = (float)v / 100 }, "%");
         ColorRow(rows, ThemeText.SelectionColor, s => s.DropdownSelectionColor, (s, v) => s with { DropdownSelectionColor = v });
