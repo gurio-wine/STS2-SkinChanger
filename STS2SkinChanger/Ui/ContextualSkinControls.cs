@@ -714,11 +714,7 @@ internal static partial class ContextualSkinControls
         {
             return;
         }
-        var gold = new Color("efc850");
-        foreach (var state in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
-        {
-            dropdown.AddThemeColorOverride(state, gold);
-        }
+        ModThemeRuntime.AccentText(dropdown);
     }
 
     private static void ConfigureCharacterBundlePopupList(
@@ -757,6 +753,13 @@ internal static partial class ContextualSkinControls
             list.AddThemeStyleboxOverride(
                 "selected", CreateStyleBox(new Color("58205f"), new Color("efc850"), 2));
             ModThemeRuntime.ItemList(list);
+            var themedList = list;
+            ModThemeRuntime.Bind(list, "bundle_colors", theme =>
+            {
+                for (var i = 0; i < Math.Min(themedList.ItemCount, dropdown.ItemCount); i++)
+                    if (CharacterSkinBundlePolicy.TryGetSelectionBundleName(dropdown.GetItemMetadata(i).AsString(), out _))
+                        themedList.SetItemCustomFgColor(i, new Color(theme.AccentColor));
+            });
             if (GameFont != null)
             {
                 list.AddThemeFontOverride("font", GameFont);
@@ -819,7 +822,7 @@ internal static partial class ContextualSkinControls
             return false;
         }
 
-        var gold = new Color("efc850");
+        var gold = ModThemeRuntime.Accent;
         for (var index = 0; index < dropdown.ItemCount; index++)
         {
             list.AddItem(dropdown.GetItemText(index));
@@ -1204,6 +1207,7 @@ internal static partial class ContextualSkinControls
         overlay.AddThemeStyleboxOverride(
             "panel",
             CreateStyleBox(new Color("2a4058e8"), new Color("efc850"), 2));
+        ModThemeRuntime.Panel(overlay);
         var content = new VBoxContainer
         {
             Name = "Content",
@@ -1238,6 +1242,12 @@ internal static partial class ContextualSkinControls
         progress.AddThemeStyleboxOverride(
             "fill",
             CreateStyleBox(new Color("efc850"), new Color("fff1a8")));
+        var progressFill = (StyleBoxFlat)progress.GetThemeStylebox("fill");
+        ModThemeRuntime.Bind(progress, "progress", theme =>
+        {
+            progressFill.BgColor = new Color(theme.AccentColor);
+            progressFill.BorderColor = new Color(theme.AccentColor);
+        });
         content.AddChild(progress);
         screen.AddChild(overlay);
         UpdateCharacterLoadingOverlay(overlay, optionName, 0);

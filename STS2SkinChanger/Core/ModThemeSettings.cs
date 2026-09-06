@@ -13,6 +13,7 @@ internal sealed record ModThemeSettings
     public float SelectionBlur { get; init; } = 3.1f;
     public string ButtonColor { get; init; } = "#3C5F82";
     public float ButtonOpacity { get; init; } = .85f;
+    public float ButtonBlur { get; init; } = 0f;
     public string HoverColor { get; init; } = "#4B7392";
     public string TextColor { get; init; } = "#FFF6E2";
     public string AccentColor { get; init; } = "#EFC850";
@@ -21,6 +22,12 @@ internal sealed record ModThemeSettings
     public int CornerRadius { get; init; } = 12;
     public float FontScale { get; init; } = 1f;
     public int TextOutline { get; init; } = 3;
+    public bool TextShadowEnabled { get; init; } = false;
+    public string TextShadowColor { get; init; } = "#000000";
+    public float TextShadowOpacity { get; init; } = .55f;
+    public int TextShadowOffsetX { get; init; } = 2;
+    public int TextShadowOffsetY { get; init; } = 2;
+    public int TextShadowSize { get; init; } = 1;
 
     public ModThemeSettings Normalize()
     {
@@ -34,11 +41,17 @@ internal sealed record ModThemeSettings
             TextColor = Hex(TextColor, defaults.TextColor),
             AccentColor = Hex(AccentColor, defaults.AccentColor),
             BorderColor = Hex(BorderColor, defaults.BorderColor),
+            TextShadowColor = Hex(TextShadowColor, defaults.TextShadowColor),
             PanelOpacity = Number(PanelOpacity, 0, 1, defaults.PanelOpacity),
             SelectionOpacity = Number(SelectionOpacity, 0, 1, defaults.SelectionOpacity),
             ButtonOpacity = Number(ButtonOpacity, 0, 1, defaults.ButtonOpacity),
             PanelBlur = Number(PanelBlur, 0, 5, defaults.PanelBlur),
             SelectionBlur = Number(SelectionBlur, 0, 5, defaults.SelectionBlur),
+            ButtonBlur = Number(ButtonBlur, 0, 5, defaults.ButtonBlur),
+            TextShadowOpacity = Number(TextShadowOpacity, 0, 1, defaults.TextShadowOpacity),
+            TextShadowOffsetX = Math.Clamp(TextShadowOffsetX, -12, 12),
+            TextShadowOffsetY = Math.Clamp(TextShadowOffsetY, -12, 12),
+            TextShadowSize = Math.Clamp(TextShadowSize, 0, 8),
             BorderWidth = Math.Clamp(BorderWidth, 0, 5), CornerRadius = Math.Clamp(CornerRadius, 0, 24),
             FontScale = Number(FontScale, .75f, 1.5f, 1), TextOutline = Math.Clamp(TextOutline, 0, 8)
         };

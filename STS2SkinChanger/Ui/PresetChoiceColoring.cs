@@ -30,7 +30,7 @@ internal static class PresetChoiceColoring
             BundlePresetPolicy.IsOwned(picker.GetItemMetadata(index).AsString());
         void StyleSelection()
         {
-            var color = new Color(Owned(picker.Selected) ? "efc850" : "fff6e2");
+            var color = Owned(picker.Selected) ? ModThemeRuntime.Accent : ModThemeRuntime.Text;
             foreach (var state in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color" })
                 picker.AddThemeColorOverride(state, color);
         }
@@ -50,7 +50,7 @@ internal static class PresetChoiceColoring
             for (var i = 0; i < picker.ItemCount; i++)
             {
                 list.AddItem(picker.GetItemText(i));
-                if (Owned(i)) list.SetItemCustomFgColor(i, new Color("efc850"));
+                if (Owned(i)) list.SetItemCustomFgColor(i, ModThemeRuntime.Accent);
             }
             if (picker.Selected >= 0) list.Select(picker.Selected);
             Callable.From(() =>
@@ -61,6 +61,11 @@ internal static class PresetChoiceColoring
                 list.GrabFocus();
             }).CallDeferred();
         };
-        StyleSelection();
+        ModThemeRuntime.Bind(picker, "preset_colors", _ =>
+        {
+            StyleSelection();
+            for (var i = 0; i < Math.Min(list.ItemCount, picker.ItemCount); i++)
+                if (Owned(i)) list.SetItemCustomFgColor(i, ModThemeRuntime.Accent);
+        });
     }
 }

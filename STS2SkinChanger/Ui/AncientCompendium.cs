@@ -1426,6 +1426,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
             "hover",
             ContextualSkinControls.CreateStyleBox(new Color(1f, 1f, 1f, 0.04f),
                 new Color("efc85066"), 1));
+        var hoverStyle = (StyleBoxFlat)button.GetThemeStylebox("hover");
+        ModThemeRuntime.Bind(button, "inspect_accent", theme =>
+            hoverStyle.BorderColor = ModThemeRuntime.Tint(theme.AccentColor, .4f));
         button.Pressed += pressed;
         holder.AddChild(button);
     }
@@ -1641,10 +1644,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
             Text = title,
             CustomMinimumSize = new Vector2(312, 58),
             FocusMode = FocusModeEnum.All,
-            Alignment = HorizontalAlignment.Left,
+            Alignment = HorizontalAlignment.Center,
             Flat = true
         };
         ApplyEntryTheme(button, selected: false);
+        ModThemeListHover.Attach(button);
         return button;
     }
 
@@ -1666,6 +1670,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _categoryButtons[category] = button;
         row.AddChild(button);
         ApplyCategoryTheme(button, category == _selectedCategory);
+        ModThemeListHover.Attach(button);
     }
 
     private string GetCategoryText(OtherCategory category) => category switch

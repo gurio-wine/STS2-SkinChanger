@@ -51,10 +51,13 @@ internal static class ModThemeRuntime
     public static void Panel(PanelContainer panel)
     {
         var style = new StyleBoxFlat();
+        var background = ModThemeBackdrop.For(panel);
         panel.AddThemeStyleboxOverride("panel", style);
         Bind(panel, "panel", theme =>
         {
             ApplyStyle(style, ModThemeSurface.Panel, theme);
+            style.DrawCenter = false;
+            background.Update(Tint(theme.PanelColor, theme.PanelOpacity), theme.PanelBlur, theme.CornerRadius);
             BindPanelText(panel);
         });
         // Panel factories finish adding their owned labels after attaching the panel itself.
@@ -70,13 +73,16 @@ internal static class ModThemeRuntime
         // No global node-added hook, game scene traversal or per-frame discovery.
         foreach (var child in owner.GetChildren())
         {
+            if (child.Name.ToString().StartsWith("SCTheme", StringComparison.Ordinal)) continue;
             if (child is Label or Godot.Button && child is Control control &&
                 control.GetNodeOrNull<ModThemeBinding>("SCTheme_text") == null)
             {
                 var original = control.GetThemeColor("font_color");
-                // Non-body semantic labels (bundle gold, delete red, source colors) stay colored.
+                // Gold was the old accent, not a fixed semantic color. Red errors and
+                // per-provider source colors remain independent of the theme.
                 var body = original == new Color("fff6e2") || original == Colors.White;
-                TextControl(control, control.GetThemeFontSize("font_size"), preserveTextColor: !body);
+                var accent = original == new Color("efc850");
+                TextControl(control, control.GetThemeFontSize("font_size"), accent, preserveTextColor: !body && !accent);
             }
             if (child is not ModThemeBinding) BindPanelText(child);
         }
@@ -91,34 +97,62 @@ internal static class ModThemeRuntime
             ("focus", ModThemeSurface.Focus, new()), ("disabled", ModThemeSurface.Disabled, new())
         };
         foreach (var (name, _, style) in styles) button.AddThemeStyleboxOverride(name, style);
+        var background = ModThemeBackdrop.For(button);
+        void RefreshBackground()
+        {
+            if (!GodotObject.IsInstanceValid(button) || button.IsQueuedForDeletion()) return;
+            var theme = Current;
+            var mode = button.GetDrawMode();
+            var pressed = mode is BaseButton.DrawMode.Pressed or BaseButton.DrawMode.HoverPressed;
+            background.Update(ButtonTint(theme, button.IsHovered(), pressed, button.Disabled),
+                theme.ButtonBlur, theme.CornerRadius);
+        }
+        // Button.Draw is a native signal. It catches disabled/toggle states too, without
+        // a frame poll; the surface caches identical values to avoid a redraw loop.
+        if (!button.HasMeta("sc_theme_button_draw"))
+        {
+            button.SetMeta("sc_theme_button_draw", true);
+            button.Draw += RefreshBackground;
+        }
         // Mutate our own style objects instead of replacing overrides on every change. A delete
         // confirmation's red override or other explicit per-control state must keep ownership.
         Bind(button, "button", theme =>
         {
-            foreach (var (_, surface, style) in styles) ApplyStyle(style, surface, theme);
+            foreach (var (_, surface, style) in styles) { ApplyStyle(style, surface, theme); style.DrawCenter = false; }
+            RefreshBackground();
         });
         TextControl(button, fontSize);
     }
 
+    internal static Color ButtonTint(ModThemeSettings theme, bool hovered, bool pressed, bool disabled) =>
+        Tint(pressed ? theme.SelectionColor : hovered ? theme.HoverColor : theme.ButtonColor,
+            (pressed ? theme.SelectionOpacity : theme.ButtonOpacity) * (disabled ? .4f : 1));
+
     public static void TextControl(Control control, int fontSize, bool accent = false, bool preserveTextColor = false)
     {
+        control.SetMeta("sc_theme_base_font_size", fontSize);
         var lastColors = new Dictionary<string, Color>();
         var lastSize = -1;
         Bind(control, "text", theme =>
         {
             void Color(string key, Color value)
             {
-                // Keep per-entry semantic colors (yellow bundles, red destructive actions).
+                // Keep explicit semantic overrides such as red destructive actions.
                 var current = control.GetThemeColor(key);
                 if (lastColors.TryGetValue(key, out var last) && current != last) return;
                 if (current != value || !control.HasThemeColorOverride(key)) control.AddThemeColorOverride(key, value);
                 lastColors[key] = value;
             }
             if (!preserveTextColor) Color("font_color", new Color(accent ? theme.AccentColor : theme.TextColor));
-            Color("font_hover_color", new Color(theme.TextColor));
-            Color("font_focus_color", new Color(theme.TextColor));
+            Color("font_hover_color", new Color(accent ? theme.AccentColor : theme.TextColor));
+            Color("font_focus_color", new Color(accent ? theme.AccentColor : theme.TextColor));
             Color("font_pressed_color", new Color(theme.AccentColor));
             Color("font_hover_pressed_color", new Color(theme.AccentColor));
+            if (control is LineEdit)
+            {
+                Color("font_uneditable_color", new Color(accent ? theme.AccentColor : theme.TextColor));
+                Color("caret_color", new Color(theme.AccentColor));
+            }
             if (control.GetThemeColor("font_outline_color") != new Color("332f27"))
                 control.AddThemeColorOverride("font_outline_color", new Color("332f27"));
             if (control.GetThemeConstant("outline_size") != theme.TextOutline)
@@ -127,23 +161,32 @@ internal static class ModThemeRuntime
                 fontSize = control.GetThemeFontSize("font_size");
             lastSize = Math.Max(10, (int)MathF.Round(fontSize * theme.FontScale));
             if (control.GetThemeFontSize("font_size") != lastSize) control.AddThemeFontSizeOverride("font_size", lastSize);
+            ApplyTextShadow(control, theme);
         });
+    }
+
+    public static void AccentText(Control control) => TextControl(control,
+        control.HasMeta("sc_theme_base_font_size") ? control.GetMeta("sc_theme_base_font_size").AsInt32() : control.GetThemeFontSize("font_size"), accent: true);
+
+    internal static void ApplyTextShadow(Control control, ModThemeSettings theme)
+    {
+        control.AddThemeColorOverride("font_shadow_color", Tint(theme.TextShadowColor, theme.TextShadowEnabled ? theme.TextShadowOpacity : 0));
+        control.AddThemeConstantOverride("shadow_offset_x", theme.TextShadowOffsetX);
+        control.AddThemeConstantOverride("shadow_offset_y", theme.TextShadowOffsetY);
+        control.AddThemeConstantOverride("shadow_outline_size", theme.TextShadowSize);
+        if (control is Godot.Button button) ModThemeButtonShadow.Attach(button);
     }
 
     public static void ListButton(Button button, bool selected, int fontSize)
     {
         var normal = new StyleBoxEmpty();
-        var hover = new StyleBoxFlat();
         var focus = new StyleBoxFlat();
         button.AddThemeStyleboxOverride("normal", normal);
-        button.AddThemeStyleboxOverride("hover", hover);
+        button.AddThemeStyleboxOverride("hover", normal);
         button.AddThemeStyleboxOverride("pressed", focus);
         button.AddThemeStyleboxOverride("focus", focus);
         Bind(button, "row", theme =>
         {
-            ApplyStyle(hover, ModThemeSurface.Hover, theme);
-            hover.BgColor = Tint(theme.HoverColor, .15f);
-            hover.BorderWidthLeft = hover.BorderWidthRight = hover.BorderWidthTop = hover.BorderWidthBottom = 0;
             ApplyStyle(focus, ModThemeSurface.Focus, theme);
         });
         if (ContextualSkinControls.GameFont is { } font) button.AddThemeFontOverride("font", font);
@@ -171,6 +214,7 @@ internal static class ModThemeRuntime
 
     public static void ItemList(ItemList list)
     {
+        var background = ModThemeBackdrop.For(list);
         var styles = new[] { new StyleBoxFlat(), new StyleBoxFlat(), new StyleBoxFlat() };
         list.AddThemeStyleboxOverride("panel", styles[0]);
         list.AddThemeStyleboxOverride("hovered", styles[1]);
@@ -178,6 +222,8 @@ internal static class ModThemeRuntime
         Bind(list, "list", theme =>
         {
             ApplyStyle(styles[0], ModThemeSurface.Panel, theme);
+            styles[0].DrawCenter = false;
+            background.Update(Tint(theme.PanelColor, theme.PanelOpacity), theme.PanelBlur, theme.CornerRadius);
             ApplyStyle(styles[1], ModThemeSurface.Hover, theme);
             ApplyStyle(styles[2], ModThemeSurface.Selected, theme);
         });

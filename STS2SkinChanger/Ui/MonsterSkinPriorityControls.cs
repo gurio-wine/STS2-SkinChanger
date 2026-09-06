@@ -61,9 +61,7 @@ internal static partial class ContextualSkinControls
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         regionLabel.AddThemeFontSizeOverride("font_size", 23);
-        regionLabel.AddThemeColorOverride("font_color", new Color("efc850"));
-        regionLabel.AddThemeColorOverride("font_outline_color", new Color("332f27"));
-        regionLabel.AddThemeConstantOverride("outline_size", 4);
+        ModThemeRuntime.AccentText(regionLabel);
         if (GameFont != null)
         {
             regionLabel.AddThemeFontOverride("font", GameFont);
@@ -317,7 +315,7 @@ internal static partial class ContextualSkinControls
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         title.AddThemeFontSizeOverride("font_size", 25);
-        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        ModThemeRuntime.AccentText(title);
         if (GameFont != null)
         {
             title.AddThemeFontOverride("font", GameFont);
@@ -520,7 +518,7 @@ internal static partial class ContextualSkinControls
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         title.AddThemeFontSizeOverride("font_size", 25);
-        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        ModThemeRuntime.AccentText(title);
         content.AddChild(title);
 
         var createRow = new HBoxContainer { CustomMinimumSize = new Vector2(890, 44) };
@@ -576,7 +574,7 @@ internal static partial class ContextualSkinControls
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            active.AddThemeColorOverride("font_color", new Color("efc850"));
+            ModThemeRuntime.AccentText(active);
             row.AddChild(active);
             var name = new LineEdit
             {
@@ -588,7 +586,7 @@ internal static partial class ContextualSkinControls
             };
             if (preset.IsBundlePreset)
             {
-                name.AddThemeColorOverride("font_uneditable_color", new Color("efc850"));
+                ModThemeRuntime.AccentText(name);
             }
             row.AddChild(name);
             var apply = CreateMonsterPresetActionButton(

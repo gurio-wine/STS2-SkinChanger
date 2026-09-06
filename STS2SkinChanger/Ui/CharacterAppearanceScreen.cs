@@ -256,9 +256,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             ProcessMode = ProcessModeEnum.Always
         };
         ApplyTextTheme(_hint, 22);
-        _hint.AddThemeColorOverride("font_color", new Color("efc850"));
-        _hint.AddThemeColorOverride("font_outline_color", new Color("241d12"));
-        _hint.AddThemeConstantOverride("outline_size", 6);
+        ModThemeRuntime.AccentText(_hint);
         _hintLayer.AddChild(_hint);
 
         _selectionHint = new Label
@@ -277,9 +275,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             ProcessMode = ProcessModeEnum.Always
         };
         ApplyTextTheme(_selectionHint, 28);
-        _selectionHint.AddThemeColorOverride("font_color", new Color("efc850"));
-        _selectionHint.AddThemeColorOverride("font_outline_color", new Color("241d12"));
-        _selectionHint.AddThemeConstantOverride("outline_size", 7);
+        ModThemeRuntime.AccentText(_selectionHint);
         _hintLayer.AddChild(_selectionHint);
 
         _restorePlayerButton = BuildButton(string.Empty);
@@ -1960,7 +1956,11 @@ internal partial class CharacterAppearanceScreen : NSubmenu
     {
         _status.Text = text;
         _status.Visible = !string.IsNullOrWhiteSpace(text);
-        _status.Modulate = warning ? new Color("efc850") : new Color("b8e6c0");
+        ModThemeRuntime.Bind(_status, "status", theme =>
+        {
+            _status.Modulate = Colors.White;
+            _status.AddThemeColorOverride("font_color", warning ? new Color(theme.AccentColor) : new Color("b8e6c0"));
+        });
     }
 
     private void SetAppliedStatus(string? liveRefreshError)
@@ -1999,7 +1999,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         var label = BuildLabel(string.Empty, 23);
         label.CustomMinimumSize = new Vector2(0f, 38f);
         label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        label.Modulate = new Color("efc850");
+        ModThemeRuntime.AccentText(label);
         return label;
     }
 

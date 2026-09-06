@@ -1161,7 +1161,7 @@ internal static class CardSkinControls
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         title.AddThemeFontSizeOverride("font_size", 25);
-        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        ModThemeRuntime.AccentText(title);
         content.AddChild(title);
 
         var createRow = new HBoxContainer
@@ -1250,7 +1250,7 @@ internal static class CardSkinControls
                 MouseFilter = Control.MouseFilterEnum.Pass
             };
             active.AddThemeFontSizeOverride("font_size", 18);
-            active.AddThemeColorOverride("font_color", new Color("efc850"));
+            ModThemeRuntime.AccentText(active);
             row.AddChild(active);
 
             var name = new LineEdit
@@ -1264,7 +1264,7 @@ internal static class CardSkinControls
             name.AddThemeFontSizeOverride("font_size", 18);
             if (preset.IsBundlePreset)
             {
-                name.AddThemeColorOverride("font_uneditable_color", new Color("efc850"));
+                ModThemeRuntime.AccentText(name);
             }
             row.AddChild(name);
 
@@ -1470,7 +1470,7 @@ internal static class CardSkinControls
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         title.AddThemeFontSizeOverride("font_size", 25);
-        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        ModThemeRuntime.AccentText(title);
         content.AddChild(title);
 
         scroll.CustomMinimumSize = new Vector2(670, 350);

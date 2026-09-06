@@ -14,7 +14,7 @@ internal static partial class CharacterSkinBundleControls
         header.AddThemeConstantOverride("separation", 12);
         fields.AddChild(header);
         var label = CreateLabel(monsters ? ModLocalization.BundleMonsters : ModLocalization.BundleCards, 21);
-        label.AddThemeColorOverride("font_color", new Color("efc850"));
+        ModThemeRuntime.AccentText(label);
         label.CustomMinimumSize = new Vector2(250f, 42f);
         header.AddChild(label);
         var mode = CreateOptions();

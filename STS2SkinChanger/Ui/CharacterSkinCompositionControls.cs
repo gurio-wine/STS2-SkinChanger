@@ -545,6 +545,8 @@ internal static class CharacterSkinCompositionControls
         };
         label.AddThemeFontSizeOverride("font_size", fontSize);
         label.AddThemeColorOverride("font_color", color ?? new Color("fff6e2"));
+        ModThemeRuntime.TextControl(label, fontSize, color == new Color("efc850"),
+            preserveTextColor: color.HasValue && color != new Color("efc850") && color != new Color("fff6e2"));
         if (ContextualSkinControls.GameFont != null)
         {
             label.AddThemeFontOverride("font", ContextualSkinControls.GameFont);
@@ -563,7 +565,7 @@ internal static class CharacterSkinCompositionControls
             MouseDefaultCursorShape = Control.CursorShape.PointingHand
         };
         ContextualSkinControls.ApplyGameTheme(button);
-        button.AddThemeFontSizeOverride("font_size", 18);
+        ModThemeRuntime.TextControl(button, 18);
         return button;
     }
 
@@ -572,7 +574,7 @@ internal static class CharacterSkinCompositionControls
         lineEdit.AddThemeFontSizeOverride("font_size", 19);
         lineEdit.AddThemeColorOverride("font_color", new Color("fff6e2"));
         lineEdit.AddThemeColorOverride("font_placeholder_color", new Color("b9adbd"));
-        lineEdit.AddThemeColorOverride("caret_color", new Color("efc850"));
+        ModThemeRuntime.TextControl(lineEdit, 19);
         lineEdit.AddThemeStyleboxOverride(
             "normal",
             ContextualSkinControls.CreateStyleBox(
@@ -584,6 +586,8 @@ internal static class CharacterSkinCompositionControls
                 new Color("30243b"),
                 new Color("efc850"),
                 2));
+        var focusStyle = (StyleBoxFlat)lineEdit.GetThemeStylebox("focus");
+        ModThemeRuntime.Bind(lineEdit, "focus_accent", theme => focusStyle.BorderColor = new Color(theme.AccentColor));
         if (ContextualSkinControls.GameFont != null)
         {
             lineEdit.AddThemeFontOverride("font", ContextualSkinControls.GameFont);

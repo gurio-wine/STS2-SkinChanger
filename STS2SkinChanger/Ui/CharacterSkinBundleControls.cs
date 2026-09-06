@@ -167,7 +167,7 @@ internal static partial class CharacterSkinBundleControls
         var scroll = ScrollListRebuild.Begin(state.Content, state.GroupId + ":" + state.Draft.Id);
         var title = CreateLabel(state.DisplayName + " · " + ModLocalization.Get(ModText.CharacterSkinBundle), 27);
         title.HorizontalAlignment = HorizontalAlignment.Center;
-        title.AddThemeColorOverride("font_color", new Color("efc850"));
+        ModThemeRuntime.AccentText(title);
         state.Content.AddChild(title);
 
         var profileRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -268,7 +268,7 @@ internal static partial class CharacterSkinBundleControls
         status.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         status.HorizontalAlignment = HorizontalAlignment.Center;
         status.CustomMinimumSize = new Vector2(0f, 25f);
-        status.AddThemeColorOverride("font_color", new Color("efc850"));
+        ModThemeRuntime.AccentText(status);
         state.Content.AddChild(status);
         state.StatusLabel = status;
 
@@ -408,6 +408,7 @@ internal static partial class CharacterSkinBundleControls
             label.AddThemeFontOverride("font", font);
         }
         label.AddThemeFontSizeOverride("font_size", size);
+        ModThemeRuntime.TextControl(label, size);
         return label;
     }
 

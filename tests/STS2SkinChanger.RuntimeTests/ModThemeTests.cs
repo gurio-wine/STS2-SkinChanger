@@ -14,6 +14,26 @@ internal static class ModThemeTests
         var normalize = settings!.GetMethod("Normalize")!;
         object Parse(string json) => normalize.Invoke(JsonSerializer.Deserialize(json, settings), null)!;
         var defaults = Parse("{}");
+        Require(settings.GetProperty("ButtonBlur") != null && settings.GetProperty("TextShadowEnabled") != null,
+            "按钮背景必须有独立模糊，文字阴影必须可以在主题中调节。");
+        var effects = Parse("{\"ButtonBlur\":100,\"TextShadowEnabled\":true,\"TextShadowColor\":\"invalid\",\"TextShadowOpacity\":3,\"TextShadowOffsetX\":-100,\"TextShadowOffsetY\":100,\"TextShadowSize\":99}");
+        Require((float)Property(effects, "ButtonBlur") == 5 && (bool)Property(effects, "TextShadowEnabled") &&
+                (string)Property(effects, "TextShadowColor") == "#000000" && (float)Property(effects, "TextShadowOpacity") == 1 &&
+                (int)Property(effects, "TextShadowOffsetX") == -12 && (int)Property(effects, "TextShadowOffsetY") == 12 &&
+                (int)Property(effects, "TextShadowSize") == 8, "模糊和阴影参数必须归一化，避免无界渲染开销。");
+        var tint = assembly.GetType("STS2SkinChanger.Ui.ModThemeRuntime", true)!
+            .GetMethod("ButtonTint", BindingFlags.NonPublic | BindingFlags.Static);
+        Require(tint != null, "按钮状态必须统一计算本层颜色，不预先覆盖/累加面板的不透明度。");
+        var layerTheme = Parse("{\"PanelOpacity\":0.2,\"ButtonOpacity\":0.3,\"SelectionOpacity\":0.4,\"ButtonColor\":\"#123456\",\"HoverColor\":\"#654321\"}");
+        var normal = (Godot.Color)tint!.Invoke(null, [layerTheme, false, false, false])!;
+        var hover = (Godot.Color)tint.Invoke(null, [layerTheme, true, false, false])!;
+        var pressed = (Godot.Color)tint.Invoke(null, [layerTheme, true, true, false])!;
+        var disabled = (Godot.Color)tint.Invoke(null, [layerTheme, false, false, true])!;
+        Require(Math.Abs(normal.A - .3f) < .0001f && Math.Abs(hover.A - .3f) < .0001f &&
+                Math.Abs(pressed.A - .4f) < .0001f && Math.Abs(disabled.A - .12f) < .0001f && normal.R != hover.R,
+            "普通、悬停、按下与禁用只更改按钮本层，面板应由下层绘制保留。");
+        Require(Math.Abs(new Godot.Color(1, 1, 1, .2f).Blend(normal).A - .44f) < .0001f,
+            "20% 面板上叠加 30% 按钮应得到 44%，不是覆盖成 30% 或直接相加 50%。");
         var invalid = Parse("{\"PanelColor\":\"bad\",\"PanelOpacity\":-2,\"SelectionOpacity\":4,\"CornerRadius\":-3,\"FontScale\":9}");
         Require((string)Property(defaults, "PanelColor") == "#FFFFFF" && (float)Property(defaults, "PanelOpacity") < .3f,
             "初版应是更透明的白色背景。");
@@ -25,7 +45,7 @@ internal static class ModThemeTests
         var changes = 0;
         Action listener = () => changes++;
         sessionType.GetEvent("Changed")!.AddEventHandler(session, listener);
-        var draft = Parse("{\"PanelOpacity\":0.24,\"ButtonColor\":\"#123456\"}");
+        var draft = Parse("{\"PanelOpacity\":0.24,\"ButtonColor\":\"#123456\",\"ButtonBlur\":1.5,\"TextShadowEnabled\":true,\"TextShadowOffsetX\":-2}");
         sessionType.GetMethod("Preview")!.Invoke(session, [draft]);
         sessionType.GetMethod("Preview")!.Invoke(session, [draft]);
         Require(changes == 1 && (string)Property(Property(session, "Current"), "ButtonColor") == "#123456",
@@ -53,6 +73,8 @@ internal static class ModThemeTests
             var store = assembly.GetType("STS2SkinChanger.Core.ModThemeStore", true)!;
             var restored = store.GetMethod("Load")!.Invoke(null, [path])!;
             Require((string)Property(restored, "ButtonColor") == "#123456", "保存并重开必须保留主题草稿。");
+            Require((float)Property(restored, "ButtonBlur") == 1.5f && (bool)Property(restored, "TextShadowEnabled") &&
+                    (int)Property(restored, "TextShadowOffsetX") == -2, "新阴影/按钮模糊设置保存后必须完整恢复。");
             sessionType.GetMethod("Reset")!.Invoke(session, null);
             Require((string)Property(Property(session, "Current"), "ButtonColor") != "#123456", "恢复默认立即预览。");
             sessionType.GetMethod("Revert")!.Invoke(session, null);
