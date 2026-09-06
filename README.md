@@ -114,6 +114,7 @@ Windows 与 WSL 的还原和中间文件分别写入 `obj/windows`、`obj/unix`�
 - 运行时测试附加 `-- --test-combat-hud`：验证能量控件替换的交接/回滚、未启用 HUD、解绑失败及退出异常后的原版取消/解除订阅；`-- --audit-combat-hud <CznStyleUI.dll路径>` 只读核对实包的绑定接口。均不启动游戏，不能替代局内切肤、离开战斗和多人篝火流程复测。
 - 运行时测试附加 `-- --test-character-catalog`：经过完整目录构建验证角色归属，覆盖完整模型夹带其它角色头像、纯头像包、多角色包、私有目录和怪物混合包，防止后续资源映射绕过首轮筛选。`-- --audit-character-catalog <游戏PCK> <皮肤清单JSON路径> <逗号分隔的预期分组ID>` 可只读核对实包，不执行提供者初始化器、不启动游戏。
 - 运行时测试附加 `-- --test-animator-discovery`：验证角色动画补丁按游戏入口签名识别，不因角色 Mod 的同名重载、泛型辅助方法而中断整个 Mod 初始化；包含继承去重和真实 Harmony 安装检查，不执行角色动画、不启动游戏。
+- 运行时测试附加 `-- --test-bundle-sources`：验证皮肤包编辑器不把已禁用/删除的来源重新插入列表；覆盖草稿回退、关闭不改配置、重新启用、明确保存后重读、同 ID 来源迁移及角色/预设隔离，不启动游戏。
 - `dotnet run --project tests/STS2SkinChanger.FrameworkTests -c Release -- <原管理器DLL绝对路径>`：独立进程加载原 DLL，验证原生状态/缓存/保存流程、防回声、玩家作用域、配置委托、精确补登记和原功能补丁保留。仅测试引擎 IO/日志边界被替换，不写玩家配置；可同样传入 `ReleaseBeta` 和测试版 `GameAssemblyDir`。不执行原 Mod 初始化器、不启动游戏，不代表界面或局内表现已实机验证。
 
 ```powershell

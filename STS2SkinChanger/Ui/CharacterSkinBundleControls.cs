@@ -144,6 +144,13 @@ internal static class CharacterSkinBundleControls
             CharacterGroupId = state.GroupId,
             CharacterOptionId = SkinService.Config.GetSelection(state.GroupId)
         } : CharacterSkinBundlePolicy.Clone(bundle);
+        // Work on the draft only: opening/closing must preserve saved references so a
+        // temporarily disabled Mod can recover. Saving explicitly commits the fallback.
+        var optionId = SkinService.Catalog?.ResolveStoredVisualSelectionId(
+            state.GroupId, state.Draft.CharacterOptionId) ?? state.Draft.CharacterOptionId;
+        state.Draft.CharacterOptionId = SkinService.GetCharacterSkinBundleSourceOptions(state.GroupId)
+            .FirstOrDefault(option => option.Id.Equals(optionId, StringComparison.OrdinalIgnoreCase))?.Id
+            ?? SkinCatalog.BaseOptionId;
         if (bundle == null) BundlePresetPolicy.InitializeDraft(state.Draft,
             state.CardCategories.Select(category => category.Id), state.MonsterCategories.Select(category => category.Id));
         state.Dirty = bundle == null;
@@ -221,20 +228,11 @@ internal static class CharacterSkinBundleControls
             .Select(option => (option.Id, Name: ModLocalization.DisplayOptionName(option.Name))).ToList();
         options.Insert(0, (SkinCatalog.BaseOptionId, ModLocalization.Get(ModText.GameDefault)));
         var selected = options.FindIndex(option => option.Id.Equals(state.Draft.CharacterOptionId, StringComparison.OrdinalIgnoreCase));
-        if (selected < 0)
-        {
-            var hidden = SkinService.Catalog?.Groups.FirstOrDefault(group =>
-                    group.Id.Equals(state.GroupId, StringComparison.OrdinalIgnoreCase))?.Options.FirstOrDefault(option =>
-                    option.Id.Equals(state.Draft.CharacterOptionId, StringComparison.OrdinalIgnoreCase));
-            options.Add((state.Draft.CharacterOptionId, hidden != null ? ModLocalization.DisplayOptionName(hidden.Name) :
-                ModLocalization.Get(ModText.CharacterSkinSourceUnavailable) + " · " + state.Draft.CharacterOptionId));
-            selected = options.Count - 1;
-        }
         foreach (var option in options)
         {
             skins.AddItem(option.Name);
         }
-        skins.Select(selected);
+        skins.Select(Math.Max(0, selected));
         skins.ItemSelected += index => { state.Draft.CharacterOptionId = options[(int)index].Id; MarkDirty(state); };
         skinRow.AddChild(skins);
 
