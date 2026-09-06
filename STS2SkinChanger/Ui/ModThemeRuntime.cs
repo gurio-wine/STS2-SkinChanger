@@ -74,6 +74,10 @@ internal static class ModThemeRuntime
         foreach (var child in owner.GetChildren())
         {
             if (child.Name.ToString().StartsWith("SCTheme", StringComparison.Ordinal)) continue;
+            if (child is LineEdit input && input.GetNodeOrNull<ModThemeBinding>("SCTheme_input") == null)
+                Input(input, input.HasMeta("sc_theme_base_font_size")
+                    ? input.GetMeta("sc_theme_base_font_size").AsInt32() : input.GetThemeFontSize("font_size"),
+                    input.GetThemeColor("font_color") == Accent);
             if (child is Label or Godot.Button && child is Control control &&
                 control.GetNodeOrNull<ModThemeBinding>("SCTheme_text") == null)
             {
@@ -127,6 +131,38 @@ internal static class ModThemeRuntime
     internal static Color ButtonTint(ModThemeSettings theme, bool hovered, bool pressed, bool disabled) =>
         Tint(pressed ? theme.SelectionColor : hovered ? theme.HoverColor : theme.ButtonColor,
             (pressed ? theme.SelectionOpacity : theme.ButtonOpacity) * (disabled ? .4f : 1));
+
+    public static void Input(LineEdit input, int fontSize, bool accent = false)
+    {
+        var background = ModThemeBackdrop.For(input);
+        var styles = new (string Name, ModThemeSurface Surface, StyleBoxFlat Style)[]
+        {
+            ("normal", ModThemeSurface.Button, new()), ("read_only", ModThemeSurface.Disabled, new()),
+            ("focus", ModThemeSurface.Focus, new())
+        };
+        foreach (var (name, _, style) in styles) input.AddThemeStyleboxOverride(name, style);
+        void RefreshBackground()
+        {
+            if (!GodotObject.IsInstanceValid(input) || input.IsQueuedForDeletion()) return;
+            var theme = Current;
+            background.Update(ButtonTint(theme, false, false, !input.Editable), theme.ButtonBlur, theme.CornerRadius);
+        }
+        if (!input.HasMeta("sc_theme_input_draw"))
+        {
+            input.SetMeta("sc_theme_input_draw", true);
+            input.Draw += RefreshBackground;
+        }
+        Bind(input, "input", theme =>
+        {
+            foreach (var (_, surface, style) in styles) { ApplyStyle(style, surface, theme); style.DrawCenter = false; }
+            input.AddThemeColorOverride("font_placeholder_color", new Color(theme.TextColor));
+            input.AddThemeColorOverride("selection_color", Tint(theme.SelectionColor, theme.SelectionOpacity));
+            input.AddThemeColorOverride("font_selected_color", new Color(accent ? theme.AccentColor : theme.TextColor));
+            RefreshBackground();
+        });
+        if (ContextualSkinControls.GameFont is { } font) input.AddThemeFontOverride("font", font);
+        TextControl(input, fontSize, accent);
+    }
 
     public static void TextControl(Control control, int fontSize, bool accent = false, bool preserveTextColor = false)
     {

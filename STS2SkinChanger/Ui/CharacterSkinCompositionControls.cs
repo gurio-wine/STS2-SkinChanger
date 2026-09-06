@@ -571,27 +571,7 @@ internal static class CharacterSkinCompositionControls
 
     internal static void ApplyLineEditTheme(LineEdit lineEdit)
     {
-        lineEdit.AddThemeFontSizeOverride("font_size", 19);
-        lineEdit.AddThemeColorOverride("font_color", new Color("fff6e2"));
-        lineEdit.AddThemeColorOverride("font_placeholder_color", new Color("b9adbd"));
-        ModThemeRuntime.TextControl(lineEdit, 19);
-        lineEdit.AddThemeStyleboxOverride(
-            "normal",
-            ContextualSkinControls.CreateStyleBox(
-                new Color("30243b"),
-                new Color("79547e")));
-        lineEdit.AddThemeStyleboxOverride(
-            "focus",
-            ContextualSkinControls.CreateStyleBox(
-                new Color("30243b"),
-                new Color("efc850"),
-                2));
-        var focusStyle = (StyleBoxFlat)lineEdit.GetThemeStylebox("focus");
-        ModThemeRuntime.Bind(lineEdit, "focus_accent", theme => focusStyle.BorderColor = new Color(theme.AccentColor));
-        if (ContextualSkinControls.GameFont != null)
-        {
-            lineEdit.AddThemeFontOverride("font", ContextualSkinControls.GameFont);
-        }
+        ModThemeRuntime.Input(lineEdit, 19);
     }
 
     private sealed class EditorState(

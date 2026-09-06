@@ -531,7 +531,7 @@ internal static partial class ContextualSkinControls
             CustomMinimumSize = new Vector2(600, 40),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
-        newName.AddThemeFontSizeOverride("font_size", 18);
+        ModThemeRuntime.Input(newName, 18);
         createRow.AddChild(newName);
         var save = CreateMonsterPresetActionButton(ModLocalization.Get(ModText.SaveCurrentPreset), 220);
         save.Pressed += () => QueueMonsterPresetChange(
@@ -584,10 +584,7 @@ internal static partial class ContextualSkinControls
                 CustomMinimumSize = new Vector2(310, 38),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };
-            if (preset.IsBundlePreset)
-            {
-                ModThemeRuntime.AccentText(name);
-            }
+            ModThemeRuntime.Input(name, 18, preset.IsBundlePreset);
             row.AddChild(name);
             var apply = CreateMonsterPresetActionButton(
                 preset.Active ? ModLocalization.Get(ModText.ActiveCardPreset) : ModLocalization.Get(ModText.ApplyCardPreset), 112);

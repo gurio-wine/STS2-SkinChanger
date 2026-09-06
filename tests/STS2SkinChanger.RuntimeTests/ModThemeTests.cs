@@ -9,6 +9,9 @@ internal static class ModThemeTests
     {
         var assembly = typeof(Entry).Assembly;
         VerifyNativeLifecycleWiring(assembly);
+        VerifyBackdropCoordinates(assembly);
+        VerifyInputThemeWiring(assembly);
+        DragHandleHoverTests.Run();
         var settings = assembly.GetType("STS2SkinChanger.Core.ModThemeSettings");
         Require(settings != null, "主题需要独立配置，不得把样式实验写进皮肤选择或对局存档。");
         var normalize = settings!.GetMethod("Normalize")!;
@@ -93,6 +96,64 @@ internal static class ModThemeTests
     }
 
     private static object Property(object target, string name) => target.GetType().GetProperty(name)!.GetValue(target)!;
+
+    private static void VerifyBackdropCoordinates(Assembly assembly)
+    {
+        var type = assembly.GetType("STS2SkinChanger.Ui.ModThemeBackdrop", true)!;
+        var geometry = HarmonyLib.AccessTools.Method(type, "CopyGeometry");
+        Require(geometry != null, "模糊必须使用当前视口的实际取屏区域，不能把局部矩形当屏幕矩形。");
+        foreach (var transform in new[]
+        {
+            new Godot.Transform2D(0, new Godot.Vector2(1500, 100)),
+            new Godot.Transform2D(new(1.5f, 0), new(0, 1.5f), new(320, 180)),
+            new Godot.Transform2D(.3f, new Godot.Vector2(600, 260))
+        })
+        {
+            var size = new Godot.Vector2(180, 40);
+            var (rect, copyTransform) = ((Godot.Rect2, Godot.Transform2D))geometry!.Invoke(null, [size, transform, 8f])!;
+            var points = new[] { Godot.Vector2.Zero, new Godot.Vector2(size.X, 0), size, new Godot.Vector2(0, size.Y) }
+                .Select(point => transform * point).ToArray();
+            Require(Math.Abs(rect.Position.X - (MathF.Floor(points.Min(p => p.X)) - 8)) < .001f &&
+                    Math.Abs(rect.End.Y - (MathF.Ceiling(points.Max(p => p.Y)) + 8)) < .001f &&
+                    points.All(rect.HasPoint), "平移、缩放、旋转后的取屏矩形必须覆盖实际控件，并在屏幕像素中留出采样边距。");
+            var identity = transform * copyTransform;
+            Require(identity.X.DistanceTo(Godot.Vector2.Right) < .001f &&
+                    identity.Y.DistanceTo(Godot.Vector2.Down) < .001f && identity.Origin.Length() < .001f,
+                "取屏节点本身必须使用视口坐标，避免不同渲染后端再次变换矩形。");
+        }
+        Require(Calls(HarmonyLib.AccessTools.Method(type, "SyncCopy"), typeof(Godot.CanvasItem), "GetViewportTransform") &&
+                Calls(HarmonyLib.AccessTools.Method(type, "SyncCopy"), typeof(Godot.CanvasItem), "GetGlobalTransform"),
+            "取屏坐标必须包含视口缩放和父级变换，不能只取初始位置。");
+        Require(Calls(HarmonyLib.AccessTools.Method(type, "TrackCopy"), typeof(Godot.RenderingServer), "add_FramePreDraw") &&
+                Calls(HarmonyLib.AccessTools.Method(type, "StopTrackingCopy"), typeof(Godot.RenderingServer), "remove_FramePreDraw"),
+            "可见模糊层在绘制前跟随移动；隐藏或离树后必须停止更新。");
+        var constructor = type.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single();
+        Require(HarmonyLib.PatchProcessor.GetOriginalInstructions(constructor).Count(i =>
+                i.operand is MethodInfo called && called.DeclaringType == typeof(Godot.Node) && called.Name == "add_TreeEntered") == 2,
+            "离树创建的控件必须同时接入父项和背景的原生入树事件，不能因子项尚未入树而永远停用模糊。");
+    }
+
+    private static bool Calls(MethodBase method, Type type, string name) =>
+        HarmonyLib.PatchProcessor.GetOriginalInstructions(method).Any(i => i.operand is MethodInfo called &&
+            called.DeclaringType == type && called.Name == name);
+
+    private static void VerifyInputThemeWiring(Assembly assembly)
+    {
+        var runtime = assembly.GetType("STS2SkinChanger.Ui.ModThemeRuntime", true)!;
+        Require(HarmonyLib.AccessTools.Method(runtime, "Input") != null,
+            "命名输入框需要完整的公共主题接入，不能只改字体/焦点边框。");
+        var composition = assembly.GetType("STS2SkinChanger.Ui.CharacterSkinCompositionControls", true)!;
+        Require(Calls(HarmonyLib.AccessTools.Method(composition, "ApplyLineEditTheme"), runtime, "Input"),
+            "皮肤合并和皮肤包的命名框必须采用公共主题。");
+        foreach (var (name, factory) in new[] { ("CardSkinControls", "BuildPresetOverlay"),
+                     ("ContextualSkinControls", "BuildMonsterPresetOverlay") })
+        {
+            var owner = assembly.GetType("STS2SkinChanger.Ui." + name, true)!;
+            Require(HarmonyLib.PatchProcessor.GetOriginalInstructions(HarmonyLib.AccessTools.Method(owner, factory))
+                    .Count(i => i.operand is MethodInfo called && called.DeclaringType == runtime && called.Name == "Input") == 2,
+                name + " 的新建/重命名预设框必须显式接入公共主题。");
+        }
+    }
 
     private static void VerifyNativeLifecycleWiring(Assembly assembly)
     {

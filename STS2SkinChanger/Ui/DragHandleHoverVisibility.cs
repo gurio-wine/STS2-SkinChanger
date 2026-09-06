@@ -28,7 +28,7 @@ internal partial class DragHandleHoverVisibility : Node
             _target = target,
             _handle = handle,
             _isDragging = isDragging,
-            _shownColor = handle.SelfModulate
+            _shownColor = handle.Modulate
         };
         // Keep the handle in the container and hittable. Visible=false would shift the button
         // under the pointer and make moving from the button onto its grip flicker.
@@ -106,7 +106,7 @@ internal partial class DragHandleHoverVisibility : Node
         ApplyShown(ShouldReveal(visible, focused, dragging, Input.IsMouseButtonPressed(MouseButton.Left), over));
         if (_pointerSeen && _diagnosticsLeft > 0)
         {
-            var status = $"hover={hovered?.Name}, visible={visible}, focus={focused}, over={over}, drag={dragging}, alpha={_handle.SelfModulate.A}";
+            var status = $"hover={hovered?.Name}, visible={visible}, focus={focused}, over={over}, drag={dragging}, alpha={_handle.Modulate.A * _handle.SelfModulate.A}";
             if (status != _lastDiagnostic)
             {
                 _lastDiagnostic = status;
@@ -125,7 +125,9 @@ internal partial class DragHandleHoverVisibility : Node
         if (!GodotObject.IsInstanceValid(_handle)) return;
         var color = _shownColor;
         if (!shown) color.A = 0;
-        if (_handle.SelfModulate != color) _handle.SelfModulate = color;
+        // Theme surfaces and text shadows are children. Hide the whole drawing group,
+        // preserving SelfModulate (e.g. the model preview grip's original translucency).
+        if (_handle.Modulate != color) _handle.Modulate = color;
     }
 
     private void OnVisibilityChanged()

@@ -31,9 +31,12 @@ internal static class DragHandleHoverTests
                 Calls(AccessTools.Method(cards, "Attach"), hover, "Attach"),
             "选角/合并/皮肤包/预览与单卡选择器必须共用相同悬停规则。");
         var apply = AccessTools.Method(hover, "ApplyShown");
-        Require(Calls(apply, typeof(CanvasItem), "set_SelfModulate") &&
+        Require(Calls(apply, typeof(CanvasItem), "set_Modulate") &&
+                !Calls(apply, typeof(CanvasItem), "set_SelfModulate") &&
                 !Calls(apply, typeof(CanvasItem), "set_Visible"),
-            "隐藏拖拽柄只能改变绘制透明度，不能导致容器重排或失去鼠标命中区。");
+            "隐藏拖拽柄必须同时隐藏主题背景/阴影子节点，且不能重排或失去鼠标命中区。");
+        Require(Calls(AccessTools.Method(hover, "Attach"), typeof(CanvasItem), "get_Modulate"),
+            "显示时恢复整组原始颜色；不能把预览柄的 SelfModulate 透明度再次相乘。");
         Console.WriteLine("Drag handle hover passed: shared selectors, pointer/drag lifetime and stable layout.");
     }
 

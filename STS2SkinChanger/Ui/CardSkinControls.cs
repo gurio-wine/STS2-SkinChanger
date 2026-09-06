@@ -1178,7 +1178,7 @@ internal static class CardSkinControls
             CustomMinimumSize = new Vector2(600, 40),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
-        newName.AddThemeFontSizeOverride("font_size", 18);
+        ModThemeRuntime.Input(newName, 18);
         createRow.AddChild(newName);
         var save = new Button
         {
@@ -1261,11 +1261,7 @@ internal static class CardSkinControls
                 CustomMinimumSize = new Vector2(310, 38),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };
-            name.AddThemeFontSizeOverride("font_size", 18);
-            if (preset.IsBundlePreset)
-            {
-                ModThemeRuntime.AccentText(name);
-            }
+            ModThemeRuntime.Input(name, 18, preset.IsBundlePreset);
             row.AddChild(name);
 
             var apply = CreatePresetActionButton(

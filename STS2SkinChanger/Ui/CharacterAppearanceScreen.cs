@@ -1990,7 +1990,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             UpdateOnTextChanged = true,
             Suffix = " px"
         };
-        ApplyTextTheme(spinBox.GetLineEdit(), 20);
+        ModThemeRuntime.Input(spinBox.GetLineEdit(), 20);
         return spinBox;
     }
 
