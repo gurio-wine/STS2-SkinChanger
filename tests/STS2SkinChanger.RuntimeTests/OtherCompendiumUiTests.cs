@@ -57,6 +57,18 @@ internal static class OtherCompendiumUiTests
                 !Expand(false, false, false, true) && !Expand(true, true, true, false),
             "子项悬停、下拉菜单和键盘操作保持展开，离开收起，商店库存覆盖期间不能抢输入。");
         var controller = assembly.GetType("STS2SkinChanger.Ui.CompendiumSidebarDrawer", true)!;
+        var idleX = AccessTools.Method(drawer, "IdleX");
+        Require(idleX != null, "收起侧栏需要独立的 5%–10% 缓动边界。");
+        Require((float)idleX!.Invoke(null, [1920f, 380f, false])! == 1901f &&
+                (float)idleX.Invoke(null, [1920f, 380f, true])! == 1882f,
+            "缓动应以面板宽度为基准，在 19–38 像素露出之间变化。");
+        Require(Calls(AccessTools.Method(controller, "StartIdle"), typeof(Tween), "SetLoops") &&
+                Calls(AccessTools.Method(controller, "Disconnect"), controller, "StopAnimation"),
+            "缓动必须使用可取消的 Tween，退出时不能残留循环。");
+        var contextual = assembly.GetType("STS2SkinChanger.Ui.ContextualSkinControls", true)!;
+        Require(Calls(AccessTools.Method(contextual, "ApplyCompactButtonTheme"),
+            assembly.GetType("STS2SkinChanger.Ui.ModThemeRuntime", true)!, "Button"),
+            "怪物优先级、预设、重置的共用按钮样式必须绑定实时主题。");
         Require(Calls(AccessTools.Method(controller, "Connect"), typeof(Window), "add_WindowInput") &&
                 Calls(AccessTools.Method(controller, "Disconnect"), typeof(Window), "remove_WindowInput"),
             "面板只在可见时监听原生输入，隐藏和退出必须停止监听，不增加永久逐帧轮询。");

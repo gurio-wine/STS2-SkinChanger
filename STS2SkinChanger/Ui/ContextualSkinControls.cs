@@ -516,24 +516,11 @@ internal static partial class ContextualSkinControls
 
     private static void ApplyCompactButtonTheme(Button button)
     {
-        button.AddThemeColorOverride("font_color", new Color("fff6e2"));
-        button.AddThemeColorOverride("font_hover_color", Colors.White);
-        button.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
-        button.AddThemeFontSizeOverride("font_size", 19);
         if (GameFont != null)
         {
             button.AddThemeFontOverride("font", GameFont);
         }
-
-        button.AddThemeStyleboxOverride(
-            "normal",
-            CreateStyleBox(new Color("3c5f82"), new Color("7394ad"), 1));
-        button.AddThemeStyleboxOverride(
-            "hover",
-            CreateStyleBox(new Color("4b7392"), new Color("afcdde"), 1));
-        button.AddThemeStyleboxOverride(
-            "pressed",
-            CreateStyleBox(new Color("45104e"), new Color("efc850"), 2));
+        ModThemeRuntime.Button(button, 19);
     }
 
     private static HBoxContainer BuildSelector()

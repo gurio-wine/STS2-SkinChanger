@@ -8,6 +8,8 @@ internal static class CompendiumSidebarPolicy
 {
     public static float X(float viewportWidth, float panelWidth, bool expanded) =>
         viewportWidth - panelWidth * (expanded ? 1f : .1f);
+    public static float IdleX(float viewportWidth, float panelWidth, bool outer) =>
+        viewportWidth - panelWidth * (outer ? .1f : .05f);
     public static bool ShouldExpand(bool pointerInside, bool popupOpen, bool keyboardFocus, bool allowed) =>
         allowed && (pointerInside || popupOpen || keyboardFocus);
 }
@@ -23,6 +25,8 @@ internal sealed class CompendiumSidebarDrawer
     private Tween? _tween;
     private bool _expanded;
     private bool _keyboard;
+    private bool _idleAllowed;
+    private int _animationVersion;
 
     public CompendiumSidebarDrawer(Control panel, Func<bool> canInteract)
     {
@@ -58,8 +62,7 @@ internal sealed class CompendiumSidebarDrawer
     {
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= OnInput;
         _window = null;
-        _tween?.Kill();
-        _tween = null;
+        StopAnimation();
         _openPopups.Clear();
         _expanded = false;
         _keyboard = false;
@@ -81,18 +84,44 @@ internal sealed class CompendiumSidebarDrawer
         var expanded = CompendiumSidebarPolicy.ShouldExpand(
             _panel.GetGlobalRect().HasPoint(_panel.GetGlobalMousePosition()), _openPopups.Count > 0,
             _keyboard && focus != null && (_panel == focus || _panel.IsAncestorOf(focus)), _canInteract());
-        if (expanded == _expanded) return;
+        var idleAllowed = _canInteract() && !Instant;
+        if (expanded == _expanded && idleAllowed == _idleAllowed) return;
         _expanded = expanded;
-        _tween?.Kill();
+        _idleAllowed = idleAllowed;
+        StopAnimation();
         var target = TargetPosition();
         // Respect the game's instant-animation preference; don't introduce another setting.
-        if (SaveManager.Instance?.PrefsSave?.FastMode == FastModeType.Instant)
+        if (Instant)
         {
             _panel.Position = target;
             return;
         }
         _tween = _panel.CreateTween().SetIgnoreTimeScale().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
         _tween.TweenProperty(_panel, "position", target, expanded ? .20 : .15);
+        var version = _animationVersion;
+        if (!expanded) _tween.TweenCallback(Callable.From(() =>
+        {
+            if (version == _animationVersion) StartIdle();
+        }));
+    }
+
+    private static bool Instant => SaveManager.Instance?.PrefsSave?.FastMode == FastModeType.Instant;
+
+    private void StopAnimation()
+    {
+        _animationVersion++;
+        _tween?.Kill();
+        _tween = null;
+    }
+
+    private void StartIdle()
+    {
+        if (_window == null || _expanded || !_panel.IsVisibleInTree() || !_canInteract() || Instant) return;
+        StopAnimation();
+        _tween = _panel.CreateTween().SetIgnoreTimeScale().SetLoops()
+            .SetEase(Tween.EaseType.InOut).SetTrans(Tween.TransitionType.Sine);
+        _tween.TweenProperty(_panel, "position:x", CompendiumSidebarPolicy.IdleX(_parent.Size.X, _panel.Size.X, false), 1.8);
+        _tween.TweenProperty(_panel, "position:x", CompendiumSidebarPolicy.IdleX(_parent.Size.X, _panel.Size.X, true), 1.8);
     }
 
     private Vector2 TargetPosition() => new(
@@ -101,8 +130,9 @@ internal sealed class CompendiumSidebarDrawer
     private void Reposition()
     {
         if (!GodotObject.IsInstanceValid(_panel) || !_panel.IsInsideTree()) return;
-        _tween?.Kill();
-        _tween = null;
+        StopAnimation();
         _panel.Position = TargetPosition();
+        _idleAllowed = _canInteract() && !Instant;
+        StartIdle();
     }
 }

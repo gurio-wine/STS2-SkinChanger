@@ -827,7 +827,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
         };
         _entryList.AddThemeConstantOverride("separation", 10);
         ModThemeListHover.AddScrollList(scroll, _entryList);
-        _sidebarDrawer = new CompendiumSidebarDrawer(sidebar, () => !_merchantInventoryOpen);
+        BuildEventPriorityControls();
+        _sidebarDrawer = new CompendiumSidebarDrawer(sidebar, () => !_merchantInventoryOpen && !_eventPriorityOverlay.Visible);
         _sidebarDrawer.KeepOpenFor(_eventRegionSelector);
 
         _compendiumBackButton = PreloadManager.Cache
@@ -1863,8 +1864,15 @@ internal partial class AncientCompendiumScreen : NSubmenu
             return;
         }
 
+        var eventCategory = EventSkinPolicy.IsEventGroup(group.Id) && SkinService.HasEventSkinCategory(group.Id);
+        if (eventCategory)
+        {
+            _skinDropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
+            _skinDropdown.SetItemMetadata(0, SkinService.InheritEventSelectionId);
+        }
+        var baseIndex = _skinDropdown.ItemCount;
         _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
-        _skinDropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
+        _skinDropdown.SetItemMetadata(baseIndex, SkinCatalog.BaseOptionId);
         foreach (var option in group.Options)
         {
             var index = _skinDropdown.ItemCount;
@@ -1872,7 +1880,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             _skinDropdown.SetItemMetadata(index, option.Id);
         }
 
-        var current = SkinService.Config.GetSelection(group.Id);
+        var current = eventCategory ? SkinService.GetEventOverrideSelection(group.Id) : SkinService.Config.GetSelection(group.Id);
         var selectedIndex = Enumerable.Range(0, _skinDropdown.ItemCount)
             .FirstOrDefault(index => _skinDropdown.GetItemMetadata(index).AsString()
                 .Equals(current, StringComparison.OrdinalIgnoreCase));
@@ -1910,7 +1918,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         {
             var entry = _selectedOther;
             var request = ++_otherPreviewRequest;
-            var expectedOption = optionId;
+            var expectedOption = SkinService.Config.GetSelection(groupId);
             Callable.From(() =>
             {
                 // Multiple dropdown clicks can queue several deferred rebuilds. An old rebuild

@@ -1127,6 +1127,7 @@ internal static partial class SkinService
                     Catalog,
                     GetVisualSelections());
                 InitializeMonsterSkinCategoriesAfterModels();
+                InitializeEventSkinCategoriesAfterModels();
                 var cards = ModelDb.AllCards.ToArray();
                 var entries = cards.Select(card => new CardCatalogEntry(
                         card.GetType().Name,
@@ -1541,6 +1542,8 @@ internal static partial class SkinService
 
     public static bool ApplySelection(string groupId, string optionId)
     {
+        if (optionId.Equals(InheritEventSelectionId, StringComparison.OrdinalIgnoreCase))
+            return FollowEventCategoryPriority(groupId);
         // The category entry is an instruction, not a resource provider. Keep this in the
         // shared selection path so queued in-run choices retain their follow-category state.
         if (optionId.Equals(InheritMonsterSelectionId, StringComparison.OrdinalIgnoreCase))
@@ -1580,12 +1583,16 @@ internal static partial class SkinService
             var previousVisualProviderPriority = Config.VisualProviderPriority.ToList();
             var previousFollowingGroups = Config.MonsterGroupsFollowingCategory.ToList();
             var previousManualGroups = Config.MonsterGroupsWithManualSelection.ToList();
+            var previousEventManualGroups = Config.EventSkinPriorities.ManualGroups.ToList();
             var previousActiveMonsterPresets = new Dictionary<string, string>(
                 Config.ActiveMonsterSkinPresets,
                 StringComparer.OrdinalIgnoreCase);
             var affectedGroups = updates.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             try
             {
+                foreach (var id in affectedGroups.Where(EventSkinPolicy.IsEventGroup))
+                    if (!Config.EventSkinPriorities.ManualGroups.Contains(id, StringComparer.OrdinalIgnoreCase))
+                        Config.EventSkinPriorities.ManualGroups.Add(id);
                 foreach (var categoryId in Config.MonsterSkinCategoryGroups
                              .Where(pair => pair.Value.Any(affectedGroups.Contains))
                              .Select(pair => pair.Key))
@@ -1627,6 +1634,7 @@ internal static partial class SkinService
                 Config.VisualProviderPriority = previousVisualProviderPriority;
                 Config.MonsterGroupsFollowingCategory = previousFollowingGroups;
                 Config.MonsterGroupsWithManualSelection = previousManualGroups;
+                Config.EventSkinPriorities.ManualGroups = previousEventManualGroups;
                 Config.ActiveMonsterSkinPresets = previousActiveMonsterPresets;
 
                 TryRestoreOverlay(affectedGroups, cardOverlay: false);

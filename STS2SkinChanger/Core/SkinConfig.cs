@@ -116,6 +116,8 @@ internal sealed class SkinConfig
 
     public int MonsterPriorityDefaultsVersion { get; set; }
 
+    public EventSkinPrioritySettings EventSkinPriorities { get; set; } = new();
+
     public Dictionary<string, Dictionary<string, float>> MonsterScales { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -183,6 +185,7 @@ internal sealed class SkinConfig
         copy.EnabledMonsterSkinPriorityCategories = EnabledMonsterSkinPriorityCategories.ToList();
         copy.MonsterGroupsFollowingCategory = MonsterGroupsFollowingCategory.ToList();
         copy.MonsterGroupsWithManualSelection = MonsterGroupsWithManualSelection.ToList();
+        copy.EventSkinPriorities = EventSkinPriorities.Clone();
         return copy;
     }
 
@@ -244,6 +247,8 @@ internal sealed class SkinConfig
     private static SkinConfig Deserialize(string json)
     {
         var config = JsonSerializer.Deserialize<SkinConfig>(json, JsonOptions) ?? new SkinConfig();
+        config.EventSkinPriorities ??= new();
+        config.EventSkinPriorities.Normalize();
         config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         config.Selections = new Dictionary<string, string>(
             config.Selections,

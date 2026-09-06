@@ -12,6 +12,7 @@ internal static class EventSkinTests
     internal static void Run()
     {
         OtherCompendiumUiTests.Run();
+        EventPriorityTests.Run();
         var previewPolicy = Assembly.GetType("STS2SkinChanger.Core.EventPreviewPolicy");
         Require(previewPolicy != null, "预览必须有不依赖事件执行逻辑的页面索引。");
         var pages = (string[])previewPolicy!.GetMethod("Pages")!.Invoke(null,
@@ -64,6 +65,7 @@ internal static class EventSkinTests
             WritePack(gamePath, baseline);
             WritePack(skinPath, provider);
             using var catalog = Build(gamePath, skinPath);
+            EventPriorityTests.CheckCatalog(catalog);
             var groups = Items(Property(catalog, "Groups")).ToDictionary(g => (string)Property(g, "Id"));
             Require(groups.ContainsKey("event:alpha"), "普通事件图片必须创建独立皮肤分组。");
             Require(groups.ContainsKey("event:text_only"), "只有正文修改的事件也必须可选择。");

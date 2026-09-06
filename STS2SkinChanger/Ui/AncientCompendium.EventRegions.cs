@@ -55,7 +55,7 @@ internal partial class AncientCompendiumScreen
         _eventRegionSelector.Visible = _selectedCategory == OtherCategory.Events;
         // Event controls occupy the unused lower-left, not the native text/options column.
         _skinSelector.Position = _selectedCategory == OtherCategory.Events ? new Vector2(70, 940) : new Vector2(818, 826);
-        if (_selectedCategory != OtherCategory.Events) return;
+        if (_selectedCategory != OtherCategory.Events) { RefreshEventPriorityHeader(); return; }
         var acts = ModelDb.Acts.ToArray();
         var groups = EventRegionPolicy.Group(EventCompendiumPreview.Events().Select(e => e.Id.Entry),
             acts.ToDictionary(a => a.Id.Entry, a => a.AllEvents.Select(e => e.Id.Entry)),
@@ -80,5 +80,6 @@ internal partial class AncientCompendiumScreen
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
         finally { _refreshingEventRegions = false; }
+        RefreshEventPriorityHeader();
     }
 }
