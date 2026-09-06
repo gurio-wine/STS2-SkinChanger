@@ -1133,7 +1133,10 @@ internal static partial class SkinService
                         card.PortraitPath,
                         GetCardPoolGroupId(card),
                         GetCardCatalogGroupId(card),
-                        GetCardFilterGroupId(card)))
+                        GetCardFilterGroupId(card))
+                    {
+                        IsCharacterPool = IsCharacterCardPool(card)
+                    })
                     .ToArray();
 
                 Catalog.FinalizeCardGroups(entries);
@@ -1700,7 +1703,7 @@ internal static partial class SkinService
         }
     }
 
-    public static IReadOnlyList<CardSkinSourceState> GetCardSkinSources(CardModel card)
+    public static IReadOnlyList<CardSkinSourceState> GetCardSkinSources(CardModel card, string? displayGroupId = null)
     {
         lock (Sync)
         {
@@ -1711,7 +1714,9 @@ internal static partial class SkinService
             }
 
             var current = GetEffectiveCardSelection(card, lookup);
-            return GetCardPriorityEntriesInternal(lookup.Group)
+            var displayGroup = lookup.PriorityGroups.FirstOrDefault(group => group.Id.Equals(
+                displayGroupId, StringComparison.OrdinalIgnoreCase)) ?? lookup.Group;
+            return GetCardPriorityEntriesInternal(displayGroup)
                 .Select((entry, colorIndex) => (Entry: entry, ColorIndex: colorIndex))
                 .Where(pair =>
                     lookup.OptionsById.ContainsKey(pair.Entry.OptionId))
@@ -2733,6 +2738,19 @@ internal static partial class SkinService
     private static string GetEffectiveCardSelection(
         CardModel card,
         CardLookup lookup)
+        => ResolveCardSelection(card, lookup).OptionId;
+
+    public static string? GetCardInheritedGroupId(CardModel card)
+    {
+        lock (Sync)
+        {
+            return ResolveCardSelection(card, GetCardLookup(card)).GroupId;
+        }
+    }
+
+    private static (string OptionId, string? GroupId) ResolveCardSelection(
+        CardModel card,
+        CardLookup lookup)
     {
         var cardSelectionKey = IndividualCardSelectionKey(card);
         var individual = CardPreviewSelections.TryGetValue(cardSelectionKey, out var previewSelection)
@@ -2740,28 +2758,37 @@ internal static partial class SkinService
             : Config.Selections.GetValueOrDefault(cardSelectionKey, InheritCardSelectionId);
         if (individual.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
-            return individual;
+            return (individual, null);
         }
 
         if (lookup.OptionsById.ContainsKey(individual))
         {
-            return individual;
+            return (individual, null);
         }
 
-        if (lookup.Group == null)
+        HashSet<string>? excluded = null;
+        for (var index = 0; index < lookup.PriorityGroups.Count; index++)
         {
-            return SkinCatalog.BaseOptionId;
-        }
-
-        foreach (var entry in GetCardPriorityEntriesInternal(lookup.Group).Where(entry => entry.Enabled))
-        {
-            if (lookup.OptionsById.TryGetValue(entry.OptionId, out var option))
+            var group = lookup.PriorityGroups[index];
+            var entries = GetCardPriorityEntriesInternal(group);
+            foreach (var entry in entries)
             {
-                return option.Option.Id;
+                if (entry.Enabled && excluded?.Contains(entry.OptionId) != true &&
+                    lookup.OptionsById.TryGetValue(entry.OptionId, out var option))
+                {
+                    return (option.Option.Id, group.Id);
+                }
+            }
+            // All original is an explicit stop, not a missing-coverage fallback.
+            if (entries.Count > 0 && entries.All(entry => !entry.Enabled))
+                return (SkinCatalog.BaseOptionId, group.Id);
+            if (index + 1 < lookup.PriorityGroups.Count)
+            {
+                excluded ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                excluded.UnionWith(entries.Where(entry => !entry.Enabled).Select(entry => entry.OptionId));
             }
         }
-
-        return SkinCatalog.BaseOptionId;
+        return (SkinCatalog.BaseOptionId, null);
     }
 
     public static CardPresentationDefinition? GetCardPresentation(CardModel card)
@@ -3205,9 +3232,8 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
-            return GetCardLookup(card).GroupId.Equals(
-                groupId,
-                StringComparison.OrdinalIgnoreCase);
+            return GetCardLookup(card).PriorityGroups.Any(group => group.Id.Equals(
+                groupId, StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -3220,7 +3246,9 @@ internal static partial class SkinService
         var filterGroupId = GetCardFilterGroupId(card);
         string groupId;
         if (!filterGroupId.Equals(poolGroupId, StringComparison.OrdinalIgnoreCase) &&
-            CardGroupAffectsCardUncached(filterGroupId, card))
+            ((filterGroupId.Equals("ancients", StringComparison.OrdinalIgnoreCase) &&
+              Catalog?.CardGroups.Any(group => group.Id.Equals("ancients", StringComparison.OrdinalIgnoreCase)) == true) ||
+             CardGroupAffectsCardUncached(filterGroupId, card)))
         {
             groupId = filterGroupId;
         }
@@ -3255,6 +3283,14 @@ internal static partial class SkinService
             .Where(option => option != null)
             .Cast<CardOptionLookup>()
             .ToArray() ?? [];
+        var priorityGroups = new List<CardSkinGroup>();
+        if (card.Rarity == CardRarity.Ancient && IsCharacterCardPool(card))
+        {
+            var characterGroup = Catalog?.CardGroups.FirstOrDefault(candidate =>
+                candidate.Id.Equals(poolGroupId, StringComparison.OrdinalIgnoreCase));
+            if (characterGroup != null) priorityGroups.Add(characterGroup);
+        }
+        if (group != null && !priorityGroups.Contains(group)) priorityGroups.Add(group);
         return new CardLookup(
             groupId,
             card.GetType().Name,
@@ -3262,7 +3298,8 @@ internal static partial class SkinService
             options.Select(option => option.Option).ToArray(),
             options.ToDictionary(
                 option => option.Option.Id,
-                StringComparer.OrdinalIgnoreCase));
+                StringComparer.OrdinalIgnoreCase),
+            priorityGroups);
     }
 
     private static bool CardGroupAffectsCardUncached(string groupId, CardModel card)
@@ -3316,7 +3353,8 @@ internal static partial class SkinService
 
         var cards = ModelDb.AllCards
             .Select(card => GetCardLookup(card))
-            .Where(lookup => lookup.GroupId.Equals(group.Id, StringComparison.OrdinalIgnoreCase))
+            .Where(lookup => lookup.PriorityGroups.Any(member => member.Id.Equals(
+                group.Id, StringComparison.OrdinalIgnoreCase)))
             .ToArray();
         var byOption = group.Options.ToDictionary(
             option => option.Id,
@@ -3330,6 +3368,9 @@ internal static partial class SkinService
 
     private static string GetCardPoolGroupId(CardModel card) =>
         (card.Pool?.Title ?? string.Empty).ToLowerInvariant();
+
+    private static bool IsCharacterCardPool(CardModel card) =>
+        card.Pool is { IsColorless: false } && !SharedCardPoolIds.Contains(GetCardPoolGroupId(card));
 
     private static string GetCardCatalogGroupId(CardModel card)
     {
@@ -5922,7 +5963,8 @@ internal static partial class SkinService
         string CardType,
         CardSkinGroup? Group,
         IReadOnlyList<CardSkinOption> Options,
-        IReadOnlyDictionary<string, CardOptionLookup> OptionsById);
+        IReadOnlyDictionary<string, CardOptionLookup> OptionsById,
+        IReadOnlyList<CardSkinGroup> PriorityGroups);
 
     private sealed record CardOptionLookup(
         CardSkinOption Option,
@@ -6062,17 +6104,23 @@ internal static partial class SkinService
 
     private static void ClearCardPortraitCache(string groupId)
     {
-        var prefix = groupId + "\n";
+        // Character priorities can change a portrait cached under its canonical Ancient
+        // category. Clear dependent keys as well, without throwing away GPU resources for
+        // unrelated providers or changing their ownership.
+        var affectedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { groupId };
+        foreach (var pair in _cardLookupCache)
+            if (pair.Value.PriorityGroups.Any(group => group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase)))
+                affectedGroups.Add(pair.Value.GroupId);
+        bool Affected(string key) => affectedGroups.Any(id => key.StartsWith(id + "\n", StringComparison.OrdinalIgnoreCase));
         foreach (var key in CardPortraitCache.Keys
-                     .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                     .Where(Affected)
                      .ToArray())
         {
             CardPortraitCache.Remove(key);
             ExternalCardProviderIdentityPaths.Remove(key);
         }
 
-        FailedCardPortraitRequests.RemoveWhere(key =>
-            key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        FailedCardPortraitRequests.RemoveWhere(Affected);
     }
 
     private static string CardSelectionKey(string groupId) => "cards:" + groupId;
@@ -6311,7 +6359,7 @@ internal static partial class SkinService
 
         return ModelDb.AllCards.Any(card =>
             IndividualCardSelectionKey(card).Equals(key, StringComparison.OrdinalIgnoreCase) &&
-            GetCardLookup(card).GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase));
+            CardBelongsToGroup(card, groupId));
     }
 
     private static void MigrateLegacyCardSkinPresets()
@@ -6712,9 +6760,10 @@ internal static partial class SkinService
         foreach (var card in ModelDb.AllCards)
         {
             var lookup = GetCardLookup(card);
-            if (selectionKeysByGroup.TryGetValue(lookup.GroupId, out var keys))
+            foreach (var member in lookup.PriorityGroups)
             {
-                keys.Add(IndividualCardSelectionKey(card));
+                if (selectionKeysByGroup.TryGetValue(member.Id, out var keys))
+                    keys.Add(IndividualCardSelectionKey(card));
             }
         }
 
@@ -7078,7 +7127,8 @@ internal static partial class SkinService
             foreach (var option in group.Options.Where(option => entries.All(entry =>
                          !entry.OptionId.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
             {
-                entries.Add(new CardSkinPriorityEntry(option.Id, Enabled: true));
+                entries.Add(new CardSkinPriorityEntry(option.Id,
+                    Enabled: configuredEntries.Any(entry => entry.Enabled)));
             }
         }
         else
@@ -7092,7 +7142,8 @@ internal static partial class SkinService
                 .OrderByDescending(option => option.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase))
                 .Select(option => new CardSkinPriorityEntry(
                     option.Id,
-                    Enabled: true))
+                    Enabled: enableAllByDefault || !hasLegacySelection ||
+                             !selectedId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
         }
 

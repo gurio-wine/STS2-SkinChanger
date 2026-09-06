@@ -165,6 +165,9 @@ internal static class CardSkinControls
         }
 
         Populate(selector, GetGroupId(filter));
+        // The native filter can reuse already-bound cards before this postfix updates the
+        // category. Recolor their tabs after switching the priority-list context.
+        RefreshSourceIndicators(screen);
     }
 
     public static void SyncToSelectedFilter(NCardLibrary screen)
@@ -187,6 +190,7 @@ internal static class CardSkinControls
         {
             ShowFirstAvailableGroup(selector);
         }
+        RefreshSourceIndicators(screen);
     }
 
     public static void ReplacePortrait(CardModel card, ref Texture2D result) =>
@@ -202,14 +206,24 @@ internal static class CardSkinControls
             return;
         }
 
-        var sources = SkinService.GetCardSkinSources(card.Model);
+        NCardLibrary? library = null;
+        for (var parent = card.GetParent(); parent != null; parent = parent.GetParent())
+            if (parent is NCardLibrary screen) { library = screen; break; }
+        var selector = library?.GetNodeOrNull<HBoxContainer>(
+            $"Sidebar/MarginContainer/BottomVBox/{SelectorName}");
+        var displayGroupId = selector?.GetMeta(GroupMeta, string.Empty).AsString();
+        var sources = SkinService.GetCardSkinSources(card.Model, displayGroupId);
         if (sources.Count == 0)
         {
             RemoveSourceIndicators(card);
             return;
         }
 
-        var signature = ModLocalization.CurrentLanguage + "\n" +
+        var inheritedText = card.Model.Rarity == CardRarity.Ancient && !card.Model.Pool.IsColorless &&
+                            SkinService.GetCardOverrideSelection(card.Model).Equals(
+                                SkinService.InheritCardSelectionId, StringComparison.OrdinalIgnoreCase)
+            ? InheritedSelectionText(card.Model) : null;
+        var signature = ModLocalization.CurrentLanguage + "\n" + displayGroupId + "\n" + inheritedText + "\n" +
                         string.Join("\n", sources.Select(source =>
                             $"{source.OptionId}:{source.Enabled}:{source.ColorIndex}:{source.IsCurrent}"));
         var indicatorParent = card.GetNodeOrNull<Control>("%CardContainer") ?? card;
@@ -221,7 +235,7 @@ internal static class CardSkinControls
         }
 
         RemoveSourceIndicators(card);
-        var tooltip = BuildSourceTooltip(sources);
+        var tooltip = BuildSourceTooltip(sources, inheritedText);
         const float tabHeight = 12f;
         const float tabBottomInset = 36f;
         var height = sources.Count * tabHeight;
@@ -266,7 +280,7 @@ internal static class CardSkinControls
         }
     }
 
-    private static string BuildSourceTooltip(IReadOnlyList<CardSkinSourceState> sources)
+    private static string BuildSourceTooltip(IReadOnlyList<CardSkinSourceState> sources, string? inheritedText)
     {
         var lines = new List<string>();
         var current = sources.FirstOrDefault(source => source.IsCurrent);
@@ -275,6 +289,7 @@ internal static class CardSkinControls
             lines.Add(string.Format(
                 ModLocalization.Get(ModText.CurrentCardSource),
                 ModLocalization.DisplayOptionName(current.Name)));
+            if (inheritedText != null) lines.Add(inheritedText);
         }
 
         lines.Add(string.Format(
@@ -282,6 +297,25 @@ internal static class CardSkinControls
             string.Join(" · ", sources.Select(source =>
                 ModLocalization.DisplayOptionName(source.Name)))));
         return string.Join("\n", lines);
+    }
+
+    internal static string InheritedSelectionText(CardModel card)
+    {
+        var text = ModLocalization.Get(ModText.FollowCategory);
+        // Only disambiguate overlapping Ancient categories; ordinary selectors stay short.
+        if (card.Rarity != CardRarity.Ancient || card.Pool.IsColorless) return text;
+        var groupId = SkinService.GetCardInheritedGroupId(card);
+        if (groupId == null) return text;
+        if (groupId.Equals("ancients", StringComparison.OrdinalIgnoreCase))
+            return text + " · " + ModLocalization.Get(ModText.OtherCategoryAncients);
+        try
+        {
+            var character = ModelDb.AllCharacters.FirstOrDefault(model => model.CardPool.Title.Equals(
+                groupId, StringComparison.OrdinalIgnoreCase));
+            if (character != null) return text + " · " + character.Title.GetFormattedText();
+        }
+        catch { /* A missing Mod title must not prevent the card from being displayed. */ }
+        return text + " · " + (FindGroup(groupId)?.DisplayName ?? groupId);
     }
 
     private static Color SourceColor(int index)
@@ -2064,7 +2098,7 @@ internal static class CardInspectSkinControls
         dropdown.Clear();
         dropdown.TooltipText = string.Empty;
         var selected = SkinService.GetCardOverrideSelection(card);
-        dropdown.AddItem(SelectionDisplayName(selected));
+        dropdown.AddItem(SelectionDisplayName(selected, card));
         dropdown.SetItemMetadata(0, selected);
         dropdown.Select(0);
         selector.SetMeta(UpdatingMeta, false);
@@ -2099,7 +2133,7 @@ internal static class CardInspectSkinControls
 
         selector.SetMeta(UpdatingMeta, true);
         dropdown.Clear();
-        dropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
+        dropdown.AddItem(CardSkinControls.InheritedSelectionText(card));
         dropdown.SetItemMetadata(0, SkinService.InheritCardSelectionId);
         dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
         dropdown.SetItemMetadata(1, SkinCatalog.BaseOptionId);
@@ -2118,13 +2152,13 @@ internal static class CardInspectSkinControls
         selector.SetMeta(UpdatingMeta, false);
     }
 
-    private static string SelectionDisplayName(string optionId)
+    private static string SelectionDisplayName(string optionId, CardModel card)
     {
         if (optionId.Equals(
                 SkinService.InheritCardSelectionId,
                 StringComparison.OrdinalIgnoreCase))
         {
-            return ModLocalization.Get(ModText.FollowCategory);
+            return CardSkinControls.InheritedSelectionText(card);
         }
 
         if (optionId.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))

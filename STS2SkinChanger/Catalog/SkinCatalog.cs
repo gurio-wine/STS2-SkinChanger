@@ -2929,6 +2929,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 var specialGroupIds = option.NormalPortraits.Keys
                     .Concat(option.AncientPortraits.Keys)
+                    .Concat(option.CardPresentations.Keys)
                     .Select(cardType => cardsByType.GetValueOrDefault(cardType))
                     .Where(card => card != null &&
                                    !card.FilterGroupId.Equals(
@@ -3084,6 +3085,46 @@ internal sealed partial class SkinCatalog : IDisposable
                                         new Dictionary<string, CardPresentationDefinition>(
                                             StringComparer.OrdinalIgnoreCase)
                 });
+            }
+        }
+
+        // A character's Ancient cards appear in both library filters. Mirror only each
+        // matching card's complete provider definition, not the whole Ancient pack. The
+        // canonical Ancient group remains intact for existing presets and resource paths.
+        foreach (var card in cardEntries.Where(card => card.IsCharacterPool &&
+                     card.FilterGroupId.Equals("ancients", StringComparison.OrdinalIgnoreCase)))
+        {
+            var options = groups.Values.Where(group =>
+                    group.Id.Equals(card.PoolGroupId, StringComparison.OrdinalIgnoreCase) ||
+                    group.Id.Equals("ancients", StringComparison.OrdinalIgnoreCase))
+                .SelectMany(group => group.Options)
+                .GroupBy(option => option.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(options => options.Aggregate((left, right) => left.Merge(right)))
+                .ToArray();
+            foreach (var option in options)
+            {
+                var normal = option.NormalPortraits.Where(pair => pair.Key.Equals(card.TypeName,
+                    StringComparison.OrdinalIgnoreCase)).ToDictionary(pair => pair.Key, pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+                var ancient = option.AncientPortraits.Where(pair => pair.Key.Equals(card.TypeName,
+                    StringComparison.OrdinalIgnoreCase)).ToDictionary(pair => pair.Key, pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+                var presentations = option.CardPresentations.Where(pair => pair.Key.Equals(card.TypeName,
+                    StringComparison.OrdinalIgnoreCase)).ToDictionary(pair => pair.Key, pair => pair.Value,
+                    StringComparer.OrdinalIgnoreCase);
+                var assets = option.Assets.Where(pair => CardArtMatches(pair.Key, card, knownCardGroups))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                if (normal.Count + ancient.Count + presentations.Count + assets.Count == 0) continue;
+                var scoped = option with
+                {
+                    NormalPortraits = normal, AncientPortraits = ancient,
+                    CardPresentations = presentations, Assets = assets,
+                    CardNames = option.CardNames.Where(pair => pair.Key.Equals(card.TypeName,
+                        StringComparison.OrdinalIgnoreCase)).ToDictionary(pair => pair.Key, pair => pair.Value,
+                        StringComparer.OrdinalIgnoreCase)
+                };
+                AddCardOption(groups, card.PoolGroupId, scoped);
+                AddCardOption(groups, "ancients", scoped);
             }
         }
 
@@ -7479,7 +7520,10 @@ internal sealed record CardCatalogEntry(
     string PortraitPath,
     string PoolGroupId,
     string CatalogGroupId,
-    string FilterGroupId);
+    string FilterGroupId)
+{
+    public bool IsCharacterPool { get; init; }
+}
 
 internal sealed record AncientCardPortrait(string? NormalPortrait, string? AncientPortrait);
 

@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-ancient-card-priorities")
+{
+    AncientCardPriorityTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-bundle-sources")
 {
     CharacterSkinBundleSourceTests.Run();
@@ -141,6 +147,7 @@ DuplicateProviderLoadingTests.Run();
 CreatureVisualLifecycleTests.Run();
 BundlePresetTests.Run();
 CardPresetMigrationTests.Run();
+AncientCardPriorityTests.Run();
 CharacterSkinBundleContractTests.Run();
 CharacterSkinBundleSourceTests.Run();
 CharacterSkinBundleRunTests.Run();
