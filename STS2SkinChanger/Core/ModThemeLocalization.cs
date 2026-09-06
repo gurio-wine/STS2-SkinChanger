@@ -8,7 +8,8 @@ internal enum ThemeText
     Shadow, EnableShadow, OffsetX, OffsetY, ShadowSize,
     Dropdown, HoverOpacity, SelectionColor, SelectionOpacity,
     HoverBlur, SelectedHoverColor, SelectedHoverOpacity,
-    Presets, InvalidPresetName
+    Presets, InvalidPresetName,
+    PresetNameOrCode, CopyPresetCode, ImportPreset, InvalidPresetCode, Copied, CopyFailed
 }
 
 internal static class ModThemeLocalization
@@ -92,6 +93,25 @@ internal static class ModThemeLocalization
             ["tur"] = "Ön ayarlar|1–100 karakterlik benzersiz bir ad kullanın."
         };
         foreach (var (language, values) in presets) packs[language] = [.. packs[language], .. values.Split('|')];
+        var codes = new Dictionary<string, string>
+        {
+            ["eng"] = "Preset name/code|Copy preset code|Import preset|Preset code is damaged or unsupported.|Copied|Copy failed",
+            ["zhs"] = "预设名称/预设码|复制预设码|导入预设|预设码损坏或版本不受支持。|已复制|复制失败",
+            ["zht"] = "預設名稱/預設碼|複製預設碼|匯入預設|預設碼損壞或版本不受支援。|已複製|複製失敗",
+            ["deu"] = "Vorlagenname/Code|Vorlagencode kopieren|Vorlage importieren|Vorlagencode beschädigt oder nicht unterstützt.|Kopiert|Kopieren fehlgeschlagen",
+            ["esp"] = "Nombre/código del preajuste|Copiar código|Importar preajuste|El código está dañado o no es compatible.|Copiado|Error al copiar",
+            ["spa"] = "Nombre/código del preajuste|Copiar código|Importar preajuste|El código está dañado o no es compatible.|Copiado|Error al copiar",
+            ["fra"] = "Nom/code du préréglage|Copier le code|Importer un préréglage|Code endommagé ou non pris en charge.|Copié|Échec de la copie",
+            ["ita"] = "Nome/codice preimpostazione|Copia codice|Importa preimpostazione|Codice danneggiato o non supportato.|Copiato|Copia non riuscita",
+            ["jpn"] = "プリセット名／コード|コードをコピー|プリセットをインポート|コードが破損しているか、対応していない形式です。|コピーしました|コピーに失敗",
+            ["kor"] = "프리셋 이름/코드|프리셋 코드 복사|프리셋 가져오기|코드가 손상되었거나 지원하지 않는 버전입니다.|복사됨|복사 실패",
+            ["pol"] = "Nazwa/kod zestawu|Kopiuj kod zestawu|Importuj zestaw|Kod jest uszkodzony lub nieobsługiwany.|Skopiowano|Błąd kopiowania",
+            ["ptb"] = "Nome/código da predefinição|Copiar código|Importar predefinição|Código danificado ou incompatível.|Copiado|Falha ao copiar",
+            ["rus"] = "Название/код пресета|Копировать код|Импорт пресета|Код повреждён или не поддерживается.|Скопировано|Ошибка копирования",
+            ["tha"] = "ชื่อ/รหัสค่าที่ตั้งไว้|คัดลอกรหัส|นำเข้าค่าที่ตั้งไว้|รหัสเสียหายหรือเป็นเวอร์ชันที่ไม่รองรับ|คัดลอกแล้ว|คัดลอกไม่สำเร็จ",
+            ["tur"] = "Ön ayar adı/kodu|Ön ayar kodunu kopyala|Ön ayarı içe aktar|Kod bozuk veya desteklenmiyor.|Kopyalandı|Kopyalama başarısız"
+        };
+        foreach (var (language, values) in codes) packs[language] = [.. packs[language], .. values.Split('|')];
         return packs;
     }
     public static string Get(ThemeText text) => (Packs.TryGetValue(ModLocalization.CurrentLanguage, out var pack) ? pack : Packs["eng"])[(int)text];

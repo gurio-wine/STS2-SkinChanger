@@ -279,11 +279,12 @@ internal partial class ModThemeEditor : CanvasLayer
         catch (Exception e) { ShowThemeError(e); }
     }
 
-    private void ShowThemeError(Exception error, Label? target = null)
+    private void ShowThemeError(Exception error, Label? target = null, ThemeText? text = null)
     {
         CancelSaveFeedback();
         var status = target ?? _status;
-        status.Text = ModThemeLocalization.Get(error is ArgumentException ? ThemeText.InvalidPresetName : ThemeText.SaveFailed);
+        status.Text = ModThemeLocalization.Get(text ?? (error is FormatException ? ThemeText.InvalidPresetCode :
+            error is ArgumentException ? ThemeText.InvalidPresetName : ThemeText.SaveFailed));
         status.Show();
         ModLog.Error("主题操作失败：" + error);
     }

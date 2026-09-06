@@ -30,6 +30,25 @@ internal sealed class ModThemePresets
         return preset.Id;
     }
 
+    public ModThemePreset ImportCode(string code, string importedName)
+    {
+        var settings = ThemePresetCode.Decode(code); // Validate before any file or list mutation.
+        var baseName = importedName.Trim();
+        if (baseName.Length is 0 or > 100) throw new ArgumentException("Invalid imported preset name.", nameof(importedName));
+        var used = _users.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var name = baseName;
+        for (var number = 2; used.Contains(name); number++)
+        {
+            var suffix = $" ({number})";
+            name = baseName[..Math.Min(baseName.Length, 100 - suffix.Length)] + suffix;
+        }
+        var id = Create(name, settings);
+        return new ModThemePreset(id, name, settings);
+    }
+
+    public string ExportCode(string id) => ThemePresetCode.Encode(
+        (Presets.FirstOrDefault(p => p.Id == id) ?? throw new ArgumentException("Preset not found.", nameof(id))).Settings);
+
     public bool Rename(string id, string name)
     {
         var index = _users.FindIndex(p => p.Id == id);

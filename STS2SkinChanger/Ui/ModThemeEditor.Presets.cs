@@ -46,6 +46,7 @@ internal partial class ModThemeEditor
     private void BuildPresetPanel()
     {
         _presets = new ModThemePresets(System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_theme_presets.json"));
+        _selectedPresetId = _presets.FindMatchingId(ModThemeRuntime.Current, _selectedPresetId) ?? ModThemePresets.DefaultId;
         _presetPanel = new PanelContainer { Name = "ThemePresets", Visible = false,
             MouseFilter = Control.MouseFilterEnum.Stop };
         ModThemeRuntime.Panel(_presetPanel);
@@ -64,6 +65,7 @@ internal partial class ModThemeEditor
     private void HidePresetPanel()
     {
         if (GodotObject.IsInstanceValid(_presetPanel)) _presetPanel!.Hide();
+        CancelCopyFeedback();
         CancelPresetDelete();
     }
 
@@ -86,6 +88,7 @@ internal partial class ModThemeEditor
     private void BuildPresetRows()
     {
         var newNameDraft = GodotObject.IsInstanceValid(_presetNewName) ? _presetNewName.Text : "";
+        CancelCopyFeedback();
         _presetStates.Clear();
         _deletePresetId = null;
         // Same retained-scroll pattern as the card presets. The header/new-name row
@@ -99,22 +102,15 @@ internal partial class ModThemeEditor
         var createRow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         createRow.AddThemeConstantOverride("separation", 10);
         _presetContent.AddChild(createRow);
-        _presetNewName = new LineEdit { Text = newNameDraft, MaxLength = 100,
+        _presetNewName = new LineEdit { Text = newNameDraft, MaxLength = ThemePresetCode.MaxInputLength,
             CustomMinimumSize = new Vector2(0, 40), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         ModThemeRuntime.Input(_presetNewName, 18);
-        ModLocalization.Bind(_presetNewName, () => _presetNewName.PlaceholderText = ModLocalization.Get(ModText.CardPresetName));
+        ModLocalization.Bind(_presetNewName, () => _presetNewName.PlaceholderText = ModThemeLocalization.Get(ThemeText.PresetNameOrCode));
         createRow.AddChild(_presetNewName);
-        var save = PresetButton(() => ModLocalization.Get(ModText.SaveCurrentPreset), 138);
-        createRow.AddChild(save);
-        save.Pressed += () =>
-        {
-            var requestedName = _presetNewName.Text;
-            QueueThemePresetAction(() =>
-            {
-                _activePresetId = _presets!.Create(requestedName, ModThemeRuntime.Current);
-                if (_presetNewName.Text == requestedName) _presetNewName.Text = "";
-            });
-        };
+        _presetCreate = PresetButton(PresetCreateCaption, 138);
+        createRow.AddChild(_presetCreate);
+        _presetNewName.TextChanged += _ => _presetCreate.Text = PresetCreateCaption();
+        _presetCreate.Pressed += SaveOrImportThemePreset;
 
         scroll.CustomMinimumSize = new Vector2(0, 96);
         scroll.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
@@ -131,10 +127,15 @@ internal partial class ModThemeEditor
         _presetStatus.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _presetStatus.Hide();
         _presetContent.AddChild(_presetStatus);
-        var close = PresetButton(() => ModLocalization.Get(ModText.Close), 180);
-        close.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        var footer = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter };
+        footer.AddThemeConstantOverride("separation", 10);
+        _presetContent.AddChild(footer);
+        var close = PresetButton(() => ModLocalization.Get(ModText.Close), 90);
         close.Pressed += HidePresetPanel;
-        _presetContent.AddChild(close);
+        footer.AddChild(close);
+        _copyPresetCode = PresetButton(CopyPresetCaption, 180);
+        _copyPresetCode.Pressed += CopyThemePreset;
+        footer.AddChild(_copyPresetCode);
         RefreshPresetStates();
         Callable.From(PositionPresetPanel).CallDeferred();
     }
@@ -164,7 +165,8 @@ internal partial class ModThemeEditor
             ? ModText.ActiveCardPreset : ModText.ApplyCardPreset), 108);
         apply.Pressed += () => QueueThemePresetAction(() =>
         {
-            _activePresetId = preset.Id;
+            _activePresetId = _selectedPresetId = preset.Id;
+            CancelCopyFeedback();
             ModThemeRuntime.Session.Preview(preset.Settings);
         }, rebuild: false);
         row.AddChild(apply);
@@ -174,7 +176,7 @@ internal partial class ModThemeEditor
         overwrite.Pressed += () => QueueThemePresetAction(() =>
         {
             _presets!.Overwrite(preset.Id, ModThemeRuntime.Current);
-            _activePresetId = preset.Id;
+            _activePresetId = _selectedPresetId = preset.Id;
         });
         row.AddChild(overwrite);
         var rename = PresetButton(() => ModLocalization.Get(ModText.RenameCardPreset), 100);
@@ -227,6 +229,8 @@ internal partial class ModThemeEditor
     {
         if (_presets == null || !GodotObject.IsInstanceValid(_presetPanel)) return;
         _activePresetId = _presets.FindMatchingId(ModThemeRuntime.Current, _activePresetId) ?? "";
+        if (!_presets.Presets.Any(p => p.Id == _selectedPresetId))
+            _selectedPresetId = _activePresetId.Length > 0 ? _activePresetId : ModThemePresets.DefaultId;
         foreach (var refresh in _presetStates) refresh();
     }
 
