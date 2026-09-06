@@ -439,6 +439,17 @@ internal static partial class SkinService
             _characterSkinBundleRunSnapshot = original;
             _characterSkinBundleRunVisualGroups = visualGroups;
             _characterSkinBundleRunCardGroups = cardGroups;
+            _characterSkinBundleRunState = new CharacterSkinBundleRunState
+            {
+                CharacterGroupId = groupId,
+                BundleName = bundle.Name,
+                Cards = cardGroups.Select(id => CaptureCurrentCardSkinPreset(id,
+                    Config.ActiveCardSkinPresets.GetValueOrDefault(id, string.Empty))).ToList(),
+                Monsters = bundle.MonsterPresetNames.Keys.Where(id => GetBundleMonsterCategoryIds().Contains(id))
+                    .Select(id => CaptureCurrentMonsterSkinPreset(id,
+                        Config.ActiveMonsterSkinPresets.GetValueOrDefault(id, string.Empty))).ToList()
+            };
+            _characterSkinBundleRunSavePath = null;
             ModLog.Info(
                 $"已为本局临时应用皮肤包“{bundle.Name}”：" +
                 $"角色皮肤保持当前热切换结果，卡牌分类={cardGroups.Count}，" +
@@ -459,6 +470,10 @@ internal static partial class SkinService
 
             var visualGroups = _characterSkinBundleRunVisualGroups;
             var cardGroups = _characterSkinBundleRunCardGroups;
+            // Saving/exiting ends the temporary global override, not the saved run. Keep its
+            // appearance snapshot independently so Continue can restore it before assets load.
+            try { SaveCharacterSkinBundleRunPresets(); }
+            catch (Exception exception) { ModLog.Error("保存离开对局前的皮肤包记录失败：" + exception); }
             Config = snapshot;
             CharacterPreviewSelections.Clear();
             CardPreviewSelections.Clear();
@@ -490,6 +505,8 @@ internal static partial class SkinService
             Config.Save(ConfigPath);
             DeleteCharacterSkinBundleRunSnapshot();
             _characterSkinBundleRunSnapshot = null;
+            _characterSkinBundleRunState = null;
+            _characterSkinBundleRunSavePath = null;
             _characterSkinBundleRunVisualGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             _characterSkinBundleRunCardGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (failures.Count == 0)

@@ -101,6 +101,7 @@ CreatureVisualLifecycleTests.Run();
 BundlePresetTests.Run();
 CardPresetMigrationTests.Run();
 CharacterSkinBundleContractTests.Run();
+CharacterSkinBundleRunTests.Run();
 CharacterSkinPopupContractTests.Run();
 ScrollListRebuildContractTests.Run();
 CardSkinRefreshContractTests.Run();
