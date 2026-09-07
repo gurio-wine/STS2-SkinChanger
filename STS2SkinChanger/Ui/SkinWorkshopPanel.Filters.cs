@@ -26,7 +26,7 @@ internal partial class SkinWorkshopPanel
         _regionPicker = new(id => _names.RegionNames.GetValueOrDefault(id, id), id =>
         { _region = id; _target = ""; RefreshFilters(); _page = 0; Rebuild(); });
         _targetPicker = new(id => _names.Name(_kind, id), id => { _target = id; _page = 0; Rebuild(); });
-        _loadPicker = new(WorkshopLoadTags.Name, SetLoadFilter, () => WorkshopCommunityText.Get(WorkshopCommunityTextKey.LoadFilter) + ": " + WorkshopText.Get(WorkshopTextKey.All));
+        _loadPicker = new(WorkshopLoadTags.Name, SetLoadFilter);
         foreach (var picker in new[] { _typePicker, _regionPicker, _targetPicker, _loadPicker }) filters.AddChild(picker.Picker);
         InferRegion(); RefreshFilters();
     }

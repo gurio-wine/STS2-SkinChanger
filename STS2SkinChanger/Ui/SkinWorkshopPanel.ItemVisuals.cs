@@ -25,10 +25,14 @@ internal partial class SkinWorkshopPanel
         clip.Pressed += () => OpenItem(itemId);
         labels.AddChild(clip);
         var label = Text(text, 22); clip.AddChild(label);
-        void ColorTitle() => label.AddThemeColorOverride("font_color", clip.IsHovered() || clip.HasFocus() ? ModThemeRuntime.Accent : ModThemeRuntime.Text);
-        clip.MouseEntered += ColorTitle; clip.MouseExited += ColorTitle;
-        clip.FocusEntered += ColorTitle; clip.FocusExited += ColorTitle;
-        ModThemeRuntime.Bind(label, "workshop_link", _ => ColorTitle());
+        // Control emits the mouse signal before BaseButton updates IsHovered.
+        // Use the event itself, not the stale flag. Focus keeps the native outline,
+        // but a previous mouse click must not leave the title accented on exit.
+        var hover = new WorkshopTitleHover(accent => label.AddThemeColorOverride("font_color", accent ? ModThemeRuntime.Accent : ModThemeRuntime.Text));
+        clip.MouseEntered += hover.Enter; clip.MouseExited += hover.Exit;
+        clip.VisibilityChanged += () => { if (!clip.IsVisibleInTree()) hover.Exit(); };
+        clip.TreeExiting += hover.Exit;
+        ModThemeRuntime.Bind(label, "workshop_link", _ => hover.Refresh());
         _marquees.Add(new(row, clip, label));
         ModThemeRuntime.Bind(clip, "title_height", theme => clip.CustomMinimumSize = new Vector2(0, 38 * theme.FontScale));
         return label;
@@ -103,4 +107,12 @@ internal partial class SkinWorkshopPanel
             Resize();
         });
     }
+}
+
+internal sealed class WorkshopTitleHover(Action<bool> applyAccent)
+{
+    private bool _hovered;
+    public void Enter() { _hovered = true; Refresh(); }
+    public void Exit() { _hovered = false; Refresh(); }
+    public void Refresh() => applyAccent(_hovered);
 }
