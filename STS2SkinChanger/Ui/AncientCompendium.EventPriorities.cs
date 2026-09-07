@@ -152,7 +152,11 @@ internal partial class AncientCompendiumScreen
         };
         ContextualSkinControls.ApplyGameTheme(close);
         close.Pressed += () => _eventPriorityOverlay.Hide();
-        _eventPriorityContent.AddChild(close);
+        var footer = new HBoxContainer();
+        footer.AddChild(close);
+        footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        footer.AddChild(SkinWorkshopEntry.CreatePriorityButton(this, "event", "", BuildEventPriorityList, region));
+        _eventPriorityContent.AddChild(footer);
     }
 
     private void QueueEventPriorityChange(string region, Func<bool> apply)

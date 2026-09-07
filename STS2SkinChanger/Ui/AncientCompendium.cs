@@ -1889,6 +1889,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             .FirstOrDefault(index => _skinDropdown.GetItemMetadata(index).AsString()
                 .Equals(current, StringComparison.OrdinalIgnoreCase));
         _skinDropdown.Select(selectedIndex);
+        SkinWorkshopEntry.RefreshSelectionColor(_skinDropdown);
         _skinDropdown.SetMeta("sts2_skin_group", group.Id);
         _updatingDropdown = false;
         _skinSelector.Visible = !_merchantInventoryOpen;

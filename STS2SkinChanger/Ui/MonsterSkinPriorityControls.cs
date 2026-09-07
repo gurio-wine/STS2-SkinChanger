@@ -432,7 +432,12 @@ internal static partial class ContextualSkinControls
         ApplyGameTheme(close);
         close.AddThemeFontSizeOverride("font_size", 19);
         close.Pressed += () => overlay.Visible = false;
-        content.AddChild(close);
+        var footer = new HBoxContainer();
+        footer.AddChild(close);
+        footer.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+        footer.AddChild(SkinWorkshopEntry.CreatePriorityButton(screen, "monster", "",
+            () => BuildMonsterPriorityOverlay(screen, selector, overlay), region: categoryId));
+        content.AddChild(footer);
     }
 
     private static Control CreateMonsterPresetOverlay()

@@ -143,7 +143,7 @@ internal static partial class ModLocalization
             ModText.SkinnedCardsOnly => SkinnedCardsOnly,
             ModText.CardCategorySkinTooltip => CardCategorySkinTooltip,
             ModText.IndividualCardTooltip => IndividualCardTooltip,
-            ModText.FollowCategory => FollowCategory,
+            ModText.FollowCategory => "↷" + FollowCategory,
             ModText.MonsterSize => MonsterSize,
             ModText.Reset => Reset,
             ModText.LoadOrderTitle => LoadOrderTitle,

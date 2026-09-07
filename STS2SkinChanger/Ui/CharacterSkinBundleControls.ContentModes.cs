@@ -32,6 +32,8 @@ internal static partial class CharacterSkinBundleControls
             BuildEditor(state);
         };
         header.AddChild(mode);
+        header.AddChild(SkinWorkshopEntry.CreatePriorityButton(state.Screen, monsters ? "monster" : "cards", "",
+            () => BuildEditor(state)));
         if (selected == BundleContentMode.ModPriority)
             AddModPriorityRows(state, fields, monsters);
         else

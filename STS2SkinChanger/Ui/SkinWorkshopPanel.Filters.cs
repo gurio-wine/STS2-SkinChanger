@@ -27,6 +27,7 @@ internal partial class SkinWorkshopPanel
     {
         if (_kind == "companion" && _target == "osty") { _kind = "character"; _target = "necrobinder"; }
         _names = WorkshopTargetNames.Build();
+        _region = ResolveEntryRegion(_region, _names.Regions(_kind).Keys);
         var filters = new HFlowContainer();
         filters.AddThemeConstantOverride("h_separation", 12); filters.AddThemeConstantOverride("v_separation", 8); content.AddChild(filters);
         _subscriptionPicker = new(WorkshopSubscriptionFilter.Name, value =>
@@ -52,6 +53,12 @@ internal partial class SkinWorkshopPanel
     {
         if (_target.Length > 0 && WorkshopBrowserPolicy.HasRegions(_kind))
             _region = _names.Regions(_kind).FirstOrDefault(pair => pair.Value.Contains(_target)).Key ?? "";
+    }
+    internal static string ResolveEntryRegion(string region, IEnumerable<string> available)
+    {
+        // Bestiary priority keys use "act:<lowercase>", while the browser uses model IDs.
+        if (region.StartsWith("act:", StringComparison.OrdinalIgnoreCase)) region = region[4..];
+        return available.FirstOrDefault(id => id.Equals(region, StringComparison.OrdinalIgnoreCase)) ?? "";
     }
     private void RefreshFilters()
     {

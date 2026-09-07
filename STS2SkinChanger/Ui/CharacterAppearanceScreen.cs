@@ -744,6 +744,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
                 _skinDropdown.GetItemMetadata(index).AsString()
                     .Equals(selection, StringComparison.OrdinalIgnoreCase));
         _skinDropdown.Select(selectedIndex);
+        SkinWorkshopEntry.RefreshSelectionColor(_skinDropdown);
         _updating = false;
     }
 

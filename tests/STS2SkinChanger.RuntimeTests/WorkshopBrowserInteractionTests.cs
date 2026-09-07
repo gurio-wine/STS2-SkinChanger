@@ -5,6 +5,7 @@ internal static class WorkshopBrowserInteractionTests
 {
     public static void Run()
     {
+        WorkshopEntryTests.Run();
         WorkshopSubscriptionFilterTests.Run();
         CheckSessionCache();
         CheckTitleHoverTransitions();

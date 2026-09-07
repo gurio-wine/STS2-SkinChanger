@@ -1620,10 +1620,11 @@ internal static class CardSkinControls
         close.AddThemeFontSizeOverride("font_size", 19);
         close.Pressed += () => overlay.Visible = false;
         var footer = new HBoxContainer();
-        var workshop = new Button { Text = WorkshopText.Get(WorkshopTextKey.Title), CustomMinimumSize = new Vector2(180, 42) };
-        ContextualSkinControls.ApplyGameTheme(workshop);
-        workshop.Pressed += () => SkinWorkshopPanel.Show(screen, "cards", groupId, () => BuildPriorityOverlay(screen, selector, overlay));
-        footer.AddChild(workshop); footer.AddChild(close); content.AddChild(footer);
+        footer.AddChild(close);
+        footer.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+        footer.AddChild(SkinWorkshopEntry.CreatePriorityButton(screen, "cards", groupId,
+            () => BuildPriorityOverlay(screen, selector, overlay)));
+        content.AddChild(footer);
     }
 
     private static void QueuePriorityChange(
@@ -2140,6 +2141,7 @@ internal static class CardInspectSkinControls
         dropdown.AddItem(SelectionDisplayName(selected, card));
         dropdown.SetItemMetadata(0, selected);
         dropdown.Select(0);
+        SkinWorkshopEntry.RefreshSelectionColor(dropdown);
         selector.SetMeta(UpdatingMeta, false);
         selector.Visible = true;
     }

@@ -719,10 +719,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static bool IsAccentedCharacterOption(string optionId) =>
-        optionId == SkinCatalog.BaseOptionId ||
-        !WorkshopCatalogPolicy.IsSkinChoice(optionId) ||
-        RandomCharacterSkinPolicy.IsRandom(optionId) ||
-        CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out _);
+        SkinOptionStylePolicy.IsAccented(optionId);
 
     private static void ApplyCharacterBundleSelectionTheme(OptionButton dropdown, bool selectedBundle)
     {

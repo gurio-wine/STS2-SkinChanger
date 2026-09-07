@@ -24,12 +24,12 @@ internal partial class SkinWorkshopPanel : Control
     private Button _next = null!;
     private readonly List<(ulong Id, Label Status, Button Action, Button Cancel)> _actions = [];
 
-    internal static void Show(Node origin, string kind, string target, Action refresh)
+    internal static void Show(Node origin, string kind, string target, Action refresh, string region = "")
     {
         var root = origin.GetTree()?.Root;
         if (root == null || root.GetNodeOrNull("SCSkinWorkshopLayer") != null) return;
         var layer = new CanvasLayer { Name = "SCSkinWorkshopLayer", Layer = 100, ProcessMode = ProcessModeEnum.Always };
-        var panel = new SkinWorkshopPanel { _kind = kind, _target = target, _origin = origin, _refresh = refresh, _layer = layer };
+        var panel = new SkinWorkshopPanel { _kind = kind, _target = target, _region = region, _origin = origin, _refresh = refresh, _layer = layer };
         try
         {
             root.AddChild(layer);
@@ -38,7 +38,7 @@ internal partial class SkinWorkshopPanel : Control
             // Like ModThemeEditor, this DLL has no generated Godot virtual-method bridge.
             // Adding a plain Control to the tree does not dispatch our _Ready override.
             panel.Initialize();
-            ModLog.Info($"已打开皮肤工坊：类型={kind}，对象={target}。");
+            ModLog.Info($"已打开皮肤工坊：类型={kind}，对象={target}，地区={panel._region}。");
         }
         catch (Exception ex)
         {
@@ -287,7 +287,46 @@ internal static class SkinWorkshopEntry
             if (dropdown.GetItemMetadata(index).AsString() == SkinCatalog.BaseOptionId)
                 dropdown.SetItemText(index, ModLocalization.Get(ModText.GameDefault));
         if (!characterPopup)
-            PresetChoiceColoring.Attach(dropdown, id => id == SkinCatalog.BaseOptionId || !WorkshopCatalogPolicy.IsSkinChoice(id), colorSelection: false);
+        {
+            PresetChoiceColoring.Attach(dropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
+            RefreshSelectionColor(dropdown);
+        }
+    }
+
+    internal static void RefreshSelectionColor(OptionButton dropdown)
+    {
+        // Programmatic Select does not emit ItemSelected. Call after repopulating too,
+        // including the lazy one-item card selector, without loading its skin options.
+        if (!dropdown.HasMeta("sc_skin_choice_color"))
+        {
+            dropdown.SetMeta("sc_skin_choice_color", true);
+            dropdown.ItemSelected += _ => RefreshSelectionColor(dropdown);
+        }
+        ModThemeRuntime.Bind(dropdown, "skin_choice_color", theme =>
+        {
+            var accented = dropdown.Selected >= 0 && dropdown.Selected < dropdown.ItemCount &&
+                SkinOptionStylePolicy.IsAccented(dropdown.GetItemMetadata(dropdown.Selected).AsString());
+            var color = new Color(accented ? theme.AccentColor : theme.TextColor);
+            foreach (var state in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color" })
+                dropdown.AddThemeColorOverride(state, color);
+        });
+    }
+
+    internal static Button CreatePriorityButton(Node origin, string kind, string target, Action refresh, string region = "")
+    {
+        var button = new Button
+        {
+            Text = WorkshopText.EntryLabel, CustomMinimumSize = new Vector2(180, 42),
+            FocusMode = Control.FocusModeEnum.None, MouseDefaultCursorShape = Control.CursorShape.PointingHand
+        };
+        ContextualSkinControls.ApplyGameTheme(button);
+        ModThemeRuntime.AccentText(button);
+        button.Pressed += () => Callable.From(() =>
+        {
+            if (GodotObject.IsInstanceValid(origin) && origin.IsInsideTree())
+                SkinWorkshopPanel.Show(origin, kind, target, refresh, region);
+        }).CallDeferred();
+        return button;
     }
     internal static bool Open(string optionId, Node origin, string groupId, Action refresh, bool cards = false, string? kind = null)
     {

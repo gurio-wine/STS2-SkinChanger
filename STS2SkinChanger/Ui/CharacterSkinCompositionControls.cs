@@ -334,6 +334,8 @@ internal static class CharacterSkinCompositionControls
         }
         delete.Pressed += () => Delete(state, delete);
         actionRow.AddChild(delete);
+        actionRow.AddChild(SkinWorkshopEntry.CreatePriorityButton(state.Screen, "character", state.Group!.Id,
+            () => BuildEditor(state)));
         actionRow.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
         var close = CreateButton(ModLocalization.Get(ModText.Close), 190f);
         close.Pressed += () =>
