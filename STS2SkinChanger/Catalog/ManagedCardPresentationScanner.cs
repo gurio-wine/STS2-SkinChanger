@@ -4,6 +4,7 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using HarmonyLib;
 
 namespace STS2SkinChanger.Catalog;
 
@@ -96,6 +97,7 @@ internal static class ManagedCardPresentationScanner
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
+            var overlayTargets = ReadBuiltInOverlayTargets(reader, type.GetCustomAttributes(), knownCardStems);
             var strings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var referencedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var referencedMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -112,6 +114,15 @@ internal static class ManagedCardPresentationScanner
                 if (il != null)
                 {
                     ScanIl(reader, il, strings, referencedTypes, referencedMembers);
+                    if (IsConstantOverlayOffPostfix(reader, method, il))
+                    {
+                        foreach (var cardType in overlayTargets.Concat(
+                                     ReadBuiltInOverlayTargets(reader, method.GetCustomAttributes(), knownCardStems)))
+                        {
+                            var previous = presentations.TryGetValue(cardType, out var existing) ? existing : new CardPresentationDefinition();
+                            presentations[cardType] = previous with { BuiltInOverlayVisible = false };
+                        }
+                    }
                 }
             }
 
@@ -183,9 +194,60 @@ internal static class ManagedCardPresentationScanner
                 AncientTextBackground: textBackground);
             foreach (var cardType in cardTypes)
             {
-                presentations.TryAdd(cardType, definition);
+                if (presentations.TryGetValue(cardType, out var existing))
+                {
+                    if (!existing.UseAncientLayout && !existing.UseExpandedPortraitLayout)
+                        presentations[cardType] = definition with { BuiltInOverlayVisible = existing.BuiltInOverlayVisible };
+                }
+                else
+                    presentations[cardType] = definition;
             }
         }
+    }
+
+    private static string[] ReadBuiltInOverlayTargets(MetadataReader reader,
+        CustomAttributeHandleCollection attributes, IReadOnlyDictionary<string, string> knownCardStems)
+    {
+        var targets = new List<string>();
+        foreach (var handle in attributes)
+        {
+            try
+            {
+                var attribute = reader.GetCustomAttribute(handle);
+                if (attribute.Constructor.Kind != HandleKind.MemberReference) continue;
+                var constructor = reader.GetMemberReference((MemberReferenceHandle)attribute.Constructor);
+                if (constructor.Parent.Kind != HandleKind.TypeReference) continue;
+                var owner = reader.GetTypeReference((TypeReferenceHandle)constructor.Parent);
+                if (reader.GetString(owner.Namespace) != "HarmonyLib" || reader.GetString(owner.Name) != "HarmonyPatch") continue;
+                // Accept only the complete (Type, property, MethodType.Getter) declaration.
+                // Never infer the affected card from class names or nearby resource strings.
+                var blob = reader.GetBlobReader(attribute.Value);
+                if (blob.ReadUInt16() != 1) continue;
+                var target = blob.ReadSerializedString()?.Split(',')[0];
+                var member = blob.ReadSerializedString();
+                if (target == null || member != "HasBuiltInOverlay" ||
+                    blob.ReadInt32() != (int)MethodType.Getter || blob.ReadUInt16() != 0 || blob.RemainingBytes != 0) continue;
+                var name = target[(target.LastIndexOf('.') + 1)..];
+                if (knownCardStems.TryGetValue(NormalizeToken(name), out var stem)) targets.Add(stem);
+            }
+            catch (Exception exception) when (exception is BadImageFormatException or ArgumentException)
+            {
+                // Unsupported attribute overloads and malformed metadata remain unmanaged.
+            }
+        }
+        return targets.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool IsConstantOverlayOffPostfix(MetadataReader reader, MethodDefinition method, byte[] il)
+    {
+        // Deliberately narrow: static void Postfix(ref bool __result) { __result = false; }.
+        // Conditional/configured patches, extra parameters and gameplay getters are not replayed.
+        if (reader.GetString(method.Name) != "Postfix" || (method.Attributes & MethodAttributes.Static) == 0 ||
+            !reader.GetBlobBytes(method.Signature).AsSpan().SequenceEqual(new byte[] { 0, 1, 1, 0x10, 2 })) return false;
+        var parameter = method.GetParameters().Select(reader.GetParameter)
+            .SingleOrDefault(parameter => parameter.SequenceNumber == 1);
+        if (reader.GetString(parameter.Name) != "__result") return false;
+        return il.Where(value => value != 0).SequenceEqual(new byte[] { 0x02, 0x16, 0x52, 0x2a });
     }
 
     private static bool LooksLikeAncientLayoutPatch(IReadOnlySet<string> strings)

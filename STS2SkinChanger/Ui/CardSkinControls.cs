@@ -51,6 +51,9 @@ internal static class CardSkinControls
     private static readonly ConditionalWeakTable<NCard, CardLayoutState> BaselineLayouts = new();
     private static readonly ConditionalWeakTable<NCard, CardPresentationState> PresentationLayouts = new();
     private static readonly ConditionalWeakTable<NCard, CardPreviewState> PreviewModes = new();
+    private static readonly ConditionalWeakTable<NCard, CardBuiltInOverlayVisibility> BuiltInOverlays = new();
+    private static readonly System.Reflection.FieldInfo? BuiltInOverlayField =
+        AccessTools.Field(typeof(NCard), "_cardOverlay");
     private static readonly System.Reflection.FieldInfo? HighlightShaderMaterialField =
         AccessTools.Field(typeof(NCardHighlight), "_shaderMaterial");
     private static Texture2D? _normalTextBackgroundCoverTexture;
@@ -431,11 +434,13 @@ internal static class CardSkinControls
         // explicitly configured that card there. Other cards remain managed here.
         if (externalOwnership.Frame)
         {
+            ApplyBuiltInOverlay(card, null);
             PresentationLayouts.Remove(card);
             return;
         }
 
         var presentation = SkinService.GetCardPresentation(card.Model);
+        ApplyBuiltInOverlay(card, presentation);
         if (presentation == null)
         {
             PresentationLayouts.Remove(card);
@@ -673,6 +678,19 @@ internal static class CardSkinControls
         SetVisible(
             FindNodeByName(card, "Infection") as CanvasItem,
             presentation.InfectionOverlayVisible);
+    }
+
+    public static void ApplyBuiltInOverlay(NCard card, CardPresentationDefinition? presentation)
+    {
+        // The game's container also holds affliction overlays. Only touch its own built-in
+        // card overlay, never enchantments/afflictions or CardModel properties. Reload creates
+        // a fresh original node; baseline restoration handles switching away on existing nodes.
+        if (card.Model is not { HasBuiltInOverlay: true } model || model.Affliction?.HasOverlay == true) return;
+        var overlay = BuiltInOverlayField?.GetValue(card) as CanvasItem;
+        if (overlay == null || !GodotObject.IsInstanceValid(overlay)) return;
+        if (presentation?.BuiltInOverlayVisible == null && !BuiltInOverlays.TryGetValue(card, out _)) return;
+        overlay.Visible = BuiltInOverlays.GetOrCreateValue(card).Resolve(
+            model, overlay, overlay.Visible, presentation?.BuiltInOverlayVisible);
     }
 
     private static void ApplyManagedFullFrameArt(
@@ -2442,6 +2460,18 @@ internal static class CardPreviewModeCapturePatch
     [HarmonyPriority(Priority.First)]
     private static void Prefix(NCard __instance, CardPreviewMode previewMode) =>
         CardSkinControls.RememberPreviewMode(__instance, previewMode);
+}
+
+[HarmonyPatch(typeof(NCard), "ReloadOverlay")]
+internal static class CardBuiltInOverlayPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCard __instance)
+    {
+        if (__instance.Model is not { HasBuiltInOverlay: true }) return;
+        CardSkinControls.ApplyBuiltInOverlay(__instance, ExternalCardVisualBridge.GetOwnership(__instance).Frame
+            ? null : SkinService.GetCardPresentation(__instance.Model));
+    }
 }
 
 [HarmonyPatch]

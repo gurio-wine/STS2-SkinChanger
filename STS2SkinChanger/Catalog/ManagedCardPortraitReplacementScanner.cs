@@ -11,7 +11,8 @@ namespace STS2SkinChanger.Catalog;
 /// <summary>
 /// Reads exact CardModel type -> portrait resource mappings from common Harmony providers
 /// without loading or executing their assembly. This covers providers that keep card art in a
-/// private folder and replace CardModel.PortraitPath/GetPortrait through a static dictionary.
+/// private folder and replace CardModel.PortraitPath/GetPortrait through a static dictionary
+/// keyed by Type or its Name/FullName.
 /// </summary>
 internal static class ManagedCardPortraitReplacementScanner
 {
@@ -123,12 +124,14 @@ internal static class ManagedCardPortraitReplacementScanner
         {
             var type = reader.GetTypeDefinition(typeHandle);
             var typePortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var namedPortraits = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var typeName = reader.GetString(type.Name);
             var hasPortraitPatchHint =
                 typeName.Contains("Portrait", StringComparison.OrdinalIgnoreCase) ||
                 HasPortraitPatchAttribute(reader, type.GetCustomAttributes());
             var hasRuntimeTypeLookup = false;
             var hasDictionaryLookup = false;
+            var hasTypeNameLookup = false;
 
             foreach (var methodHandle in type.GetMethods())
             {
@@ -148,8 +151,10 @@ internal static class ManagedCardPortraitReplacementScanner
                         reader,
                         il,
                         typePortraits,
+                        namedPortraits,
                         ref hasRuntimeTypeLookup,
-                        ref hasDictionaryLookup);
+                        ref hasDictionaryLookup,
+                        ref hasTypeNameLookup);
                 }
             }
 
@@ -166,6 +171,11 @@ internal static class ManagedCardPortraitReplacementScanner
             {
                 portraits[pair.Key] = pair.Value;
             }
+            // String keys only identify cards when this portrait patch actually looks up
+            // the instance's CLR type name. Arbitrary labels/IDs in UI maps are not cards.
+            if (hasTypeNameLookup)
+                foreach (var pair in namedPortraits)
+                    portraits[pair.Key[(Math.Max(pair.Key.LastIndexOf('.'), pair.Key.LastIndexOf('+')) + 1)..]] = pair.Value;
         }
 
         return portraits;
@@ -175,13 +185,18 @@ internal static class ManagedCardPortraitReplacementScanner
         MetadataReader reader,
         byte[] il,
         IDictionary<string, string> portraits,
+        IDictionary<string, string> namedPortraits,
         ref bool hasRuntimeTypeLookup,
-        ref bool hasDictionaryLookup)
+        ref bool hasDictionaryLookup,
+        ref bool hasTypeNameLookup)
     {
         string? pendingType = null;
         string? pendingPath = null;
         var pendingTypeInstruction = -1;
         var pendingPathInstruction = -1;
+        string? pendingName = null;
+        var pendingNameInstruction = -1;
+        var lastRuntimeTypeInstruction = -1;
         var instruction = 0;
         var offset = 0;
         while (offset < il.Length)
@@ -226,6 +241,17 @@ internal static class ManagedCardPortraitReplacementScanner
                         pendingPath = NormalizeResourcePath(valueString);
                         pendingPathInstruction = instruction;
                     }
+                    else if (valueString.Length > 0 &&
+                             (char.IsLetter(valueString[0]) || valueString[0] == '_') &&
+                             valueString.All(character => char.IsLetterOrDigit(character) || character is '_' or '.' or '+'))
+                    {
+                        pendingName = valueString;
+                        pendingNameInstruction = instruction;
+                    }
+                    else
+                    {
+                        pendingName = null;
+                    }
                 }
                 catch (Exception exception) when (
                     exception is BadImageFormatException or ArgumentException)
@@ -241,6 +267,11 @@ internal static class ManagedCardPortraitReplacementScanner
                 if (methodName != null)
                 {
                     hasRuntimeTypeLookup |= methodName.Equals("GetType", StringComparison.Ordinal);
+                    if (methodName == "GetType") lastRuntimeTypeInstruction = instruction;
+                    if (methodName is "get_Name" or "get_FullName" &&
+                        lastRuntimeTypeInstruction >= 0 && instruction - lastRuntimeTypeInstruction <= 4 &&
+                        IsTypeNameGetter(reader, MetadataTokens.EntityHandle(token)))
+                        hasTypeNameLookup = true;
                     hasDictionaryLookup |= methodName.Equals("TryGetValue", StringComparison.Ordinal);
                     if (methodName is "set_Item" or "Add" or "TryAdd")
                     {
@@ -251,9 +282,16 @@ internal static class ManagedCardPortraitReplacementScanner
                         {
                             portraits[pendingType] = pendingPath;
                         }
+                        // A string-key initializer emits adjacent key/path literals. Do not
+                        // pair remote literals across branches, other calls or unrelated maps.
+                        if (pendingName != null && pendingPath != null &&
+                            pendingPathInstruction == pendingNameInstruction + 1 &&
+                            instruction == pendingPathInstruction + 1)
+                            namedPortraits[pendingName] = pendingPath;
 
                         pendingType = null;
                         pendingPath = null;
+                        pendingName = null;
                     }
                 }
             }
@@ -261,6 +299,16 @@ internal static class ManagedCardPortraitReplacementScanner
             offset += operandSize;
             instruction++;
         }
+    }
+
+    private static bool IsTypeNameGetter(MetadataReader reader, EntityHandle handle)
+    {
+        if (handle.Kind != HandleKind.MemberReference) return false;
+        var parent = reader.GetMemberReference((MemberReferenceHandle)handle).Parent;
+        if (parent.Kind != HandleKind.TypeReference) return false;
+        var type = reader.GetTypeReference((TypeReferenceHandle)parent);
+        return (reader.GetString(type.Namespace), reader.GetString(type.Name)) is
+            ("System.Reflection", "MemberInfo") or ("System", "Type");
     }
 
     private static bool HasPortraitPatchAttribute(

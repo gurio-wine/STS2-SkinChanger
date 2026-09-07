@@ -5293,6 +5293,11 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             if (presentations.TryGetValue(inferred.Key, out var configured))
             {
+                configured = configured with
+                {
+                    BuiltInOverlayVisible = configured.BuiltInOverlayVisible ?? inferred.Value.BuiltInOverlayVisible
+                };
+                presentations[inferred.Key] = configured;
                 // An omitted uiMode is not an explicit request for the normal layout. Exported
                 // card managers commonly keep frame visibility in JSON while routing the same
                 // declared portraits to AncientPortrait from their disabled DLL patch. Preserve
@@ -7580,7 +7585,8 @@ internal sealed record CardPresentationDefinition(
     float? FrameOverlayOffsetLeft = null,
     float? FrameOverlayOffsetRight = null,
     float? FrameOverlayScaleX = null,
-    float? FrameOverlayScaleY = null)
+    float? FrameOverlayScaleY = null,
+    bool? BuiltInOverlayVisible = null)
 {
     public IEnumerable<string> ResourcePaths => new[]
         {

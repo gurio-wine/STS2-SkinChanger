@@ -17,6 +17,17 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-managed-card-portraits")
+{
+    ManagedCardPortraitTests.Run();
+    return;
+}
+if (args.Length == 3 && args[0] == "--audit-parasitophobia-cards")
+{
+    ManagedCardPortraitTests.Audit(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-provider-previews")
 {
     CreatureVisualParentTests.Run();
@@ -175,6 +186,7 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
 
 CreatureVisualParentTests.Run();
 ManualCharacterVariantTests.Run();
+ManagedCardPortraitTests.Run();
 PresentationNodeOwnershipTests.Run();
 RenderedPreviewFramingTests.Run();
 FrameworkSelectorCycleTests.Run();
