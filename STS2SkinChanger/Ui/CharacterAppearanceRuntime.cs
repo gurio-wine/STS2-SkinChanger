@@ -956,7 +956,9 @@ internal static class CharacterAppearanceRuntime
                 fallbackReticle.PivotOffset = size * 0.5f;
             }
 
-            var intentMarker = boundsContainer.GetNode<Marker2D>("%IntentPos");
+            // Match NCreature.UpdateBounds: animations pass their current bounds container.
+            // A scene-unique lookup (%IntentPos) would select the root/default stance instead.
+            var intentMarker = boundsContainer.GetNode<Marker2D>("IntentPos");
             var markerBaseLocal =
                 (wrapper.GetGlobalTransform().AffineInverse() * intentMarker.GlobalPosition) /
                 tempScale /
@@ -2413,7 +2415,9 @@ internal static class CharacterAppearanceBoundsPatch
     private static MethodBase TargetMethod() =>
         AccessTools.Method(typeof(NCreature), "UpdateBounds", [typeof(Node)]);
 
-    [HarmonyPriority(Priority.Last)]
+    // Establish our model/UI transforms before authors apply their final visibility guards.
+    // Running last discarded e.g. top-edge clamping by rebuilding the intent's local position.
+    [HarmonyPriority(Priority.First)]
     private static void Postfix(NCreature __instance, Node boundsContainer) =>
         CharacterAppearanceRuntime.CorrectBoundsForVisualTransforms(__instance, boundsContainer);
 }

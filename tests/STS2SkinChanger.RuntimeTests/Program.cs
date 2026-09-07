@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-creature-intents")
+{
+    CreatureIntentLayoutTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-appearance-boundaries")
 {
     AppearanceResourceBoundaryTests.Run();
@@ -209,6 +215,7 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
 CreatureVisualParentTests.Run();
 ManualCharacterVariantTests.Run();
 AppearanceResourceBoundaryTests.Run();
+CreatureIntentLayoutTests.Run();
 ManagedCardPortraitTests.Run();
 RandomCharacterSkinTests.Run();
 PresentationNodeOwnershipTests.Run();
