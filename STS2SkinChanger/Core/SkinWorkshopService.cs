@@ -16,6 +16,8 @@ internal sealed class WorkshopDownload
     public WorkshopTextKey State = WorkshopTextKey.Waiting;
     public string Error = "";
     public bool Busy;
+    public WorkshopLoadReason Reason;
+    public bool NoticeOwned;
 }
 
 // Permanent, explicitly requested subscriptions. Never calls OnlineSkinCache or removes Steam files.
@@ -31,6 +33,8 @@ internal static class SkinWorkshopService
     private static readonly Dictionary<ulong, WorkshopDownload> Downloads = [];
     private static readonly Dictionary<ulong, TaskCompletionSource<EResult>> Waiters = [];
     private static readonly Dictionary<ulong, Mod> DeferredNotices = [];
+    internal static readonly WorkshopNoticeQueue Notices = new();
+    private static readonly Dictionary<ulong, string> Titles = [];
     private static Callback<DownloadItemResult_t>? _downloadCallback;
     private static readonly System.Net.Http.HttpClient Images = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
     private static readonly SemaphoreSlim ImageGate = new(3);
@@ -82,7 +86,11 @@ internal static class SkinWorkshopService
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
         { ModLog.Info("工坊详情暂不可用，保留缓存：" + ex.Message); }
-        finally { if (handle != UGCQueryHandle_t.Invalid) SteamUGC.ReleaseQueryUGCRequest(handle); }
+        finally
+        {
+            if (handle != UGCQueryHandle_t.Invalid) SteamUGC.ReleaseQueryUGCRequest(handle);
+            foreach (var (id, details) in result) Titles[id] = details.Title;
+        }
         return result;
     }
 
@@ -133,8 +141,9 @@ internal static class SkinWorkshopService
     public static bool IsActive(ulong id) => SkinService.Catalog is { } catalog &&
         ActiveItems.GetValue(catalog, c => c.ExportWorkshopCatalog().Select(item => item.Id).ToHashSet()).Contains(id);
     public static WorkshopDownload? DownloadState(ulong id) => Downloads.GetValueOrDefault(id);
-    internal static bool IsHotRegisteredResourceMod(Mod mod) => mod.manifest?.hasDll == false &&
+    internal static bool IsHotRegisteredResourceMod(Mod mod) =>
         Downloads.GetValueOrDefault(SkinCatalog.WorkshopSourceId(mod.path))?.State == WorkshopTextKey.Ready;
+    internal static string Title(ulong id) => Titles.GetValueOrDefault(id, "#" + id);
     public static bool IsSubscribed(ulong id) => ((EItemState)SteamUGC.GetItemState(new(id)) & EItemState.k_EItemStateSubscribed) != 0;
     public static double? Progress(ulong id) => SteamUGC.GetItemDownloadInfo(new(id), out var bytes, out var total) && total > 0
         ? Math.Clamp(100d * bytes / total, 0, 100) : null;
@@ -144,8 +153,10 @@ internal static class SkinWorkshopService
         if (!Catalog.Any(item => item.Id == id) || Downloads.GetValueOrDefault(id)?.Busy == true) return;
         var status = new WorkshopDownload { Busy = true };
         Downloads[id] = status;
+        Notices.BeginAttempt(id);
         try
         {
+            Ui.WorkshopSubscriptionDialog.EnsurePolling();
             _downloadCallback ??= Callback<DownloadItemResult_t>.Create(ev =>
             {
                 if (ev.m_unAppID.m_AppId == WorkshopCatalogPolicy.AppId && Waiters.TryGetValue(ev.m_nPublishedFileId.m_PublishedFileId, out var waiter))
@@ -167,12 +178,14 @@ internal static class SkinWorkshopService
             }
             if (!TryInstalled(id, out var directory)) throw new IOException("Steam install is not complete.");
             status.State = WorkshopTextKey.Checking;
-            var available = IsActive(id) || await SkinService.TryRegisterWorkshopResources(directory);
-            status.State = available ? WorkshopTextKey.Ready : WorkshopTextKey.Restart;
-            ModLog.Info($"工坊皮肤 {id}：{status.State}；安装目录 {directory}");
+            status.Reason = IsActive(id) ? WorkshopLoadReason.None : await SkinService.TryRegisterWorkshopResources(directory);
+            status.State = status.Reason == WorkshopLoadReason.None ? WorkshopTextKey.Ready :
+                status.Reason is WorkshopLoadReason.Version or WorkshopLoadReason.InvalidPackage ? WorkshopTextKey.Failed : WorkshopTextKey.Restart;
+            ModLog.Info($"工坊皮肤 {id}：{status.State}，原因={status.Reason}；安装目录 {directory}");
         }
         catch (Exception ex)
         {
+            if (status.State == WorkshopTextKey.Checking) status.Reason = WorkshopLoadReason.IncompleteResources;
             status.State = status.State == WorkshopTextKey.Checking ? WorkshopTextKey.Restart : WorkshopTextKey.Failed;
             status.Error = ex.Message;
             ModLog.Error($"工坊皮肤 {id} 下载/检查失败：{ex}");
@@ -181,7 +194,10 @@ internal static class SkinWorkshopService
         {
             status.Busy = false;
             Waiters.Remove(id);
-            if (DeferredNotices.Remove(id, out var mod) && status.State != WorkshopTextKey.Ready && GodotObject.IsInstanceValid(NGame.Instance))
+            status.NoticeOwned = status.Reason != WorkshopLoadReason.None;
+            Notices.Enqueue(id, status.Reason);
+            Ui.WorkshopSubscriptionDialog.TryShow();
+            if (DeferredNotices.Remove(id, out var mod) && !status.NoticeOwned && status.State != WorkshopTextKey.Ready && GodotObject.IsInstanceValid(NGame.Instance))
             {
                 try { AccessTools.Method(typeof(NGame), "OnNewModDetected")?.Invoke(NGame.Instance, [mod]); }
                 catch (Exception ex) { ModLog.Warn("恢复工坊重启提示失败，面板保留重启状态：" + ex.GetBaseException().Message); }
@@ -203,7 +219,7 @@ internal static class SkinWorkshopService
         var id = SkinCatalog.WorkshopSourceId(mod.path);
         if (Downloads.GetValueOrDefault(id) is not { } status) return false;
         if (status.Busy) { DeferredNotices[id] = mod; return true; }
-        return status.State == WorkshopTextKey.Ready;
+        return status.State == WorkshopTextKey.Ready || status.NoticeOwned;
     }
 }
 

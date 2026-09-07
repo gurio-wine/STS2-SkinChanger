@@ -24,7 +24,8 @@ internal sealed partial class SkinCatalog
                 b.Archive.Contains(dependency + ".import") || b.Archive.Contains(dependency + ".remap"));
         return ownedFiles.Count > 0 && resources.All(path => ownedFiles.Contains(path) ||
             path is "res://project.binary" or "res://.godot/uid_cache.bin" or "res://.godot/global_script_class_cache.cfg") &&
-            resources.All(path => !path.EndsWith(".scn", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".res", StringComparison.OrdinalIgnoreCase)) &&
+            resources.All(path => System.IO.Path.GetExtension(path.EndsWith(".remap") ? path[..^6] : path).ToLowerInvariant()
+                is not (".scn" or ".res" or ".cs" or ".gd" or ".gdc" or ".dll" or ".gdextension")) &&
             resources.SelectMany(path => EnumerateDependencyPaths(new ResourceFile(index.Archive, path))).All(Available);
     }
 

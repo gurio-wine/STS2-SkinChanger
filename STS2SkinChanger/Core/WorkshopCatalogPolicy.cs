@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace STS2SkinChanger.Core;
 
 internal sealed record WorkshopTarget(string Kind, string Target);
-internal sealed record WorkshopCatalogItem(ulong Id, WorkshopTarget[] Targets);
+internal sealed record WorkshopCatalogItem(ulong Id, WorkshopTarget[] Targets, bool RestartRequired = false);
 
 internal static class WorkshopCatalogPolicy
 {
@@ -19,7 +19,7 @@ internal static class WorkshopCatalogPolicy
         return items.Where(item => item != null && item.Id > 0)
             .GroupBy(item => item.Id).Select(group => new WorkshopCatalogItem(group.Key,
                 group.SelectMany(item => item.Targets ?? []).Where(t => t != null && Kinds.Contains(t.Kind) && !string.IsNullOrWhiteSpace(t.Target))
-                    .Select(t => new WorkshopTarget(t.Kind, t.Target.ToLowerInvariant())).Distinct().ToArray()))
+                    .Select(t => new WorkshopTarget(t.Kind, t.Target.ToLowerInvariant())).Distinct().ToArray(), group.Any(item => item.RestartRequired)))
             .Where(item => item.Targets.Length > 0).ToArray();
     }
     public static ulong[] FilterIds(string json, string kind, string target) =>
@@ -30,8 +30,6 @@ internal static class WorkshopCatalogPolicy
     public static bool IsSkinChoice(string id) => !id.Equals(CommandId, StringComparison.OrdinalIgnoreCase);
     public static bool CanUseInstalledFiles(bool installed, bool needsUpdate, bool downloading, bool pending) =>
         installed && !needsUpdate && !downloading && !pending;
-    public static bool CanHotRegister(bool hasCode, bool affectsGameplay, bool dependencies, bool completeResources) =>
-        !hasCode && !affectsGameplay && !dependencies && completeResources;
 
     public static bool IsSafeCover(byte[] data)
     {

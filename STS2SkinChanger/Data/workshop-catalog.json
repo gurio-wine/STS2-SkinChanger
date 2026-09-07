@@ -22,7 +22,8 @@
         "kind": "character",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747535878,
@@ -87,7 +88,8 @@
         "kind": "cards",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747583717,
@@ -96,7 +98,8 @@
         "kind": "cards",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747589574,
@@ -105,7 +108,8 @@
         "kind": "character",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3747591649,
@@ -114,7 +118,8 @@
         "kind": "character",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3747592061,
@@ -151,7 +156,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747597614,
@@ -160,7 +166,8 @@
         "kind": "character",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3747611326,
@@ -169,7 +176,8 @@
         "kind": "ancient",
         "target": "neow"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3747626664,
@@ -182,7 +190,8 @@
         "kind": "cards",
         "target": "curse"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747627739,
@@ -219,7 +228,8 @@
         "kind": "ancient",
         "target": "vakuu"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747644438,
@@ -228,7 +238,8 @@
         "kind": "character",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747659515,
@@ -237,7 +248,8 @@
         "kind": "cards",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747659596,
@@ -246,7 +258,8 @@
         "kind": "character",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747659673,
@@ -263,7 +276,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747659771,
@@ -272,7 +286,8 @@
         "kind": "character",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747659917,
@@ -289,7 +304,8 @@
         "kind": "cards",
         "target": "curse"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747661487,
@@ -302,7 +318,8 @@
         "kind": "cards",
         "target": "status"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747668677,
@@ -311,7 +328,8 @@
         "kind": "monster",
         "target": "queen"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3747671186,
@@ -324,7 +342,8 @@
         "kind": "cards",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747751411,
@@ -337,7 +356,8 @@
         "kind": "cards",
         "target": "curse"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747763262,
@@ -346,7 +366,8 @@
         "kind": "character",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747767062,
@@ -355,7 +376,8 @@
         "kind": "cards",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747774514,
@@ -364,7 +386,8 @@
         "kind": "character",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747788291,
@@ -377,7 +400,8 @@
         "kind": "companion",
         "target": "osty"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747800917,
@@ -390,7 +414,8 @@
         "kind": "cards",
         "target": "watcher"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3747823253,
@@ -403,7 +428,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3747942752,
@@ -412,7 +438,8 @@
         "kind": "character",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747952763,
@@ -437,7 +464,8 @@
         "kind": "cards",
         "target": "status"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3747990002,
@@ -446,7 +474,8 @@
         "kind": "merchant",
         "target": "merchant"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748163142,
@@ -455,7 +484,8 @@
         "kind": "character",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748168882,
@@ -464,7 +494,8 @@
         "kind": "cards",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3748172835,
@@ -473,7 +504,8 @@
         "kind": "character",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748172927,
@@ -482,7 +514,8 @@
         "kind": "character",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748173013,
@@ -491,7 +524,8 @@
         "kind": "cards",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3748174613,
@@ -504,7 +538,8 @@
         "kind": "cards",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748331824,
@@ -517,7 +552,8 @@
         "kind": "merchant",
         "target": "fake_merchant_monster"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748397014,
@@ -526,7 +562,8 @@
         "kind": "ancient",
         "target": "vakuu"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3748416304,
@@ -535,7 +572,8 @@
         "kind": "monster",
         "target": "torch_head_amalgam"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3748419805,
@@ -544,7 +582,8 @@
         "kind": "character",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3748583469,
@@ -553,7 +592,8 @@
         "kind": "character",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748603697,
@@ -562,7 +602,8 @@
         "kind": "character",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748612230,
@@ -579,7 +620,8 @@
         "kind": "cards",
         "target": "colorless"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748629709,
@@ -588,7 +630,8 @@
         "kind": "character",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748645069,
@@ -597,7 +640,8 @@
         "kind": "character",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748864970,
@@ -626,7 +670,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748924864,
@@ -635,7 +680,8 @@
         "kind": "ancient",
         "target": "pael"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748931996,
@@ -644,7 +690,8 @@
         "kind": "character",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3748978466,
@@ -657,7 +704,8 @@
         "kind": "cards",
         "target": "status"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3749568885,
@@ -666,7 +714,8 @@
         "kind": "character",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3749575378,
@@ -675,7 +724,8 @@
         "kind": "character",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3749577455,
@@ -684,7 +734,8 @@
         "kind": "character",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3749627968,
@@ -701,7 +752,8 @@
         "kind": "cards",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3750777432,
@@ -710,7 +762,8 @@
         "kind": "character",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3752065217,
@@ -719,7 +772,8 @@
         "kind": "monster",
         "target": "byrdonis"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3752222957,
@@ -728,7 +782,8 @@
         "kind": "character",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3752315521,
@@ -737,7 +792,8 @@
         "kind": "character",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3752316873,
@@ -746,7 +802,8 @@
         "kind": "character",
         "target": "regent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3756670882,
@@ -759,7 +816,8 @@
         "kind": "cards",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3756920998,
@@ -772,7 +830,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3757190070,
@@ -781,7 +840,8 @@
         "kind": "companion",
         "target": "byrdpip"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3759576970,
@@ -794,7 +854,8 @@
         "kind": "cards",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3759748828,
@@ -847,7 +908,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3761681399,
@@ -856,7 +918,8 @@
         "kind": "character",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3761681862,
@@ -889,7 +952,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3761752374,
@@ -898,7 +962,8 @@
         "kind": "monster",
         "target": "myte"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3764459833,
@@ -911,7 +976,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3765802910,
@@ -1140,7 +1206,8 @@
         "kind": "event",
         "target": "event:zen_weaver"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3767081188,
@@ -1177,7 +1244,8 @@
         "kind": "ancient",
         "target": "vakuu"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3768362328,
@@ -1186,7 +1254,8 @@
         "kind": "monster",
         "target": "ceremonial_beast"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3770720212,
@@ -1195,7 +1264,8 @@
         "kind": "monster",
         "target": "bygone_effigy"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3771061301,
@@ -1204,7 +1274,8 @@
         "kind": "character",
         "target": "necrobinder"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3771061420,
@@ -1221,7 +1292,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3771874448,
@@ -1258,7 +1330,8 @@
         "kind": "ancient",
         "target": "vakuu"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3773814239,
@@ -1271,7 +1344,8 @@
         "kind": "companion",
         "target": "osty"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3774396033,
@@ -1280,7 +1354,8 @@
         "kind": "monster",
         "target": "shrinker_beetle"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3779055290,
@@ -1289,7 +1364,8 @@
         "kind": "cards",
         "target": "ironclad"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3783041069,
@@ -1706,7 +1782,8 @@
         "kind": "monster",
         "target": "zapbot"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3786286239,
@@ -1715,7 +1792,8 @@
         "kind": "character",
         "target": "silent"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3787753911,
@@ -1736,7 +1814,8 @@
         "kind": "cards",
         "target": "token"
       }
-    ]
+    ],
+    "restartRequired": false
   },
   {
     "id": 3789216478,
@@ -1745,7 +1824,8 @@
         "kind": "character",
         "target": "watcher"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3790373874,
@@ -1754,7 +1834,8 @@
         "kind": "character",
         "target": "defect"
       }
-    ]
+    ],
+    "restartRequired": true
   },
   {
     "id": 3795439955,
@@ -1783,6 +1864,7 @@
         "kind": "monster",
         "target": "vantom"
       }
-    ]
+    ],
+    "restartRequired": false
   }
 ]

@@ -30,12 +30,8 @@ internal static class WorkshopTests
                 !(bool)Call("CanUseInstalledFiles", true, false, false, true) &&
                 (bool)Call("CanUseInstalledFiles", true, false, false, false),
             "正在更新/下载/排队的旧文件不能标记为可用。");
-        Require(!(bool)Call("CanHotRegister", true, false, false, true) &&
-                !(bool)Call("CanHotRegister", false, true, false, true) &&
-                !(bool)Call("CanHotRegister", false, false, true, true) &&
-                !(bool)Call("CanHotRegister", false, false, false, false) &&
-                (bool)Call("CanHotRegister", false, false, false, true),
-            "新增 DLL、玩法、依赖及未证明完整的资源不能半接管。");
+        var marked = (Array)Call("Parse", json.Replace("\"id\":123", "\"id\":123,\"restartRequired\":true"));
+        Require((bool)marked.GetValue(0)!.GetType().GetProperty("RestartRequired")!.GetValue(marked.GetValue(0))!, "合并重复 ID 不能丢失已审计的重启标记。");
         var png = new byte[24];
         new byte[] {137,80,78,71,13,10,26,10}.CopyTo(png, 0);
         new byte[] {73,72,68,82}.CopyTo(png, 12);
@@ -52,12 +48,79 @@ internal static class WorkshopTests
         CheckResourceCoverage();
         CheckNativeNoticeScope();
         CheckPanelLifecycle();
+        CheckPackageCapabilities();
+        CheckNoticeQueue();
         using var catalogResource = typeof(Entry).Assembly.GetManifestResourceStream("STS2SkinChanger.Data.workshop-catalog.json");
         Require(catalogResource != null, "发布 DLL 缺少内置清单，不能依赖开发机器的文件。");
         using var reader = new StreamReader(catalogResource!);
         var bundled = (ulong[])Call("FilterIds", reader.ReadToEnd(), "", "");
         Require(bundled.Length > 0 && bundled.Distinct().Count() == bundled.Length && !bundled.Contains(3787302680UL), "工坊浏览器不能收录自身或重复物品。");
         Console.WriteLine("Workshop policy tests passed.");
+    }
+    private static void CheckPackageCapabilities()
+    {
+        var policy = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopPackagePolicy");
+        Require(policy != null, "需要按实际版本、已加载前置和代码能力检查工坊包，而不是一律要求重启。");
+        using var package = new WorkshopPackageFixture();
+        string Assess(string json, string version, Dictionary<string, string> loaded)
+        {
+            File.WriteAllText(Path.Combine(package.Path, "skin.json"), json);
+            var result = policy!.GetMethod("Assess")!.Invoke(null, [package.Path, version, loaded])!;
+            return result.GetType().GetProperty("Reason")!.GetValue(result)!.ToString()!;
+        }
+        const string manifest = """{"id":"skin","has_pck":true,"has_dll":false,"affects_gameplay":false,"min_game_version":"0.107.0","dependencies":[{"id":"BaseLib","min_version":"1.0.0"}]}""";
+        Require(Assess(manifest, "0.111.0", new() { ["BaseLib"] = "1.1.0" }) == "None", "已经加载且版本符合的前置不应阻止纯资源热加载。");
+        Require(Assess(manifest, "0.111.0", new()) == "Dependency", "未加载的前置不能假装已满足。");
+        Require(Assess(manifest, "0.106.0", new() { ["BaseLib"] = "1.1.0" }) == "Version", "游戏版本不匹配不能只提示重启。");
+        Require(Assess(manifest, "0.111.0", new() { ["BaseLib"] = "0.9.0" }) == "Dependency", "不能忽略前置的版本下限。");
+        Require(Assess(manifest.Replace("min_game_version", "unknown_game_version"), "0.111.0", new()) == "VersionRule", "不能略过不认识的版本约束。");
+        Require(Assess(manifest.Replace("0.107.0", "0.112.0"), "0.111.0", new()) == "Version", "比当前测试版更高的版本要求也必须拒绝。");
+        Require(Assess(manifest.Replace("skin\"", "../skin\""), "0.111.0", new()) == "InvalidPackage", "包内 ID 不能穿越安装目录。");
+        var bootstrap = System.IO.Path.Combine(AppContext.BaseDirectory, "STS2SkinChanger.WorkshopBootstrapFixture.dll");
+        File.Copy(bootstrap, System.IO.Path.Combine(package.Path, "skin.dll"));
+        Require(Assess(manifest.Replace("\"has_dll\":false", "\"has_dll\":true"), "0.111.0", new() { ["BaseLib"] = "1.1.0" }) == "None", "仅有可省略启动代码的 DLL 不应挡住后续完整资源验证。");
+        Require(!AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "STS2SkinChanger.WorkshopBootstrapFixture"), "检查 DLL 不得执行或加载它。");
+        File.Copy(typeof(WorkshopTests).Assembly.Location, System.IO.Path.Combine(package.Path, "skin.dll"), true);
+        Require(Assess(manifest, "0.111.0", new() { ["BaseLib"] = "1.1.0" }) == "StartupCode", "含未知逻辑的 DLL 即使未声明也不得绕过初始化检查。");
+        var snapshot = HarmonyLib.AccessTools.Method(policy, "Snapshot").Invoke(null, [package.Path])!;
+        Require((bool)HarmonyLib.AccessTools.Method(policy, "Unchanged").Invoke(null, [package.Path, snapshot])!, "未改动的下载包应该通过源文件检查。");
+        File.WriteAllText(System.IO.Path.Combine(package.Path, "new.json"), "{}");
+        Require(!(bool)HarmonyLib.AccessTools.Method(policy, "Unchanged").Invoke(null, [package.Path, snapshot])!, "检查期间新增文件也必须阻止发布，不能只验证旧文件。");
+    }
+
+    private static void CheckNoticeQueue()
+    {
+        var queueType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopNoticeQueue");
+        Require(queueType != null, "订阅完成后的提醒不能依赖工坊面板或 Steam 新 Mod 回调仍在。");
+        var queue = Activator.CreateInstance(queueType!)!;
+        var reasonType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopLoadReason")!;
+        object Reason(string value) => Enum.Parse(reasonType, value);
+        void Enqueue(ulong id, string reason) => queueType!.GetMethod("Enqueue")!.Invoke(queue, [id, Reason(reason)]);
+        Enqueue(1, "None");
+        Require((int)queueType!.GetProperty("Count")!.GetValue(queue)! == 0, "热加载成功不应提示重启。");
+        Enqueue(2, "StartupCode"); Enqueue(2, "StartupCode"); Enqueue(3, "Version");
+        Require((int)queueType.GetProperty("Count")!.GetValue(queue)! == 2, "同一次订阅只能排队一条提示，不同物品不能丢失。");
+        queueType.GetMethod("Acknowledge")!.Invoke(queue, [2UL]);
+        Enqueue(2, "StartupCode");
+        Require((int)queueType.GetProperty("Count")!.GetValue(queue)! == 1, "已确认的同一提示不能被迟到的回调再次弹出。");
+        var noticeText = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopNoticeText");
+        Require(noticeText != null, "需要面向玩家的重启原因和版本不匹配提示。");
+        var keyType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopNoticeKey", true)!;
+        foreach (var language in new[] { "eng", "zhs", "zht", "deu", "esp", "spa", "fra", "ita", "jpn", "kor", "pol", "ptb", "rus", "tha", "tur" })
+        foreach (var key in Enum.GetValues(keyType))
+            Require(!string.IsNullOrWhiteSpace((string)noticeText!.GetMethod("ForLanguage")!.Invoke(null, [language, key])!), $"{language} 缺少订阅提醒 {key}");
+    }
+
+    private sealed class WorkshopPackageFixture : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory("sc-workshop-capability-").FullName;
+        public WorkshopPackageFixture()
+        {
+            var pck = typeof(Entry).Assembly.GetType("STS2SkinChanger.Pck.PckArchive", true)!;
+            HarmonyLib.AccessTools.Method(pck, "Write").Invoke(null, [System.IO.Path.Combine(Path, "skin.pck"),
+                new Dictionary<string, byte[]> { ["res://animations/characters/necrobinder/model.tres"] = System.Text.Encoding.UTF8.GetBytes("[gd_resource type=\"Resource\" format=3]\n[resource]\n") }]);
+        }
+        public void Dispose() => Directory.Delete(Path, true);
     }
     private static void CheckPanelLifecycle()
     {
@@ -79,6 +142,12 @@ internal static class WorkshopTests
         var accent = HarmonyLib.AccessTools.Method(controls, "IsAccentedCharacterOption");
         Require((bool)accent.Invoke(null, ["__workshop__"])! && !(bool)accent.Invoke(null, ["skin:a"])!,
             "工坊入口需要强调色，但不能给所有普通皮肤染色。");
+        var dialog = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.WorkshopSubscriptionDialog", true)!;
+        Require(Calls(HarmonyLib.AccessTools.Method(dialog, "EnsurePolling"), "add_Timeout"), "订阅提醒需要由游戏节点的原生计时信号驱动，关闭浏览器后也能继续。");
+        var showDialog = HarmonyLib.AccessTools.Method(dialog, "Show");
+        var moveNext = showDialog.GetCustomAttribute<System.Runtime.CompilerServices.AsyncStateMachineAttribute>()!.StateMachineType.GetMethod("MoveNext", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Require(Calls(moveNext, "WaitForConfirmation") && Calls(moveNext, "SuspendForNotice") && Calls(moveNext, "add_TreeExiting"),
+            "提醒必须走原生弹窗、处理浏览器遮挡，并在弹窗被退树释放时结束等待。");
     }
     private static void CheckNativeNoticeScope()
     {
@@ -101,6 +170,9 @@ internal static class WorkshopTests
             var keyType = assembly.GetType("STS2SkinChanger.Core.WorkshopTextKey", true)!;
             stateType.GetField("State")!.SetValue(state, Enum.Parse(keyType, "Ready"));
             Require((bool)method.Invoke(null, [ours])!, "完整注册的资源皮肤不应再提示必须重启。");
+            stateType.GetField("State")!.SetValue(state, Enum.Parse(keyType, "Restart"));
+            stateType.GetField("NoticeOwned")!.SetValue(state, true);
+            Require((bool)method.Invoke(null, [ours])! && !(bool)method.Invoke(null, [other])!, "已有本 Mod 结果提醒时只去重同一物品，不能拦住其它订阅提醒。");
             var patch = assembly.GetType("STS2SkinChanger.Core.WorkshopRuntimeNoticePatch", true)!;
             Require(HarmonyLib.AccessTools.Method(patch, "TargetMethod").Invoke(null, null) is MethodBase, "当前游戏版本不存在预期的官方重启提示入口。");
         }

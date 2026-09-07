@@ -1,8 +1,6 @@
-using System.Text.Json;
 using Godot;
 using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger.Catalog;
-using STS2SkinChanger.Pck;
 
 namespace STS2SkinChanger.Core;
 
@@ -13,7 +11,7 @@ internal static partial class SkinService
     private static Dictionary<string, (long Length, DateTime Modified)> _workshopSourceStamps = [];
     private static readonly SemaphoreSlim WorkshopRegistrationGate = new(1);
 
-    internal static async Task<bool> TryRegisterWorkshopResources(string directory)
+    internal static async Task<WorkshopLoadReason> TryRegisterWorkshopResources(string directory)
     {
         await WorkshopRegistrationGate.WaitAsync();
         SkinCatalog? staged = null;
@@ -28,14 +26,22 @@ internal static partial class SkinService
                 baseline = Catalog;
                 descriptors = _workshopDescriptors;
                 gamePack = _workshopGamePack;
-                if (baseline == null || gamePack == null) return false;
-                if (!WorkshopSourcesUnchanged()) return false;
+                if (baseline == null || gamePack == null) return WorkshopLoadReason.ChangedFiles;
+                if (!WorkshopSourcesUnchanged()) return WorkshopLoadReason.ChangedFiles;
                 cards = ModelDb.AllCards.Select(card => new CardCatalogEntry(card.GetType().Name, card.PortraitPath,
                     GetCardPoolGroupId(card), GetCardCatalogGroupId(card), GetCardFilterGroupId(card))
                 { IsCharacterPool = IsCharacterCardPool(card) }).ToArray();
             }
-            var additions = await Task.Run(() => ReadCompleteWorkshopResourceMods(directory));
-            if (additions.Length == 0 || additions.Any(mod => descriptors.Any(old => old.Id.Equals(mod.Id, StringComparison.OrdinalIgnoreCase)))) return false;
+            var gameVersion = (HarmonyLib.AccessTools.Field(typeof(MegaCrit.Sts2.Core.Modding.ModManager), "_gameVersion")?.GetValue(null))?.ToString();
+            var loaded = MegaCrit.Sts2.Core.Modding.ModManager.Mods
+                .Where(mod => mod.state == MegaCrit.Sts2.Core.Modding.ModLoadState.Loaded && mod.manifest?.id != null)
+                .GroupBy(mod => mod.manifest!.id!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().manifest!.version ?? "", StringComparer.OrdinalIgnoreCase);
+            var before = await Task.Run(() => WorkshopPackagePolicy.Snapshot(directory));
+            var package = await Task.Run(() => WorkshopPackagePolicy.Assess(directory, gameVersion, loaded));
+            if (!package.CanInspectResources) return package.Reason;
+            var additions = package.Mods;
+            if (additions.Any(mod => descriptors.Any(old => old.Id.Equals(mod.Id, StringComparison.OrdinalIgnoreCase)))) return WorkshopLoadReason.DuplicateId;
             var combined = descriptors.Concat(additions).ToArray();
             staged = await Task.Run<SkinCatalog?>(() =>
             {
@@ -49,10 +55,11 @@ internal static partial class SkinService
                 }
                 catch { candidate.Dispose(); throw; }
             });
-            if (staged == null) return false;
+            if (staged == null) return WorkshopLoadReason.IncompleteResources;
+            if (!await Task.Run(() => WorkshopPackagePolicy.Unchanged(directory, before))) return WorkshopLoadReason.ChangedFiles;
             lock (Sync)
             {
-                if (!ReferenceEquals(Catalog, baseline) || !WorkshopSourcesUnchanged()) return false;
+                if (!ReferenceEquals(Catalog, baseline) || !WorkshopSourcesUnchanged()) return WorkshopLoadReason.ChangedFiles;
                 staged.SynchronizeCharacterSkinCompositions(Config.CharacterSkinCompositions);
                 var previousConfig = Config;
                 var nextConfig = Config.CloneForBundleTransaction();
@@ -111,7 +118,7 @@ internal static partial class SkinService
                 _cardLookupCache = new System.Runtime.CompilerServices.ConditionalWeakTable<CardModel, CardLookup>();
                 CardCoverageCache.Clear();
             }
-            return true;
+            return WorkshopLoadReason.None;
         }
         finally { staged?.Dispose(); WorkshopRegistrationGate.Release(); }
     }
@@ -122,35 +129,4 @@ internal static partial class SkinService
     private static bool WorkshopSourcesUnchanged() => _workshopSourceStamps.All(pair =>
         File.Exists(pair.Key) && new FileInfo(pair.Key) is { } file && (file.Length, file.LastWriteTimeUtc) == pair.Value);
 
-    private static SkinModDescriptor[] ReadCompleteWorkshopResourceMods(string directory)
-    {
-        // Conservative complete-resource path. A DLL/script, gameplay contribution or dependency
-        // requires the game's normal restart/loader; never execute downloaded initializers here.
-        if (Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any(path =>
-                System.IO.Path.GetExtension(path).ToLowerInvariant() is ".dll" or ".so" or ".dylib" or ".gd" or ".cs")) return [];
-        var result = new List<SkinModDescriptor>();
-        foreach (var manifest in Directory.EnumerateFiles(directory, "*.json", SearchOption.AllDirectories))
-        {
-            if (new FileInfo(manifest).Length > 1024 * 1024) continue;
-            using var doc = JsonDocument.Parse(File.ReadAllText(manifest).TrimStart('\uFEFF'));
-            var j = doc.RootElement;
-            if (j.ValueKind != JsonValueKind.Object || !j.TryGetProperty("id", out var idField) || !j.TryGetProperty("has_pck", out var hp)) continue;
-            var hasCode = !j.TryGetProperty("has_dll", out var hd) || hd.GetBoolean();
-            var gameplay = !j.TryGetProperty("affects_gameplay", out var ag) || ag.GetBoolean();
-            var dependencies = j.TryGetProperty("dependencies", out var deps) && (deps.ValueKind != JsonValueKind.Array || deps.GetArrayLength() > 0);
-            // Version-constrained manifests need native validation against the running snapshot.
-            var versioned = j.EnumerateObject().Any(p => p.Name.Contains("version", StringComparison.OrdinalIgnoreCase) && p.Name != "version");
-            if (!WorkshopCatalogPolicy.CanHotRegister(hasCode, gameplay, dependencies || versioned, hp.GetBoolean())) return [];
-            var id = idField.GetString();
-            var pckName = j.TryGetProperty("pck_name", out var pn) ? pn.GetString() : id;
-            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(pckName) || pckName.IndexOfAny(['/', '\\', ':']) >= 0 || pckName is "." or "..") return [];
-            var root = System.IO.Path.GetDirectoryName(manifest)!;
-            var pck = System.IO.Path.Combine(root, pckName + ".pck");
-            if (!File.Exists(pck)) return [];
-            using var archive = PckArchive.Open(pck);
-            if (archive.Paths.Any(path => System.IO.Path.GetExtension(path.EndsWith(".remap") ? path[..^6] : path).ToLowerInvariant() is ".cs" or ".gd" or ".gdc" or ".dll" or ".gdextension")) return [];
-            result.Add(new(id, j.TryGetProperty("name", out var name) ? name.GetString() ?? id : id, pck, false, root, false));
-        }
-        return result.ToArray();
-    }
 }

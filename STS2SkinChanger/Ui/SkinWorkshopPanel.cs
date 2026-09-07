@@ -7,6 +7,8 @@ namespace STS2SkinChanger.Ui;
 internal partial class SkinWorkshopPanel : Control
 {
     private const int PageSize = 8;
+    private static SkinWorkshopPanel? _current;
+    private bool _suspended;
     private static readonly string[] Kinds = ["", "character", "cards", "monster", "ancient", "merchant", "companion", "event"];
     private string _kind = "";
     private string _target = "";
@@ -32,6 +34,7 @@ internal partial class SkinWorkshopPanel : Control
         var panel = new SkinWorkshopPanel { _kind = kind, _target = target, _origin = origin, _refresh = refresh, _layer = layer };
         try
         {
+            _current = panel;
             root.AddChild(layer);
             layer.AddChild(panel);
             panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -193,6 +196,10 @@ internal partial class SkinWorkshopPanel : Control
     private void Poll()
     {
         if (_closed) return;
+        // The browser's CanvasLayer sits above the native UI. Yield to ALL native
+        // modals, including another Mod's subscription notice, not only our own.
+        _suspended = MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
+        _layer.Visible = !_suspended;
         foreach (var (id, label, action) in _actions)
         {
             try
@@ -202,8 +209,16 @@ internal partial class SkinWorkshopPanel : Control
                 action.Disabled = state?.Busy == true || active || state?.State == WorkshopTextKey.Restart;
                 action.Text = WorkshopText.Get(active ? WorkshopTextKey.Ready : state?.State == WorkshopTextKey.Restart ? WorkshopTextKey.Restart :
                     SkinWorkshopService.IsSubscribed(id) ? WorkshopTextKey.Download : WorkshopTextKey.Subscribe);
-                label.Text = state == null ? "" : WorkshopText.Get(state.State);
-                label.TooltipText = state?.Error ?? "";
+                var restart = !active && (state?.State == WorkshopTextKey.Restart ||
+                    state == null && SkinWorkshopService.Catalog.First(i => i.Id == id).RestartRequired);
+                label.Text = state == null ? active ? WorkshopText.Get(WorkshopTextKey.Ready) :
+                    WorkshopNoticeText.Get(restart ? WorkshopNoticeKey.KnownRestart : WorkshopNoticeKey.CheckAfterDownload) : WorkshopText.Get(state.State);
+                if (!label.HasMeta("sc_restart_accent") || label.GetMeta("sc_restart_accent").AsBool() != restart)
+                {
+                    ModThemeRuntime.TextControl(label, 17, restart);
+                    label.SetMeta("sc_restart_accent", restart);
+                }
+                label.TooltipText = state is { Reason: not WorkshopLoadReason.None } ? WorkshopNoticeText.Reason(state.Reason) : state?.Error ?? "";
                 if (state is { Busy: true, State: WorkshopTextKey.Waiting } && SkinWorkshopService.Progress(id) is { } progress)
                     label.Text = WorkshopText.Get(WorkshopTextKey.Download) + $" {progress:F0}%";
             }
@@ -212,13 +227,19 @@ internal partial class SkinWorkshopPanel : Control
     }
     private void HandleInput(InputEvent ev)
     {
-        if (!_closed && ev.IsActionPressed("ui_cancel") && !ev.IsEcho())
+        if (!_closed && !_suspended && ev.IsActionPressed("ui_cancel") && !ev.IsEcho())
         {
             GetViewport().SetInputAsHandled();
             Close();
         }
     }
     private bool _closed;
+    internal static void SuspendForNotice(bool suspend)
+    {
+        if (!GodotObject.IsInstanceValid(_current) || _current!._closed) return;
+        _current._suspended = suspend;
+        _current._layer.Visible = !suspend;
+    }
     private void Close()
     {
         if (_closed) return; _closed = true;
@@ -230,6 +251,7 @@ internal partial class SkinWorkshopPanel : Control
     }
     private void Cleanup()
     {
+        if (ReferenceEquals(_current, this)) _current = null;
         _closed = true;
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
         _window = null;

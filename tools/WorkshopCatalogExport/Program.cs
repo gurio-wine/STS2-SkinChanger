@@ -1,8 +1,23 @@
 using System.Text.Json;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Core;
 using STS2SkinChanger.Pck;
 
 // Developer-only local inventory export. The game never scans subscriptions to populate its browser.
+if (args.Length == 3 && args[0] == "--refresh-restart-hints")
+{
+    // Only inspect IDs already curated in this file. Hints describe the audited
+    // local snapshot; subscription always rechecks the actual downloaded package.
+    var existing = WorkshopCatalogPolicy.Parse(File.ReadAllText(args[2]));
+    var audited = existing.Select(item =>
+    {
+        var directory = Path.Combine(args[1], item.Id.ToString());
+        return Directory.Exists(directory) ? item with { RestartRequired = WorkshopPackagePolicy.RequiresCodeAtStartup(directory) } : item;
+    }).ToArray();
+    File.WriteAllText(args[2], JsonSerializer.Serialize(audited, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }).Replace("\r\n", "\n") + "\n");
+    Console.WriteLine($"Audited {audited.Length} curated IDs: {audited.Count(item => item.RestartRequired)} require startup code; others remain download-to-check.");
+    return;
+}
 if (args.Length != 3) throw new ArgumentException("WorkshopCatalogExport <game.pck> <installed Workshop root> <output.json>");
 var mods = new List<SkinModDescriptor>();
 foreach (var path in Directory.EnumerateFiles(args[1], "*.json", SearchOption.AllDirectories))
@@ -42,5 +57,5 @@ foreach (var pck in mods.Where(m => m.AffectsGameplay && m.PckPath != null).Sele
 }
 catalog.FinalizeCardGroups(cards.Values);
 var entries = catalog.ExportWorkshopCatalog();
-File.WriteAllText(args[2], JsonSerializer.Serialize(entries, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }) + "\n");
+File.WriteAllText(args[2], JsonSerializer.Serialize(entries, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }).Replace("\r\n", "\n") + "\n");
 Console.WriteLine($"Exported {entries.Length} recognized Workshop items from {mods.Count} installed manifests.");
