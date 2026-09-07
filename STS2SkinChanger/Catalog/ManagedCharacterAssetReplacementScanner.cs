@@ -124,7 +124,7 @@ internal static class ManagedCharacterAssetReplacementScanner
         // field-level data-flow analysis instead of assigning one profile to every target.
         if (characterEntries.Count != 1 || providerPathsByProperty.Count == 0)
         {
-            return null;
+            return ScanButtonIcon(assemblyPath);
         }
 
         var targetGroupId = NormalizeToken(characterEntries.Single());
@@ -141,6 +141,103 @@ internal static class ManagedCharacterAssetReplacementScanner
         return mappedPaths.Count == 0
             ? null
             : new ManagedCharacterAssetReplacement(targetGroupId, mappedPaths);
+    }
+
+    // Some skins assign a cached private texture from NCharacterSelectButton.Init instead of
+    // replacing CharacterSelectIcon. Resolve that declaration without activating the provider
+    // (whose static constructor may also load every combat model and effect).
+    internal static ManagedCharacterAssetReplacement? ScanButtonIcon(string assemblyPath)
+    {
+        using var stream = File.OpenRead(assemblyPath);
+        using var pe = new PEReader(stream);
+        if (!pe.HasMetadata) return null;
+        var reader = pe.GetMetadataReader();
+        var fields = new Dictionary<int, string>();
+        var methods = reader.TypeDefinitions.SelectMany(type => reader.GetTypeDefinition(type).GetMethods())
+            .Where(handle => reader.GetMethodDefinition(handle).RelativeVirtualAddress != 0)
+            .ToDictionary(handle => handle, handle => ReadIconInstructions(reader, pe, handle));
+        foreach (var (handle, instructions) in methods)
+        {
+            if (reader.GetString(reader.GetMethodDefinition(handle).Name) != ".cctor") continue;
+            string? image = null;
+            var loaded = false;
+            foreach (var i in instructions)
+            {
+                if (i.Op == OpCodes.Ldstr) { image = IsIconImage(i.Text) ? i.Text : null; loaded = false; }
+                if (i.Op == OpCodes.Call && i.Text is "Load") loaded = image != null;
+                if (i.Op == OpCodes.Stsfld)
+                {
+                    if (loaded && image != null) fields[i.Token] = image;
+                    image = null;
+                    loaded = false;
+                }
+            }
+        }
+        var matches = new List<(string Group, string Path)>();
+        foreach (var (handle, instructions) in methods)
+        {
+            var method = reader.GetMethodDefinition(handle);
+            if (reader.GetString(method.Name) != "Postfix") continue;
+            var attributes = reader.GetTypeDefinition(method.GetDeclaringType()).GetCustomAttributes()
+                .Concat(method.GetCustomAttributes());
+            var hasButtonInit = attributes.Any(handle =>
+            {
+                var a = reader.GetCustomAttribute(handle);
+                var value = System.Text.Encoding.UTF8.GetString(reader.GetBlobBytes(a.Value));
+                return value.Contains("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectButton,", StringComparison.Ordinal) &&
+                       value.Contains("\u0004Init", StringComparison.Ordinal);
+            });
+            if (!hasButtonInit || !instructions.Any(i => i.Text is "_icon" or "%Icon") ||
+                !instructions.Any(i => i.Text is "set_Texture" or "SetValue")) continue;
+            var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var n = 0; n < instructions.Count; n++)
+            {
+                var i = instructions[n];
+                if (i.Op == OpCodes.Ldstr && IsPlausibleCharacterEntry(i.Text) &&
+                    instructions.Skip(n + 1).Take(3).Any(next =>
+                        (next.Op == OpCodes.Call || next.Op == OpCodes.Callvirt) && next.Text is "Equals" or "op_Equality"))
+                    groups.Add(NormalizeToken(i.Text!));
+            }
+            var images = instructions.Where(i => i.Op == OpCodes.Ldsfld && fields.ContainsKey(i.Token))
+                .Select(i => fields[i.Token])
+                .Concat(instructions.Where(i => i.Op == OpCodes.Ldstr && IsIconImage(i.Text)).Select(i => i.Text!))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            // Ambiguous multiple characters/images need real control-flow analysis, never a guess.
+            if (groups.Count == 1 && images.Length == 1) matches.Add((groups.Single(), images[0]));
+        }
+        if (matches.Count == 0 || matches.Distinct().Count() != 1) return null;
+        var match = matches[0];
+        return new ManagedCharacterAssetReplacement(match.Group,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [match.Path] = GetCanonicalPath("CharacterSelectIconPath", match.Group)!
+            });
+    }
+
+    private static bool IsIconImage(string? path) =>
+        path?.StartsWith("res://", StringComparison.OrdinalIgnoreCase) == true &&
+        new[] { ".png", ".jpg", ".webp", ".ctex" }.Any(ext => path.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
+
+    private static List<(OpCode Op, int Token, string? Text)> ReadIconInstructions(
+        MetadataReader reader, PEReader pe, MethodDefinitionHandle method)
+    {
+        var il = pe.GetMethodBody(reader.GetMethodDefinition(method).RelativeVirtualAddress).GetILBytes()!;
+        var result = new List<(OpCode, int, string?)>();
+        for (var offset = 0; offset < il.Length;)
+        {
+            var first = il[offset++];
+            var value = first == 0xfe && offset < il.Length ? (ushort)(0xfe00 | il[offset++]) : first;
+            if (!OpCodesByValue.TryGetValue(value, out var op)) break;
+            var size = GetOperandSize(op.OperandType, il, offset);
+            if (size < 0 || offset + size > il.Length) break;
+            var token = size == 4 ? BinaryPrimitives.ReadInt32LittleEndian(il.AsSpan(offset, 4)) : 0;
+            var text = op.OperandType == OperandType.InlineString
+                ? reader.GetUserString(MetadataTokens.UserStringHandle(token & 0xffffff))
+                : op.OperandType == OperandType.InlineMethod ? ResolveMethodName(reader, MetadataTokens.EntityHandle(token)) : null;
+            result.Add((op, token, text));
+            offset += size;
+        }
+        return result;
     }
 
     private static void ScanIl(

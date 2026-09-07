@@ -9,11 +9,22 @@ internal static class RelicSkinResources
 {
     private static readonly HashSet<string> ReportedFailures =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ReportedStandaloneOverrides =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public static void Replace(string resourcePath, ref Texture2D result)
     {
         try
         {
+            // A selected character's retained icon callback can return an explicit standalone
+            // texture instead of an atlas slice. Do not overwrite that authored result with our
+            // vanilla atlas repair. Unselected files and shared atlases still use normal isolation.
+            if (SkinService.IsSelectedCharacterStandaloneTexture(result.ResourcePath))
+            {
+                if (ReportedStandaloneOverrides.Add(resourcePath + "\n" + result.ResourcePath))
+                    ModLog.Info($"已保留选中角色皮肤的独立遗物图标：{resourcePath} -> {result.ResourcePath}");
+                return;
+            }
             result = SkinService.GetRelicIconOverride(resourcePath) ?? result;
         }
         catch (Exception exception)

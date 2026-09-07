@@ -2222,6 +2222,26 @@ internal sealed partial class SkinCatalog : IDisposable
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+    internal bool IsSelectedCharacterStandaloneTexture(
+        string resourcePath,
+        IReadOnlyDictionary<string, string> selections)
+    {
+        if (string.IsNullOrWhiteSpace(resourcePath) || IsRelicAtlasTexturePath(resourcePath) ||
+            !new[] { ".png", ".jpg", ".webp", ".ctex" }.Any(ext =>
+                resourcePath.EndsWith(ext, StringComparison.OrdinalIgnoreCase))) return false;
+        foreach (var group in Groups)
+        {
+            if (!IsCharacterAppearanceGroup(group.Id) ||
+                !selections.TryGetValue(group.Id, out var selection)) continue;
+            var option = group.Options.FirstOrDefault(o => o.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            if (option == null || option.Id.Equals(BaseOptionId, StringComparison.OrdinalIgnoreCase)) continue;
+            if (GetSelectionProviderIndexes(option).Any(index =>
+                    index.Archive.Contains(resourcePath) || index.Archive.Contains(resourcePath + ".import")))
+                return true;
+        }
+        return false;
+    }
+
     public string? FindSelectedRelicIconGroup(
         string resourcePath,
         IReadOnlyDictionary<string, string> selections,

@@ -4125,6 +4125,12 @@ internal static partial class SkinService
         }
     }
 
+    internal static bool IsSelectedCharacterStandaloneTexture(string resourcePath)
+    {
+        lock (Sync)
+            return Catalog?.IsSelectedCharacterStandaloneTexture(resourcePath, GetVisualSelections()) == true;
+    }
+
     public static Texture2D? GetRelicIconOverride(string resourcePath)
     {
         lock (Sync)

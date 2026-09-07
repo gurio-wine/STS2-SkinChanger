@@ -421,6 +421,25 @@ internal static class CardSkinControls
         }
     }
 
+    internal static bool HasCurrentCardLayout(NCard card) =>
+        card.Model != null && BaselineLayouts.TryGetValue(card, out var baseline) &&
+        baseline.BelongsTo(card.Model);
+
+    internal static void ReapplyCardAfterTreeEntry(NCard card)
+    {
+        // Moving a hand card into its drag/queue holder re-enters the tree without Reload or
+        // UpdateVisuals. Exported skin packs also patch this boundary. The first tree entry is
+        // before _Ready, so only restore nodes whose current model has a captured native layout.
+        if (!HasCurrentCardLayout(card)) return;
+        var ownership = ExternalCardVisualBridge.GetOwnership(card);
+        // Tree entry does not reset native visuals. Keep the current hover/fade state instead
+        // of restoring the old Reload snapshot; the guard removes unselected provider reentry
+        // callbacks, and final presentation still respects explicitly edited layers.
+        ApplySelectedPresentation(card, ownership);
+        ApplySelectedPortraitToNode(card, ownership);
+        ExternalCardVisualBridge.SynchronizeProvider(card);
+    }
+
     public static void ApplySelectedPresentation(
         NCard card,
         ExternalCardVisualOwnership externalOwnership)
@@ -2518,6 +2537,14 @@ internal static class CardLayoutFinalPatch
         CardRefreshDiagnostics.Record(__instance, "editor", __originalMethod);
         CardSkinControls.UpdateLibrarySourceIndicators(__instance);
     }
+}
+
+[HarmonyPatch(typeof(NCard), nameof(NCard._EnterTree))]
+internal static class CardTreeReentrySkinPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCard __instance) =>
+        CardSkinControls.ReapplyCardAfterTreeEntry(__instance);
 }
 
 [HarmonyPatch(typeof(NCardPlayQueue), nameof(NCardPlayQueue.OnLocalCardPlayed))]

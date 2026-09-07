@@ -157,7 +157,10 @@ internal static class VisualPatchGuard
 
         if (typeof(NCard).IsAssignableFrom(declaringType))
         {
-            return target.Name is "Reload" or "UpdateVisuals" or "UpdatePortrait" ||
+            // Exported card packs also apply portraits/frames when a hand card is reparented
+            // into its drag holder. Keep that boundary under the same provider ownership as
+            // Reload; do not remove _ExitTree cleanup or callbacks from protected live editors.
+            return target.Name is "Reload" or "UpdateVisuals" or "UpdatePortrait" or "_EnterTree" ||
                    HasVisualName(target.Name);
         }
 
