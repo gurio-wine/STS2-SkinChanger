@@ -12,7 +12,7 @@ internal partial class SkinWorkshopPanel : Control
     private string _target = "";
     private int _page;
     private int _generation;
-    private double _pollTime;
+    private Window? _window;
     private CancellationTokenSource? _pageToken;
     private Action? _refresh;
     private Node _origin = null!;
@@ -28,17 +28,37 @@ internal partial class SkinWorkshopPanel : Control
     {
         var root = origin.GetTree()?.Root;
         if (root == null || root.GetNodeOrNull("SCSkinWorkshopLayer") != null) return;
-        var layer = new CanvasLayer { Name = "SCSkinWorkshopLayer", Layer = 100 };
+        var layer = new CanvasLayer { Name = "SCSkinWorkshopLayer", Layer = 100, ProcessMode = ProcessModeEnum.Always };
         var panel = new SkinWorkshopPanel { _kind = kind, _target = target, _origin = origin, _refresh = refresh, _layer = layer };
-        root.AddChild(layer);
-        layer.AddChild(panel);
-        panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        try
+        {
+            root.AddChild(layer);
+            layer.AddChild(panel);
+            panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+            // Like ModThemeEditor, this DLL has no generated Godot virtual-method bridge.
+            // Adding a plain Control to the tree does not dispatch our _Ready override.
+            panel.Initialize();
+            ModLog.Info($"已打开皮肤工坊：类型={kind}，对象={target}。");
+        }
+        catch (Exception ex)
+        {
+            panel.Cleanup();
+            if (layer.GetParent() is { } parent) parent.RemoveChild(layer);
+            layer.QueueFree();
+            ModLog.Error($"打开皮肤工坊失败：{ex}");
+        }
     }
 
-    public override void _Ready()
+    private void Initialize()
     {
         MouseFilter = MouseFilterEnum.Stop;
         ProcessMode = ProcessModeEnum.Always;
+        TreeExiting += Cleanup;
+        _window = GetWindow();
+        _window.WindowInput += HandleInput;
+        var timer = new Godot.Timer { WaitTime = .5, Autostart = true, ProcessMode = ProcessModeEnum.Always };
+        timer.Timeout += Poll;
+        AddChild(timer);
         var mask = new ColorRect { Color = new Color(0, 0, 0, .48f), MouseFilter = MouseFilterEnum.Stop };
         AddChild(mask);
         mask.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -170,14 +190,9 @@ internal partial class SkinWorkshopPanel : Control
         await SkinWorkshopService.Subscribe(id);
         if (GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
     }
-    public override void _Process(double delta)
-    {
-        _pollTime += delta;
-        if (_pollTime < .5) return;
-        _pollTime = 0; Poll();
-    }
     private void Poll()
     {
+        if (_closed) return;
         foreach (var (id, label, action) in _actions)
         {
             try
@@ -195,9 +210,13 @@ internal partial class SkinWorkshopPanel : Control
             catch { action.Disabled = true; label.Text = WorkshopText.Get(WorkshopTextKey.Offline); }
         }
     }
-    public override void _UnhandledInput(InputEvent ev)
+    private void HandleInput(InputEvent ev)
     {
-        if (ev.IsActionPressed("ui_cancel")) { GetViewport().SetInputAsHandled(); Close(); }
+        if (!_closed && ev.IsActionPressed("ui_cancel") && !ev.IsEcho())
+        {
+            GetViewport().SetInputAsHandled();
+            Close();
+        }
     }
     private bool _closed;
     private void Close()
@@ -205,14 +224,18 @@ internal partial class SkinWorkshopPanel : Control
         if (_closed) return; _closed = true;
         if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;
         _pageToken?.Cancel();
+        _layer.Hide();
         _layer.QueueFree();
         if (GodotObject.IsInstanceValid(_origin) && _origin.IsInsideTree()) _refresh?.Invoke();
     }
-    public override void _ExitTree()
+    private void Cleanup()
     {
         _closed = true;
+        if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
+        _window = null;
         if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;
         _pageToken?.Cancel(); _pageToken?.Dispose();
+        _pageToken = null;
         foreach (var texture in _textures) texture.Dispose(); _textures.Clear();
     }
     private static Label Text(string text, int size = 20, bool accent = false)
@@ -232,16 +255,23 @@ internal partial class SkinWorkshopPanel : Control
 
 internal static class SkinWorkshopEntry
 {
-    internal static void Append(OptionButton dropdown)
+    internal static void Append(OptionButton dropdown, bool characterPopup = false)
     {
         var i = dropdown.ItemCount;
-        dropdown.AddItem(WorkshopText.Get(WorkshopTextKey.Title)); dropdown.SetItemMetadata(i, WorkshopCatalogPolicy.CommandId);
+        dropdown.AddItem(WorkshopText.EntryLabel); dropdown.SetItemMetadata(i, WorkshopCatalogPolicy.CommandId);
+        if (!characterPopup)
+            PresetChoiceColoring.Attach(dropdown, id => !WorkshopCatalogPolicy.IsSkinChoice(id), colorSelection: false);
     }
     internal static bool Open(string optionId, Node origin, string groupId, Action refresh, bool cards = false, string? kind = null)
     {
         if (WorkshopCatalogPolicy.IsSkinChoice(optionId)) return false;
         refresh();
-        SkinWorkshopPanel.Show(origin, kind ?? (cards ? "cards" : SkinService.Catalog?.WorkshopKind(groupId) ?? "character"), groupId, refresh);
+        // Finish the dropdown's click/hide dispatch before adding the modal input mask.
+        Callable.From(() =>
+        {
+            if (!GodotObject.IsInstanceValid(origin) || !origin.IsInsideTree()) return;
+            SkinWorkshopPanel.Show(origin, kind ?? (cards ? "cards" : SkinService.Catalog?.WorkshopKind(groupId) ?? "character"), groupId, refresh);
+        }).CallDeferred();
         return true;
     }
 }

@@ -51,12 +51,34 @@ internal static class WorkshopTests
             Require(!string.IsNullOrWhiteSpace((string)texts.GetMethod("ForLanguage")!.Invoke(null, [language, value])!), $"{language} 缺少工坊文本 {value}");
         CheckResourceCoverage();
         CheckNativeNoticeScope();
+        CheckPanelLifecycle();
         using var catalogResource = typeof(Entry).Assembly.GetManifestResourceStream("STS2SkinChanger.Data.workshop-catalog.json");
         Require(catalogResource != null, "发布 DLL 缺少内置清单，不能依赖开发机器的文件。");
         using var reader = new StreamReader(catalogResource!);
         var bundled = (ulong[])Call("FilterIds", reader.ReadToEnd(), "", "");
         Require(bundled.Length > 0 && bundled.Distinct().Count() == bundled.Length && !bundled.Contains(3787302680UL), "工坊浏览器不能收录自身或重复物品。");
         Console.WriteLine("Workshop policy tests passed.");
+    }
+    private static void CheckPanelLifecycle()
+    {
+        var panel = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.SkinWorkshopPanel", true)!;
+        static bool Calls(MethodBase method, string name) => HarmonyLib.PatchProcessor.GetOriginalInstructions(method)
+            .Any(i => i.operand is MethodInfo called && called.Name == name);
+        // This assembly has no Godot source generator: a plain Control's _Ready override is
+        // not dispatched by the engine. Assert the factory/native-signal boundary instead.
+        var show = panel.GetMethod("Show", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)!;
+        Require(Calls(show, "Initialize"),
+            "工坊入口必须显式初始化面板；当前 DLL 不会调用新建 Control 的 _Ready，点击后只会生成空控件。");
+        var initialize = HarmonyLib.AccessTools.Method(panel, "Initialize");
+        Require(Calls(initialize, "add_Timeout") && Calls(initialize, "add_TreeExiting") &&
+                Calls(initialize, "add_WindowInput"),
+            "工坊的进度刷新、关闭输入和退树清理也必须绑定原生信号，不能依赖未接通的虚方法。");
+        Require(Calls(HarmonyLib.AccessTools.Method(panel, "Cleanup"), "remove_WindowInput"),
+            "关闭工坊后必须解除主窗口输入监听，不能残留已释放面板的回调。");
+        var controls = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.ContextualSkinControls", true)!;
+        var accent = HarmonyLib.AccessTools.Method(controls, "IsAccentedCharacterOption");
+        Require((bool)accent.Invoke(null, ["__workshop__"])! && !(bool)accent.Invoke(null, ["skin:a"])!,
+            "工坊入口需要强调色，但不能给所有普通皮肤染色。");
     }
     private static void CheckNativeNoticeScope()
     {

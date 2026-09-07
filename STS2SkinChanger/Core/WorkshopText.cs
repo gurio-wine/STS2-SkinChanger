@@ -23,6 +23,7 @@ internal static class WorkshopText
         ["tur"] = "Atölye…|Tümü|Abone ol|İndir|İndirme bekleniyor|Uyumluluk denetleniyor…|Kullanılabilir|Yeniden başlatılmalı|Başarısız|Steam kullanılamıyor|Eşleşen görünüm yok|Geçerli hedef|Karakterler|Kartlar|Canavarlar|Kadimler|Tüccarlar|Yoldaşlar|Olaylar|Önceki|Sonraki".Split('|')
     };
     public static string Get(WorkshopTextKey key) => ForLanguage(ModLocalization.CurrentLanguage, key);
+    public static string EntryLabel => "☼" + Get(WorkshopTextKey.Title).TrimEnd('…');
     public static string ForLanguage(string language, WorkshopTextKey key) => Packs.GetValueOrDefault(language, Packs["eng"])[(int)key];
     public static string Kind(string kind) => Get(kind switch
     {

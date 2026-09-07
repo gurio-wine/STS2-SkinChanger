@@ -652,7 +652,7 @@ internal static partial class ContextualSkinControls
             selector.SetMeta(GroupMeta, target);
             dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
             dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
-            SkinWorkshopEntry.Append(dropdown);
+            SkinWorkshopEntry.Append(dropdown, characterPopup: true);
             dropdown.Select(0);
             selector.Visible = target.Length > 0;
             ConfigureCharacterBundlePopupList(selector, dropdown, 0);
@@ -694,7 +694,7 @@ internal static partial class ContextualSkinControls
             dropdown.AddItem(ModLocalization.Get(ModText.RandomCharacterSkin));
             dropdown.SetItemMetadata(index, RandomCharacterSkinPolicy.OptionId);
         }
-        SkinWorkshopEntry.Append(dropdown);
+        SkinWorkshopEntry.Append(dropdown, characterPopup: true);
         ConfigureCharacterBundlePopupList(selector, dropdown, bundles.Count + (allowRandom ? 1 : 0));
 
         var selected = hasMonsterPriorityContext
@@ -719,6 +719,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static bool IsAccentedCharacterOption(string optionId) =>
+        !WorkshopCatalogPolicy.IsSkinChoice(optionId) ||
         RandomCharacterSkinPolicy.IsRandom(optionId) ||
         CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out _);
 
@@ -739,7 +740,8 @@ internal static partial class ContextualSkinControls
     {
         var popup = dropdown.GetPopup();
         var list = popup.GetNodeOrNull<ItemList>(CharacterBundlePopupListName);
-        if (bundleCount <= 0 && list == null)
+        if (bundleCount <= 0 && list == null && !Enumerable.Range(0, dropdown.ItemCount)
+                .Any(index => IsAccentedCharacterOption(dropdown.GetItemMetadata(index).AsString())))
         {
             return;
         }
