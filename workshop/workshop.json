@@ -23,7 +23,8 @@
     "screenshot/upload/7.jpg",
     "screenshot/upload/8.jpg",
     "screenshot/upload/9.jpg",
-    "screenshot/upload/10.jpg"
+    "screenshot/upload/10.jpg",
+    "screenshot/upload/11.jpg"
   ],
   "changeNote": "1.0.0: Add a curated in-game Workshop with type/region/subscription filters, covers, subscription management and download progress; show restart requirements before subscribing and hot-load supported resource-only skins. Add Workshop entries to all skin priority panels, unify highlighted skin choices, and include recent appearance/layout fixes. / 1.0.0 正式发布：新增内置清单式游戏内创意工坊，支持类型、地区、订阅状态筛选，封面、订阅管理及下载进度；订阅前显示重启要求，支持的纯资源皮肤可下载后使用。补齐各类皮肤优先级面板入口，统一特殊选项的强调色，并包含近期外观与定位修复。",
   "localizationsFile": "localizations.json"
