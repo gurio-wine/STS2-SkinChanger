@@ -5,6 +5,7 @@ namespace STS2SkinChanger.Ui;
 
 internal partial class SkinWorkshopPanel
 {
+    private sealed record ItemVisual(Label Title, TextureRect Cover, Panel Placeholder);
     private sealed class Marquee(Control row, Control clip, Label label)
     {
         public readonly Control Row = row;
@@ -13,16 +14,36 @@ internal partial class SkinWorkshopPanel
         public ulong Started;
     }
     private readonly List<Marquee> _marquees = [];
-    private Label CreateMarquee(Control row, VBoxContainer labels, string text)
+    private Label CreateMarquee(Control row, VBoxContainer labels, string text, ulong itemId)
     {
         // Control, not Container: the title's full minimum width must not stretch
         // either grid column. Clip only the title, never the interactive tags below.
-        var clip = new Control { ClipContents = true, CustomMinimumSize = new Vector2(0, 38), SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore };
+        var clip = new Button { ClipContents = true, Flat = true, CustomMinimumSize = new Vector2(0, 38), SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseDefaultCursorShape = CursorShape.PointingHand };
+        foreach (var state in new[] { "normal", "hover", "pressed", "disabled" }) clip.AddThemeStyleboxOverride(state, new StyleBoxEmpty());
+        var focusStyle = new StyleBoxFlat(); clip.AddThemeStyleboxOverride("focus", focusStyle);
+        ModThemeRuntime.Bind(clip, "title_focus", theme => ModThemeRuntime.ApplyStyle(focusStyle, ModThemeSurface.Focus, theme));
+        clip.Pressed += () => OpenItem(itemId);
         labels.AddChild(clip);
         var label = Text(text, 22); clip.AddChild(label);
         _marquees.Add(new(row, clip, label));
         ModThemeRuntime.Bind(clip, "title_height", theme => clip.CustomMinimumSize = new Vector2(0, 38 * theme.FontScale));
         return label;
+    }
+    private static TextureRect CreateCover(HBoxContainer row, out Panel placeholder)
+    {
+        var host = new Control { CustomMinimumSize = new Vector2(144, 100), MouseFilter = MouseFilterEnum.Ignore };
+        row.AddChild(host);
+        placeholder = new Panel { MouseFilter = MouseFilterEnum.Ignore };
+        host.AddChild(placeholder); placeholder.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        var style = new StyleBoxFlat(); placeholder.AddThemeStyleboxOverride("panel", style);
+        ModThemeRuntime.Bind(placeholder, "workshop_placeholder", theme =>
+        {
+            style.BgColor = new Color(theme.AccentColor);
+            style.CornerRadiusTopLeft = style.CornerRadiusTopRight = style.CornerRadiusBottomLeft = style.CornerRadiusBottomRight = theme.CornerRadius;
+        });
+        var cover = new TextureRect { ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, MouseFilter = MouseFilterEnum.Ignore };
+        host.AddChild(cover); cover.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        return cover;
     }
     private void AnimateTitles()
     {

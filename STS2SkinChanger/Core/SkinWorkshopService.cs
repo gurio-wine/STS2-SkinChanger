@@ -37,62 +37,78 @@ internal static class SkinWorkshopService
     private static readonly Dictionary<ulong, Mod> DeferredNotices = [];
     internal static readonly WorkshopNoticeQueue Notices = new();
     private static readonly Dictionary<ulong, string> Titles = [];
+    private static readonly WorkshopSessionCache<Dictionary<ulong, WorkshopDetails>> SessionDetails = new();
     private static Callback<DownloadItemResult_t>? _downloadCallback;
     private static readonly System.Net.Http.HttpClient Images = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
     private static readonly SemaphoreSlim ImageGate = new(3);
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SkinCatalog, HashSet<ulong>> ActiveItems = new();
     private static string CacheRoot => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_workshop");
+    public static WorkshopDetails? CachedDetails(ulong id) => SessionDetails.TryGet(WorkshopText.SteamLanguage, out var details) ? details.GetValueOrDefault(id) : null;
 
     public static async Task<Dictionary<ulong, WorkshopDetails>> Query(IReadOnlyList<ulong> ids, CancellationToken token)
     {
         var requested = ids.Where(id => Catalog.Any(item => item.Id == id)).Distinct().Take(12).ToArray();
-        var cache = System.IO.Path.Combine(CacheRoot, WorkshopText.SteamLanguage);
+        if (requested.Length == 0) return [];
+        var language = WorkshopText.SteamLanguage;
+        var details = await SessionDetails.Get(language, () => RefreshDetails(language), token);
+        return requested.Where(details.ContainsKey).ToDictionary(id => id, id => details[id]);
+    }
+
+    private static async Task<Dictionary<ulong, WorkshopDetails>> RefreshDetails(string language)
+    {
+        // Refresh the curated metadata once at the first open, not once per page.
+        // UI cancellation must not dispose the Steam handle shared by later pages.
+        var cache = System.IO.Path.Combine(CacheRoot, language);
         var result = new Dictionary<ulong, WorkshopDetails>();
-        foreach (var id in requested)
+        foreach (var id in Catalog.Select(item => item.Id))
         {
             try
             {
                 var path = System.IO.Path.Combine(cache, id + ".json");
                 if (File.Exists(path) && new FileInfo(path).Length < 32768)
-                    if (JsonSerializer.Deserialize<WorkshopDetails>(await File.ReadAllTextAsync(path, token)) is { } cached) result[id] = cached;
+                    if (JsonSerializer.Deserialize<WorkshopDetails>(await File.ReadAllTextAsync(path)) is { Title.Length: > 0 } cached) result[id] = cached;
             }
             catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
             catch (JsonException) { }
         }
-        if (requested.Length == 0) return result;
-        var handle = UGCQueryHandle_t.Invalid;
-        try
+        foreach (var requested in Catalog.Select(item => item.Id).Chunk(1000))
         {
-            handle = SteamUGC.CreateQueryUGCDetailsRequest(requested.Select(id => new PublishedFileId_t(id)).ToArray(), (uint)requested.Length);
-            SteamUGC.SetLanguage(handle, WorkshopText.SteamLanguage);
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(25));
-            using var call = new SteamCallResult<SteamUGCQueryCompleted_t>(SteamUGC.SendQueryUGCRequest(handle), timeout.Token);
-            var completed = await call.Task;
-            if (completed.m_eResult != EResult.k_EResultOK) return result;
-            for (uint i = 0; i < completed.m_unNumResultsReturned; i++)
+            var handle = UGCQueryHandle_t.Invalid;
+            try
             {
-                if (!SteamUGC.GetQueryUGCResult(handle, i, out var item) || item.m_eResult != EResult.k_EResultOK ||
-                    item.m_nConsumerAppID.m_AppId != WorkshopCatalogPolicy.AppId || !requested.Contains(item.m_nPublishedFileId.m_PublishedFileId)) continue;
-                SteamUGC.GetQueryUGCPreviewURL(handle, i, out var preview, 4096);
-                var details = new WorkshopDetails(item.m_rgchTitle, preview ?? "");
-                var id = item.m_nPublishedFileId.m_PublishedFileId;
-                result[id] = details;
-                try
+                handle = SteamUGC.CreateQueryUGCDetailsRequest(requested.Select(id => new PublishedFileId_t(id)).ToArray(), (uint)requested.Length);
+                SteamUGC.SetLanguage(handle, language);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                using var call = new SteamCallResult<SteamUGCQueryCompleted_t>(SteamUGC.SendQueryUGCRequest(handle), timeout.Token);
+                var completed = await call.Task;
+                if (completed.m_eResult != EResult.k_EResultOK) continue;
+                for (uint i = 0; i < completed.m_unNumResultsReturned; i++)
                 {
-                    Directory.CreateDirectory(cache);
-                    await File.WriteAllTextAsync(System.IO.Path.Combine(cache, id + ".json"), JsonSerializer.Serialize(details), token);
+                    if (!SteamUGC.GetQueryUGCResult(handle, i, out var item) || item.m_eResult != EResult.k_EResultOK ||
+                        item.m_nConsumerAppID.m_AppId != WorkshopCatalogPolicy.AppId || !requested.Contains(item.m_nPublishedFileId.m_PublishedFileId)) continue;
+                    SteamUGC.GetQueryUGCPreviewURL(handle, i, out var preview, 4096);
+                    var details = new WorkshopDetails(item.m_rgchTitle, preview ?? "");
+                    var id = item.m_nPublishedFileId.m_PublishedFileId;
+                    result[id] = details;
+                    try
+                    {
+                        Directory.CreateDirectory(cache);
+                        await File.WriteAllTextAsync(System.IO.Path.Combine(cache, id + ".json"), JsonSerializer.Serialize(details));
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
                 }
-                catch (IOException) { }
+            }
+            catch (Exception ex)
+            { ModLog.Info("工坊详情暂不可用，保留缓存：" + ex.Message); }
+            finally
+            {
+                if (handle != UGCQueryHandle_t.Invalid) SteamUGC.ReleaseQueryUGCRequest(handle);
+                foreach (var (id, details) in result) Titles[id] = details.Title;
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
-        { ModLog.Info("工坊详情暂不可用，保留缓存：" + ex.Message); }
-        finally
-        {
-            if (handle != UGCQueryHandle_t.Invalid) SteamUGC.ReleaseQueryUGCRequest(handle);
-            foreach (var (id, details) in result) Titles[id] = details.Title;
-        }
+        ModLog.Info($"工坊资料本次启动刷新结束：{language}，{result.Count}/{Catalog.Count} 项；之后筛选/翻页复用内存缓存。");
         return result;
     }
 
@@ -147,6 +163,7 @@ internal static class SkinWorkshopService
         Downloads.GetValueOrDefault(SkinCatalog.WorkshopSourceId(mod.path))?.State == WorkshopTextKey.Ready;
     internal static string Title(ulong id) => Titles.GetValueOrDefault(id, "#" + id);
     public static bool IsSubscribed(ulong id) => ((EItemState)SteamUGC.GetItemState(new(id)) & EItemState.k_EItemStateSubscribed) != 0;
+    public static bool IsInstalled(ulong id) => TryInstalled(id, out _);
     public static double? Progress(ulong id) => SteamUGC.GetItemDownloadInfo(new(id), out var bytes, out var total) && total > 0
         ? Math.Clamp(100d * bytes / total, 0, 100) : null;
 

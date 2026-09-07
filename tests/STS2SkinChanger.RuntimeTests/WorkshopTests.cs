@@ -51,6 +51,7 @@ internal static class WorkshopTests
         CheckPackageCapabilities();
         CheckNoticeQueue();
         CheckBrowserNavigation();
+        WorkshopBrowserInteractionTests.Run();
         using var catalogResource = typeof(Entry).Assembly.GetManifestResourceStream("STS2SkinChanger.Data.workshop-catalog.json");
         Require(catalogResource != null, "发布 DLL 缺少内置清单，不能依赖开发机器的文件。");
         using var reader = new StreamReader(catalogResource!);

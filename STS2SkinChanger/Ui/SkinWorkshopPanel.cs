@@ -24,7 +24,6 @@ internal partial class SkinWorkshopPanel : Control
     private Button _previous = null!;
     private Button _next = null!;
     private readonly List<(ulong Id, Label Status, Button Action, Button Cancel)> _actions = [];
-    private readonly List<Texture2D> _textures = [];
 
     internal static void Show(Node origin, string kind, string target, Action refresh)
     {
@@ -108,7 +107,7 @@ internal partial class SkinWorkshopPanel : Control
         var token = _pageToken.Token;
         var generation = ++_generation;
         foreach (var child in _rows.GetChildren()) { _rows.RemoveChild(child); child.QueueFree(); }
-        foreach (var texture in _textures) texture.Dispose(); _textures.Clear(); _actions.Clear(); _marquees.Clear();
+        _actions.Clear(); _marquees.Clear();
         var filtered = WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers).ToArray();
         var pages = Math.Max(1, (filtered.Length + PageSize - 1) / PageSize);
         _page = Math.Clamp(_page, 0, pages - 1);
@@ -116,30 +115,33 @@ internal partial class SkinWorkshopPanel : Control
         _pageLabel.Text = $"{_page + 1} / {pages}";
         if (filtered.Length == 0) _rows.AddChild(Text(WorkshopText.Get(WorkshopTextKey.Empty)));
         var visible = filtered.Skip(_page * PageSize).Take(PageSize).ToArray();
-        var rows = new Dictionary<ulong, (Label Title, TextureRect Cover)>();
+        var rows = new Dictionary<ulong, ItemVisual>();
         foreach (var item in visible)
         {
-            var itemBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 180) };
-            itemBox.AddThemeConstantOverride("separation", 8); _rows.AddChild(itemBox);
+            var itemPanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            _rows.AddChild(itemPanel); ModThemeRuntime.Panel(itemPanel);
+            var itemMargin = new MarginContainer(); itemPanel.AddChild(itemMargin);
+            foreach (var edge in new[] { "left", "right", "top", "bottom" }) itemMargin.AddThemeConstantOverride("margin_" + edge, 12);
+            var itemBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 158) };
+            itemBox.AddThemeConstantOverride("separation", 8); itemMargin.AddChild(itemBox);
             var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 14); itemBox.AddChild(row);
-            var cover = new TextureRect { CustomMinimumSize = new Vector2(144, 100), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
-            row.AddChild(cover);
+            var cover = CreateCover(row, out var placeholder);
             var labels = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill }; row.AddChild(labels);
-            var title = CreateMarquee(itemBox, labels, "#" + item.Id);
+            var title = CreateMarquee(itemPanel, labels, SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…", item.Id);
             var tags = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill }; labels.AddChild(tags); AddTags(tags, item);
             var controls = new HBoxContainer(); itemBox.AddChild(controls);
             var status = Text("", 16); status.SizeFlagsHorizontal = SizeFlags.ExpandFill; status.ClipText = true; status.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; controls.AddChild(status);
-            var action = Button(WorkshopText.Get(WorkshopTextKey.Subscribe), () => _ = Subscribe(item.Id));
+            var action = Button(WorkshopText.Get(WorkshopTextKey.Subscribe), () => PerformPrimary(item.Id));
             action.CustomMinimumSize = new Vector2(100, 38); controls.AddChild(action);
             var cancel = Button(WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribe), () => _ = Unsubscribe(item.Id));
             cancel.CustomMinimumSize = new Vector2(120, 38); controls.AddChild(cancel);
-            _actions.Add((item.Id, status, action, cancel)); rows[item.Id] = (title, cover);
+            _actions.Add((item.Id, status, action, cancel)); rows[item.Id] = new(title, cover, placeholder);
         }
         Poll();
         _ = LoadDetails(visible.Select(i => i.Id).ToArray(), rows, generation, token);
     }
 
-    private async Task LoadDetails(ulong[] ids, Dictionary<ulong, (Label Title, TextureRect Cover)> rows, int generation, CancellationToken token)
+    private async Task LoadDetails(ulong[] ids, Dictionary<ulong, ItemVisual> rows, int generation, CancellationToken token)
     {
         try
         {
@@ -149,7 +151,7 @@ internal partial class SkinWorkshopPanel : Control
             foreach (var (id, detail) in details)
             {
                 var row = rows[id]; row.Title.Text = detail.Title;
-                covers.Add(LoadCover(detail.PreviewUrl, row.Cover, generation, token));
+                covers.Add(LoadCover(detail.PreviewUrl, row, generation, token));
             }
             await Task.WhenAll(covers);
         }
@@ -157,17 +159,13 @@ internal partial class SkinWorkshopPanel : Control
         catch (Exception ex) { ModLog.Info("工坊列表详情加载失败：" + ex.Message); }
     }
 
-    private async Task LoadCover(string url, TextureRect cover, int generation, CancellationToken token)
+    private async Task LoadCover(string url, ItemVisual row, int generation, CancellationToken token)
     {
-        var bytes = await SkinWorkshopService.Cover(url, token);
-        if (bytes == null || token.IsCancellationRequested || generation != _generation || !GodotObject.IsInstanceValid(cover)) return;
-        using var image = new Image();
-        var error = bytes[0] == 137 ? image.LoadPngFromBuffer(bytes) : image.LoadJpgFromBuffer(bytes);
-        if (error != Error.Ok || image.GetWidth() > 4096 || image.GetHeight() > 4096) return;
-        var factor = Math.Min(1d, Math.Min(144d / image.GetWidth(), 100d / image.GetHeight()));
-        image.Resize(Math.Max(1, (int)(image.GetWidth() * factor)), Math.Max(1, (int)(image.GetHeight() * factor)), Image.Interpolation.Lanczos);
-        var texture = ImageTexture.CreateFromImage(image); _textures.Add(texture); cover.Texture = texture;
-        RoundCover(cover);
+        var texture = await WorkshopCoverCache.Get(url, token);
+        if (texture == null || token.IsCancellationRequested || generation != _generation || !GodotObject.IsInstanceValid(row.Cover)) return;
+        row.Cover.Texture = texture;
+        row.Placeholder.Hide();
+        RoundCover(row.Cover);
     }
 
     private async Task Subscribe(ulong id)
@@ -177,6 +175,7 @@ internal partial class SkinWorkshopPanel : Control
     }
     private async Task Unsubscribe(ulong id)
     {
+        _actionErrors.Remove(id);
         await SkinWorkshopService.Unsubscribe(id);
         if (GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
     }
@@ -194,19 +193,21 @@ internal partial class SkinWorkshopPanel : Control
                 var state = SkinWorkshopService.DownloadState(id);
                 var active = SkinWorkshopService.IsActive(id);
                 var subscribed = SkinWorkshopService.IsSubscribed(id);
-                action.Visible = !subscribed || !active && state?.State != WorkshopTextKey.Restart;
-                action.Disabled = state?.Busy == true || subscribed && (active || state?.State == WorkshopTextKey.Restart);
-                action.Text = WorkshopText.Get(subscribed ? WorkshopTextKey.Download : WorkshopTextKey.Subscribe);
-                cancel.Visible = subscribed; cancel.Disabled = state?.Busy == true;
+                var knownRestart = SkinWorkshopService.Catalog.First(i => i.Id == id).RestartRequired;
+                var primary = WorkshopItemActions.Primary(subscribed, active, SkinWorkshopService.IsInstalled(id), knownRestart, state?.State, state?.Busy == true);
+                action.Visible = primary != null;
+                action.Disabled = _restartPending || state?.Busy == true;
+                action.Text = primary is { } key ? WorkshopText.Get(key) : "";
+                action.TooltipText = primary == WorkshopTextKey.Restart && state is { Reason: not WorkshopLoadReason.None } ? WorkshopNoticeText.Reason(state.Reason) :
+                    !active && knownRestart ? WorkshopNoticeText.Get(WorkshopNoticeKey.KnownRestart) : "";
+                cancel.Visible = subscribed; cancel.Disabled = _restartPending || state?.Busy == true;
                 cancel.TooltipText = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Retained);
-                var restart = !active && (state?.State == WorkshopTextKey.Restart ||
-                    state == null && SkinWorkshopService.Catalog.First(i => i.Id == id).RestartRequired);
-                label.Text = state == null ? active ? WorkshopText.Get(WorkshopTextKey.Ready) :
-                    WorkshopNoticeText.Get(restart ? WorkshopNoticeKey.KnownRestart : WorkshopNoticeKey.CheckAfterDownload) : WorkshopText.Get(state.State);
-                if (!label.HasMeta("sc_restart_accent") || label.GetMeta("sc_restart_accent").AsBool() != restart)
+                var restart = primary == WorkshopTextKey.Restart;
+                label.Text = WorkshopItemActions.Status(state?.State) is { } statusKey ? WorkshopText.Get(statusKey) : "";
+                if (!action.HasMeta("sc_restart_accent") || action.GetMeta("sc_restart_accent").AsBool() != restart)
                 {
-                    ModThemeRuntime.TextControl(label, 17, restart);
-                    label.SetMeta("sc_restart_accent", restart);
+                    ModThemeRuntime.TextControl(action, 20, restart);
+                    action.SetMeta("sc_restart_accent", restart);
                 }
                 label.TooltipText = state is { Reason: not WorkshopLoadReason.None } ? WorkshopNoticeText.Reason(state.Reason) : state?.Error ?? "";
                 if (state?.Unsubscribed == true) { label.Text = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribed); label.TooltipText = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Retained); }
@@ -214,6 +215,7 @@ internal partial class SkinWorkshopPanel : Control
                 if (state is { Busy: false, Error.Length: > 0 }) { label.Text = WorkshopText.Get(WorkshopTextKey.Failed); label.TooltipText = state.Error; }
                 if (state is { Busy: true, Removing: false, State: WorkshopTextKey.Waiting } && SkinWorkshopService.Progress(id) is { } progress)
                     label.Text = WorkshopText.Get(WorkshopTextKey.Download) + $" {progress:F0}%";
+                if (_actionErrors.TryGetValue(id, out var error)) { label.Text = WorkshopText.Get(WorkshopTextKey.Failed); label.TooltipText = error; }
             }
             catch { action.Disabled = true; cancel.Disabled = true; label.Text = WorkshopText.Get(WorkshopTextKey.Offline); }
         }
@@ -251,7 +253,6 @@ internal partial class SkinWorkshopPanel : Control
         if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;
         _pageToken?.Cancel(); _pageToken?.Dispose();
         _pageToken = null;
-        foreach (var texture in _textures) texture.Dispose(); _textures.Clear();
         _marquees.Clear();
     }
     private static Label Text(string text, int size = 20, bool accent = false)
