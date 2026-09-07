@@ -17,7 +17,8 @@ internal sealed class WorkshopDownload
     public string Error = "";
     public bool Busy;
     public WorkshopLoadReason Reason;
-    public bool NoticeOwned;
+    public bool BrowserSubscription;
+    public bool HotLoadVerified;
     public bool Removing;
     public bool Unsubscribed;
 }
@@ -34,9 +35,6 @@ internal static class SkinWorkshopService
     public static IReadOnlyList<WorkshopCatalogItem> Catalog => Items.Value;
     private static readonly Dictionary<ulong, WorkshopDownload> Downloads = [];
     private static readonly Dictionary<ulong, TaskCompletionSource<EResult>> Waiters = [];
-    private static readonly Dictionary<ulong, Mod> DeferredNotices = [];
-    internal static readonly WorkshopNoticeQueue Notices = new();
-    private static readonly Dictionary<ulong, string> Titles = [];
     private static readonly WorkshopSessionCache<Dictionary<ulong, WorkshopDetails>> SessionDetails = new();
     private static Callback<DownloadItemResult_t>? _downloadCallback;
     private static readonly System.Net.Http.HttpClient Images = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
@@ -105,7 +103,6 @@ internal static class SkinWorkshopService
             finally
             {
                 if (handle != UGCQueryHandle_t.Invalid) SteamUGC.ReleaseQueryUGCRequest(handle);
-                foreach (var (id, details) in result) Titles[id] = details.Title;
             }
         }
         ModLog.Info($"工坊资料本次启动刷新结束：{language}，{result.Count}/{Catalog.Count} 项；之后筛选/翻页复用内存缓存。");
@@ -161,7 +158,14 @@ internal static class SkinWorkshopService
     public static WorkshopDownload? DownloadState(ulong id) => Downloads.GetValueOrDefault(id);
     internal static bool IsHotRegisteredResourceMod(Mod mod) =>
         Downloads.GetValueOrDefault(SkinCatalog.WorkshopSourceId(mod.path))?.State == WorkshopTextKey.Ready;
-    internal static string Title(ulong id) => Titles.GetValueOrDefault(id, "#" + id);
+    public static string LoadTag(WorkshopCatalogItem item)
+    {
+        var state = DownloadState(item.Id);
+        // Ready also covers mods loaded at startup. Only a completed hot-register
+        // check proves that future subscriptions can work without restarting.
+        var checkedState = state is { State: WorkshopTextKey.Ready, HotLoadVerified: false } ? null : state?.State;
+        return WorkshopLoadTags.Classify(item.RestartRequired, checkedState, state?.Reason ?? WorkshopLoadReason.None);
+    }
     public static bool IsSubscribed(ulong id) => ((EItemState)SteamUGC.GetItemState(new(id)) & EItemState.k_EItemStateSubscribed) != 0;
     public static bool IsInstalled(ulong id) => TryInstalled(id, out _);
     public static double? Progress(ulong id) => SteamUGC.GetItemDownloadInfo(new(id), out var bytes, out var total) && total > 0
@@ -170,12 +174,10 @@ internal static class SkinWorkshopService
     public static async Task Subscribe(ulong id)
     {
         if (!Catalog.Any(item => item.Id == id) || Downloads.GetValueOrDefault(id)?.Busy == true) return;
-        var status = new WorkshopDownload { Busy = true };
+        var status = new WorkshopDownload { Busy = true, BrowserSubscription = true };
         Downloads[id] = status;
-        Notices.BeginAttempt(id);
         try
         {
-            Ui.WorkshopSubscriptionDialog.EnsurePolling();
             _downloadCallback ??= Callback<DownloadItemResult_t>.Create(ev =>
             {
                 if (ev.m_unAppID.m_AppId == WorkshopCatalogPolicy.AppId && Waiters.TryGetValue(ev.m_nPublishedFileId.m_PublishedFileId, out var waiter))
@@ -197,7 +199,9 @@ internal static class SkinWorkshopService
             }
             if (!TryInstalled(id, out var directory)) throw new IOException("Steam install is not complete.");
             status.State = WorkshopTextKey.Checking;
-            status.Reason = IsActive(id) ? WorkshopLoadReason.None : await SkinService.TryRegisterWorkshopResources(directory);
+            var alreadyActive = IsActive(id);
+            status.Reason = alreadyActive ? WorkshopLoadReason.None : await SkinService.TryRegisterWorkshopResources(directory);
+            status.HotLoadVerified = !alreadyActive && status.Reason == WorkshopLoadReason.None;
             status.State = status.Reason == WorkshopLoadReason.None ? WorkshopTextKey.Ready :
                 status.Reason is WorkshopLoadReason.Version or WorkshopLoadReason.InvalidPackage ? WorkshopTextKey.Failed : WorkshopTextKey.Restart;
             ModLog.Info($"工坊皮肤 {id}：{status.State}，原因={status.Reason}；安装目录 {directory}");
@@ -213,14 +217,7 @@ internal static class SkinWorkshopService
         {
             status.Busy = false;
             Waiters.Remove(id);
-            status.NoticeOwned = status.Reason != WorkshopLoadReason.None;
-            Notices.Enqueue(id, status.Reason);
-            Ui.WorkshopSubscriptionDialog.TryShow();
-            if (DeferredNotices.Remove(id, out var mod) && !status.NoticeOwned && status.State != WorkshopTextKey.Ready && GodotObject.IsInstanceValid(NGame.Instance))
-            {
-                try { AccessTools.Method(typeof(NGame), "OnNewModDetected")?.Invoke(NGame.Instance, [mod]); }
-                catch (Exception ex) { ModLog.Warn("恢复工坊重启提示失败，面板保留重启状态：" + ex.GetBaseException().Message); }
-            }
+            ModLog.Info($"工坊皮肤 {id} 结果保留在标签和操作按钮中；本面板订阅不弹重启提示。");
         }
     }
 
@@ -238,8 +235,6 @@ internal static class SkinWorkshopService
             if (result.m_eResult != EResult.k_EResultOK || result.m_nPublishedFileId.m_PublishedFileId != id)
                 throw new IOException(result.m_eResult.ToString());
             status.Unsubscribed = true;
-            Notices.Acknowledge(id);
-            DeferredNotices.Remove(id);
             // Keep catalog, selections and mounted resources alive for this session.
             // Steam owns subscription files and removes them after the game exits.
             ModLog.Info($"已取消订阅工坊皮肤 {id}；本次已加载资源保留，文件移除由 Steam 在退出后处理。");
@@ -264,9 +259,9 @@ internal static class SkinWorkshopService
     internal static bool DeferNativeNotice(Mod mod)
     {
         var id = SkinCatalog.WorkshopSourceId(mod.path);
-        if (Downloads.GetValueOrDefault(id) is not { } status) return false;
-        if (status.Busy) { DeferredNotices[id] = mod; return true; }
-        return status.State == WorkshopTextKey.Ready || status.NoticeOwned;
+        // The browser owns feedback only for subscriptions explicitly initiated here.
+        // Native notifications for unrelated subscriptions/Mods are left untouched.
+        return Downloads.GetValueOrDefault(id)?.BrowserSubscription == true;
     }
 }
 

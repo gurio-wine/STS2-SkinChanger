@@ -1,6 +1,5 @@
 using Godot;
 using MegaCrit.Sts2.Core.Nodes;
-using Steamworks;
 using STS2SkinChanger.Core;
 
 namespace STS2SkinChanger.Ui;
@@ -52,11 +51,24 @@ internal partial class SkinWorkshopPanel
         try
         {
             _actionErrors.Remove(id);
-            if (SteamUtils.IsOverlayEnabled()) SteamFriends.ActivateGameOverlayToWebPage(WorkshopItemActions.ItemUrl(id, false));
-            else if (OS.ShellOpen(WorkshopItemActions.ItemUrl(id, true)) != Error.Ok)
-                throw new IOException("Steam could not open the Workshop item.");
+            WorkshopCommunityLinks.OpenItem(id);
         }
         catch (Exception ex) { ShowActionError(id, ex); }
+    }
+    private static void OpenSubmission(Button button)
+    {
+        try
+        {
+            WorkshopCommunityLinks.OpenDiscussion(presets: false);
+            button.Text = WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitMod);
+            button.TooltipText = "";
+        }
+        catch (Exception ex)
+        {
+            button.Text = WorkshopCommunityText.Get(WorkshopCommunityTextKey.OpenFailed);
+            button.TooltipText = ex.GetBaseException().Message;
+            ModLog.Warn("打开模组投稿区失败：" + ex.GetBaseException().Message);
+        }
     }
     private void ShowActionError(ulong id, Exception ex)
     {

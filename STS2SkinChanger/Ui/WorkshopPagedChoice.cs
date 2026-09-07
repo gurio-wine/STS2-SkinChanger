@@ -11,9 +11,11 @@ internal sealed class WorkshopPagedChoice
     private int _page;
     private readonly Func<string, string> _name;
     private readonly Action<string> _changed;
-    public WorkshopPagedChoice(Func<string, string> name, Action<string> changed)
+    private readonly Func<string> _allName;
+    public WorkshopPagedChoice(Func<string, string> name, Action<string> changed, Func<string>? allName = null)
     {
         _name = name; _changed = changed;
+        _allName = allName ?? (() => WorkshopText.Get(WorkshopTextKey.All));
         ContextualSkinControls.ApplyGameTheme(Picker);
         Picker.ItemSelected += index =>
         {
@@ -46,12 +48,12 @@ internal sealed class WorkshopPagedChoice
             Picker.GetPopup().SetItemTooltip(i, text);
             if (id == _value) Picker.Select(i);
         }
-        Add(WorkshopText.Get(WorkshopTextKey.All), "");
+        Add(_allName(), "");
         foreach (var id in WorkshopBrowserPolicy.Page(_ids, _page)) Add(_name(id), id);
         var pages = Math.Max(1, (_ids.Length + 9) / 10);
         if (_page > 0) Add("‹ " + WorkshopText.Get(WorkshopTextKey.Previous) + $"  {_page}/{pages}", "__previous_page__");
         if (_page + 1 < pages) Add(WorkshopText.Get(WorkshopTextKey.Next) + $"  {_page + 2}/{pages} ›", "__next_page__");
-        Picker.Text = _value.Length == 0 ? WorkshopText.Get(WorkshopTextKey.All) : _name(_value);
+        Picker.Text = _value.Length == 0 ? _allName() : _name(_value);
         Picker.TooltipText = Picker.Text;
     }
 }

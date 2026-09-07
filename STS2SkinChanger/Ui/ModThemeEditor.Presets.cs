@@ -136,6 +136,13 @@ internal partial class ModThemeEditor
         _copyPresetCode = PresetButton(CopyPresetCaption, 180);
         _copyPresetCode.Pressed += CopyThemePreset;
         footer.AddChild(_copyPresetCode);
+        var submit = PresetButton(() => WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitPreset), 140);
+        submit.Pressed += () =>
+        {
+            try { WorkshopCommunityLinks.OpenDiscussion(presets: true); }
+            catch (Exception e) { ShowThemeError(e, _presetStatus); }
+        };
+        footer.AddChild(submit);
         RefreshPresetStates();
         Callable.From(PositionPresetPanel).CallDeferred();
     }

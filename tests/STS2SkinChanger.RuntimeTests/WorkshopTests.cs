@@ -49,7 +49,7 @@ internal static class WorkshopTests
         CheckNativeNoticeScope();
         CheckPanelLifecycle();
         CheckPackageCapabilities();
-        CheckNoticeQueue();
+        CheckReasonTexts();
         CheckBrowserNavigation();
         WorkshopBrowserInteractionTests.Run();
         using var catalogResource = typeof(Entry).Assembly.GetManifestResourceStream("STS2SkinChanger.Data.workshop-catalog.json");
@@ -126,21 +126,8 @@ internal static class WorkshopTests
             "取消订阅必须交给 Steam，不能直接删除运行中资源。");
     }
 
-    private static void CheckNoticeQueue()
+    private static void CheckReasonTexts()
     {
-        var queueType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopNoticeQueue");
-        Require(queueType != null, "订阅完成后的提醒不能依赖工坊面板或 Steam 新 Mod 回调仍在。");
-        var queue = Activator.CreateInstance(queueType!)!;
-        var reasonType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopLoadReason")!;
-        object Reason(string value) => Enum.Parse(reasonType, value);
-        void Enqueue(ulong id, string reason) => queueType!.GetMethod("Enqueue")!.Invoke(queue, [id, Reason(reason)]);
-        Enqueue(1, "None");
-        Require((int)queueType!.GetProperty("Count")!.GetValue(queue)! == 0, "热加载成功不应提示重启。");
-        Enqueue(2, "StartupCode"); Enqueue(2, "StartupCode"); Enqueue(3, "Version");
-        Require((int)queueType.GetProperty("Count")!.GetValue(queue)! == 2, "同一次订阅只能排队一条提示，不同物品不能丢失。");
-        queueType.GetMethod("Acknowledge")!.Invoke(queue, [2UL]);
-        Enqueue(2, "StartupCode");
-        Require((int)queueType.GetProperty("Count")!.GetValue(queue)! == 1, "已确认的同一提示不能被迟到的回调再次弹出。");
         var noticeText = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopNoticeText");
         Require(noticeText != null, "需要面向玩家的重启原因和版本不匹配提示。");
         var keyType = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopNoticeKey", true)!;
@@ -180,12 +167,6 @@ internal static class WorkshopTests
         var accent = HarmonyLib.AccessTools.Method(controls, "IsAccentedCharacterOption");
         Require((bool)accent.Invoke(null, ["__workshop__"])! && !(bool)accent.Invoke(null, ["skin:a"])!,
             "工坊入口需要强调色，但不能给所有普通皮肤染色。");
-        var dialog = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.WorkshopSubscriptionDialog", true)!;
-        Require(Calls(HarmonyLib.AccessTools.Method(dialog, "EnsurePolling"), "add_Timeout"), "订阅提醒需要由游戏节点的原生计时信号驱动，关闭浏览器后也能继续。");
-        var showDialog = HarmonyLib.AccessTools.Method(dialog, "Show");
-        var moveNext = showDialog.GetCustomAttribute<System.Runtime.CompilerServices.AsyncStateMachineAttribute>()!.StateMachineType.GetMethod("MoveNext", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        Require(Calls(moveNext, "WaitForConfirmation") && Calls(moveNext, "SuspendForNotice") && Calls(moveNext, "add_TreeExiting"),
-            "提醒必须走原生弹窗、处理浏览器遮挡，并在弹窗被退树释放时结束等待。");
     }
     private static void CheckNativeNoticeScope()
     {
@@ -193,28 +174,30 @@ internal static class WorkshopTests
         var service = assembly.GetType("STS2SkinChanger.Core.SkinWorkshopService", true)!;
         var method = HarmonyLib.AccessTools.Method(service, "DeferNativeNotice");
         var downloads = (System.Collections.IDictionary)HarmonyLib.AccessTools.Field(service, "Downloads").GetValue(null)!;
-        var notices = (System.Collections.IDictionary)HarmonyLib.AccessTools.Field(service, "DeferredNotices").GetValue(null)!;
         var stateType = assembly.GetType("STS2SkinChanger.Core.WorkshopDownload", true)!;
         var state = Activator.CreateInstance(stateType)!;
+        var origin = stateType.GetField("BrowserSubscription");
+        Require(origin != null, "需要记录订阅来源：本面板发起的订阅不弹窗，不能全局屏蔽游戏提示。");
         stateType.GetField("Busy")!.SetValue(state, true);
         downloads.Add(123UL, state);
         try
         {
             var ours = new MegaCrit.Sts2.Core.Modding.Mod { path = "D:/Steam/steamapps/workshop/content/2868840/123" };
             var other = new MegaCrit.Sts2.Core.Modding.Mod { path = "D:/Steam/steamapps/workshop/content/2868840/456" };
-            Require((bool)method.Invoke(null, [ours])! && !(bool)method.Invoke(null, [other])!, "只可延迟本次正在检查的物品提示，不能屏蔽其它 Mod 的官方提示。");
+            Require(!(bool)method.Invoke(null, [ours])!, "仅有退订或其它来源状态不能视作本面板的订阅。");
+            origin!.SetValue(state, true);
+            Require((bool)method.Invoke(null, [ours])! && !(bool)method.Invoke(null, [other])!, "只能接管本面板发起的订阅提示。");
             stateType.GetField("Busy")!.SetValue(state, false);
-            Require(!(bool)method.Invoke(null, [ours])!, "没有热注册成功必须交回游戏重启提示。");
             var keyType = assembly.GetType("STS2SkinChanger.Core.WorkshopTextKey", true)!;
-            stateType.GetField("State")!.SetValue(state, Enum.Parse(keyType, "Ready"));
-            Require((bool)method.Invoke(null, [ours])!, "完整注册的资源皮肤不应再提示必须重启。");
-            stateType.GetField("State")!.SetValue(state, Enum.Parse(keyType, "Restart"));
-            stateType.GetField("NoticeOwned")!.SetValue(state, true);
-            Require((bool)method.Invoke(null, [ours])! && !(bool)method.Invoke(null, [other])!, "已有本 Mod 结果提醒时只去重同一物品，不能拦住其它订阅提醒。");
+            foreach (var status in new[] { "Ready", "Restart", "Failed" })
+            {
+                stateType.GetField("State")!.SetValue(state, Enum.Parse(keyType, status));
+                Require((bool)method.Invoke(null, [ours])! && !(bool)method.Invoke(null, [other])!, "本面板结果只用标签、状态和按钮；晚到的原生通知也不能再次弹窗。");
+            }
             var patch = assembly.GetType("STS2SkinChanger.Core.WorkshopRuntimeNoticePatch", true)!;
             Require(HarmonyLib.AccessTools.Method(patch, "TargetMethod").Invoke(null, null) is MethodBase, "当前游戏版本不存在预期的官方重启提示入口。");
         }
-        finally { downloads.Remove(123UL); notices.Remove(123UL); }
+        finally { downloads.Remove(123UL); }
     }
     private static void CheckResourceCoverage()
     {

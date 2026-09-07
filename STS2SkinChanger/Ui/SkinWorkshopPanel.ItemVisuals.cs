@@ -25,13 +25,21 @@ internal partial class SkinWorkshopPanel
         clip.Pressed += () => OpenItem(itemId);
         labels.AddChild(clip);
         var label = Text(text, 22); clip.AddChild(label);
+        void ColorTitle() => label.AddThemeColorOverride("font_color", clip.IsHovered() || clip.HasFocus() ? ModThemeRuntime.Accent : ModThemeRuntime.Text);
+        clip.MouseEntered += ColorTitle; clip.MouseExited += ColorTitle;
+        clip.FocusEntered += ColorTitle; clip.FocusExited += ColorTitle;
+        ModThemeRuntime.Bind(label, "workshop_link", _ => ColorTitle());
         _marquees.Add(new(row, clip, label));
         ModThemeRuntime.Bind(clip, "title_height", theme => clip.CustomMinimumSize = new Vector2(0, 38 * theme.FontScale));
         return label;
     }
-    private static TextureRect CreateCover(HBoxContainer row, out Panel placeholder)
+    private TextureRect CreateCover(HBoxContainer row, ulong itemId, out Panel placeholder)
     {
-        var host = new Control { CustomMinimumSize = new Vector2(144, 100), MouseFilter = MouseFilterEnum.Ignore };
+        var host = new Button { Flat = true, CustomMinimumSize = new Vector2(144, 100), MouseDefaultCursorShape = CursorShape.PointingHand, SizeFlagsVertical = SizeFlags.ShrinkBegin };
+        foreach (var state in new[] { "normal", "hover", "pressed", "disabled" }) host.AddThemeStyleboxOverride(state, new StyleBoxEmpty());
+        var focusStyle = new StyleBoxFlat(); host.AddThemeStyleboxOverride("focus", focusStyle);
+        ModThemeRuntime.Bind(host, "cover_focus", theme => ModThemeRuntime.ApplyStyle(focusStyle, ModThemeSurface.Focus, theme));
+        host.Pressed += () => OpenItem(itemId);
         row.AddChild(host);
         placeholder = new Panel { MouseFilter = MouseFilterEnum.Ignore };
         host.AddChild(placeholder); placeholder.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);

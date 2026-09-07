@@ -7,7 +7,6 @@ namespace STS2SkinChanger.Ui;
 internal partial class SkinWorkshopPanel : Control
 {
     private const int PageSize = 8;
-    private static SkinWorkshopPanel? _current;
     private bool _suspended;
     private static readonly string[] Kinds = ["", "character", "cards", "monster", "ancient", "merchant", "companion", "event"];
     private string _kind = "";
@@ -33,7 +32,6 @@ internal partial class SkinWorkshopPanel : Control
         var panel = new SkinWorkshopPanel { _kind = kind, _target = target, _origin = origin, _refresh = refresh, _layer = layer };
         try
         {
-            _current = panel;
             root.AddChild(layer);
             layer.AddChild(panel);
             panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -71,22 +69,25 @@ internal partial class SkinWorkshopPanel : Control
         {
             if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }) { mask.AcceptEvent(); Close(); }
         };
-        var panel = new PanelContainer { AnchorLeft = .06f, AnchorRight = .94f, AnchorTop = .06f, AnchorBottom = .94f, MouseFilter = MouseFilterEnum.Stop };
+        var panel = new PanelContainer { AnchorLeft = .06f, AnchorRight = .94f, AnchorTop = .015f, AnchorBottom = .985f, MouseFilter = MouseFilterEnum.Stop };
         AddChild(panel);
         ModThemeRuntime.Panel(panel);
         var margin = new MarginContainer();
-        foreach (var edge in new[] { "left", "right", "top", "bottom" }) margin.AddThemeConstantOverride("margin_" + edge, 20);
+        foreach (var edge in new[] { "left", "right", "top", "bottom" }) margin.AddThemeConstantOverride("margin_" + edge, 16);
         panel.AddChild(margin);
         var content = new VBoxContainer();
-        content.AddThemeConstantOverride("separation", 12);
+        content.AddThemeConstantOverride("separation", 10);
         margin.AddChild(content);
-        content.AddChild(Text(WorkshopText.EntryLabel, 27, true));
+        var heading = new HBoxContainer(); heading.AddThemeConstantOverride("separation", 18); content.AddChild(heading);
+        heading.AddChild(Text(WorkshopText.EntryLabel, 27, true));
+        var submit = Button(WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitMod), () => { });
+        submit.Pressed += () => OpenSubmission(submit); heading.AddChild(submit);
         BuildFilters(content);
         var scroll = new ScrollContainer { SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
         content.AddChild(scroll);
         _rows = new GridContainer { Columns = 2, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         _rows.AddThemeConstantOverride("h_separation", 18);
-        _rows.AddThemeConstantOverride("v_separation", 18);
+        _rows.AddThemeConstantOverride("v_separation", 12);
         scroll.AddChild(_rows);
         var footer = new HBoxContainer(); content.AddChild(footer);
         footer.AddChild(Button(ModLocalization.Get(ModText.Close), Close));
@@ -107,8 +108,9 @@ internal partial class SkinWorkshopPanel : Control
         var token = _pageToken.Token;
         var generation = ++_generation;
         foreach (var child in _rows.GetChildren()) { _rows.RemoveChild(child); child.QueueFree(); }
-        _actions.Clear(); _marquees.Clear();
-        var filtered = WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers).ToArray();
+        _actions.Clear(); _marquees.Clear(); _loadTags.Clear(); _loadSnapshot = LoadSnapshot();
+        var filtered = WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
+            .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item))).ToArray();
         var pages = Math.Max(1, (filtered.Length + PageSize - 1) / PageSize);
         _page = Math.Clamp(_page, 0, pages - 1);
         _previous.Disabled = _page == 0; _next.Disabled = _page + 1 >= pages;
@@ -125,7 +127,7 @@ internal partial class SkinWorkshopPanel : Control
             var itemBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 158) };
             itemBox.AddThemeConstantOverride("separation", 8); itemMargin.AddChild(itemBox);
             var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 14); itemBox.AddChild(row);
-            var cover = CreateCover(row, out var placeholder);
+            var cover = CreateCover(row, item.Id, out var placeholder);
             var labels = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill }; row.AddChild(labels);
             var title = CreateMarquee(itemPanel, labels, SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…", item.Id);
             var tags = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill }; labels.AddChild(tags); AddTags(tags, item);
@@ -210,7 +212,7 @@ internal partial class SkinWorkshopPanel : Control
                     action.SetMeta("sc_restart_accent", restart);
                 }
                 label.TooltipText = state is { Reason: not WorkshopLoadReason.None } ? WorkshopNoticeText.Reason(state.Reason) : state?.Error ?? "";
-                if (state?.Unsubscribed == true) { label.Text = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribed); label.TooltipText = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Retained); }
+                if (state?.Unsubscribed == true) { label.Text = WorkshopCommunityText.Get(WorkshopCommunityTextKey.Removed); label.TooltipText = label.Text; }
                 if (state?.Removing == true) label.Text = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribing);
                 if (state is { Busy: false, Error.Length: > 0 }) { label.Text = WorkshopText.Get(WorkshopTextKey.Failed); label.TooltipText = state.Error; }
                 if (state is { Busy: true, Removing: false, State: WorkshopTextKey.Waiting } && SkinWorkshopService.Progress(id) is { } progress)
@@ -219,6 +221,7 @@ internal partial class SkinWorkshopPanel : Control
             }
             catch { action.Disabled = true; cancel.Disabled = true; label.Text = WorkshopText.Get(WorkshopTextKey.Offline); }
         }
+        PollLoadTags();
     }
     private void HandleInput(InputEvent ev)
     {
@@ -229,12 +232,6 @@ internal partial class SkinWorkshopPanel : Control
         }
     }
     private bool _closed;
-    internal static void SuspendForNotice(bool suspend)
-    {
-        if (!GodotObject.IsInstanceValid(_current) || _current!._closed) return;
-        _current._suspended = suspend;
-        _current._layer.Visible = !suspend;
-    }
     private void Close()
     {
         if (_closed) return; _closed = true;
@@ -246,7 +243,6 @@ internal partial class SkinWorkshopPanel : Control
     }
     private void Cleanup()
     {
-        if (ReferenceEquals(_current, this)) _current = null;
         _closed = true;
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
         _window = null;

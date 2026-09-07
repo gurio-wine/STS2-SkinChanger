@@ -6,6 +6,8 @@ internal static class WorkshopBrowserInteractionTests
     public static void Run()
     {
         CheckSessionCache();
+        CheckLoadTagsAndSubmissionLinks();
+        CheckNativeLinkControls();
         var assembly = typeof(Entry).Assembly;
         var policy = assembly.GetType("STS2SkinChanger.Core.WorkshopItemActions");
         Require(policy != null, "工坊需要按实际安装和订阅状态生成重启操作，不能只显示重启文字。");
@@ -24,6 +26,76 @@ internal static class WorkshopBrowserInteractionTests
         Require(policy!.GetMethod("Status")!.Invoke(null, [Enum.Parse(key, "Failed")])?.ToString() == "Failed", "失败信息不能被去重逻辑隐藏。");
         Require((string)policy!.GetMethod("ItemUrl")!.Invoke(null, [123UL, false])! == "https://steamcommunity.com/sharedfiles/filedetails/?id=123" &&
             (string)policy.GetMethod("ItemUrl")!.Invoke(null, [123UL, true])! == "steam://url/CommunityFilePage/123", "Steam 页面入口只能由数字 ID 构造，不接收外部标题或封面链接。");
+    }
+
+    private static void CheckNativeLinkControls()
+    {
+        var assembly = typeof(Entry).Assembly;
+        var panel = assembly.GetType("STS2SkinChanger.Ui.SkinWorkshopPanel", true)!;
+        static bool Calls(MethodBase method, string target) => HarmonyLib.PatchProcessor.GetOriginalInstructions(method)
+            .Any(i => i.operand is MethodInfo call && call.Name == target);
+        var cover = HarmonyLib.AccessTools.Method(panel, "CreateCover");
+        var title = HarmonyLib.AccessTools.Method(panel, "CreateMarquee");
+        Require(Calls(cover, "add_Pressed") && Calls(title, "add_Pressed"), "封面和名字都必须绑定原生点击，不能只有鼠标光标。");
+        foreach (var signal in new[] { "add_MouseEntered", "add_MouseExited", "add_FocusEntered", "add_FocusExited" })
+            Require(Calls(title, signal), "标题悬停和键盘焦点的强调色需要同时进入和恢复。");
+        Require(assembly.GetType("STS2SkinChanger.Ui.WorkshopSubscriptionDialog") == null, "订阅后的独立重启弹窗已取消，不能保留另一路弹窗调度。");
+        var links = assembly.GetType("STS2SkinChanger.Ui.WorkshopCommunityLinks", true)!;
+        Require(Calls(HarmonyLib.AccessTools.Method(panel, "OpenItem"), "OpenItem") &&
+            Calls(HarmonyLib.AccessTools.Method(links, "Open"), "ActivateGameOverlayToWebPage") &&
+            Calls(HarmonyLib.AccessTools.Method(links, "Open"), "ShellOpen"), "物品和投稿必须共用 Steam 覆盖层/客户端回退路径。");
+    }
+
+    private static void CheckLoadTagsAndSubmissionLinks()
+    {
+        var assembly = typeof(Entry).Assembly;
+        var policy = assembly.GetType("STS2SkinChanger.Core.WorkshopLoadTags");
+        Require(policy != null, "订阅前需要可筛选的重启标签，不能藏在下载按钮的悬停说明里。");
+        var keyType = assembly.GetType("STS2SkinChanger.Core.WorkshopTextKey")!;
+        var reasonType = assembly.GetType("STS2SkinChanger.Core.WorkshopLoadReason")!;
+        string Tag(bool known, string? status, string reason = "None") => (string)policy!.GetMethod("Classify")!.Invoke(null,
+            [known, status == null ? null : Enum.Parse(keyType, status), Enum.Parse(reasonType, reason)])!;
+        Require(Tag(true, null) == "restart", "尚未订阅时也要显示内置清单已经确认的重启要求。");
+        Require(Tag(false, null) == "unknown", "未确认的包不能误标为免重启。");
+        Require(Tag(false, "Ready") == "hot" && Tag(true, "Ready") == "hot", "当前资源完整检查成功应覆盖旧清单。");
+        Require(Tag(false, "Restart", "Dependency") == "restart", "下载后的实际检查结果应更新标签。");
+        Require(Tag(true, "Failed", "Version") == "blocked" && Tag(false, "Failed") == "unknown", "版本不兼容和暂时下载失败不能混同。");
+        bool Match(string filter, string tag) => (bool)policy!.GetMethod("Matches")!.Invoke(null, [filter, tag])!;
+        Require(Match("", "unknown") && Match("restart", "restart") && !Match("hot", "restart"), "标签筛选必须独立精确匹配，全部不限制结果。");
+        var links = assembly.GetType("STS2SkinChanger.Core.WorkshopCommunityPolicy");
+        Require(links != null, "两个投稿入口需要固定的讨论地址。");
+        string Url(bool presets, bool client) => (string)links!.GetMethod("DiscussionUrl")!.Invoke(null, [presets, client])!;
+        Require(Url(false, false) == "https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592940620292752301", "投稿模组地址不匹配。");
+        Require(Url(true, false) == "https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592940620292746467", "投稿预设地址不匹配，不能串到模组投稿区。");
+        Require(Url(true, true) == "steam://openurl/https://steamcommunity.com/workshop/filedetails/discussion/3787302680/592940620292746467", "无覆盖层时也应在 Steam 客户端打开，而不是操作系统网页浏览器。");
+        var text = assembly.GetType("STS2SkinChanger.Core.WorkshopCommunityText", true)!;
+        var textKey = assembly.GetType("STS2SkinChanger.Core.WorkshopCommunityTextKey", true)!;
+        foreach (var language in new[] { "eng", "zhs", "zht", "deu", "esp", "spa", "fra", "ita", "jpn", "kor", "pol", "ptb", "rus", "tha", "tur" })
+        foreach (var key in Enum.GetValues(textKey))
+            Require(!string.IsNullOrWhiteSpace((string)text.GetMethod("ForLanguage")!.Invoke(null, [language, key])!), $"{language} 缺少投稿/重启标签文本 {key}");
+        CheckExistingLoadedIsNotHot();
+    }
+
+    private static void CheckExistingLoadedIsNotHot()
+    {
+        var assembly = typeof(Entry).Assembly;
+        var service = assembly.GetType("STS2SkinChanger.Core.SkinWorkshopService", true)!;
+        var stateType = assembly.GetType("STS2SkinChanger.Core.WorkshopDownload", true)!;
+        var keyType = assembly.GetType("STS2SkinChanger.Core.WorkshopTextKey", true)!;
+        var policy = assembly.GetType("STS2SkinChanger.Core.WorkshopCatalogPolicy", true)!;
+        var items = (Array)policy.GetMethod("Parse")!.Invoke(null, ["""[{"id":321,"restartRequired":true,"targets":[{"kind":"character","target":"silent"}]}]"""])!;
+        var state = Activator.CreateInstance(stateType)!;
+        stateType.GetField("State")!.SetValue(state, Enum.Parse(keyType, "Ready"));
+        var downloads = (System.Collections.IDictionary)HarmonyLib.AccessTools.Field(service, "Downloads").GetValue(null)!;
+        downloads.Add(321UL, state);
+        try
+        {
+            string Tag() => (string)service.GetMethod("LoadTag")!.Invoke(null, [items.GetValue(0)])!;
+            Require(Tag() == "restart", "启动时已加载不等于下载后可免重启，重新订阅不能把启动型 Mod 错标为免重启。");
+            stateType.GetField("HotLoadVerified")!.SetValue(state, true);
+            Require(Tag() == "hot", "实际免重启注册成功后才允许覆盖清单标签。");
+        }
+        finally { downloads.Remove(321UL); }
     }
 
     private static void CheckSessionCache()
