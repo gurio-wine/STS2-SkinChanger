@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using HarmonyLib;
 using STS2SkinChanger;
@@ -10,6 +11,19 @@ internal static class RandomCharacterSkinTests
     private static readonly Assembly Mod = typeof(Entry).Assembly;
     private static string _configPath = string.Empty;
     private static bool ConfigPath(ref string __result) { __result = _configPath; return false; }
+    private static int _mountCalls;
+    private static bool _failMount;
+    private static bool MountBoundary()
+    {
+        _mountCalls++;
+        if (_failMount) throw new IOException("Test vanilla mount failure");
+        return false;
+    }
+    private static bool SkipLog(object[] __args)
+    {
+        if (!_failMount) Console.WriteLine("Random lobby transaction: " + __args[0]);
+        return false;
+    }
 
     public static void Run()
     {
@@ -54,8 +68,116 @@ internal static class RandomCharacterSkinTests
             "没有可用皮肤时必须安全回退原皮。");
         CheckRunRecord();
         CheckSavedPreferenceAndCleanup(service);
+        CheckReturnToLobby(service);
         CheckUiAndRunBoundaries(service);
         Console.WriteLine("Random character skins passed: deferred intent, visible candidates, independent RNG and saved-run choice.");
+    }
+
+    private static void CheckReturnToLobby(Type service)
+    {
+        var prepare = AccessTools.Method(service, "RestoreRandomCharacterSkinsForLobby");
+        Require(prepare != null, "重新进入选角缺少随机皮肤的原皮恢复流程，上局的实际来源会泄漏到大厅。");
+        var configProperty = AccessTools.Property(service, "Config");
+        var catalogProperty = AccessTools.Property(service, "Catalog");
+        var configType = configProperty.PropertyType;
+        var previousConfig = configProperty.GetValue(null);
+        var previousCatalog = catalogProperty.GetValue(null);
+        var previousError = AccessTools.Property(service, "LastError").GetValue(null);
+        var fields = new[] { "_characterSkinBundleRunSnapshot", "_characterSkinBundleRunState", "_characterSkinBundleRunSavePath" }
+            .ToDictionary(name => name, name => AccessTools.Field(service, name).GetValue(null));
+        var directory = Path.Combine(Path.GetTempPath(), "sc-random-lobby-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        _configPath = Path.Combine(directory, "config.json");
+        var runPath = Path.Combine(directory, "run.json");
+        var stateType = Mod.GetType("STS2SkinChanger.Core.CharacterSkinBundleRunState", true)!;
+        var state = JsonSerializer.Deserialize("""{"RunIdentity":"run-A","CharacterGroupId":"silent","RandomCharacterOptionId":"skin:a"}""", stateType)!;
+        var harmony = new Harmony("sc-tests.random-lobby-return");
+        try
+        {
+            harmony.Patch(AccessTools.PropertyGetter(service, "ConfigPath"), prefix: new HarmonyMethod(typeof(RandomCharacterSkinTests), nameof(ConfigPath)));
+            // Only the Godot resource-mount boundary is replaced. Selection transactions,
+            // provider/companion ownership, config writes and run records stay real.
+            harmony.Patch(AccessTools.Method(service, "MountOverlay"), prefix: new HarmonyMethod(typeof(RandomCharacterSkinTests), nameof(MountBoundary)));
+            foreach (var method in Mod.GetType("STS2SkinChanger.Core.ModLog", true)!.GetMethods().Where(m => m.Name is "Info" or "Warn" or "Error"))
+                harmony.Patch(method, prefix: new HarmonyMethod(typeof(RandomCharacterSkinTests), nameof(SkipLog)));
+            var config = AccessTools.Method(configType, "Deserialize").Invoke(null, ["""
+                {"Selections":{"silent":"skin:a","regent":"skin:a","monster:a":"skin:a"},
+                 "RandomCharacterSkinGroups":["silent","missing","monster:a"],"ActiveCharacterSkinBundles":{"silent":"CZN"}}
+                """])!;
+            configProperty.SetValue(null, config);
+            catalogProperty.SetValue(null, CreateLobbyCatalog(catalogProperty.PropertyType));
+            foreach (var field in fields.Keys) AccessTools.Field(service, field).SetValue(null, null);
+            AccessTools.Field(service, "_characterSkinBundleRunState").SetValue(null, state);
+            AccessTools.Field(service, "_characterSkinBundleRunSavePath").SetValue(null, runPath);
+            _mountCalls = 0;
+            _failMount = false;
+            string Actual(string group) => (string)AccessTools.Method(service, "GetVisualSelection").Invoke(null, [group])!;
+            prepare!.Invoke(null, null);
+            Require(Actual("silent") == "skin:a" && _mountCalls == 0, "仍在对局时不能因为残留选角节点而重置随机结果。");
+            AccessTools.Method(service, "RestoreCharacterSkinBundleAfterRun").Invoke(null, null);
+            var beforeLobby = File.ReadAllText(runPath);
+            prepare.Invoke(null, null);
+            Require(Actual("silent") == "__base__" && Actual("regent") == "skin:a" && Actual("monster:a") == "skin:a",
+                $"返回选角只恢复选择随机的角色：silent={Actual("silent")}，regent={Actual("regent")}，monster={Actual("monster:a")}；错误={AccessTools.Property(service, "LastError").GetValue(null)}");
+            Require((string?)AccessTools.Method(service, "GetCharacterSelectionOptionId").Invoke(null, ["silent"]) == "__random_character_skin__" &&
+                    !((IDictionary)configType.GetProperty("ActiveCharacterSkinBundles")!.GetValue(configProperty.GetValue(null))!).Contains("silent"),
+                "恢复原皮必须保留随机意图，并清除上局随机抽到的皮肤包标记。");
+            Require(_mountCalls == 1 && File.ReadAllText(runPath) == beforeLobby,
+                "必须实际热切换原皮，不能只改配置；也不能把原皮写回旧局的随机结果。");
+            prepare.Invoke(null, null);
+            Require(_mountCalls == 1, "重复打开已经是原皮的随机选项不能重复挂载资源。");
+            var store = Mod.GetType("STS2SkinChanger.Core.CharacterSkinBundleRunStore", true)!;
+            var saved = AccessTools.Method(store, "LoadMatching").Invoke(null, [runPath, "run-A"])!;
+            AccessTools.Method(service, "ResumeRandomCharacterSkin").Invoke(null, [saved]);
+            Require(Actual("silent") == "skin:a", "大厅恢复原皮之后，继续旧局仍应恢复该局的确切皮肤，不能重抽。");
+            // A restart can load the previous run's actual selection from global config too.
+            var restarted = AccessTools.Method(configType, "Load").Invoke(null, [_configPath])!;
+            configProperty.SetValue(null, restarted);
+            prepare.Invoke(null, null);
+            Require(Actual("silent") == "__base__" && File.ReadAllText(runPath) == beforeLobby,
+                "重新启动后进入新选角也应恢复原皮，保留旧局记录。");
+            ((IDictionary)configType.GetProperty("Selections")!.GetValue(configProperty.GetValue(null))!)["silent"] = "skin:a";
+            _failMount = true;
+            prepare.Invoke(null, null);
+            Require(Actual("silent") == "skin:a" && File.ReadAllText(runPath) == beforeLobby,
+                "恢复失败应保留原事务状态，不能清空皮肤或破坏旧局记录。");
+        }
+        finally
+        {
+            _failMount = false;
+            harmony.UnpatchAll(harmony.Id);
+            configProperty.SetValue(null, previousConfig);
+            catalogProperty.SetValue(null, previousCatalog);
+            AccessTools.Property(service, "LastError").SetValue(null, previousError);
+            foreach (var field in fields) AccessTools.Field(service, field.Key).SetValue(null, field.Value);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static object CreateLobbyCatalog(Type type)
+    {
+        var catalog = RuntimeHelpers.GetUninitializedObject(type);
+        var groupType = Mod.GetType("STS2SkinChanger.Catalog.SkinGroup", true)!;
+        var optionType = Mod.GetType("STS2SkinChanger.Catalog.SkinOption", true)!;
+        var groups = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(groupType))!;
+        foreach (var id in new[] { "silent", "regent", "monster:a" })
+        {
+            var group = Activator.CreateInstance(groupType, [id, id])!;
+            var constructor = optionType.GetConstructors().Single(c => c.GetParameters().Length > 2);
+            var args = constructor.GetParameters().Select(p => p.HasDefaultValue ? p.DefaultValue :
+                p.ParameterType.IsGenericType ? Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(p.ParameterType.GenericTypeArguments)) : null).ToArray();
+            args[0] = "skin:a"; args[1] = "Test skin";
+            args[3] = id != "monster:a"; // Known character groups supplied by a DLL skin.
+            ((IList)groupType.GetProperty("Options")!.GetValue(group)!).Add(constructor.Invoke(args));
+            groups.Add(group);
+        }
+        AccessTools.Field(type, "_groups").SetValue(catalog, groups);
+        AccessTools.Field(type, "_characterAppearanceGroupIds").SetValue(catalog, new HashSet<string>(["silent", "regent"], StringComparer.OrdinalIgnoreCase));
+        AccessTools.Field(type, "_fullRuntimeProviders").SetValue(catalog, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        AccessTools.Field(type, "_fullRuntimeProviderGroups").SetValue(catalog, new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+        var identities = AccessTools.Field(type, "_providerInstanceIdentities");
+        identities.SetValue(catalog, Array.CreateInstance(identities.FieldType.GenericTypeArguments[0], 0));
+        return catalog;
     }
 
     private static void CheckSavedPreferenceAndCleanup(Type service)
@@ -154,6 +276,18 @@ internal static class RandomCharacterSkinTests
                 Array.IndexOf(commit, "ApplySelection") < Array.IndexOf(commit, "SetRandomCharacterSkinEnabled") &&
                 commit.Contains("OnLocalCharacterSelectionChanged"),
             "先成功切回原皮再保存随机指令，并通过本机换肤流程同步实际原皮和头像。");
+        var lobbyPatch = Mod.GetType("STS2SkinChanger.Ui.RandomCharacterLobbySkinPatch", true)!;
+        var harmony = new Harmony("sc-tests.random-lobby-hook");
+        try
+        {
+            Require(harmony.CreateClassProcessor(lobbyPatch).Patch().Count == 1,
+                "返回选角恢复必须能绑定当前游戏版本的真实入口。");
+            var entry = AccessTools.Method(typeof(MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen), "OnSubmenuOpened");
+            Require(Harmony.GetPatchInfo(entry)!.Prefixes.Any(p => p.owner == harmony.Id) &&
+                    Calls(lobbyPatch, "Prefix").Contains("RestoreRandomCharacterSkinsForLobby"),
+                "必须在选角原生预览创建之前恢复原皮，不是预览已经显示后的补丁。");
+        }
+        finally { harmony.UnpatchAll(harmony.Id); }
     }
 
     private static void CheckRunRecord()

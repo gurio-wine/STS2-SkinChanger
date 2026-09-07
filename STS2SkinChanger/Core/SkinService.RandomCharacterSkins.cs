@@ -24,6 +24,33 @@ internal static partial class SkinService
         }
     }
 
+    internal static void RestoreRandomCharacterSkinsForLobby()
+    {
+        lock (Sync)
+        {
+            // The saved run owns its actual random result. Only entering a new character
+            // selection screen may normalize the lobby; never do this from a config getter,
+            // a preview rebuild or while a run's temporary settings are still active.
+            if (_characterSkinBundleRunState != null || _characterSkinBundleRunSnapshot != null) return;
+            foreach (var groupId in Config.RandomCharacterSkinGroups.ToArray())
+            {
+                if (Catalog?.IsCharacterAppearanceGroup(groupId) != true) continue;
+                var previous = Config.GetSelection(groupId);
+                if (!previous.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!ApplySelection(groupId, SkinCatalog.BaseOptionId))
+                    {
+                        ModLog.Warn($"选角恢复随机皮肤的原皮失败，保留现状：{groupId}；{LastError}");
+                        continue;
+                    }
+                    ModLog.Info($"选角随机皮肤已恢复原皮：{groupId}，上一局来源={previous}；独立对局记录保持不变。");
+                }
+                if (!ClearSelectedCharacterSkinBundle(groupId))
+                    ModLog.Warn($"清除上局随机皮肤包标记失败：{groupId}；{LastError}");
+            }
+        }
+    }
+
     private static void ApplyRandomCharacterSkinForNewRun(string groupId)
     {
         var visible = new[] { SkinCatalog.BaseOptionId }

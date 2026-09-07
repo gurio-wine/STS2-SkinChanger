@@ -2812,6 +2812,20 @@ internal static partial class ContextualSkinControls
     }
 }
 
+[HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.OnSubmenuOpened))]
+internal static class RandomCharacterLobbySkinPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix()
+    {
+        try { SkinService.RestoreRandomCharacterSkinsForLobby(); }
+        catch (Exception error)
+        {
+            ModLog.Error("进入选角时恢复随机皮肤的原皮失败，不阻止打开界面：" + error);
+        }
+    }
+}
+
 [HarmonyPatch(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.SelectCharacter))]
 internal static class CharacterSelectionSkinPatch
 {
