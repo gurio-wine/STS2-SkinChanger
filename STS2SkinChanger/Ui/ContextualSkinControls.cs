@@ -719,6 +719,7 @@ internal static partial class ContextualSkinControls
     }
 
     private static bool IsAccentedCharacterOption(string optionId) =>
+        optionId == SkinCatalog.BaseOptionId ||
         !WorkshopCatalogPolicy.IsSkinChoice(optionId) ||
         RandomCharacterSkinPolicy.IsRandom(optionId) ||
         CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out _);

@@ -50,6 +50,7 @@ internal static class WorkshopTests
         CheckPanelLifecycle();
         CheckPackageCapabilities();
         CheckNoticeQueue();
+        CheckBrowserNavigation();
         using var catalogResource = typeof(Entry).Assembly.GetManifestResourceStream("STS2SkinChanger.Data.workshop-catalog.json");
         Require(catalogResource != null, "发布 DLL 缺少内置清单，不能依赖开发机器的文件。");
         using var reader = new StreamReader(catalogResource!);
@@ -86,6 +87,42 @@ internal static class WorkshopTests
         Require((bool)HarmonyLib.AccessTools.Method(policy, "Unchanged").Invoke(null, [package.Path, snapshot])!, "未改动的下载包应该通过源文件检查。");
         File.WriteAllText(System.IO.Path.Combine(package.Path, "new.json"), "{}");
         Require(!(bool)HarmonyLib.AccessTools.Method(policy, "Unchanged").Invoke(null, [package.Path, snapshot])!, "检查期间新增文件也必须阻止发布，不能只验证旧文件。");
+    }
+
+    private static void CheckBrowserNavigation()
+    {
+        var assembly = typeof(Entry).Assembly;
+        var type = assembly.GetType("STS2SkinChanger.Core.WorkshopBrowserPolicy");
+        Require(type != null, "工坊需要按地区过滤和每页最多十个对象的统一策略。");
+        object Call(string method, params object[] args) => type!.GetMethod(method)!.Invoke(null, args)!;
+        Require((bool)Call("HasRegions", "monster") && (bool)Call("HasRegions", "event") && !(bool)Call("HasRegions", "cards"), "仅怪物和事件使用地区层级。");
+        var ids = Enumerable.Range(1, 23).Select(i => "m" + i).ToArray();
+        Require(((string[])Call("Page", ids, 0)).SequenceEqual(new[] {"m1","m2","m3","m4","m5","m6","m7","m8","m9","m10"}), "首屏不能塞满整个怪物列表。");
+        Require(((string[])Call("Page", ids, 2)).SequenceEqual(new[] {"m21","m22","m23"}), "翻页不能漏掉尾部对象。");
+        const string json = """[{"id":1,"targets":[{"kind":"monster","target":"jaw_worm"},{"kind":"cards","target":"silent"}]},{"id":2,"targets":[{"kind":"monster","target":"slime"}]},{"id":3,"targets":[{"kind":"companion","target":"osty"}]}]""";
+        Require(((ulong[])Call("FilterIds", json, "monster", "", new[] {"jaw_worm"})).SequenceEqual(new ulong[] {1}), "地区筛选必须限制同类型的对象，而不是让任何标签匹配即可。");
+        Require(((ulong[])Call("FilterIds", json, "", "slime", new[] {"slime"})).SequenceEqual(new ulong[] {1,2}), "选择全部类型后须清除隐藏的对象/地区筛选，且不得包含仅奥斯提标签的条目。");
+        var controls = assembly.GetType("STS2SkinChanger.Ui.ContextualSkinControls", true)!;
+        Require((bool)HarmonyLib.AccessTools.Method(controls, "IsAccentedCharacterOption").Invoke(null, ["__base__"])!, "游戏默认选项也应使用强调色。");
+        Require((float)Call("MarqueeOffset", 72f, .3d) == 0 && (float)Call("MarqueeOffset", 72f, 1.8d) == 36f &&
+            (float)Call("MarqueeOffset", 0f, 10d) == 0, "长标题应停留后匀速平移，短标题不能无故移动。");
+        var browserTexts = assembly.GetType("STS2SkinChanger.Core.WorkshopBrowserText", true)!;
+        var keyType = assembly.GetType("STS2SkinChanger.Core.WorkshopBrowserTextKey", true)!;
+        foreach (var language in new[] { "eng", "zhs", "zht", "deu", "esp", "spa", "fra", "ita", "jpn", "kor", "pol", "ptb", "rus", "tha", "tur" })
+        foreach (var key in Enum.GetValues(keyType))
+            Require(!string.IsNullOrWhiteSpace((string)browserTexts.GetMethod("ForLanguage")!.Invoke(null, [language, key])!), $"{language} 缺少工坊筛选文本 {key}");
+        var service = assembly.GetType("STS2SkinChanger.Core.SkinWorkshopService", true)!;
+        var unsubscribe = HarmonyLib.AccessTools.Method(service, "Unsubscribe");
+        Require(unsubscribe != null, "工坊需要实际的取消订阅操作，不是修改本地 UI 状态。");
+        var downloads = (System.Collections.IDictionary)HarmonyLib.AccessTools.Field(service, "Downloads").GetValue(null)!;
+        var count = downloads.Count;
+        ((Task)unsubscribe!.Invoke(null, [0UL])!).GetAwaiter().GetResult();
+        Require(downloads.Count == count, "非清单物品不能触发退订或创建任务。");
+        var moveNext = unsubscribe.GetCustomAttribute<System.Runtime.CompilerServices.AsyncStateMachineAttribute>()!.StateMachineType.GetMethod("MoveNext", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var calls = HarmonyLib.PatchProcessor.GetOriginalInstructions(moveNext).Select(i => i.operand).OfType<MethodBase>().ToArray();
+        Require(calls.Any(m => m.DeclaringType == typeof(Steamworks.SteamUGC) && m.Name == "UnsubscribeItem") &&
+            !calls.Any(m => m.Name == "Delete" && (m.DeclaringType == typeof(File) || m.DeclaringType == typeof(Directory))),
+            "取消订阅必须交给 Steam，不能直接删除运行中资源。");
     }
 
     private static void CheckNoticeQueue()

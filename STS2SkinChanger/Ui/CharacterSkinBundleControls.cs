@@ -231,9 +231,12 @@ internal static partial class CharacterSkinBundleControls
         var selected = options.FindIndex(option => option.Id.Equals(state.Draft.CharacterOptionId, StringComparison.OrdinalIgnoreCase));
         foreach (var option in options)
         {
+            var i = skins.ItemCount;
             skins.AddItem(option.Name);
+            skins.SetItemMetadata(i, option.Id);
         }
         skins.Select(Math.Max(0, selected));
+        PresetChoiceColoring.Attach(skins, id => id == SkinCatalog.BaseOptionId);
         skins.ItemSelected += index => { state.Draft.CharacterOptionId = options[(int)index].Id; MarkDirty(state); };
         skinRow.AddChild(skins);
 

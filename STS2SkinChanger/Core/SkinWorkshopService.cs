@@ -18,6 +18,8 @@ internal sealed class WorkshopDownload
     public bool Busy;
     public WorkshopLoadReason Reason;
     public bool NoticeOwned;
+    public bool Removing;
+    public bool Unsubscribed;
 }
 
 // Permanent, explicitly requested subscriptions. Never calls OnlineSkinCache or removes Steam files.
@@ -203,6 +205,34 @@ internal static class SkinWorkshopService
                 catch (Exception ex) { ModLog.Warn("恢复工坊重启提示失败，面板保留重启状态：" + ex.GetBaseException().Message); }
             }
         }
+    }
+
+    public static async Task Unsubscribe(ulong id)
+    {
+        if (!Catalog.Any(item => item.Id == id) || Downloads.GetValueOrDefault(id)?.Busy == true) return;
+        var status = Downloads.GetValueOrDefault(id) ?? new WorkshopDownload();
+        Downloads[id] = status;
+        status.Busy = true; status.Removing = true; status.Error = "";
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var call = new SteamCallResult<RemoteStorageUnsubscribePublishedFileResult_t>(SteamUGC.UnsubscribeItem(new(id)), timeout.Token);
+            var result = await call.Task;
+            if (result.m_eResult != EResult.k_EResultOK || result.m_nPublishedFileId.m_PublishedFileId != id)
+                throw new IOException(result.m_eResult.ToString());
+            status.Unsubscribed = true;
+            Notices.Acknowledge(id);
+            DeferredNotices.Remove(id);
+            // Keep catalog, selections and mounted resources alive for this session.
+            // Steam owns subscription files and removes them after the game exits.
+            ModLog.Info($"已取消订阅工坊皮肤 {id}；本次已加载资源保留，文件移除由 Steam 在退出后处理。");
+        }
+        catch (Exception ex)
+        {
+            status.Error = ex.Message;
+            ModLog.Warn($"取消订阅工坊皮肤 {id} 失败：{ex.Message}");
+        }
+        finally { status.Busy = false; status.Removing = false; }
     }
 
     private static bool TryInstalled(ulong id, out string directory)

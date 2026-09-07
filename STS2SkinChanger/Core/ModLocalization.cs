@@ -1363,7 +1363,8 @@ internal static partial class ModLocalization
     }
 
     public static string Get(ModText text) =>
-        text == ModText.RandomCharacterSkin ? RandomCharacterSkinTexts[CurrentLanguage] :
+        text == ModText.RandomCharacterSkin ? "⁇" + RandomCharacterSkinTexts[CurrentLanguage] :
+        text == ModText.GameDefault ? "◈" + Packs[CurrentLanguage].Get(ModText.GameDefault) :
         text == ModText.OtherCategoryEvents ? EventCategoryTexts[CurrentLanguage] :
         text == ModText.NoMonsterPresets
             ? NoMonsterPresetTexts[CurrentLanguage]

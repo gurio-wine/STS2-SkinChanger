@@ -4,7 +4,7 @@
   "author": "Gurio",
   "description": "切换角色、卡牌、怪物、先古、商人、生物和事件皮肤。其它图鉴支持分类预览，事件可按地区设置皮肤优先级；界面主题可即时调节、保存预设并通过预设码分享。多人游戏按玩家同步双方已安装的皮肤、头像及外观参数，不下载远端资源。支持 15 种语言，无需重启。 Switch character, card, monster, Ancient, merchant, creature and event skins. The Other Compendium offers categorized previews and regional event skin priorities. Customize the interface live, save theme presets and share preset codes. Multiplayer syncs each player's locally installed skins, avatars and appearance settings without remote downloads. 15 languages, no restart required.",
   "version": "0.10.11",
-  "internal_test_version": "0.10.11.5",
+  "internal_test_version": "0.10.11.6",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],
