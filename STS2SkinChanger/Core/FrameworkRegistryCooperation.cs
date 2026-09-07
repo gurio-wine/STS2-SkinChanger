@@ -170,16 +170,6 @@ internal static class FrameworkRegistryCooperation
         PendingOptions[groupId] = optionId;
     }
 
-    public static void SelectionInstructionChanged(string groupId)
-    {
-        Requests.Remove(groupId);
-        PendingOptions.Remove(groupId);
-        // A deferred instruction changes the label/cycle cursor, not the loaded preview.
-        foreach (var control in LiveControls())
-            if (CharacterId(control) is { } id && Normalize(id.Entry).Equals(groupId, StringComparison.OrdinalIgnoreCase))
-                UpdateLabel(control);
-    }
-
     public static void QueueRefreshControls()
     {
         if (_session == null || _refreshQueued) return;

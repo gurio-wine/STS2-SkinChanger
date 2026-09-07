@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text.Json;
 using HarmonyLib;
 using STS2SkinChanger;
@@ -24,7 +25,7 @@ internal static class RandomCharacterSkinTests
                 "保存的随机意图必须显示为随机，而非上一套皮肤。");
             Require((string?)AccessTools.Method(service, "GetVisualSelection").Invoke(null, ["silent"]) == "skin:a" &&
                     (string?)AccessTools.Method(service, "GetCharacterSelectionOptionId").Invoke(null, ["regent"]) == "skin:b",
-                "选中随机不能改变当前预览或其它角色，资源层只能读取真实皮肤。");
+                "读取随机意图不能重抽或改变其它角色，资源层仍只读取已提交的真实皮肤。");
             var clone = AccessTools.Method(property.PropertyType, "CloneForBundleTransaction").Invoke(config, null)!;
             ((IList)clone.GetType().GetProperty("RandomCharacterSkinGroups")!.GetValue(clone)!).Clear();
             Require(((IList)config.GetType().GetProperty("RandomCharacterSkinGroups")!.GetValue(config)!).Count == 1,
@@ -83,7 +84,7 @@ internal static class RandomCharacterSkinTests
             var selections = (IDictionary)configType.GetProperty("Selections")!.GetValue(persisted)!;
             Require((string?)selections["silent"] == "skin:a" && (string?)selections["regent"] == "skin:other" &&
                     !((IDictionary)configType.GetProperty("ActiveCharacterSkinBundles")!.GetValue(persisted)!).Contains("silent"),
-                "随机只替换选角指令，不改变实际资源，也不能残留即将开局的旧皮肤包指令。");
+                "意图存储不直接挂载资源，原皮由正常选择事务负责；不能残留旧皮肤包指令。");
             property.SetValue(null, persisted);
             Require((string?)AccessTools.Method(service, "GetCharacterSelectionOptionId").Invoke(null, ["silent"]) == "__random_character_skin__",
                 "重启后仍应显示玩家选中的随机选项。");
@@ -142,12 +143,17 @@ internal static class RandomCharacterSkinTests
                 Calls(service, "LoadCharacterSkinBundleRun").Contains("ResumeRandomCharacterSkin") &&
                 Calls(service, "ResumeRandomCharacterSkin").Contains("ApplySelection"),
             "只有新开局抽取；读档必须用通用换肤流程恢复存储结果，不能重抽。");
-        var apply = Calls(controls, "ApplyDropdownSelection");
-        Require(apply.Contains("SetRandomCharacterSkinEnabled") &&
-                Array.IndexOf(apply, "SetRandomCharacterSkinEnabled") < Array.IndexOf(apply, "BeginCharacterDropdownSelection"),
-            "随机选项必须先独立处理，不能交给立即预加载流程。");
-        Require(!apply.Contains("QueueRefreshControls"),
-            "选择随机时也不能重建原管理器模型预览，只刷新选项名称。");
+        var apply = PatchProcessor.GetOriginalInstructions(AccessTools.Method(controls, "ApplyDropdownSelection"));
+        var firstLoad = apply.FindIndex(i => i.operand is MethodInfo { Name: "BeginCharacterDropdownSelection" });
+        Require(firstLoad >= 3 && apply[firstLoad - 3].opcode == OpCodes.Ldstr &&
+                (string?)apply[firstLoad - 3].operand == "__base__" &&
+                apply[firstLoad - 2].opcode == OpCodes.Ldc_I4_0 && apply[firstLoad - 1].opcode == OpCodes.Ldc_I4_1,
+            "随机分支必须调用普通切肤流程加载原皮，同时携带随机意图，不能停留在之前的皮肤。");
+        var commit = Calls(controls, "ApplyDropdownSelectionNow");
+        Require(commit.Contains("SetRandomCharacterSkinEnabled") &&
+                Array.IndexOf(commit, "ApplySelection") < Array.IndexOf(commit, "SetRandomCharacterSkinEnabled") &&
+                commit.Contains("OnLocalCharacterSelectionChanged"),
+            "先成功切回原皮再保存随机指令，并通过本机换肤流程同步实际原皮和头像。");
     }
 
     private static void CheckRunRecord()

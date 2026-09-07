@@ -969,11 +969,10 @@ internal static partial class ContextualSkinControls
         var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
         if (characterScreen != null && !HasMonsterPriorityContext(selector) && RandomCharacterSkinPolicy.IsRandom(optionId))
         {
-            // Only save the next-run instruction. Do not warm, mount or preview another skin.
-            if (!SkinService.SetRandomCharacterSkinEnabled(groupId, true))
-                ModLog.Error($"保存随机皮肤选择失败：{SkinService.LastError}");
-            Populate(selector, FindGroup(groupId));
-            FrameworkRegistryCooperation.SelectionInstructionChanged(groupId);
+            // Show vanilla through the same resource, preview and avatar refresh transaction
+            // as an explicit vanilla choice. The random draw itself still waits for a new run.
+            BeginCharacterDropdownSelection(characterScreen, selector, dropdown, index, groupId,
+                SkinCatalog.BaseOptionId, preserveCharacterSkinBundle: false, selectRandomCharacterSkin: true);
             return;
         }
         if (characterScreen != null &&
@@ -1020,7 +1019,8 @@ internal static partial class ContextualSkinControls
         int index,
         string groupId,
         string optionId,
-        bool preserveCharacterSkinBundle = false)
+        bool preserveCharacterSkinBundle = false,
+        bool selectRandomCharacterSkin = false)
     {
         var previousSelections = new Dictionary<string, string>(
             SkinService.Config.Selections,
@@ -1045,9 +1045,9 @@ internal static partial class ContextualSkinControls
 
         if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
             !HasMonsterPriorityContext(selector) &&
-            !SkinService.SetRandomCharacterSkinEnabled(groupId, false))
+            !SkinService.SetRandomCharacterSkinEnabled(groupId, selectRandomCharacterSkin))
         {
-            ModLog.Warn($"清除选角随机皮肤选择失败：{SkinService.LastError}");
+            ModLog.Warn($"保存选角随机皮肤状态失败：{SkinService.LastError}");
         }
 
         if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
@@ -1096,7 +1096,8 @@ internal static partial class ContextualSkinControls
         int index,
         string groupId,
         string optionId,
-        bool preserveCharacterSkinBundle = false)
+        bool preserveCharacterSkinBundle = false,
+        bool selectRandomCharacterSkin = false)
     {
         // Keep the visible bundle ID while warming its underlying character skin, so a
         // second arrow click advances from the bundle rather than from its ingredient.
@@ -1156,7 +1157,8 @@ internal static partial class ContextualSkinControls
                     index,
                     groupId,
                     optionId,
-                    preserveCharacterSkinBundle);
+                    preserveCharacterSkinBundle,
+                    selectRandomCharacterSkin);
                 if (preserveCharacterSkinBundle && !applied)
                 {
                     SkinService.ClearSelectedCharacterSkinBundle(groupId);

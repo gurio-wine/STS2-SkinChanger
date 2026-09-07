@@ -61,7 +61,7 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    // A next-run instruction, not a provider ID. Keep the last real skin available for previews.
+    // A next-run instruction, not a provider ID. Keep the actual loaded source separate.
     public List<string> RandomCharacterSkinGroups { get; set; } = [];
 
     public List<SlotVisibilitySelection> SlotVisibilitySelections { get; set; } = [];
