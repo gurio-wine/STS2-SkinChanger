@@ -108,14 +108,15 @@ internal partial class SkinWorkshopPanel : Control
         var token = _pageToken.Token;
         var generation = ++_generation;
         foreach (var child in _rows.GetChildren()) { _rows.RemoveChild(child); child.QueueFree(); }
-        _actions.Clear(); _marquees.Clear(); _loadTags.Clear(); _loadSnapshot = LoadSnapshot();
-        var filtered = WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
-            .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item))).ToArray();
+        _actions.Clear(); _marquees.Clear(); _loadTags.Clear(); _emptyLabel = null;
+        _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
+        var filtered = FilteredItems();
+        _filteredIds = filtered.Select(item => item.Id).ToArray();
         var pages = Math.Max(1, (filtered.Length + PageSize - 1) / PageSize);
         _page = Math.Clamp(_page, 0, pages - 1);
         _previous.Disabled = _page == 0; _next.Disabled = _page + 1 >= pages;
         _pageLabel.Text = $"{_page + 1} / {pages}";
-        if (filtered.Length == 0) _rows.AddChild(Text(WorkshopText.Get(WorkshopTextKey.Empty)));
+        if (filtered.Length == 0) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
         var visible = filtered.Skip(_page * PageSize).Take(PageSize).ToArray();
         var rows = new Dictionary<ulong, ItemVisual>();
         foreach (var item in visible)
@@ -172,14 +173,26 @@ internal partial class SkinWorkshopPanel : Control
 
     private async Task Subscribe(ulong id)
     {
-        await SkinWorkshopService.Subscribe(id);
-        if (GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
+        if (_closed || SkinWorkshopService.DownloadState(id)?.Busy == true) return;
+        _subscriptions.BeginAction(id);
+        try { await SkinWorkshopService.Subscribe(id); }
+        finally
+        {
+            _subscriptions.EndAction(id);
+            if (GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
+        }
     }
     private async Task Unsubscribe(ulong id)
     {
+        if (_closed || SkinWorkshopService.DownloadState(id)?.Busy == true) return;
         _actionErrors.Remove(id);
-        await SkinWorkshopService.Unsubscribe(id);
-        if (GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
+        _subscriptions.BeginAction(id);
+        try { await SkinWorkshopService.Unsubscribe(id); }
+        finally
+        {
+            _subscriptions.EndAction(id);
+            if (GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
+        }
     }
     private void Poll()
     {
@@ -221,7 +234,7 @@ internal partial class SkinWorkshopPanel : Control
             }
             catch { action.Disabled = true; cancel.Disabled = true; label.Text = WorkshopText.Get(WorkshopTextKey.Offline); }
         }
-        PollLoadTags();
+        PollFilters();
     }
     private void HandleInput(InputEvent ev)
     {

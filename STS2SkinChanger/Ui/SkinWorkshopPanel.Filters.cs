@@ -11,23 +11,32 @@ internal partial class SkinWorkshopPanel
     private WorkshopPagedChoice _regionPicker = null!;
     private WorkshopPagedChoice _targetPicker = null!;
     private WorkshopPagedChoice _loadPicker = null!;
+    private WorkshopPagedChoice _subscriptionPicker = null!;
+    private readonly WorkshopSubscriptionFilter _subscriptions = new();
     private string _loadFilter = "";
-    private string _loadSnapshot = "";
-    private bool _loadRebuildPending;
+    private ulong[] _filteredIds = [];
+    private bool _filterRebuildPending;
+    private Label? _emptyLabel;
     private readonly Dictionary<ulong, Button> _loadTags = [];
-    private static string LoadSnapshot() => string.Join('|', SkinWorkshopService.Catalog.Select(SkinWorkshopService.LoadTag));
+    private string EmptyText => WorkshopText.Get(_subscriptions.Value.Length > 0 && _subscriptions.Unavailable ? WorkshopTextKey.Offline : WorkshopTextKey.Empty);
+    private WorkshopCatalogItem[] FilteredItems() => _subscriptions.Filter(
+        WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
+            .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item)))).ToArray();
     private IReadOnlySet<string>? RegionMembers => _region.Length == 0 ? null : _names.Regions(_kind).GetValueOrDefault(_region) ?? new HashSet<string>();
     private void BuildFilters(VBoxContainer content)
     {
         if (_kind == "companion" && _target == "osty") { _kind = "character"; _target = "necrobinder"; }
         _names = WorkshopTargetNames.Build();
-        var filters = new HBoxContainer(); filters.AddThemeConstantOverride("separation", 12); content.AddChild(filters);
+        var filters = new HFlowContainer();
+        filters.AddThemeConstantOverride("h_separation", 12); filters.AddThemeConstantOverride("v_separation", 8); content.AddChild(filters);
+        _subscriptionPicker = new(WorkshopSubscriptionFilter.Name, value =>
+        { _subscriptions.Select(value); _page = 0; RefreshFilters(); Rebuild(); });
         _typePicker = new(WorkshopText.Kind, id => SetFilter(id, ""));
         _regionPicker = new(id => _names.RegionNames.GetValueOrDefault(id, id), id =>
         { _region = id; _target = ""; RefreshFilters(); _page = 0; Rebuild(); });
         _targetPicker = new(id => _names.Name(_kind, id), id => { _target = id; _page = 0; Rebuild(); });
         _loadPicker = new(WorkshopLoadTags.Name, SetLoadFilter);
-        foreach (var picker in new[] { _typePicker, _regionPicker, _targetPicker, _loadPicker }) filters.AddChild(picker.Picker);
+        foreach (var picker in new[] { _subscriptionPicker, _typePicker, _regionPicker, _targetPicker, _loadPicker }) filters.AddChild(picker.Picker);
         InferRegion(); RefreshFilters();
     }
     private void SetLoadFilter(string value)
@@ -46,6 +55,7 @@ internal partial class SkinWorkshopPanel
     }
     private void RefreshFilters()
     {
+        _subscriptionPicker.SetOptions(WorkshopSubscriptionFilter.Options, _subscriptions.Value);
         _typePicker.SetOptions(Kinds, _kind);
         _regionPicker.Picker.Visible = WorkshopBrowserPolicy.HasRegions(_kind);
         _regionPicker.SetOptions(_names.Regions(_kind).Keys, _region);
@@ -90,20 +100,19 @@ internal partial class SkinWorkshopPanel
         var scale = ModThemeRuntime.Current.FontScale;
         button.CustomMinimumSize = new Vector2(Math.Clamp(button.GetThemeFont("font").GetStringSize(button.Text, fontSize: (int)(15 * scale)).X + 24, 48, 190 * scale), 30 * scale);
     }
-    private void PollLoadTags()
+    private void PollFilters()
     {
+        _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
         foreach (var item in SkinWorkshopService.Catalog)
             if (_loadTags.TryGetValue(item.Id, out var button)) UpdateLoadTag(item, button);
-        var snapshot = LoadSnapshot();
-        if (snapshot == _loadSnapshot) return;
-        _loadSnapshot = snapshot;
-        if (_loadFilter.Length == 0 || _loadRebuildPending) return;
-        _loadRebuildPending = true;
-        // A download may finish off-page. Refresh membership/counts without freeing
-        // a tag button inside its own input dispatch.
+        if (GodotObject.IsInstanceValid(_emptyLabel)) _emptyLabel!.Text = EmptyText;
+        if (FilteredItems().Select(item => item.Id).SequenceEqual(_filteredIds) || _filterRebuildPending) return;
+        _filterRebuildPending = true;
+        // Subscription/load-state changes may happen off-page. Rebuild only when
+        // membership changes, after input dispatch; keep the page unless out of range.
         Callable.From(() =>
         {
-            _loadRebuildPending = false;
+            _filterRebuildPending = false;
             if (!_closed && GodotObject.IsInstanceValid(this) && IsInsideTree()) Rebuild();
         }).CallDeferred();
     }
