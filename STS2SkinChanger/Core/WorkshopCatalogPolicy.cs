@@ -3,7 +3,8 @@ using System.Text.Json;
 namespace STS2SkinChanger.Core;
 
 internal sealed record WorkshopTarget(string Kind, string Target);
-internal sealed record WorkshopCatalogItem(ulong Id, WorkshopTarget[] Targets, bool RestartRequired = false);
+// Only an explicit, complete package audit may promise hot loading.
+internal sealed record WorkshopCatalogItem(ulong Id, WorkshopTarget[] Targets, bool RestartRequired = true);
 
 internal static class WorkshopCatalogPolicy
 {

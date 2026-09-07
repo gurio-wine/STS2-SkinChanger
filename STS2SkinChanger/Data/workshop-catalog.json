@@ -167,7 +167,7 @@
         "target": "necrobinder"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3747611326,
@@ -329,7 +329,7 @@
         "target": "queen"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3747671186,
@@ -415,7 +415,7 @@
         "target": "watcher"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3747823253,
@@ -429,7 +429,7 @@
         "target": "token"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3747942752,
@@ -495,7 +495,7 @@
         "target": "regent"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3748172835,
@@ -525,7 +525,7 @@
         "target": "ironclad"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3748174613,
@@ -563,7 +563,7 @@
         "target": "vakuu"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3748416304,
@@ -573,7 +573,7 @@
         "target": "torch_head_amalgam"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3748419805,
@@ -583,7 +583,7 @@
         "target": "necrobinder"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3748583469,
@@ -763,7 +763,7 @@
         "target": "regent"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3752065217,
@@ -773,7 +773,7 @@
         "target": "byrdonis"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3752222957,
@@ -817,7 +817,7 @@
         "target": "ironclad"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3756920998,
@@ -831,7 +831,7 @@
         "target": "token"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3757190070,
@@ -841,7 +841,7 @@
         "target": "byrdpip"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3759576970,
@@ -963,7 +963,7 @@
         "target": "myte"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3764459833,
@@ -1207,7 +1207,7 @@
         "target": "event:zen_weaver"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3767081188,
@@ -1255,7 +1255,7 @@
         "target": "ceremonial_beast"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3770720212,
@@ -1265,7 +1265,7 @@
         "target": "bygone_effigy"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3771061301,
@@ -1345,7 +1345,7 @@
         "target": "osty"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3774396033,
@@ -1355,7 +1355,7 @@
         "target": "shrinker_beetle"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3779055290,
@@ -1815,7 +1815,7 @@
         "target": "token"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   },
   {
     "id": 3789216478,
@@ -1865,6 +1865,6 @@
         "target": "vantom"
       }
     ],
-    "restartRequired": false
+    "restartRequired": true
   }
 ]

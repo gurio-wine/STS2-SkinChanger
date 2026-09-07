@@ -32,6 +32,9 @@ internal static class WorkshopTests
             "正在更新/下载/排队的旧文件不能标记为可用。");
         var marked = (Array)Call("Parse", json.Replace("\"id\":123", "\"id\":123,\"restartRequired\":true"));
         Require((bool)marked.GetValue(0)!.GetType().GetProperty("RestartRequired")!.GetValue(marked.GetValue(0))!, "合并重复 ID 不能丢失已审计的重启标记。");
+        var unspecified = (Array)Call("Parse", json);
+        Require(unspecified.Cast<object>().All(item => (bool)item.GetType().GetProperty("RestartRequired")!.GetValue(item)!),
+            "导出或漏填重启要求不能自动承诺免重启；只有完整检查通过才能明确填写 false。");
         var png = new byte[24];
         new byte[] {137,80,78,71,13,10,26,10}.CopyTo(png, 0);
         new byte[] {73,72,68,82}.CopyTo(png, 12);
@@ -203,6 +206,11 @@ internal static class WorkshopTests
     {
         var mod = typeof(Entry).Assembly;
         var catalogType = mod.GetType("STS2SkinChanger.Catalog.SkinCatalog", true)!;
+        var resourceGate = HarmonyLib.AccessTools.Method(catalogType, "SupportsWorkshopResourcePath");
+        Require(resourceGate != null, "本地清单审计和实际热注册必须共用资源格式检查。");
+        foreach (var path in new[] { "res://model.res", "res://model.scn.remap", "res://logic.gd", "res://logic.DLL" })
+            Require(!(bool)resourceGate!.Invoke(null, [path])!, "启动型资源不能仅因没有外置 DLL 就标为免重启。");
+        Require((bool)resourceGate!.Invoke(null, ["res://model.tres"])!, "文本资源仍可继续完整资源检查。");
         var write = HarmonyLib.AccessTools.Method(mod.GetType("STS2SkinChanger.Pck.PckArchive", true)!, "Write");
         var descriptor = mod.GetType("STS2SkinChanger.Catalog.SkinModDescriptor", true)!;
         var directory = Directory.CreateTempSubdirectory("sc-workshop-test-");

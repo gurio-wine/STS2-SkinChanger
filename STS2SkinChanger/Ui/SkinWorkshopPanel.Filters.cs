@@ -54,7 +54,7 @@ internal partial class SkinWorkshopPanel
             .Select(t => t.Target).Where(id => RegionMembers == null || RegionMembers.Contains(id)).Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(id => _names.Name(_kind, id), StringComparer.CurrentCulture);
         _targetPicker.SetOptions(ids, _target);
-        _loadPicker.SetOptions(["restart", "hot", "unknown", "blocked"], _loadFilter);
+        _loadPicker.SetOptions(WorkshopLoadTags.FilterOptions, _loadFilter);
     }
     private void AddTags(HFlowContainer flow, WorkshopCatalogItem item)
     {
@@ -85,8 +85,8 @@ internal partial class SkinWorkshopPanel
         if (button.HasMeta("sc_load_tag") && button.GetMeta("sc_load_tag").AsString() == tag) return;
         button.SetMeta("sc_load_tag", tag);
         button.Text = WorkshopLoadTags.Name(tag);
-        button.TooltipText = tag == "unknown" ? WorkshopNoticeText.Get(WorkshopNoticeKey.CheckAfterDownload) : button.Text;
-        ModThemeRuntime.TextControl(button, 15, accent: tag is "restart" or "blocked");
+        button.TooltipText = button.Text;
+        ModThemeRuntime.TextControl(button, 15, accent: tag == "restart");
         var scale = ModThemeRuntime.Current.FontScale;
         button.CustomMinimumSize = new Vector2(Math.Clamp(button.GetThemeFont("font").GetStringSize(button.Text, fontSize: (int)(15 * scale)).X + 24, 48, 190 * scale), 30 * scale);
     }

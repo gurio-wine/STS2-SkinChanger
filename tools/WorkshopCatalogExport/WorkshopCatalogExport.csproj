@@ -3,5 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="../../STS2SkinChanger/STS2SkinChanger.csproj" />
     <Reference Include="0Harmony"><HintPath>$(GameAssemblyDir)/0Harmony.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="sts2"><HintPath>$(GameAssemblyDir)/sts2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="GodotSharp"><HintPath>$(GameAssemblyDir)/GodotSharp.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Steamworks.NET"><HintPath>$(GameAssemblyDir)/Steamworks.NET.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
 </Project>

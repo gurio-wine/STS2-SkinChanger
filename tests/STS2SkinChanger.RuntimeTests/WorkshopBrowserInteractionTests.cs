@@ -78,12 +78,16 @@ internal static class WorkshopBrowserInteractionTests
         string Tag(bool known, string? status, string reason = "None") => (string)policy!.GetMethod("Classify")!.Invoke(null,
             [known, status == null ? null : Enum.Parse(keyType, status), Enum.Parse(reasonType, reason)])!;
         Require(Tag(true, null) == "restart", "尚未订阅时也要显示内置清单已经确认的重启要求。");
-        Require(Tag(false, null) == "unknown", "未确认的包不能误标为免重启。");
+        Require(Tag(false, null) == "hot", "清单已确认可免重启的包在订阅前就应显示正确标签。");
         Require(Tag(false, "Ready") == "hot" && Tag(true, "Ready") == "hot", "当前资源完整检查成功应覆盖旧清单。");
         Require(Tag(false, "Restart", "Dependency") == "restart", "下载后的实际检查结果应更新标签。");
-        Require(Tag(true, "Failed", "Version") == "blocked" && Tag(false, "Failed") == "unknown", "版本不兼容和暂时下载失败不能混同。");
+        foreach (var reason in Enum.GetNames(reasonType))
+            Require(Tag(true, "Failed", reason) == "restart" && Tag(false, "Failed", reason) == "hot",
+                "下载/版本错误应独立显示具体原因，不能重新生成不兼容或待确认标签。");
+        Require(((string[])policy!.GetField("FilterOptions")!.GetValue(null)!).SequenceEqual(new[] { "restart", "hot" }),
+            "筛选只能提供需要重启和可免重启，不能残留不兼容或待确认入口。");
         bool Match(string filter, string tag) => (bool)policy!.GetMethod("Matches")!.Invoke(null, [filter, tag])!;
-        Require(Match("", "unknown") && Match("restart", "restart") && !Match("hot", "restart"), "标签筛选必须独立精确匹配，全部不限制结果。");
+        Require(Match("", "hot") && Match("restart", "restart") && !Match("hot", "restart"), "标签筛选必须独立精确匹配，全部不限制结果。");
         var links = assembly.GetType("STS2SkinChanger.Core.WorkshopCommunityPolicy");
         Require(links != null, "两个投稿入口需要固定的讨论地址。");
         string Url(bool presets, bool client) => (string)links!.GetMethod("DiscussionUrl")!.Invoke(null, [presets, client])!;
