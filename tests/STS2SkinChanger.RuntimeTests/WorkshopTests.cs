@@ -1,0 +1,120 @@
+using System.Reflection;
+using STS2SkinChanger;
+
+internal static class WorkshopTests
+{
+    public static void Run()
+    {
+        var policy = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopCatalogPolicy");
+        Require(policy != null, "缺少工坊清单验证和按目标过滤的生产实现。");
+        object Call(string method, params object[] args) => policy!.GetMethod(method)!.Invoke(null, args)!;
+        const string json = """
+            [{"id":123,"targets":[{"kind":"character","target":"silent"},{"kind":"cards","target":"regent"}]},
+             {"id":124,"targets":[{"kind":"cards","target":"silent"}]},
+             {"id":123,"targets":[{"kind":"monster","target":"jaw_worm"}]},
+             {"id":0,"targets":[{"kind":"cards","target":"silent"}]}]
+            """;
+        Require(((ulong[])Call("FilterIds", json, "cards", "silent")).SequenceEqual(new ulong[] { 124 }),
+            "不能把角色皮肤标签错当同角色卡牌皮肤；过滤必须匹配同一个类型/目标组合。");
+        Require(((ulong[])Call("FilterIds", json, "", "")).SequenceEqual(new ulong[] {123, 124}),
+            "ID 去重合并标签、拒绝零 ID，保持清单顺序。");
+        Require(((ulong[])Call("FilterIds", json, "monster", "jaw_worm")).SequenceEqual(new ulong[] {123}),
+            "重复 ID 的其它标签不能丢失。");
+        Require(!(bool)Call("IsSkinChoice", "__workshop__") && (bool)Call("IsSkinChoice", "skin:a"),
+            "工坊命令不能进入真实皮肤的循环/随机池。");
+        var random = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.RandomCharacterSkinPolicy")!;
+        var drawn = random.GetMethod("Draw")!.Invoke(null, [new[] { "skin:a", "__workshop__" }, (Func<int,int>)(n => n - 1)]);
+        Require((string)drawn! == "skin:a", "随机抽取必须跳过工坊命令，不能保存伪皮肤 ID。");
+        Require(!(bool)Call("CanUseInstalledFiles", true, true, false, false) &&
+                !(bool)Call("CanUseInstalledFiles", true, false, true, false) &&
+                !(bool)Call("CanUseInstalledFiles", true, false, false, true) &&
+                (bool)Call("CanUseInstalledFiles", true, false, false, false),
+            "正在更新/下载/排队的旧文件不能标记为可用。");
+        Require(!(bool)Call("CanHotRegister", true, false, false, true) &&
+                !(bool)Call("CanHotRegister", false, true, false, true) &&
+                !(bool)Call("CanHotRegister", false, false, true, true) &&
+                !(bool)Call("CanHotRegister", false, false, false, false) &&
+                (bool)Call("CanHotRegister", false, false, false, true),
+            "新增 DLL、玩法、依赖及未证明完整的资源不能半接管。");
+        var png = new byte[24];
+        new byte[] {137,80,78,71,13,10,26,10}.CopyTo(png, 0);
+        new byte[] {73,72,68,82}.CopyTo(png, 12);
+        png[19] = 144; png[23] = 100;
+        Require(policy!.GetMethod("IsSafeCover") != null, "封面解码之前需要校验尺寸，不能只在分配后拒绝超大图。");
+        Require((bool)Call("IsSafeCover", png), "允许尺寸正常的 PNG 头。");
+        png[16] = 127;
+        Require(!(bool)Call("IsSafeCover", png) && !(bool)Call("IsSafeCover", new byte[3]), "拒绝超大或截断的封面头。");
+        var texts = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopText")!;
+        var key = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopTextKey")!;
+        foreach (var language in new[] { "eng", "zhs", "zht", "deu", "esp", "spa", "fra", "ita", "jpn", "kor", "pol", "ptb", "rus", "tha", "tur" })
+        foreach (var value in Enum.GetValues(key))
+            Require(!string.IsNullOrWhiteSpace((string)texts.GetMethod("ForLanguage")!.Invoke(null, [language, value])!), $"{language} 缺少工坊文本 {value}");
+        CheckResourceCoverage();
+        CheckNativeNoticeScope();
+        using var catalogResource = typeof(Entry).Assembly.GetManifestResourceStream("STS2SkinChanger.Data.workshop-catalog.json");
+        Require(catalogResource != null, "发布 DLL 缺少内置清单，不能依赖开发机器的文件。");
+        using var reader = new StreamReader(catalogResource!);
+        var bundled = (ulong[])Call("FilterIds", reader.ReadToEnd(), "", "");
+        Require(bundled.Length > 0 && bundled.Distinct().Count() == bundled.Length && !bundled.Contains(3787302680UL), "工坊浏览器不能收录自身或重复物品。");
+        Console.WriteLine("Workshop policy tests passed.");
+    }
+    private static void CheckNativeNoticeScope()
+    {
+        var assembly = typeof(Entry).Assembly;
+        var service = assembly.GetType("STS2SkinChanger.Core.SkinWorkshopService", true)!;
+        var method = HarmonyLib.AccessTools.Method(service, "DeferNativeNotice");
+        var downloads = (System.Collections.IDictionary)HarmonyLib.AccessTools.Field(service, "Downloads").GetValue(null)!;
+        var notices = (System.Collections.IDictionary)HarmonyLib.AccessTools.Field(service, "DeferredNotices").GetValue(null)!;
+        var stateType = assembly.GetType("STS2SkinChanger.Core.WorkshopDownload", true)!;
+        var state = Activator.CreateInstance(stateType)!;
+        stateType.GetField("Busy")!.SetValue(state, true);
+        downloads.Add(123UL, state);
+        try
+        {
+            var ours = new MegaCrit.Sts2.Core.Modding.Mod { path = "D:/Steam/steamapps/workshop/content/2868840/123" };
+            var other = new MegaCrit.Sts2.Core.Modding.Mod { path = "D:/Steam/steamapps/workshop/content/2868840/456" };
+            Require((bool)method.Invoke(null, [ours])! && !(bool)method.Invoke(null, [other])!, "只可延迟本次正在检查的物品提示，不能屏蔽其它 Mod 的官方提示。");
+            stateType.GetField("Busy")!.SetValue(state, false);
+            Require(!(bool)method.Invoke(null, [ours])!, "没有热注册成功必须交回游戏重启提示。");
+            var keyType = assembly.GetType("STS2SkinChanger.Core.WorkshopTextKey", true)!;
+            stateType.GetField("State")!.SetValue(state, Enum.Parse(keyType, "Ready"));
+            Require((bool)method.Invoke(null, [ours])!, "完整注册的资源皮肤不应再提示必须重启。");
+            var patch = assembly.GetType("STS2SkinChanger.Core.WorkshopRuntimeNoticePatch", true)!;
+            Require(HarmonyLib.AccessTools.Method(patch, "TargetMethod").Invoke(null, null) is MethodBase, "当前游戏版本不存在预期的官方重启提示入口。");
+        }
+        finally { downloads.Remove(123UL); notices.Remove(123UL); }
+    }
+    private static void CheckResourceCoverage()
+    {
+        var mod = typeof(Entry).Assembly;
+        var catalogType = mod.GetType("STS2SkinChanger.Catalog.SkinCatalog", true)!;
+        var write = HarmonyLib.AccessTools.Method(mod.GetType("STS2SkinChanger.Pck.PckArchive", true)!, "Write");
+        var descriptor = mod.GetType("STS2SkinChanger.Catalog.SkinModDescriptor", true)!;
+        var directory = Directory.CreateTempSubdirectory("sc-workshop-test-");
+        try
+        {
+            var game = Path.Combine(directory.FullName, "game.pck");
+            var pack = Path.Combine(directory.FullName, "skin.pck");
+            const string resource = "res://animations/characters/necrobinder/model.tres";
+            var files = new Dictionary<string, byte[]> { [resource] = System.Text.Encoding.UTF8.GetBytes("[gd_resource type=\"Resource\" format=3]\n[resource]\n") };
+            write.Invoke(null, [game, files]);
+            var descriptors = Array.CreateInstance(descriptor, 1);
+            descriptors.SetValue(Activator.CreateInstance(descriptor, "skin", "Skin", pack, false, directory.FullName, false, null), 0);
+            bool Covered()
+            {
+                write.Invoke(null, [pack, files]);
+                using var catalog = (IDisposable)HarmonyLib.AccessTools.Method(catalogType, "Build").Invoke(null, [game, descriptors])!;
+                return (bool)HarmonyLib.AccessTools.Method(catalogType, "HasCompleteWorkshopResourceCoverage").Invoke(catalog, ["skin"])!;
+            }
+            Require(Covered(), "完整的无脚本原生资源替换应允许热注册。");
+            files["res://unmanaged/menu.txt"] = [1];
+            Require(!Covered(), "有未接管的 UI/文本文件时不能宣称完整支持。");
+            files.Remove("res://unmanaged/menu.txt");
+            files[resource] = System.Text.Encoding.UTF8.GetBytes("[gd_resource type=\"Resource\" format=3]\n[ext_resource type=\"Texture2D\" path=\"res://missing/texture.png\" id=\"1\"]\n[resource]\n");
+            Require(!Covered(), "缺失的场景资源依赖必须拒绝，不能等玩家选择后出现空白。");
+        }
+        finally { directory.Delete(true); }
+    }
+    private static void Require(bool condition, string message)
+    { if (!condition) throw new InvalidOperationException(message); }
+}

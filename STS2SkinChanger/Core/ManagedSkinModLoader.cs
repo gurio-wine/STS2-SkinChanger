@@ -134,6 +134,7 @@ internal static class ManagedSkinModLoader
 
         try
         {
+            if (SkinWorkshopService.IsHotRegisteredResourceMod(mod)) return true;
             return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds,
                 FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id));
         }

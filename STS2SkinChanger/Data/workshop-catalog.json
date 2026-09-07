@@ -1,0 +1,1788 @@
+[
+  {
+    "id": 3747527467,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "ironclad"
+      },
+      {
+        "kind": "character",
+        "target": "silent"
+      },
+      {
+        "kind": "character",
+        "target": "regent"
+      },
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "character",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3747535878,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      },
+      {
+        "kind": "character",
+        "target": "defect"
+      },
+      {
+        "kind": "ancient",
+        "target": "darv"
+      },
+      {
+        "kind": "monster",
+        "target": "hunter_killer"
+      },
+      {
+        "kind": "monster",
+        "target": "infested_prism"
+      },
+      {
+        "kind": "ancient",
+        "target": "orobas"
+      },
+      {
+        "kind": "monster",
+        "target": "ovicopter"
+      },
+      {
+        "kind": "ancient",
+        "target": "pael"
+      },
+      {
+        "kind": "ancient",
+        "target": "tezcatara"
+      },
+      {
+        "kind": "monster",
+        "target": "the_obscura"
+      },
+      {
+        "kind": "monster",
+        "target": "thieving_hopper"
+      },
+      {
+        "kind": "event",
+        "target": "event:trial"
+      },
+      {
+        "kind": "monster",
+        "target": "tunneler"
+      },
+      {
+        "kind": "cards",
+        "target": "regent"
+      },
+      {
+        "kind": "cards",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3747583717,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3747589574,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3747591649,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3747592061,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "ironclad"
+      },
+      {
+        "kind": "cards",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "defect"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      },
+      {
+        "kind": "cards",
+        "target": "event"
+      },
+      {
+        "kind": "cards",
+        "target": "status"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3747597614,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3747611326,
+    "targets": [
+      {
+        "kind": "ancient",
+        "target": "neow"
+      }
+    ]
+  },
+  {
+    "id": 3747626664,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "regent"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      }
+    ]
+  },
+  {
+    "id": 3747627739,
+    "targets": [
+      {
+        "kind": "ancient",
+        "target": "neow"
+      },
+      {
+        "kind": "ancient",
+        "target": "darv"
+      },
+      {
+        "kind": "ancient",
+        "target": "nonupeipe"
+      },
+      {
+        "kind": "ancient",
+        "target": "orobas"
+      },
+      {
+        "kind": "ancient",
+        "target": "pael"
+      },
+      {
+        "kind": "ancient",
+        "target": "tanx"
+      },
+      {
+        "kind": "ancient",
+        "target": "tezcatara"
+      },
+      {
+        "kind": "ancient",
+        "target": "vakuu"
+      }
+    ]
+  },
+  {
+    "id": 3747644438,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3747659515,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3747659596,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3747659673,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3747659771,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3747659917,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "regent"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      }
+    ]
+  },
+  {
+    "id": 3747661487,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "aeonglass"
+      },
+      {
+        "kind": "cards",
+        "target": "status"
+      }
+    ]
+  },
+  {
+    "id": 3747668677,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "queen"
+      }
+    ]
+  },
+  {
+    "id": 3747671186,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      },
+      {
+        "kind": "cards",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3747751411,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "regent"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      }
+    ]
+  },
+  {
+    "id": 3747763262,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3747767062,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3747774514,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3747788291,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "companion",
+        "target": "osty"
+      }
+    ]
+  },
+  {
+    "id": 3747800917,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "watcher"
+      },
+      {
+        "kind": "cards",
+        "target": "watcher"
+      }
+    ]
+  },
+  {
+    "id": 3747823253,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3747942752,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3747952763,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "ironclad"
+      },
+      {
+        "kind": "cards",
+        "target": "ironclad"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      },
+      {
+        "kind": "cards",
+        "target": "status"
+      }
+    ]
+  },
+  {
+    "id": 3747990002,
+    "targets": [
+      {
+        "kind": "merchant",
+        "target": "merchant"
+      }
+    ]
+  },
+  {
+    "id": 3748163142,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3748168882,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3748172835,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3748172927,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3748173013,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3748174613,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      },
+      {
+        "kind": "cards",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3748331824,
+    "targets": [
+      {
+        "kind": "merchant",
+        "target": "merchant"
+      },
+      {
+        "kind": "merchant",
+        "target": "fake_merchant_monster"
+      }
+    ]
+  },
+  {
+    "id": 3748397014,
+    "targets": [
+      {
+        "kind": "ancient",
+        "target": "vakuu"
+      }
+    ]
+  },
+  {
+    "id": 3748416304,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "torch_head_amalgam"
+      }
+    ]
+  },
+  {
+    "id": 3748419805,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3748583469,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3748603697,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3748612230,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "cards",
+        "target": "defect"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      }
+    ]
+  },
+  {
+    "id": 3748629709,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3748645069,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3748864970,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      },
+      {
+        "kind": "cards",
+        "target": "event"
+      },
+      {
+        "kind": "cards",
+        "target": "status"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3748924864,
+    "targets": [
+      {
+        "kind": "ancient",
+        "target": "pael"
+      }
+    ]
+  },
+  {
+    "id": 3748931996,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3748978466,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "wriggler"
+      },
+      {
+        "kind": "cards",
+        "target": "status"
+      }
+    ]
+  },
+  {
+    "id": 3749568885,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3749575378,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3749577455,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3749627968,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "companion",
+        "target": "osty"
+      },
+      {
+        "kind": "cards",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3750777432,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3752065217,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "byrdonis"
+      }
+    ]
+  },
+  {
+    "id": 3752222957,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3752315521,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3752316873,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "regent"
+      }
+    ]
+  },
+  {
+    "id": 3756670882,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "ironclad"
+      },
+      {
+        "kind": "cards",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3756920998,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3757190070,
+    "targets": [
+      {
+        "kind": "companion",
+        "target": "byrdpip"
+      }
+    ]
+  },
+  {
+    "id": 3759576970,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3759748828,
+    "targets": [
+      {
+        "kind": "ancient",
+        "target": "neow"
+      },
+      {
+        "kind": "ancient",
+        "target": "darv"
+      },
+      {
+        "kind": "ancient",
+        "target": "nonupeipe"
+      },
+      {
+        "kind": "ancient",
+        "target": "orobas"
+      },
+      {
+        "kind": "ancient",
+        "target": "pael"
+      },
+      {
+        "kind": "companion",
+        "target": "paels_legion"
+      },
+      {
+        "kind": "ancient",
+        "target": "tanx"
+      },
+      {
+        "kind": "ancient",
+        "target": "tezcatara"
+      },
+      {
+        "kind": "ancient",
+        "target": "vakuu"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      },
+      {
+        "kind": "cards",
+        "target": "event"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3761681399,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3761681862,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "cards",
+        "target": "defect"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      },
+      {
+        "kind": "cards",
+        "target": "curse"
+      },
+      {
+        "kind": "cards",
+        "target": "event"
+      },
+      {
+        "kind": "cards",
+        "target": "status"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3761752374,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "myte"
+      }
+    ]
+  },
+  {
+    "id": 3764459833,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3765802910,
+    "targets": [
+      {
+        "kind": "merchant",
+        "target": "fake_merchant_monster"
+      },
+      {
+        "kind": "event",
+        "target": "event:abyssal_baths"
+      },
+      {
+        "kind": "event",
+        "target": "event:amalgamator"
+      },
+      {
+        "kind": "event",
+        "target": "event:aroma_of_chaos"
+      },
+      {
+        "kind": "event",
+        "target": "event:battleworn_dummy"
+      },
+      {
+        "kind": "event",
+        "target": "event:brain_leech"
+      },
+      {
+        "kind": "event",
+        "target": "event:bugslayer"
+      },
+      {
+        "kind": "event",
+        "target": "event:byrdonis_nest"
+      },
+      {
+        "kind": "event",
+        "target": "event:colorful_philosophers"
+      },
+      {
+        "kind": "event",
+        "target": "event:colossal_flower"
+      },
+      {
+        "kind": "event",
+        "target": "event:crystal_sphere"
+      },
+      {
+        "kind": "event",
+        "target": "event:dense_vegetation"
+      },
+      {
+        "kind": "event",
+        "target": "event:doll_room"
+      },
+      {
+        "kind": "event",
+        "target": "event:doors_of_light_and_dark"
+      },
+      {
+        "kind": "event",
+        "target": "event:drowning_beacon"
+      },
+      {
+        "kind": "event",
+        "target": "event:endless_conveyor"
+      },
+      {
+        "kind": "event",
+        "target": "event:field_of_man_sized_holes"
+      },
+      {
+        "kind": "event",
+        "target": "event:grave_of_the_forgotten"
+      },
+      {
+        "kind": "event",
+        "target": "event:hungry_for_mushrooms"
+      },
+      {
+        "kind": "event",
+        "target": "event:infested_automaton"
+      },
+      {
+        "kind": "event",
+        "target": "event:jungle_maze_adventure"
+      },
+      {
+        "kind": "event",
+        "target": "event:lost_wisp"
+      },
+      {
+        "kind": "event",
+        "target": "event:luminous_choir"
+      },
+      {
+        "kind": "event",
+        "target": "event:morphic_grove"
+      },
+      {
+        "kind": "event",
+        "target": "event:potion_courier"
+      },
+      {
+        "kind": "event",
+        "target": "event:punch_off"
+      },
+      {
+        "kind": "event",
+        "target": "event:ranwid_the_elder"
+      },
+      {
+        "kind": "event",
+        "target": "event:reflections"
+      },
+      {
+        "kind": "event",
+        "target": "event:relic_trader"
+      },
+      {
+        "kind": "event",
+        "target": "event:room_full_of_cheese"
+      },
+      {
+        "kind": "event",
+        "target": "event:round_tea_party"
+      },
+      {
+        "kind": "event",
+        "target": "event:sapphire_seed"
+      },
+      {
+        "kind": "event",
+        "target": "event:self_help_book"
+      },
+      {
+        "kind": "event",
+        "target": "event:slippery_bridge"
+      },
+      {
+        "kind": "event",
+        "target": "event:spiraling_whirlpool"
+      },
+      {
+        "kind": "event",
+        "target": "event:spirit_grafter"
+      },
+      {
+        "kind": "event",
+        "target": "event:stone_of_all_time"
+      },
+      {
+        "kind": "event",
+        "target": "event:sunken_statue"
+      },
+      {
+        "kind": "event",
+        "target": "event:sunken_treasury"
+      },
+      {
+        "kind": "event",
+        "target": "event:symbiote"
+      },
+      {
+        "kind": "event",
+        "target": "event:tablet_of_truth"
+      },
+      {
+        "kind": "event",
+        "target": "event:tea_master"
+      },
+      {
+        "kind": "event",
+        "target": "event:the_future_of_potions"
+      },
+      {
+        "kind": "event",
+        "target": "event:the_legends_were_true"
+      },
+      {
+        "kind": "event",
+        "target": "event:this_or_that"
+      },
+      {
+        "kind": "event",
+        "target": "event:tinker_time"
+      },
+      {
+        "kind": "event",
+        "target": "event:trash_heap"
+      },
+      {
+        "kind": "event",
+        "target": "event:trial"
+      },
+      {
+        "kind": "event",
+        "target": "event:unrest_site"
+      },
+      {
+        "kind": "event",
+        "target": "event:war_historian_repy"
+      },
+      {
+        "kind": "event",
+        "target": "event:waterlogged_scriptorium"
+      },
+      {
+        "kind": "event",
+        "target": "event:welcome_to_wongos"
+      },
+      {
+        "kind": "event",
+        "target": "event:wellspring"
+      },
+      {
+        "kind": "event",
+        "target": "event:whispering_hollow"
+      },
+      {
+        "kind": "event",
+        "target": "event:wood_carvings"
+      },
+      {
+        "kind": "event",
+        "target": "event:zen_weaver"
+      }
+    ]
+  },
+  {
+    "id": 3767081188,
+    "targets": [
+      {
+        "kind": "ancient",
+        "target": "neow"
+      },
+      {
+        "kind": "ancient",
+        "target": "darv"
+      },
+      {
+        "kind": "ancient",
+        "target": "nonupeipe"
+      },
+      {
+        "kind": "ancient",
+        "target": "orobas"
+      },
+      {
+        "kind": "ancient",
+        "target": "pael"
+      },
+      {
+        "kind": "ancient",
+        "target": "tanx"
+      },
+      {
+        "kind": "ancient",
+        "target": "tezcatara"
+      },
+      {
+        "kind": "ancient",
+        "target": "vakuu"
+      }
+    ]
+  },
+  {
+    "id": 3768362328,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "ceremonial_beast"
+      }
+    ]
+  },
+  {
+    "id": 3770720212,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "bygone_effigy"
+      }
+    ]
+  },
+  {
+    "id": 3771061301,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      }
+    ]
+  },
+  {
+    "id": 3771061420,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "cards",
+        "target": "colorless"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3771874448,
+    "targets": [
+      {
+        "kind": "ancient",
+        "target": "neow"
+      },
+      {
+        "kind": "ancient",
+        "target": "darv"
+      },
+      {
+        "kind": "ancient",
+        "target": "nonupeipe"
+      },
+      {
+        "kind": "ancient",
+        "target": "orobas"
+      },
+      {
+        "kind": "ancient",
+        "target": "pael"
+      },
+      {
+        "kind": "ancient",
+        "target": "tanx"
+      },
+      {
+        "kind": "ancient",
+        "target": "tezcatara"
+      },
+      {
+        "kind": "ancient",
+        "target": "vakuu"
+      }
+    ]
+  },
+  {
+    "id": 3773814239,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "necrobinder"
+      },
+      {
+        "kind": "companion",
+        "target": "osty"
+      }
+    ]
+  },
+  {
+    "id": 3774396033,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "shrinker_beetle"
+      }
+    ]
+  },
+  {
+    "id": 3779055290,
+    "targets": [
+      {
+        "kind": "cards",
+        "target": "ironclad"
+      }
+    ]
+  },
+  {
+    "id": 3783041069,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "aeonglass"
+      },
+      {
+        "kind": "monster",
+        "target": "assassin_ruby_raider"
+      },
+      {
+        "kind": "monster",
+        "target": "axe_ruby_raider"
+      },
+      {
+        "kind": "monster",
+        "target": "axebot"
+      },
+      {
+        "kind": "monster",
+        "target": "bowlbug_egg"
+      },
+      {
+        "kind": "monster",
+        "target": "bowlbug_nectar"
+      },
+      {
+        "kind": "monster",
+        "target": "bowlbug_rock"
+      },
+      {
+        "kind": "monster",
+        "target": "bowlbug_silk"
+      },
+      {
+        "kind": "monster",
+        "target": "brute_ruby_raider"
+      },
+      {
+        "kind": "monster",
+        "target": "bygone_effigy"
+      },
+      {
+        "kind": "monster",
+        "target": "byrdonis"
+      },
+      {
+        "kind": "monster",
+        "target": "calcified_cultist"
+      },
+      {
+        "kind": "monster",
+        "target": "ceremonial_beast"
+      },
+      {
+        "kind": "monster",
+        "target": "chomper"
+      },
+      {
+        "kind": "monster",
+        "target": "corpse_slug"
+      },
+      {
+        "kind": "monster",
+        "target": "crossbow_ruby_raider"
+      },
+      {
+        "kind": "monster",
+        "target": "crusher"
+      },
+      {
+        "kind": "monster",
+        "target": "cubex_construct"
+      },
+      {
+        "kind": "monster",
+        "target": "damp_cultist"
+      },
+      {
+        "kind": "monster",
+        "target": "decimillipede_segment_back"
+      },
+      {
+        "kind": "monster",
+        "target": "decimillipede_segment_front"
+      },
+      {
+        "kind": "monster",
+        "target": "decimillipede_segment_middle"
+      },
+      {
+        "kind": "monster",
+        "target": "devoted_sculptor"
+      },
+      {
+        "kind": "monster",
+        "target": "entomancer"
+      },
+      {
+        "kind": "monster",
+        "target": "exoskeleton"
+      },
+      {
+        "kind": "monster",
+        "target": "eye_with_teeth"
+      },
+      {
+        "kind": "monster",
+        "target": "fabricator"
+      },
+      {
+        "kind": "monster",
+        "target": "fat_gremlin"
+      },
+      {
+        "kind": "monster",
+        "target": "flail_knight"
+      },
+      {
+        "kind": "monster",
+        "target": "flyconid"
+      },
+      {
+        "kind": "monster",
+        "target": "fogmog"
+      },
+      {
+        "kind": "monster",
+        "target": "fossil_stalker"
+      },
+      {
+        "kind": "monster",
+        "target": "frog_knight"
+      },
+      {
+        "kind": "monster",
+        "target": "fuzzy_wurm_crawler"
+      },
+      {
+        "kind": "monster",
+        "target": "gas_bomb"
+      },
+      {
+        "kind": "monster",
+        "target": "globe_head"
+      },
+      {
+        "kind": "monster",
+        "target": "gremlin_merc"
+      },
+      {
+        "kind": "monster",
+        "target": "guardbot"
+      },
+      {
+        "kind": "monster",
+        "target": "haunted_ship"
+      },
+      {
+        "kind": "monster",
+        "target": "hunter_killer"
+      },
+      {
+        "kind": "monster",
+        "target": "infested_prism"
+      },
+      {
+        "kind": "monster",
+        "target": "inklet"
+      },
+      {
+        "kind": "monster",
+        "target": "kin_follower"
+      },
+      {
+        "kind": "monster",
+        "target": "kin_priest"
+      },
+      {
+        "kind": "monster",
+        "target": "knowledge_demon"
+      },
+      {
+        "kind": "monster",
+        "target": "lagavulin_matriarch"
+      },
+      {
+        "kind": "monster",
+        "target": "leaf_slime_m"
+      },
+      {
+        "kind": "monster",
+        "target": "leaf_slime_s"
+      },
+      {
+        "kind": "monster",
+        "target": "living_fog"
+      },
+      {
+        "kind": "monster",
+        "target": "living_shield"
+      },
+      {
+        "kind": "monster",
+        "target": "louse_progenitor"
+      },
+      {
+        "kind": "monster",
+        "target": "magi_knight"
+      },
+      {
+        "kind": "monster",
+        "target": "mawler"
+      },
+      {
+        "kind": "monster",
+        "target": "mecha_knight"
+      },
+      {
+        "kind": "monster",
+        "target": "mysterious_knight"
+      },
+      {
+        "kind": "monster",
+        "target": "myte"
+      },
+      {
+        "kind": "monster",
+        "target": "nibbit"
+      },
+      {
+        "kind": "monster",
+        "target": "noisebot"
+      },
+      {
+        "kind": "monster",
+        "target": "ovicopter"
+      },
+      {
+        "kind": "monster",
+        "target": "owl_magistrate"
+      },
+      {
+        "kind": "monster",
+        "target": "parafright"
+      },
+      {
+        "kind": "monster",
+        "target": "phantasmal_gardener"
+      },
+      {
+        "kind": "monster",
+        "target": "phrog_parasite"
+      },
+      {
+        "kind": "monster",
+        "target": "punch_construct"
+      },
+      {
+        "kind": "monster",
+        "target": "queen"
+      },
+      {
+        "kind": "monster",
+        "target": "rocket"
+      },
+      {
+        "kind": "monster",
+        "target": "scroll_of_biting"
+      },
+      {
+        "kind": "monster",
+        "target": "seapunk"
+      },
+      {
+        "kind": "monster",
+        "target": "sewer_clam"
+      },
+      {
+        "kind": "monster",
+        "target": "shrinker_beetle"
+      },
+      {
+        "kind": "monster",
+        "target": "skulking_colony"
+      },
+      {
+        "kind": "monster",
+        "target": "slimed_berserker"
+      },
+      {
+        "kind": "monster",
+        "target": "slithering_strangler"
+      },
+      {
+        "kind": "monster",
+        "target": "sludge_spinner"
+      },
+      {
+        "kind": "monster",
+        "target": "slumbering_beetle"
+      },
+      {
+        "kind": "monster",
+        "target": "snapping_jaxfruit"
+      },
+      {
+        "kind": "monster",
+        "target": "sneaky_gremlin"
+      },
+      {
+        "kind": "monster",
+        "target": "soul_fysh"
+      },
+      {
+        "kind": "monster",
+        "target": "soul_nexus"
+      },
+      {
+        "kind": "monster",
+        "target": "spectral_knight"
+      },
+      {
+        "kind": "monster",
+        "target": "spiny_toad"
+      },
+      {
+        "kind": "monster",
+        "target": "stabbot"
+      },
+      {
+        "kind": "monster",
+        "target": "terror_eel"
+      },
+      {
+        "kind": "monster",
+        "target": "test_subject"
+      },
+      {
+        "kind": "monster",
+        "target": "the_forgotten"
+      },
+      {
+        "kind": "monster",
+        "target": "the_insatiable"
+      },
+      {
+        "kind": "monster",
+        "target": "the_lost"
+      },
+      {
+        "kind": "monster",
+        "target": "the_obscura"
+      },
+      {
+        "kind": "monster",
+        "target": "thieving_hopper"
+      },
+      {
+        "kind": "monster",
+        "target": "toadpole"
+      },
+      {
+        "kind": "monster",
+        "target": "torch_head_amalgam"
+      },
+      {
+        "kind": "monster",
+        "target": "tough_egg"
+      },
+      {
+        "kind": "monster",
+        "target": "tracker_ruby_raider"
+      },
+      {
+        "kind": "monster",
+        "target": "tunneler"
+      },
+      {
+        "kind": "monster",
+        "target": "turret_operator"
+      },
+      {
+        "kind": "monster",
+        "target": "twig_slime_m"
+      },
+      {
+        "kind": "monster",
+        "target": "twig_slime_s"
+      },
+      {
+        "kind": "monster",
+        "target": "two_tailed_rat"
+      },
+      {
+        "kind": "monster",
+        "target": "vantom"
+      },
+      {
+        "kind": "monster",
+        "target": "vine_shambler"
+      },
+      {
+        "kind": "monster",
+        "target": "waterfall_giant"
+      },
+      {
+        "kind": "monster",
+        "target": "wriggler"
+      },
+      {
+        "kind": "monster",
+        "target": "zapbot"
+      }
+    ]
+  },
+  {
+    "id": 3786286239,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      }
+    ]
+  },
+  {
+    "id": 3787753911,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "silent"
+      },
+      {
+        "kind": "cards",
+        "target": "event"
+      },
+      {
+        "kind": "cards",
+        "target": "token"
+      }
+    ]
+  },
+  {
+    "id": 3789216478,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "watcher"
+      }
+    ]
+  },
+  {
+    "id": 3790373874,
+    "targets": [
+      {
+        "kind": "character",
+        "target": "defect"
+      }
+    ]
+  },
+  {
+    "id": 3795439955,
+    "targets": [
+      {
+        "kind": "monster",
+        "target": "ceremonial_beast"
+      },
+      {
+        "kind": "monster",
+        "target": "kin_follower"
+      },
+      {
+        "kind": "monster",
+        "target": "kin_priest"
+      },
+      {
+        "kind": "monster",
+        "target": "lagavulin_matriarch"
+      },
+      {
+        "kind": "monster",
+        "target": "soul_fysh"
+      },
+      {
+        "kind": "monster",
+        "target": "vantom"
+      }
+    ]
+  }
+]

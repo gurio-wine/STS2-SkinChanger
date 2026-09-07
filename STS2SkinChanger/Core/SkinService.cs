@@ -1090,6 +1090,9 @@ internal static partial class SkinService
                     .ToArray();
 
                 Catalog = SkinCatalog.Build(gamePckPath, mods);
+                _workshopGamePack = gamePckPath;
+                _workshopDescriptors = mods;
+                _workshopSourceStamps = WorkshopSourceStamps(mods);
                 ManagedCharacterAssetRegistrationGuard.Configure(Catalog);
                 Config = LoadConfig();
                 _configLoaded = true;

@@ -9,7 +9,7 @@ internal static class RandomCharacterSkinPolicy
 
     public static string Draw(IEnumerable<string> visibleOptions, Func<int, int> next)
     {
-        var candidates = visibleOptions.Where(id => !string.IsNullOrWhiteSpace(id) && !IsRandom(id))
+        var candidates = visibleOptions.Where(id => !string.IsNullOrWhiteSpace(id) && !IsRandom(id) && WorkshopCatalogPolicy.IsSkinChoice(id))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         return candidates.Length == 0 ? SkinCatalog.BaseOptionId : candidates[next(candidates.Length)];
     }

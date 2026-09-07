@@ -68,6 +68,8 @@ internal sealed partial class SkinCatalog : IDisposable
         IReadOnlyList<SkinModDescriptor> mods)
     {
         _gameArchive = gameArchive;
+        _workshopSourceIds = mods.Where(mod => WorkshopSourceId(mod.RootPath) != 0)
+            .ToDictionary(mod => mod.Id, mod => WorkshopSourceId(mod.RootPath), StringComparer.OrdinalIgnoreCase);
         _baselineIndexes = baselineIndexes;
         _cosmeticIndexes = cosmeticIndexes;
         _groups = groups.ToList();

@@ -1855,9 +1855,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void PopulateSkinDropdown(SkinGroup? group)
     {
+        var id = group?.Id ?? (_selectedAncient != null ? _selectedAncient.Id.Entry.ToLowerInvariant() : _selectedOther?.Id);
+        group = SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id.Equals(id, StringComparison.OrdinalIgnoreCase)) ?? group;
+        if (group == null && id != null) group = new SkinGroup(id, id);
         _updatingDropdown = true;
         _skinDropdown.Clear();
-        if (group == null || group.Options.Count == 0)
+        if (group == null)
         {
             _skinSelector.Visible = false;
             _updatingDropdown = false;
@@ -1880,6 +1883,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
             _skinDropdown.SetItemMetadata(index, option.Id);
         }
 
+        SkinWorkshopEntry.Append(_skinDropdown);
         var current = eventCategory ? SkinService.GetEventOverrideSelection(group.Id) : SkinService.Config.GetSelection(group.Id);
         var selectedIndex = Enumerable.Range(0, _skinDropdown.ItemCount)
             .FirstOrDefault(index => _skinDropdown.GetItemMetadata(index).AsString()
@@ -1899,6 +1903,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         var groupId = _skinDropdown.GetMeta("sts2_skin_group", string.Empty).AsString();
         var optionId = _skinDropdown.GetItemMetadata(index).AsString();
+        if (SkinWorkshopEntry.Open(optionId, this, groupId, () => PopulateSkinDropdown(
+                SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id == groupId)), kind: _selectedCategory switch
+                { OtherCategory.Ancients => "ancient", OtherCategory.Merchants => "merchant", OtherCategory.Events => "event", _ => "companion" })) return;
         if (!SkinService.ApplySelection(groupId, optionId))
         {
             ModLog.Error($"其它图鉴皮肤切换失败：{SkinService.LastError}");

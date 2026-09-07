@@ -689,6 +689,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
 
     private void PopulateSkinDropdown()
     {
+        if (_group != null) _group = SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id == _group.Id) ?? _group;
         if (_skinDropdown == null)
         {
             return;
@@ -729,6 +730,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
             _skinDropdown.SetItemMetadata(index, option.Id);
         }
 
+        SkinWorkshopEntry.Append(_skinDropdown);
         var selection = CharacterAppearanceRuntime.GetRequestedOption(_group.Id) ??
                         (hasMonsterPriorityContext
                             ? SkinService.GetMonsterOverrideSelection(_group.Id)
@@ -753,6 +755,7 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         var optionId = _skinDropdown.GetItemMetadata(index).AsString();
+        if (SkinWorkshopEntry.Open(optionId, this, _group.Id, PopulateSkinDropdown)) return;
         RequestSkinSelection(optionId);
     }
 

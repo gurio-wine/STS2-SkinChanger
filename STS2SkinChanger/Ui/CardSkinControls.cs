@@ -1619,7 +1619,11 @@ internal static class CardSkinControls
         ContextualSkinControls.ApplyGameTheme(close);
         close.AddThemeFontSizeOverride("font_size", 19);
         close.Pressed += () => overlay.Visible = false;
-        content.AddChild(close);
+        var footer = new HBoxContainer();
+        var workshop = new Button { Text = WorkshopText.Get(WorkshopTextKey.Title), CustomMinimumSize = new Vector2(180, 42) };
+        ContextualSkinControls.ApplyGameTheme(workshop);
+        workshop.Pressed += () => SkinWorkshopPanel.Show(screen, "cards", groupId, () => BuildPriorityOverlay(screen, selector, overlay));
+        footer.AddChild(workshop); footer.AddChild(close); content.AddChild(footer);
     }
 
     private static void QueuePriorityChange(
@@ -2183,6 +2187,7 @@ internal static class CardInspectSkinControls
             .FirstOrDefault(index => dropdown.GetItemMetadata(index).AsString()
                 .Equals(selected, StringComparison.OrdinalIgnoreCase));
         dropdown.Select(selectedIndex);
+        SkinWorkshopEntry.Append(dropdown);
         selector.SetMeta(OptionsCardMeta, cardId);
         selector.SetMeta(UpdatingMeta, false);
     }
@@ -2225,6 +2230,7 @@ internal static class CardInspectSkinControls
         }
 
         var optionId = dropdown.GetItemMetadata(index).AsString();
+        if (SkinWorkshopEntry.Open(optionId, screen, SkinService.GetCardInheritedGroupId(card) ?? "", () => Sync(screen), cards: true)) return;
         if (!SkinService.ApplyCardSelection(card, optionId))
         {
             ModLog.Error($"单卡皮肤界面切换失败：{SkinService.LastError}");
@@ -2265,6 +2271,7 @@ internal static class CardInspectSkinControls
 
         var cardId = card.Id.ToString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
+        if (!WorkshopCatalogPolicy.IsSkinChoice(optionId)) { RestorePreview(screen); return; }
         if (screen.GetMeta(PreviewCardMeta, string.Empty).AsString().Equals(
                 cardId,
                 StringComparison.OrdinalIgnoreCase) &&

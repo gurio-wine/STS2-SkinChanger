@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-workshop")
+{
+    WorkshopTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-creature-intents")
 {
     CreatureIntentLayoutTests.Run();
@@ -1138,6 +1144,7 @@ foreach (System.Collections.DictionaryEntry pack in compositionPacks)
 
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 RequiredLibraryVisualGuardTests.Run(args);
+WorkshopTests.Run();
 
 static Type RequirePatchType(string name, string error) =>
     typeof(Entry).Assembly.GetType(name) ?? throw new InvalidOperationException(error);

@@ -95,6 +95,7 @@ internal static partial class ContextualSkinControls
         ManagedSkinModLoader.RestoreCharacterPresentation(screen);
         RemoveStaleProviderCharacterSelectControls(screen);
         var selector = EnsureCharacterSelector(screen);
+        selector.SetMeta("sc_workshop_target", character.Id.Entry.ToLowerInvariant());
         var group = FindGroup(character.Id.Entry);
         if (group != null)
         {
@@ -103,7 +104,7 @@ internal static partial class ContextualSkinControls
                 runEnvironmentProviderIds: [],
                 reason: "选角预览");
         }
-        RegisterRefresh(selector, group == null ? null : () => RebuildCharacterDisplay(screen, character, group.Id));
+        RegisterRefresh(selector, () => RebuildCharacterDisplay(screen, character, FindGroup(character.Id.Entry)?.Id ?? character.Id.Entry.ToLowerInvariant()));
         Populate(selector, group);
         Action refreshSelection = () =>
             {
@@ -178,6 +179,7 @@ internal static partial class ContextualSkinControls
         var selector = EnsureMonsterSelector(screen);
         SetMonsterPriorityContext(selector, ResolveMonsterSkinCategory(entry));
         var monster = entry.IsDiscovered ? entry.Entry.monsterModel : null;
+        selector.SetMeta("sc_workshop_target", monster?.Id.Entry.ToLowerInvariant() ?? string.Empty);
         var group = monster == null
             ? null
             : FindGroup(monster.Id.Entry, monster.GetType().Name);
@@ -196,7 +198,8 @@ internal static partial class ContextualSkinControls
         }
         RegisterRefresh(
             selector,
-            group == null || monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster, group.Id));
+            monster == null ? null : () => RebuildMonsterDisplay(screen, entry, monster,
+                FindGroup(monster.Id.Entry, monster.GetType().Name)?.Id ?? monster.Id.Entry.ToLowerInvariant()));
         Populate(selector, group);
     }
 
@@ -624,6 +627,7 @@ internal static partial class ContextualSkinControls
     private static void Populate(HBoxContainer selector, SkinGroup? group)
     {
         var dropdown = selector.GetNode<OptionButton>(DropdownName);
+        if (group != null) group = SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id == group.Id) ?? group;
         dropdown.GetPopup().Hide();
         var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
         var visualOptions = group == null
@@ -641,10 +645,16 @@ internal static partial class ContextualSkinControls
             group.Options.FirstOrDefault(option => option.ManualCharacterVariant != null && !option.IsComposition &&
                 option.Id.Equals(SkinService.GetCharacterSelectionOptionId(group.Id), StringComparison.OrdinalIgnoreCase)) is { } currentVariant &&
             visualOptions.All(option => option.Id != currentVariant.Id)) visualOptions = [.. visualOptions, currentVariant];
-        if (group == null || visualOptions.Length == 0 && bundles.Count == 0 && !allowRandom)
+        if (group == null)
         {
-            selector.Visible = false;
             dropdown.Clear();
+            var target = selector.GetMeta("sc_workshop_target", string.Empty).AsString();
+            selector.SetMeta(GroupMeta, target);
+            dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
+            dropdown.SetItemMetadata(0, SkinCatalog.BaseOptionId);
+            SkinWorkshopEntry.Append(dropdown);
+            dropdown.Select(0);
+            selector.Visible = target.Length > 0;
             ConfigureCharacterBundlePopupList(selector, dropdown, 0);
             return;
         }
@@ -684,6 +694,7 @@ internal static partial class ContextualSkinControls
             dropdown.AddItem(ModLocalization.Get(ModText.RandomCharacterSkin));
             dropdown.SetItemMetadata(index, RandomCharacterSkinPolicy.OptionId);
         }
+        SkinWorkshopEntry.Append(dropdown);
         ConfigureCharacterBundlePopupList(selector, dropdown, bundles.Count + (allowRandom ? 1 : 0));
 
         var selected = hasMonsterPriorityContext
@@ -905,7 +916,7 @@ internal static partial class ContextualSkinControls
         // Read the same items the player sees; packs, merges and hidden ingredients have
         // already been handled by Populate. Never expand the native SkinData registry.
         var options = Enumerable.Range(0, dropdown.ItemCount)
-            .Select(index => dropdown.GetItemMetadata(index).AsString()).ToArray();
+            .Select(index => dropdown.GetItemMetadata(index).AsString()).Where(WorkshopCatalogPolicy.IsSkinChoice).ToArray();
         var current = pendingOptionId != null && options.Contains(pendingOptionId, StringComparer.OrdinalIgnoreCase)
             ? pendingOptionId
             : SkinService.GetCharacterSelectionOptionId(groupId);
@@ -967,6 +978,8 @@ internal static partial class ContextualSkinControls
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
         var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        if (SkinWorkshopEntry.Open(optionId, selector, groupId, () => Populate(selector, FindGroup(groupId)),
+                kind: characterScreen != null ? "character" : "monster")) return;
         if (characterScreen != null && !HasMonsterPriorityContext(selector) && RandomCharacterSkinPolicy.IsRandom(optionId))
         {
             // Show vanilla through the same resource, preview and avatar refresh transaction
