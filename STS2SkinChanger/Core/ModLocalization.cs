@@ -104,7 +104,8 @@ internal enum ModText
     BundleReferenceHint,
     BundleUnsaved,
     BundleApplying,
-    BundleScopeConflict
+    BundleScopeConflict,
+    RandomCharacterSkin
 }
 
 internal static partial class ModLocalization
@@ -1362,6 +1363,7 @@ internal static partial class ModLocalization
     }
 
     public static string Get(ModText text) =>
+        text == ModText.RandomCharacterSkin ? RandomCharacterSkinTexts[CurrentLanguage] :
         text == ModText.OtherCategoryEvents ? EventCategoryTexts[CurrentLanguage] :
         text == ModText.NoMonsterPresets
             ? NoMonsterPresetTexts[CurrentLanguage]

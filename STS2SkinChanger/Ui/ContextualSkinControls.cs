@@ -634,13 +634,14 @@ internal static partial class ContextualSkinControls
         var bundles = group != null && characterScreen != null && !HasMonsterPriorityContext(selector)
             ? SkinService.GetCharacterSkinBundles(group.Id)
             : [];
+        var allowRandom = group != null && characterScreen != null && !HasMonsterPriorityContext(selector);
         // An author's own switch can select a variant hidden as a pack/merge ingredient.
         // Show that current choice without changing the user's hidden-source preferences.
         if (group != null && characterScreen != null &&
             group.Options.FirstOrDefault(option => option.ManualCharacterVariant != null && !option.IsComposition &&
                 option.Id.Equals(SkinService.GetCharacterSelectionOptionId(group.Id), StringComparison.OrdinalIgnoreCase)) is { } currentVariant &&
             visualOptions.All(option => option.Id != currentVariant.Id)) visualOptions = [.. visualOptions, currentVariant];
-        if (group == null || visualOptions.Length == 0 && bundles.Count == 0)
+        if (group == null || visualOptions.Length == 0 && bundles.Count == 0 && !allowRandom)
         {
             selector.Visible = false;
             dropdown.Clear();
@@ -677,7 +678,13 @@ internal static partial class ContextualSkinControls
                 ModLocalization.DisplayOptionName));
             dropdown.SetItemMetadata(index, option.Id);
         }
-        ConfigureCharacterBundlePopupList(selector, dropdown, bundles.Count);
+        if (allowRandom)
+        {
+            var index = dropdown.ItemCount;
+            dropdown.AddItem(ModLocalization.Get(ModText.RandomCharacterSkin));
+            dropdown.SetItemMetadata(index, RandomCharacterSkinPolicy.OptionId);
+        }
+        ConfigureCharacterBundlePopupList(selector, dropdown, bundles.Count + (allowRandom ? 1 : 0));
 
         var selected = hasMonsterPriorityContext
             ? SkinService.GetMonsterOverrideSelection(group.Id)
@@ -692,13 +699,17 @@ internal static partial class ContextualSkinControls
         }
         ApplyCharacterBundleSelectionTheme(
             dropdown,
-            CharacterSkinBundlePolicy.TryGetSelectionBundleName(selected, out _));
+            IsAccentedCharacterOption(selected));
         dropdown.Visible = true;
         PopulateMonsterScale(selector, group.Id);
         selector.SetMeta(UpdatingMeta, false);
         selector.Visible = true;
         RefreshMonsterPriorityButton(selector);
     }
+
+    private static bool IsAccentedCharacterOption(string optionId) =>
+        RandomCharacterSkinPolicy.IsRandom(optionId) ||
+        CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out _);
 
     private static void ApplyCharacterBundleSelectionTheme(OptionButton dropdown, bool selectedBundle)
     {
@@ -750,7 +761,7 @@ internal static partial class ContextualSkinControls
             ModThemeRuntime.Bind(list, "bundle_colors", theme =>
             {
                 for (var i = 0; i < Math.Min(themedList.ItemCount, dropdown.ItemCount); i++)
-                    if (CharacterSkinBundlePolicy.TryGetSelectionBundleName(dropdown.GetItemMetadata(i).AsString(), out _))
+                    if (IsAccentedCharacterOption(dropdown.GetItemMetadata(i).AsString()))
                         themedList.SetItemCustomFgColor(i, new Color(theme.AccentColor));
             });
             if (GameFont != null)
@@ -808,8 +819,7 @@ internal static partial class ContextualSkinControls
         list.Clear();
         list.Visible = false;
         var hasBundles = Enumerable.Range(0, dropdown.ItemCount).Any(index =>
-            CharacterSkinBundlePolicy.TryGetSelectionBundleName(
-                dropdown.GetItemMetadata(index).AsString(), out _));
+            IsAccentedCharacterOption(dropdown.GetItemMetadata(index).AsString()));
         if (!hasBundles)
         {
             return false;
@@ -819,8 +829,7 @@ internal static partial class ContextualSkinControls
         for (var index = 0; index < dropdown.ItemCount; index++)
         {
             list.AddItem(dropdown.GetItemText(index));
-            if (CharacterSkinBundlePolicy.TryGetSelectionBundleName(
-                    dropdown.GetItemMetadata(index).AsString(), out _))
+            if (IsAccentedCharacterOption(dropdown.GetItemMetadata(index).AsString()))
             {
                 list.SetItemCustomFgColor(index, gold);
             }
@@ -958,6 +967,15 @@ internal static partial class ContextualSkinControls
         var groupId = selector.GetMeta(GroupMeta, string.Empty).AsString();
         var optionId = dropdown.GetItemMetadata(index).AsString();
         var characterScreen = FindAncestor<NCharacterSelectScreen>(selector);
+        if (characterScreen != null && !HasMonsterPriorityContext(selector) && RandomCharacterSkinPolicy.IsRandom(optionId))
+        {
+            // Only save the next-run instruction. Do not warm, mount or preview another skin.
+            if (!SkinService.SetRandomCharacterSkinEnabled(groupId, true))
+                ModLog.Error($"保存随机皮肤选择失败：{SkinService.LastError}");
+            Populate(selector, FindGroup(groupId));
+            FrameworkRegistryCooperation.SelectionInstructionChanged(groupId);
+            return;
+        }
         if (characterScreen != null &&
             !HasMonsterPriorityContext(selector) &&
             CharacterSkinBundlePolicy.TryGetSelectionBundleName(optionId, out var bundleName))
@@ -1023,6 +1041,13 @@ internal static partial class ContextualSkinControls
                     .Equals(current, StringComparison.OrdinalIgnoreCase));
             dropdown.Select(currentIndex);
             return false;
+        }
+
+        if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
+            !HasMonsterPriorityContext(selector) &&
+            !SkinService.SetRandomCharacterSkinEnabled(groupId, false))
+        {
+            ModLog.Warn($"清除选角随机皮肤选择失败：{SkinService.LastError}");
         }
 
         if (FindAncestor<NCharacterSelectScreen>(selector) != null &&
@@ -2805,6 +2830,11 @@ internal static class SingleplayerEmbarkSkinSelectorPatch
         try
         {
             var groupId = ContextualSkinControls.GetLocalLobbyCharacter(__instance.Lobby).Id.Entry.ToLowerInvariant();
+            if (SkinService.IsRandomCharacterSkinEnabled(groupId))
+            {
+                ContextualSkinControls.HideCharacterSelector(__instance);
+                return; // Resolve after the fade, once RunManager has the final local character.
+            }
             if (!SkinService.ApplySelectedCharacterSkinBundleForRun(groupId, out var warnings))
             {
                 ModLog.Error($"开始对局前应用皮肤包失败：{SkinService.LastError}");
@@ -2830,6 +2860,11 @@ internal static class MultiplayerEmbarkSkinSelectorPatch
         try
         {
             var groupId = ContextualSkinControls.GetLocalLobbyCharacter(__instance.Lobby).Id.Entry.ToLowerInvariant();
+            if (SkinService.IsRandomCharacterSkinEnabled(groupId))
+            {
+                ContextualSkinControls.HideCharacterSelector(__instance);
+                return;
+            }
             if (!SkinService.ApplySelectedCharacterSkinBundleForRun(groupId, out var warnings))
             {
                 ModLog.Error($"开始多人对局前应用皮肤包失败：{SkinService.LastError}");

@@ -68,6 +68,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
+            if (IsRandomCharacterSkinEnabled(groupId)) return RandomCharacterSkinPolicy.OptionId;
             var bundle = Config.ActiveCharacterSkinBundles.GetValueOrDefault(groupId);
             return !string.IsNullOrWhiteSpace(bundle) && FindCharacterSkinBundleIndex(groupId, bundle) >= 0
                 ? CharacterSkinBundlePolicy.CreateSelectionOptionId(bundle)
@@ -452,6 +453,9 @@ internal static partial class SkinService
             var snapshot = _characterSkinBundleRunSnapshot;
             if (snapshot == null)
             {
+                SaveCharacterSkinBundleRunPresets();
+                _characterSkinBundleRunState = null;
+                _characterSkinBundleRunSavePath = null;
                 return;
             }
 

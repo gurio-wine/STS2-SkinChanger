@@ -41,13 +41,15 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
-            if (_characterSkinBundleRunSnapshot == null || _characterSkinBundleRunSavePath == null) return;
+            if (_characterSkinBundleRunState == null || _characterSkinBundleRunSavePath == null) return;
             CaptureCharacterSkinBundleRunPresets();
+            if (_characterSkinBundleRunState.RandomCharacterOptionId != null)
+                _characterSkinBundleRunState.RandomCharacterOptionId = Config.GetSelection(_characterSkinBundleRunState.CharacterGroupId);
             CharacterSkinBundleRunStore.Save(_characterSkinBundleRunSavePath, _characterSkinBundleRunState!);
         }
     }
 
-    internal static void BindNewCharacterSkinBundleRun(RunManager manager, RunState state, bool multiplayer)
+    internal static void BindNewCharacterSkinBundleRun(RunManager manager, RunState state, bool multiplayer, bool shouldSave = true)
     {
         lock (Sync)
         {
@@ -56,14 +58,20 @@ internal static partial class SkinService
             var startTime = (long)AccessTools.Field(typeof(RunManager), "_startTime").GetValue(manager)!;
             var identity = CharacterSkinBundleRunState.Identity(startTime, state.Rng.StringSeed,
                 local.NetId, state.Players.Select(player => player.NetId));
-            var path = GetCharacterSkinBundleRunSavePath(multiplayer);
+            if (_characterSkinBundleRunState?.RunIdentity == identity) return;
+            var groupId = local.Character.Id.Entry.ToLowerInvariant();
+            var random = IsRandomCharacterSkinEnabled(groupId);
+            if (random) ApplyRandomCharacterSkinForNewRun(groupId);
             // Empty records are intentional: a new run without a bundle must not inherit a
             // previous run's bundle even when the player reuses a seed and the same character.
             var record = _characterSkinBundleRunSnapshot != null ? _characterSkinBundleRunState : null;
             record ??= new CharacterSkinBundleRunState { CharacterGroupId = local.Character.Id.Entry.ToLowerInvariant() };
             record.RunIdentity = identity;
-            CharacterSkinBundleRunStore.Save(path, record);
-            if (_characterSkinBundleRunSnapshot == null) return;
+            record.RandomCharacterOptionId = random ? Config.GetSelection(groupId) : null;
+            var path = shouldSave ? GetCharacterSkinBundleRunSavePath(multiplayer) : null;
+            if (path != null) CharacterSkinBundleRunStore.Save(path, record);
+            if (_characterSkinBundleRunSnapshot == null && !random) return;
+            _characterSkinBundleRunState = record;
             _characterSkinBundleRunSavePath = path;
             ModLog.Info($"已绑定本局皮肤包“{record.BundleName}”到对局记录：开始时间={startTime}，多人={multiplayer}。");
         }
@@ -84,10 +92,19 @@ internal static partial class SkinService
                 ModLog.Info("继续对局没有找到匹配的皮肤包记录；不根据选角界面的当前包猜测旧局选择。");
                 return;
             }
-            if (string.IsNullOrWhiteSpace(record.BundleName)) return;
             if (!record.CharacterGroupId.Equals(local.Character.Id.Entry, StringComparison.OrdinalIgnoreCase))
             {
                 ModLog.Warn("皮肤包对局记录的角色与本机玩家不匹配，跳过恢复。");
+                return;
+            }
+            ResumeRandomCharacterSkin(record);
+            if (string.IsNullOrWhiteSpace(record.BundleName))
+            {
+                if (record.RandomCharacterOptionId != null)
+                {
+                    _characterSkinBundleRunState = record;
+                    _characterSkinBundleRunSavePath = path;
+                }
                 return;
             }
             if (ResumeCharacterSkinBundleForRun(record)) _characterSkinBundleRunSavePath = path;
@@ -145,6 +162,7 @@ internal static partial class SkinService
             _characterSkinBundleRunState = new CharacterSkinBundleRunState {
                 RunIdentity = state.RunIdentity, CharacterGroupId = state.CharacterGroupId,
                 BundleName = state.BundleName, Cards = state.Cards.Select(p => p.Clone()).ToList(),
+                RandomCharacterOptionId = state.RandomCharacterOptionId,
                 Monsters = state.Monsters.Select(p => p.Clone()).ToList() };
             ModLog.Info($"继续对局已恢复皮肤包“{state.BundleName}”：卡牌分类={cards.Count}，怪物地区={monsters.Count}；离开后恢复当前全局预设。");
             return true;
@@ -160,8 +178,7 @@ internal static class CharacterSkinBundleNewRunBindingPatch
         AccessTools.Method(typeof(RunManager), nameof(RunManager.SetUpNewMultiplayer)) };
     private static void Postfix(RunManager __instance, RunState state, bool shouldSave, MethodBase __originalMethod)
     {
-        if (!shouldSave) return;
-        try { SkinService.BindNewCharacterSkinBundleRun(__instance, state, __originalMethod.Name == nameof(RunManager.SetUpNewMultiplayer)); }
+        try { SkinService.BindNewCharacterSkinBundleRun(__instance, state, __originalMethod.Name == nameof(RunManager.SetUpNewMultiplayer), shouldSave); }
         catch (Exception error) { ModLog.Error("保存新对局的皮肤包记录失败，不影响游戏开局：" + error); }
     }
 }

@@ -61,6 +61,9 @@ internal sealed class SkinConfig
 
     public Dictionary<string, string> Selections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    // A next-run instruction, not a provider ID. Keep the last real skin available for previews.
+    public List<string> RandomCharacterSkinGroups { get; set; } = [];
+
     public List<SlotVisibilitySelection> SlotVisibilitySelections { get; set; } = [];
 
     // Legacy migration input only. Current versions treat icon packs as ordinary character skins
@@ -168,6 +171,7 @@ internal sealed class SkinConfig
     {
         var copy = (SkinConfig)MemberwiseClone();
         copy.Selections = new(Selections, StringComparer.OrdinalIgnoreCase);
+        copy.RandomCharacterSkinGroups = RandomCharacterSkinGroups.ToList();
         copy.SlotVisibilitySelections = SlotVisibilitySelections
             .Select(state => state with { SourceSlots = state.SourceSlots.ToArray() }).ToList();
         copy.VisualProviderPriority = VisualProviderPriority.ToList();
@@ -251,6 +255,9 @@ internal sealed class SkinConfig
         var config = JsonSerializer.Deserialize<SkinConfig>(json, JsonOptions) ?? new SkinConfig();
         config.EventSkinPriorities ??= new();
         config.EventSkinPriorities.Normalize();
+        config.RandomCharacterSkinGroups = (config.RandomCharacterSkinGroups ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         config.Selections = new Dictionary<string, string>(
             config.Selections,

@@ -10,6 +10,7 @@ internal sealed class CharacterSkinBundleRunState
     public string RunIdentity { get; set; } = string.Empty;
     public string CharacterGroupId { get; set; } = string.Empty;
     public string BundleName { get; set; } = string.Empty;
+    public string? RandomCharacterOptionId { get; set; }
     public List<CardSkinPreset> Cards { get; set; } = [];
     public List<MonsterSkinPreset> Monsters { get; set; } = [];
 
