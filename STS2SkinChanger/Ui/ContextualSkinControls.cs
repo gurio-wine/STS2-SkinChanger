@@ -634,6 +634,12 @@ internal static partial class ContextualSkinControls
         var bundles = group != null && characterScreen != null && !HasMonsterPriorityContext(selector)
             ? SkinService.GetCharacterSkinBundles(group.Id)
             : [];
+        // An author's own switch can select a variant hidden as a pack/merge ingredient.
+        // Show that current choice without changing the user's hidden-source preferences.
+        if (group != null && characterScreen != null &&
+            group.Options.FirstOrDefault(option => option.ManualCharacterVariant != null && !option.IsComposition &&
+                option.Id.Equals(SkinService.GetCharacterSelectionOptionId(group.Id), StringComparison.OrdinalIgnoreCase)) is { } currentVariant &&
+            visualOptions.All(option => option.Id != currentVariant.Id)) visualOptions = [.. visualOptions, currentVariant];
         if (group == null || visualOptions.Length == 0 && bundles.Count == 0)
         {
             selector.Visible = false;
@@ -926,6 +932,19 @@ internal static partial class ContextualSkinControls
         return false;
     }
 
+    internal static bool RequestManualVariantSelection(NCharacterSelectScreen screen, string groupId, string optionId)
+    {
+        if (RequestFrameworkSelection(screen, groupId, optionId)) return true;
+        var dropdown = FindFrameworkDropdown(screen, groupId);
+        var option = FindGroup(groupId)?.Options.FirstOrDefault(option => !option.IsComposition &&
+            option.Id == optionId && option.ManualCharacterVariant != null);
+        if (dropdown == null || option == null) return false;
+        var index = dropdown.ItemCount;
+        dropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
+        dropdown.SetItemMetadata(index, option.Id);
+        return RequestFrameworkSelection(screen, groupId, option.Id);
+    }
+
     internal static bool IsCharacterSelectionLoading(NCharacterSelectScreen screen) =>
         FindCharacterSelector(screen)?.GetMeta(UpdatingMeta, false).AsBool() == true;
 
@@ -1065,7 +1084,8 @@ internal static partial class ContextualSkinControls
         var optionName = dropdown.GetItemText(index);
         var overlay = EnsureCharacterLoadingOverlay(screen, optionName);
         var progressValue = 0;
-        var packPaths = SkinService.GetSelectionResourcePackPaths(groupId, optionId);
+        var packPaths = SkinService.IsSameManualVariantSource(groupId, optionId)
+            ? [] : SkinService.GetSelectionResourcePackPaths(groupId, optionId);
         var warmTask = SkinService.WarmResourcePackFilesAsync(
             packPaths,
             progress => Interlocked.Exchange(
@@ -1545,7 +1565,7 @@ internal static partial class ContextualSkinControls
         CharacterModel character,
         string groupId)
     {
-        var providerId = SkinService.GetSelectedFullRuntimeProvider(groupId);
+        var providerId = SkinService.GetSelectedCreatureRuntimeProvider(groupId);
         if (providerId == null)
         {
             return;
@@ -1557,12 +1577,14 @@ internal static partial class ContextualSkinControls
         var button = FindCharacterButton(screen, character);
         if (button != null)
         {
+            ManualCharacterVariantBridge.ApplyLocalChoice(groupId);
             ManagedSkinModLoader.ReplaySelectedCharacterPresentation(
                 providerId,
                 screen,
                 button,
                 character,
                 () => StabilizeProviderCharacterSelectControls(screen, existingNodes, providerId));
+            ManualCharacterVariantBridge.BindScreen(screen, groupId, providerId);
         }
 
         var animatedBackground = screen.GetNodeOrNull<Node>("AnimatedBg");

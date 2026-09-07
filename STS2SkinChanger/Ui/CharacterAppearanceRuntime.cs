@@ -1611,6 +1611,7 @@ internal static class CharacterAppearanceRuntime
 
         if (!ReferenceEquals(creature.Visuals.GetParent(), wrapper))
         {
+            CreatureVisualParentBridge.Register(creature, wrapper);
             creature.Visuals.Reparent(wrapper, keepGlobalTransform: false);
         }
 
@@ -1839,6 +1840,9 @@ internal static class CharacterAppearanceRuntime
         NCreature creature,
         IReadOnlyList<string> providerIds)
     {
+        var character = creature.Entity.Player?.Character ?? creature.Entity.PetOwner?.Character;
+        var groupId = character == null ? null : ContextualSkinControls.FindGroup(character.Id.Entry, character.GetType().Name)?.Id;
+        using var modeScope = groupId == null ? null : ManualCharacterVariantBridge.BeginScope(groupId);
         ManagedSkinModLoader.RestoreUnselectedNodeReadyBehaviors(creature, providerIds);
         foreach (var providerId in providerIds)
         {

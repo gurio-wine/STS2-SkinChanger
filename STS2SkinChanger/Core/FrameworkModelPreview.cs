@@ -49,6 +49,8 @@ internal static class FrameworkModelPreview
             // Same selected, node-local cosmetic finishing as a live hot swap. Never replay
             // NCombatRoom callbacks or the original NCreature lifecycle in a menu preview.
             CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(owner);
+            if (groupId != null)
+                ManagedSlotVisibilityBridge.BindModel(visuals, groupId, SkinService.GetSelectedCreatureRuntimeProvider(groupId));
             foreach (var childControl in DescendantsAndSelf(staged).OfType<Control>())
                 childControl.MouseFilter = Control.MouseFilterEnum.Ignore;
             var previous = container.GetNodeOrNull<Node>("PreviewSprite");

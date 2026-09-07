@@ -17,6 +17,32 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-provider-previews")
+{
+    CreatureVisualParentTests.Run();
+    SlotVisibilityTests.Run();
+    ManualCharacterVariantTests.Run();
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--audit-manual-variants")
+{
+    ManualCharacterVariantTests.Audit(args[1]);
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--audit-visual-parents")
+{
+    CreatureVisualParentTests.Audit(args[1]);
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--audit-manual-variant-catalog")
+{
+    ManualCharacterVariantTests.AuditCatalog(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-theme")
 {
     ModThemeTests.Run();
@@ -147,6 +173,8 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
     return;
 }
 
+CreatureVisualParentTests.Run();
+ManualCharacterVariantTests.Run();
 PresentationNodeOwnershipTests.Run();
 RenderedPreviewFramingTests.Run();
 FrameworkSelectorCycleTests.Run();

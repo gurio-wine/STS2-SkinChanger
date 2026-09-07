@@ -73,8 +73,10 @@ internal static class ManagedSlotVisibilityBridge
             var hidden = (bool)binding.Contract.State.GetValue(__instance)!;
             if (hidden == binding.Hidden) return;
             binding.Hidden = hidden;
-            SkinService.SaveSlotVisibilitySelection(new(binding.GroupId, binding.ProviderId,
-                binding.Contract.Id, hidden, binding.SourceSlots));
+            if (SkinService.GetSelectedManualCharacterVariant(binding.GroupId) == null)
+                SkinService.SaveSlotVisibilitySelection(new(binding.GroupId, binding.ProviderId,
+                    binding.Contract.Id, hidden, binding.SourceSlots));
+            ManualCharacterVariantBridge.AfterSlotToggle(control, binding.GroupId, binding.ProviderId, binding.Contract.Id, hidden);
             ModLog.Info($"部件显隐选择已保存 group={binding.GroupId} provider={binding.ProviderId} hidden={hidden} slots={binding.SourceSlots.Length}");
         }
         catch (Exception exception)
@@ -90,11 +92,25 @@ internal static class ManagedSlotVisibilityBridge
         {
             // These author-local interaction preferences are not multiplayer skin selections.
             // Never apply this machine's hidden parts to somebody else's character.
-            if (player == null || CharacterAppearanceRuntime.GetLocalPlayer()?.NetId != player.NetId) return;
+            if (player == null) return;
             var group = ContextualSkinControls.FindGroup(player.Character.Id.Entry, player.Character.GetType().Name);
             if (group == null) return;
+            if (CharacterAppearanceRuntime.GetLocalPlayer()?.NetId != player.NetId &&
+                SkinService.GetSelectedManualCharacterVariant(group.Id) is not { State.IsStatic: false }) return;
             var provider = SkinService.GetSelectedCreatureRuntimeProvider(group.Id);
-            var selections = provider == null ? [] : SkinService.GetSlotVisibilitySelections(group.Id, provider);
+            BindModel(root, group.Id, provider);
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("恢复皮肤部件显隐失败，保留模型：" + exception.GetBaseException().Message);
+        }
+    }
+
+    internal static void BindModel(Node root, string groupId, string? provider)
+    {
+        try
+        {
+            var selections = provider == null ? [] : SkinService.GetSlotVisibilitySelections(groupId, provider);
             var hidden = selections.Where(state => state.Hidden).ToArray();
             // Most providers have no remembered toggles: do not walk their potentially large
             // visual trees. Retain a cheap marker only for roots that may need an old mask cleared.
@@ -104,12 +120,12 @@ internal static class ManagedSlotVisibilityBridge
             {
                 if (LiveBindings.TryGetValue(spineNode, out var old))
                 {
-                    if (old.Matches(group.Id, provider, hidden)) continue;
+                    if (old.Matches(groupId, provider, hidden)) continue;
                     old.Dispose();
                 }
                 LiveBindings.Remove(spineNode);
                 if (hidden.Length == 0) continue;
-                var binding = new LiveBinding(spineNode, group.Id, provider!, hidden);
+                var binding = new LiveBinding(spineNode, groupId, provider!, hidden);
                 LiveBindings.Add(spineNode, binding);
                 binding.Start();
             }

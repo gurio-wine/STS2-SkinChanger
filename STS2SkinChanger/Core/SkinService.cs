@@ -1588,6 +1588,7 @@ internal static partial class SkinService
                 Config.ActiveMonsterSkinPresets,
                 StringComparer.OrdinalIgnoreCase);
             var affectedGroups = updates.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var stateOnly = IsSameManualVariantSource(groupId, optionId) && affectedGroups.SetEquals([groupId]);
             try
             {
                 foreach (var id in affectedGroups.Where(EventSkinPolicy.IsEventGroup))
@@ -1614,12 +1615,13 @@ internal static partial class SkinService
                 foreach (var update in updates)
                 {
                     Config.Selections[update.Key] = update.Value;
-                    ClearRuntimeResourceCache(update.Key);
+                    if (!stateOnly) ClearRuntimeResourceCache(update.Key);
                 }
 
                 UpdateVisualProviderPriority(groupId, optionId);
-                MountOverlay(affectedGroups);
+                if (!stateOnly) MountOverlay(affectedGroups);
                 Config.Save(ConfigPath);
+                ManualCharacterVariantBridge.ApplyLocalChoice(groupId);
                 EventSkinRuntime.RefreshCurrent(groupId);
                 LastError = null;
                 return true;
@@ -4011,7 +4013,7 @@ internal static partial class SkinService
             var restoreGroups = prepared.RestoreGroups
                 .Append(groupId)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return new MountedRuntimeResourceScope(restoreGroups);
+            return new MountedRuntimeResourceScope(restoreGroups, ManualCharacterVariantBridge.BeginScope(groupId));
         }
     }
 
@@ -4461,7 +4463,7 @@ internal static partial class SkinService
             providerId = catalog?.IsRuntimeProviderOption(groupId, selection) == true &&
                          (!catalog.ProviderUsesFullRuntime(selection) ||
                           catalog.IsFullRuntimeProviderFullySelected(selection, GetVisualSelections()))
-                ? selection
+                ? catalog.ResolveVisualProviderId(selection)
                 : null;
         }
 
@@ -5104,6 +5106,7 @@ internal static partial class SkinService
 
         T callbackResult;
         IDisposable? canonicalOwnership = null;
+        using var manualModeScope = ManualCharacterVariantBridge.BeginScope(groupId);
         try
         {
             if (takeOverCanonicalPaths)
@@ -5495,7 +5498,7 @@ internal static partial class SkinService
         ScopedMonsterSelections.Replace(selectedMonsterIdsByProvider);
     }
 
-    private sealed class MountedRuntimeResourceScope(IReadOnlySet<string> restoreGroups) : IDisposable
+    private sealed class MountedRuntimeResourceScope(IReadOnlySet<string> restoreGroups, IDisposable? manualModeScope) : IDisposable
     {
         private bool _disposed;
 
@@ -5509,6 +5512,7 @@ internal static partial class SkinService
                 }
 
                 _disposed = true;
+                manualModeScope?.Dispose();
                 try
                 {
                     MountOverlay(restoreGroups);
@@ -6390,7 +6394,7 @@ internal static partial class SkinService
         string groupId,
         string selection,
         string resourcePath) =>
-        groupId + "\n" + selection + "\n" + resourcePath +
+        groupId + "\n" + ManualVariantResourceSelection(groupId, selection) + "\n" + resourcePath +
         FrameworkRegistryCooperation.CacheSuffix(groupId, selection);
 
     private static string RuntimeOverlayKey(
@@ -6400,7 +6404,7 @@ internal static partial class SkinService
         bool includeProviderDependencies,
         bool reuseMountedPrivateDependencies,
         bool isolateRelicCanonicalPaths = false) =>
-        groupId + "\n" + selection + "\n" + includeProviderDependencies + "\n" +
+        groupId + "\n" + ManualVariantResourceSelection(groupId, selection) + "\n" + includeProviderDependencies + "\n" +
         reuseMountedPrivateDependencies + "\n" + isolateRelicCanonicalPaths + "\n" +
         string.Join("\n", resourcePaths) + FrameworkRegistryCooperation.CacheSuffix(groupId, selection);
 
@@ -6535,6 +6539,9 @@ internal static partial class SkinService
             Config.Selections[group.Id] = resolvedSelection;
             migratedVisualSelectionCount++;
         }
+
+        var migratedManualSlots = MigrateLegacyManualSlots(Config, Catalog);
+        if (migratedManualSlots > 0) ModLog.Info($"已将 {migratedManualSlots} 项旧部件显隐设置迁移为编号皮肤差分。");
 
         if (migratedVisualSelectionCount > 0)
         {

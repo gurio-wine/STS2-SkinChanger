@@ -4465,6 +4465,7 @@ internal sealed partial class SkinCatalog : IDisposable
             knownCharacterGroupIds);
         AddManagedMonsterSceneOptions(indexes, groups, knownGroupIds);
         AddRuntimeMonsterVisualModeOptions(indexes, groups);
+        ManualCharacterVariantScanner.Expand(indexes, groups, knownCharacterGroupIds);
         AddEventSkinGroups(indexes, baselines, groups);
 
         foreach (var group in groups.Values)
@@ -6742,7 +6743,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Select(sourceId => rawOptions[sourceId].EffectiveProviderId)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
-            IsSessionComposition = session
+            IsSessionComposition = session,
+            ManualCharacterVariant = dynamicSource?.ManualCharacterVariant
         };
         return true;
     }
@@ -7420,6 +7422,8 @@ internal sealed record SkinOption(
     public IReadOnlyList<string> CompositionSourceProviderIds { get; init; } = [];
 
     public bool IsSessionComposition { get; init; }
+
+    public ManualCharacterVariant? ManualCharacterVariant { get; init; }
 
     public bool IsComposition => CompositionSourceOptionIds.Count > 0;
 }

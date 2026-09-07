@@ -149,6 +149,9 @@ internal static class ManagedSkinModLoader
     internal static bool IsProviderAssemblyFor(string providerId, Assembly assembly) =>
         ProviderIdsByAssembly.TryGetValue(assembly, out var providers) && providers.Contains(providerId);
 
+    internal static Assembly? GetActiveProviderAssembly(string providerId) =>
+        ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ? runtime.Assembly : null;
+
     internal static void EnsureProviderSettings(Mod mod)
     {
         // A details-page request may precede the first selection. Do not initialize every DLL
@@ -1546,7 +1549,9 @@ internal static class ManagedSkinModLoader
                 node,
                 node is CanvasItem canvasItem ? canvasItem.Visible : null,
                 GetCharacterPresentationText(node),
-                node is Control control ? control.ClipContents : null);
+                node is Control control ? control.ClipContents : null,
+                CaptureCharacterPresentationMetadata(node),
+                CaptureCharacterPresentationResizeConnections(node));
         }
 
         return result;
@@ -1576,6 +1581,8 @@ internal static class ManagedSkinModLoader
         var visibilityChanges = new List<CharacterPresentationVisibilityChange>();
         var textChanges = new List<CharacterPresentationTextChange>();
         var clipChanges = new List<CharacterPresentationClipChange>();
+        var metadataChanges = new List<CharacterPresentationMetadataChange>();
+        var resizeConnections = new List<(WeakReference<Node> Node, Callable Callback)>();
         foreach (var state in baseline.Values)
         {
             if (!GodotObject.IsInstanceValid(state.Node))
@@ -1592,6 +1599,11 @@ internal static class ManagedSkinModLoader
                     originalVisibility,
                     canvasItem.Visible));
             }
+
+            foreach (var change in PresentationMetadataChanges.Capture(state.Metadata, CaptureCharacterPresentationMetadata(state.Node)))
+                metadataChanges.Add(new(new(state.Node), change));
+            foreach (var callback in CaptureCharacterPresentationResizeConnections(state.Node).Except(state.ResizeConnections))
+                resizeConnections.Add((new(state.Node), callback));
 
             if (state.Text is { } originalText &&
                 GetCharacterPresentationText(state.Node) is { } appliedText &&
@@ -1617,7 +1629,7 @@ internal static class ManagedSkinModLoader
         if (addedRoots.Count == 0 &&
             visibilityChanges.Count == 0 &&
             textChanges.Count == 0 &&
-            clipChanges.Count == 0)
+            clipChanges.Count == 0 && metadataChanges.Count == 0 && resizeConnections.Count == 0)
         {
             return;
         }
@@ -1628,8 +1640,22 @@ internal static class ManagedSkinModLoader
                 addedRoots,
                 visibilityChanges,
                 textChanges,
-                clipChanges);
+                clipChanges,
+                metadataChanges,
+                resizeConnections);
     }
+
+    private static Dictionary<string, Variant> CaptureCharacterPresentationMetadata(Node node) =>
+        node.GetMetaList().Select(key => (Key: key.ToString(), Value: node.GetMeta(key)))
+            // Flags/IDs used by author UI initialization are reversible; don't retain resource
+            // or node objects through arbitrary metadata while their scenes are being released.
+            .Where(pair => pair.Value.VariantType is Variant.Type.Bool or Variant.Type.Int or Variant.Type.String)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+
+    private static Callable[] CaptureCharacterPresentationResizeConnections(Node node) => node is Control
+        ? node.GetSignalConnectionList(Control.SignalName.Resized).Where(connection => connection.ContainsKey("callable"))
+            .Select(connection => connection["callable"].As<Callable>()).ToArray()
+        : [];
 
     private static IEnumerable<Node> EnumerateNodeTree(Node root) =>
         PresentationNodeOwnership.Walk(root,
@@ -1666,6 +1692,21 @@ internal static class ManagedSkinModLoader
 
     private static void RestoreCharacterPresentationMutation(CharacterPresentationMutation mutation)
     {
+        // Parent layout delegates often close over a provider-created button. Disconnect them
+        // before freeing that button, or re-entering/resizing later calls into a freed Control.
+        foreach (var (reference, callback) in mutation.ResizeConnections)
+            if (reference.TryGetTarget(out var node) && GodotObject.IsInstanceValid(node) &&
+                node.IsConnected(Control.SignalName.Resized, callback)) node.Disconnect(Control.SignalName.Resized, callback);
+        foreach (var entry in mutation.MetadataChanges)
+        {
+            if (!entry.Node.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node)) continue;
+            var change = entry.Change;
+            var hasCurrent = node.HasMeta(change.Key);
+            var current = hasCurrent ? node.GetMeta(change.Key) : default;
+            if (!PresentationMetadataChanges.CanRestore(change, hasCurrent, current)) continue;
+            if (change.HadOriginal) node.SetMeta(change.Key, change.Original);
+            else node.RemoveMeta(change.Key);
+        }
         foreach (var addedNodeReference in mutation.AddedRoots)
         {
             if (!addedNodeReference.TryGetTarget(out var addedNode) ||
@@ -3838,14 +3879,21 @@ internal static class ManagedSkinModLoader
         Node Node,
         bool? Visible,
         string? Text,
-        bool? ClipContents);
+        bool? ClipContents,
+        IReadOnlyDictionary<string, Variant> Metadata,
+        IReadOnlyList<Callable> ResizeConnections);
 
     private sealed record CharacterPresentationMutation(
         WeakReference<NCharacterSelectScreen> Screen,
         IReadOnlyList<WeakReference<Node>> AddedRoots,
         IReadOnlyList<CharacterPresentationVisibilityChange> VisibilityChanges,
         IReadOnlyList<CharacterPresentationTextChange> TextChanges,
-        IReadOnlyList<CharacterPresentationClipChange> ClipChanges);
+        IReadOnlyList<CharacterPresentationClipChange> ClipChanges,
+        IReadOnlyList<CharacterPresentationMetadataChange> MetadataChanges,
+        IReadOnlyList<(WeakReference<Node> Node, Callable Callback)> ResizeConnections);
+
+    private sealed record CharacterPresentationMetadataChange(
+        WeakReference<Node> Node, PresentationMetadataChange<Variant> Change);
 
     private sealed record CharacterPresentationVisibilityChange(
         WeakReference<CanvasItem> Node,
