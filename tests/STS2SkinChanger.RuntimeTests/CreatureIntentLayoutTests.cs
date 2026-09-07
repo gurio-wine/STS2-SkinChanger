@@ -21,14 +21,81 @@ internal static class CreatureIntentLayoutTests
     public static void Run()
     {
         var failures = new List<string>();
-        foreach (var test in new Action[] { CheckCurrentStanceLookup, CheckProviderGuardOrder })
+        foreach (var test in new Action[] { CheckCurrentStanceLookup, CheckProviderGuardOrder,
+                     CheckVisualDepthProtection, CheckDepthUpdateDispatch })
         {
             try { test(); }
             catch (Exception error) { failures.Add(error.GetBaseException().Message); }
         }
         if (failures.Count != 0)
             throw new InvalidOperationException(string.Join(System.Environment.NewLine, failures));
-        Console.WriteLine("Creature intent layout passed: current stance anchors and provider visibility guards after SC transforms.");
+        Console.WriteLine("Creature intent layout passed: stance anchors, provider guards and reversible visual depth protection.");
+    }
+
+    private static void CheckVisualDepthProtection()
+    {
+        var policy = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.CreatureIntentDepthState");
+        Require(policy != null, "缺少意图绘制层级保护：绝对图层的蒸汽仍可盖住意图。");
+        var state = Activator.CreateInstance(policy!, nonPublic: true)!;
+        var resolve = AccessTools.Method(policy, "Resolve");
+        (int Z, bool Relative) Apply(int z, bool relative, int parent, int visual, bool detached = false) =>
+            ((int, bool))resolve.Invoke(state, [z, relative, parent, visual, detached])!;
+
+        // Native combat SceneContainer is -10. Normal relative model and intent both
+        // inherit it. Waterfall Giant's steamParticles6 instead opts out at absolute 0.
+        Require(Apply(0, true, -10, -10) == (0, true), "普通模型不应改变意图层级。");
+        Require(Apply(0, true, -10, 0) == (10, true), "绝对图层蒸汽应触发意图保护。");
+        Require(Apply(10, true, -10, 0) == (10, true), "重复刷新不能持续累加意图层级。");
+        Require(Apply(10, true, -10, -10) == (0, true), "切离高图层皮肤必须恢复原层级。");
+        // Honor a later provider write instead of restoring an obsolete SC baseline.
+        Require(Apply(-1, false, -10, -10) == (-1, false), "不能覆盖作者已足够靠前的层级。");
+        Require(Apply(-1, false, -10, 0) == (0, false), "作者使用绝对图层时也需保护意图。");
+        Require(Apply(0, false, -10, -10) == (-1, false), "恢复作者原有的绝对图层。");
+        Require(Apply(-1, false, -10, 0, true) == (1, false), "顶层模型的同 Z 绘制不按普通子树顺序，需要越过它。");
+
+        // A second creature's baseline is independent (including player pets/monsters
+        // of the same type); no shared last-applied Z or provider state.
+        var independent = Activator.CreateInstance(policy!, nonPublic: true)!;
+        Require(((int, bool))resolve.Invoke(independent, [2, true, -10, -10, false])! == (2, true),
+            "绘制层级状态必须按生物实例隔离。");
+    }
+
+    private static void CheckDepthUpdateDispatch()
+    {
+        var assembly = typeof(Entry).Assembly;
+        var apply = AccessTools.Method(assembly.GetType("STS2SkinChanger.Ui.CreatureIntentDepth", true), "Apply");
+        var patch = assembly.GetType("STS2SkinChanger.Ui.CreatureIntentDepthPatch", true)!;
+        var update = AccessTools.Method(typeof(NCreature), nameof(NCreature.UpdateIntent));
+        var boundary = new Harmony("SkinChanger.Tests.Intent.DepthBoundary");
+        var manager = new Harmony("SkinChanger.Tests.Intent.DepthDispatch");
+        try
+        {
+            boundary.Patch(update, prefix: new HarmonyMethod(typeof(CreatureIntentLayoutTests), nameof(SkipNativeIntents)));
+            boundary.Patch(apply, prefix: new HarmonyMethod(typeof(CreatureIntentLayoutTests), nameof(ObserveDepthApply)));
+            manager.CreateClassProcessor(patch).Patch();
+            Calls.Clear();
+            update.Invoke(RuntimeHelpers.GetUninitializedObject(typeof(NCreature)), [null]);
+            Require(Calls.SequenceEqual(new[] { "native-intent", "depth" }),
+                "意图改变后必须调用图层保护，不能只在图鉴或创建怪物时校正。");
+        }
+        finally
+        {
+            manager.UnpatchAll(manager.Id);
+            boundary.UnpatchAll(boundary.Id);
+        }
+    }
+
+    private static bool SkipNativeIntents(ref Task __result)
+    {
+        Calls.Add("native-intent");
+        __result = Task.CompletedTask;
+        return false;
+    }
+
+    private static bool ObserveDepthApply()
+    {
+        Calls.Add("depth");
+        return false;
     }
 
     private static void CheckCurrentStanceLookup()

@@ -1540,6 +1540,7 @@ internal static class CharacterAppearanceRuntime
             oldVisuals.GetParent()?.RemoveChild(oldVisuals);
             newVisuals.Name = desiredVisualName;
             oldVisuals.QueueFree();
+            CreatureIntentDepth.Apply(creature);
             return true;
         }
         catch (Exception exception)
