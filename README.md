@@ -117,7 +117,7 @@ Windows 与 WSL 的还原和中间文件分别写入 `obj/windows`、`obj/unix`�
 
 - `tools/PckInspect`：检查 PCK 目录或复制少量文件验证写入器。
 - `tools/CatalogInspect`：用实际游戏与 Mod PCK 构建皮肤目录，输出识别结果。
-- `dotnet run --project tools/WorkshopCatalogExport -c Release -- --refresh-restart-hints <游戏PCK> <已安装工坊目录> STS2SkinChanger/Data/workshop-catalog.json <游戏版本>`：只读核验清单内本地包的代码、前置和完整资源接管后，更新内置重启标记；不启动游戏、不下载或执行皮肤 DLL。正式/测试版基线分别核验，只有两者均通过才承诺免重启。缺少包会明确输出未核验并保留启动加载兜底，不能把兜底当成检查通过。
+- `dotnet run --project tools/WorkshopCatalogExport -c Release -- --refresh-restart-hints <游戏PCK> <已安装工坊目录> STS2SkinChanger/Data/workshop-catalog.json <游戏版本>`：只读核验清单内本地包的代码、前置和完整资源接管后，更新内置重启标记；不启动游戏、不下载或执行皮肤 DLL。正式/测试版基线分别核验，只有两者均通过才承诺免重启。缺少包会列出全部缺失 ID 并中止，不写入清单；先请用户重新订阅，不能擅自分类。`tools/Test-WorkshopCatalogAudit.ps1` 验证缺失包时清单逐字节保持不变。
 - `tools/Test-BuildEnvironment.ps1`：通过真实 MSBuild 求值检查五个项目的正式版默认引用、测试版覆盖、跨系统缓存隔离及 AnyCPU，需 PowerShell 7。
 - 运行时测试附加 `-- --test-appearance-boundaries`：检查冷启动角色按钮的静态图标声明、卡牌拖拽重入的模型归属与接管边界、选中角色的独立遗物图片归属；`-- --audit-cold-character-icon <游戏PCK> <小骑士Mod目录>` 与 `-- --audit-standalone-relics <游戏PCK> <奥契丝皮肤清单JSON>` 可核对实包，不执行提供者初始化器、不启动游戏，不能代替实机验证。
 - 运行时测试附加 `-- --test-creature-intents`：核对意图按当前姿态的子定位点刷新，以及 SC 缩放/位移校正先于作者的普通优先级防越界补丁执行；覆盖两种补丁注册顺序、越界与正常坐标，以及绝对图层特效的意图保护、切皮恢复和实例隔离。图层保护只在意图刷新和换模时执行，不改位置或存档。测试替代引擎坐标写入，不启动游戏；不能代替怪物姿态、特效遮挡的画面复验。

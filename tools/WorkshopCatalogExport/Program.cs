@@ -10,17 +10,13 @@ if (args.Length == 5 && args[0] == "--refresh-restart-hints")
     // Absence of startup code alone does not prove complete resource takeover.
     if (!File.Exists(args[1])) throw new FileNotFoundException("Game PCK required for resource coverage checks.", args[1]);
     var existing = WorkshopCatalogPolicy.Parse(File.ReadAllText(args[3]));
+    var missing = existing.Where(item => !Directory.Exists(Path.Combine(args[2], item.Id.ToString()))).Select(item => item.Id).ToArray();
+    if (missing.Length > 0)
+        throw new DirectoryNotFoundException($"Local Workshop packages missing: {string.Join(", ", missing)}. Ask the user to subscribe and finish downloading before auditing; catalog not written.");
     CardCatalogEntry[]? baselineCards = null;
-    var missing = 0;
     var audited = existing.Select(item =>
     {
         var directory = Path.Combine(args[2], item.Id.ToString());
-        if (!Directory.Exists(directory))
-        {
-            missing++;
-            Console.WriteLine($"{item.Id}: startup-only fallback (local package unavailable; NOT audited)");
-            return item with { RestartRequired = true };
-        }
         var before = WorkshopPackagePolicy.Snapshot(directory);
         // A catalog-wide promise cannot rely on another mod already being loaded.
         var assessment = WorkshopPackagePolicy.Assess(directory, args[4], new Dictionary<string, string>());
@@ -49,7 +45,7 @@ if (args.Length == 5 && args[0] == "--refresh-restart-hints")
         return item with { RestartRequired = reason != WorkshopLoadReason.None };
     }).ToArray();
     File.WriteAllText(args[3], JsonSerializer.Serialize(audited, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }).Replace("\r\n", "\n") + "\n");
-    Console.WriteLine($"Checked {audited.Length - missing}/{audited.Length} local packages for {args[4]}: {audited.Count(item => !item.RestartRequired)} complete hot-load candidates; {missing} unavailable packages kept startup-only.");
+    Console.WriteLine($"Checked {audited.Length}/{audited.Length} local packages for {args[4]}: {audited.Count(item => !item.RestartRequired)} complete hot-load candidates.");
     return;
 }
 if (args.FirstOrDefault() == "--refresh-restart-hints")
