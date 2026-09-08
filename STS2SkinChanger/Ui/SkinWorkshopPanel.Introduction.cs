@@ -10,7 +10,7 @@ internal partial class SkinWorkshopPanel
     private sealed record HoverItem(ulong Id, Control Slot, PanelContainer Panel);
     private readonly List<HoverItem> _hoverItems = [];
     private HoverItem? _lifted;
-    private Control _floatingItems = null!;
+    private readonly WorkshopHoverDwell _introDwell = new();
     private Control _intro = null!;
     private Label _introTitle = null!;
     private Label _introDescription = null!;
@@ -26,14 +26,12 @@ internal partial class SkinWorkshopPanel
     private int _introGeneration;
     private int _hoverPopups;
     private bool _hoverKeyboard;
-    private bool _introRequested;
+    private int _hoverChanges;
+    private double _hoverTotalMs;
+    private double _hoverMaxMs;
 
     private void InitializeHover()
     {
-        // A sibling portal outside ScrollContainer clipping; move the actual row,
-        // not a screenshot/duplicate with a second set of subscription handlers.
-        _floatingItems = new Control { MouseFilter = MouseFilterEnum.Ignore, ClipContents = false };
-        AddChild(_floatingItems); _floatingItems.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         CreateIntroduction();
         _hoverTree = GetTree();
         _hoverTree.ProcessFrame += UpdateHover;
@@ -49,7 +47,7 @@ internal partial class SkinWorkshopPanel
     {
         // Every descendant also ignores input: the panel must never create a
         // second hover target or intercept clicks on the list behind it.
-        _intro = new Control { Visible = false, MouseFilter = MouseFilterEnum.Ignore };
+        _intro = new Control { Visible = false, MouseFilter = MouseFilterEnum.Ignore, ZIndex = 3 };
         AddChild(_intro);
         var panel = new PanelContainer { MouseFilter = MouseFilterEnum.Ignore };
         _intro.AddChild(panel); panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect); ModThemeRuntime.Panel(panel);
@@ -101,9 +99,9 @@ internal partial class SkinWorkshopPanel
         {
             if (_closed || _suspended || _hoverPopups > 0) { armed = false; return; }
             if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp or MouseButton.WheelDown } wheel &&
-                panel.GetParent() == _floatingItems)
+                panel.TopLevel)
             {
-                // The raised item is outside the scroll's ancestry. Forward only
+                // Top-level controls stop native input bubbling. Forward only
                 // wheel scrolling; action-button clicks must not be forwarded.
                 _listScroll.ScrollVertical += (int)(48 * Math.Max(1, wheel.Factor)) * (wheel.ButtonIndex == MouseButton.WheelUp ? -1 : 1);
                 panel.AcceptEvent();
@@ -146,21 +144,18 @@ internal partial class SkinWorkshopPanel
         if (_hoverPopups > 0 || _closed || _suspended || !IsVisibleInTree()) return;
         foreach (var item in _returnTweens.Keys) PositionLift(item);
         var candidate = HoveredItem();
-        if (!WorkshopHoverPolicy.CanDisplay(candidate?.Id ?? 0, _lifted?.Id ?? 0, false) && _introToken != null)
-            CancelIntroduction();
-        // Reparenting during a pressed mouse dispatch would lose the release and
-        // silently swallow a subscribe/tag click. Hide the intro immediately on
-        // exit, but defer restoring/moving the actual controls until release.
-        if (Input.IsMouseButtonPressed(MouseButton.Left)) return;
-        if (candidate != _lifted || candidate != null && _introToken == null) Lift(candidate);
+        // Keep the pressed control's canvas/input-root stable until release.
+        // Leaving it still hides the introduction immediately.
+        if (Input.IsMouseButtonPressed(MouseButton.Left))
+        {
+            if (!WorkshopHoverPolicy.CanDisplay(candidate?.Id ?? 0, _lifted?.Id ?? 0, false)) CancelIntroduction();
+            return;
+        }
+        if (candidate != _lifted) Lift(candidate);
         if (_lifted is not { } active) return;
         PositionLift(active);
-        if (!_introRequested)
-        {
-            _introRequested = true;
-            _intro.Show(); PositionIntroduction();
-            _ = LoadIntroduction(active.Id, _introGeneration, _introToken!.Token);
-        }
+        if (_introDwell.Observe(active.Id, Time.GetTicksMsec() / 1000d) && _introToken == null)
+            ShowIntroduction(active);
         if (_intro.Visible)
         {
             PositionIntroduction();
@@ -173,32 +168,43 @@ internal partial class SkinWorkshopPanel
 
     private void Lift(HoverItem? item)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         if (_lifted is { } previous) BeginReturn(previous);
         CancelIntroduction();
         _lifted = item;
-        if (item == null) return;
+        if (item == null) { RecordHoverTiming(started); return; }
         if (_returnTweens.Remove(item, out var returning)) returning.Kill();
-        _introRequested = false; _introToken = new();
-        _introTitle.Text = SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…";
-        _introDescription.Text = "…"; _introImage.Texture = null; _introImageStatus.Text = "…"; _introImageStatus.Show();
-        _introPage.Hide();
-        var focus = GetViewport().GuiGetFocusOwner();
-        var keepFocus = focus != null && (focus == item.Panel || item.Panel.IsAncestorOf(focus));
-        if (item.Panel.GetParent() != _floatingItems) item.Panel.Reparent(_floatingItems, false);
-        _floatingItems.MoveChild(item.Panel, -1);
+        // Detach only the canvas transform/clipping, never the node subtree.
+        // Reparenting reruns every theme binding and backdrop's TreeEntered work,
+        // invalidates text/layout and can stall each hover switch synchronously.
+        item.Panel.TopLevel = true;
+        item.Panel.ZIndex = 2;
         item.Panel.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
         item.Panel.Scale = Vector2.One * 1.025f;
         PositionLift(item);
         item.Panel.PivotOffset = item.Panel.Size * .5f;
         // Preserve one themed surface/border. A displaced StyleBox shadow drawn
         // above the backdrop makes the enlarged item look like two stacked cards.
-        if (keepFocus) focus!.GrabFocus();
+        RecordHoverTiming(started);
+    }
+
+    private void ShowIntroduction(HoverItem item)
+    {
+        // Delay the actual work, not just visibility: cached text still needs
+        // shaping/layout and cached images can complete synchronously.
+        _introToken = new();
+        _introTitle.Text = SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…";
+        _introDescription.Text = "…"; _introImage.Texture = null; _introImageStatus.Text = "…"; _introImageStatus.Show();
+        _introPage.Hide();
+        _intro.Show(); PositionIntroduction();
+        _ = LoadIntroduction(item.Id, _introGeneration, _introToken.Token);
     }
 
     private void BeginReturn(HoverItem item)
     {
         if (InstantHover) { RestoreItem(item); return; }
         if (_returnTweens.Remove(item, out var previous)) previous.Kill();
+        item.Panel.ZIndex = 1;
         var tween = item.Panel.CreateTween().SetIgnoreTimeScale().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
         _returnTweens[item] = tween;
         tween.TweenProperty(item.Panel, "scale", Vector2.One, .12);
@@ -218,7 +224,9 @@ internal partial class SkinWorkshopPanel
         item.Panel.PivotOffset = item.Panel.Size * .5f;
         var amount = Math.Clamp((item.Panel.Scale.X - 1) / .025f, 0, 1);
         var position = item.Slot.GlobalPosition - new Vector2(0, 3 * amount);
-        item.Panel.Position = _floatingItems.GetGlobalTransform().AffineInverse() * position;
+        // A top-level CanvasItem's coordinates are in its canvas, like the slot's
+        // global position; viewport stretching remains the CanvasLayer's job.
+        item.Panel.Position = position;
     }
 
     private void RestoreLift()
@@ -236,13 +244,27 @@ internal partial class SkinWorkshopPanel
             GodotObject.IsInstanceValid(old.Panel) && GodotObject.IsInstanceValid(old.Slot) &&
             !old.Panel.IsQueuedForDeletion() && !old.Slot.IsQueuedForDeletion())
         {
-            var focus = GetViewport()?.GuiGetFocusOwner();
-            var keepFocus = focus != null && (focus == old.Panel || old.Panel.IsAncestorOf(focus));
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
             old.Panel.Scale = Vector2.One;
-            old.Panel.Reparent(old.Slot, false);
+            old.Panel.TopLevel = false;
+            old.Panel.ZIndex = 0;
             old.Panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-            if (keepFocus && old.Panel.IsInsideTree()) focus!.GrabFocus();
+            RecordHoverTiming(started);
         }
+    }
+
+    private void RecordHoverTiming(long started)
+    {
+        var ms = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        _hoverChanges++; _hoverTotalMs += ms; _hoverMaxMs = Math.Max(_hoverMaxMs, ms);
+    }
+
+    private void LogHoverTiming()
+    {
+        if (_hoverChanges == 0) return;
+        // One summary on close, no disk logging in the mouse/frame hot path.
+        ModLog.Info($"工坊悬停节点切换：{_hoverChanges} 次，平均 {_hoverTotalMs / _hoverChanges:F2}ms，最高 {_hoverMaxMs:F2}ms；简介延迟 1 秒。");
+        _hoverChanges = 0; _hoverTotalMs = _hoverMaxMs = 0;
     }
 
     private void PositionIntroduction()
@@ -293,6 +315,7 @@ internal partial class SkinWorkshopPanel
 
     private void CancelIntroduction()
     {
+        _introDwell.Clear();
         _introGeneration++;
         _carousel?.Clear(); _carousel = null;
         _introToken?.Cancel(); _introToken?.Dispose(); _introToken = null;

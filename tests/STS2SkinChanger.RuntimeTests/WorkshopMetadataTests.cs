@@ -17,6 +17,7 @@ internal static class WorkshopMetadataTests
         CheckSteamFieldMapping();
         CheckIntroduction();
         CheckHover();
+        CheckHoverDwell();
         CheckTextsAndRouting();
         Console.WriteLine("Workshop metadata, sorting and hover tests passed.");
     }
@@ -109,6 +110,22 @@ internal static class WorkshopMetadataTests
         Require(!CanDisplay(1, 1, true) && !CanDisplay(0, 0, false), "关闭、翻页或原生弹窗期间不能复活简介。");
     }
 
+    private static void CheckHoverDwell()
+    {
+        var type = Type("STS2SkinChanger.Core.WorkshopHoverDwell");
+        var dwell = Activator.CreateInstance(type)!;
+        bool Ready(ulong id, double now) => (bool)type.GetMethod("Observe")!.Invoke(dwell, [id, now])!;
+        void Reset() => type.GetMethod("Clear")!.Invoke(dwell, null);
+        Require(!Ready(1, 10) && !Ready(1, 10.999), "简介及其资源请求不能在同一项悬停满一秒前开始。");
+        Require(Ready(1, 11) && Ready(1, 11.1), "连续悬停满一秒才允许显示，同一项不能重复重置计时。");
+        Require(!Ready(2, 11.2) && !Ready(2, 12), "从已打开简介的物品移到另一个物品也须重新等待一秒。");
+        Require(!Ready(1, 12.1) && !Ready(1, 13), "快速扫过或返回旧项不能累积之前的悬停时间。");
+        Require(Ready(1, 13.1), "重入后连续停留一秒应正常显示。");
+        Require(!Ready(0, 14) && !Ready(1, 15) && !Ready(1, 15.9), "离开物品须清除计时，即使其简介已经缓存。");
+        Reset();
+        Require(!Ready(1, 20) && Ready(1, 21), "滚动、翻页或弹出其它窗口后必须重新等待。");
+    }
+
     private static void CheckTextsAndRouting()
     {
         var type = Type("STS2SkinChanger.Core.WorkshopDetailsText");
@@ -138,5 +155,13 @@ internal static class WorkshopMetadataTests
             "移入物品必须立即放大，不能等待放大动画。");
         Require(AccessTools.Method(panel, "BeginReturn") is { } shrink && Calls(shrink, "CreateTween") && !Calls(shrink, "Reparent"),
             "移出时缩小过渡应保留在浮动层，不能提前退回滚动裁剪区域。");
+        Require(!Calls(AccessTools.Method(panel, "Lift"), "Reparent") && !Calls(AccessTools.Method(panel, "RestoreItem"), "Reparent"),
+            "悬停不能通过重新挂载整棵物品节点抬升；这会同步重跑主题绑定、文字布局和背景初始化。");
+        Require(Calls(AccessTools.Method(panel, "Lift"), "set_TopLevel") && Calls(AccessTools.Method(panel, "RestoreItem"), "set_TopLevel"),
+            "物品需通过原生画布顶层模式绕过滚动裁剪，退场后恢复原布局，而非只修改 ZIndex。");
+        Require(!Calls(AccessTools.Method(panel, "Lift"), "set_Text") &&
+            !Calls(AccessTools.Method(panel, "Lift"), "LoadIntroduction") &&
+            Calls(AccessTools.Method(panel, "UpdateHover"), "Observe"),
+            "切项路径只抬升物品；文字布局和简介资源请求必须受一秒悬停计时控制。");
     }
 }

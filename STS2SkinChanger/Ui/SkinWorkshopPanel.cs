@@ -17,6 +17,7 @@ internal partial class SkinWorkshopPanel : Control
     private CancellationTokenSource? _pageToken;
     private Action? _refresh;
     private Node _origin = null!;
+    private bool _originConnected;
     private CanvasLayer _layer = null!;
     private GridContainer _rows = null!;
     private Label _pageLabel = null!;
@@ -104,6 +105,7 @@ internal partial class SkinWorkshopPanel : Control
         footer.AddChild(_next);
         InitializeHover();
         _origin.TreeExited += Close;
+        _originConnected = true;
         Rebuild();
     }
 
@@ -273,7 +275,7 @@ internal partial class SkinWorkshopPanel : Control
     {
         if (_closed) return; _closed = true;
         ResetHover();
-        if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;
+        DisconnectOrigin();
         _pageToken?.Cancel();
         _layer.Hide();
         _layer.QueueFree();
@@ -283,14 +285,21 @@ internal partial class SkinWorkshopPanel : Control
     {
         _closed = true;
         ResetHover();
+        LogHoverTiming();
         if (GodotObject.IsInstanceValid(_hoverTree)) _hoverTree!.ProcessFrame -= UpdateHover;
         _hoverTree = null;
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
         _window = null;
-        if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;
+        DisconnectOrigin();
         _pageToken?.Cancel(); _pageToken?.Dispose();
         _pageToken = null;
         _marquees.Clear();
+    }
+    private void DisconnectOrigin()
+    {
+        if (!_originConnected) return;
+        _originConnected = false;
+        if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;
     }
     private static Label Text(string text, int size = 20, bool accent = false)
     {
