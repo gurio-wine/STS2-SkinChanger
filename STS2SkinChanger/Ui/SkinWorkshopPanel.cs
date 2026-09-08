@@ -111,12 +111,11 @@ internal partial class SkinWorkshopPanel : Control
 
     private void Rebuild()
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         ResetHover();
         _pageToken?.Cancel(); _pageToken?.Dispose(); _pageToken = new();
         var token = _pageToken.Token;
         var generation = ++_generation;
-        foreach (var child in _rows.GetChildren()) { _rows.RemoveChild(child); child.QueueFree(); }
-        _actions.Clear(); _marquees.Clear(); _loadTags.Clear(); _metrics.Clear(); _hoverItems.Clear(); _emptyLabel = null;
         _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
         var filtered = FilteredItems();
         _filteredIds = filtered.Select(item => item.Id).ToArray();
@@ -124,44 +123,14 @@ internal partial class SkinWorkshopPanel : Control
         _page = Math.Clamp(_page, 0, pages - 1);
         _previous.Disabled = _page == 0; _next.Disabled = _page + 1 >= pages;
         _pageLabel.Text = $"{_page + 1} / {pages}";
-        if (filtered.Length == 0) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
+        if (_emptyLabel == null) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
+        _emptyLabel.Text = EmptyText;
+        _emptyLabel.Visible = filtered.Length == 0;
         var visible = filtered.Skip(_page * PageSize).Take(PageSize).ToArray();
-        var rows = new Dictionary<ulong, ItemVisual>();
-        foreach (var item in visible)
-        {
-            var slot = new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore,
-                CustomMinimumSize = new Vector2(0, 182) };
-            _rows.AddChild(slot);
-            var itemPanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            slot.AddChild(itemPanel); itemPanel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect); ModThemeRuntime.Panel(itemPanel);
-            itemPanel.MinimumSizeChanged += () => slot.CustomMinimumSize = new Vector2(0, Math.Max(182, itemPanel.GetCombinedMinimumSize().Y));
-            _hoverItems.Add(new(item.Id, slot, itemPanel));
-            AttachItemClick(itemPanel, item.Id);
-            // Decorative layout must pass clicks to the item; only actual tag
-            // and subscription buttons consume input independently.
-            var itemMargin = new MarginContainer { MouseFilter = MouseFilterEnum.Ignore }; itemPanel.AddChild(itemMargin);
-            foreach (var edge in new[] { "left", "right", "top", "bottom" }) itemMargin.AddThemeConstantOverride("margin_" + edge, 12);
-            var itemBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 158), MouseFilter = MouseFilterEnum.Ignore };
-            itemBox.AddThemeConstantOverride("separation", 8); itemMargin.AddChild(itemBox);
-            var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore }; row.AddThemeConstantOverride("separation", 14); itemBox.AddChild(row);
-            var cover = CreateCover(row, item.Id, out var placeholder);
-            var labels = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore }; row.AddChild(labels);
-            var title = CreateMarquee(itemPanel, labels, SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…", item.Id);
-            var tags = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore }; labels.AddChild(tags); AddTags(tags, item);
-            var controls = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore }; itemBox.AddChild(controls);
-            var status = Text("", 16); status.SizeFlagsHorizontal = SizeFlags.ExpandFill; status.ClipText = true; status.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; controls.AddChild(status);
-            var metric = Text(WorkshopSortPolicy.Metric(SkinWorkshopService.CachedDetails(item.Id), _sort, ModLocalization.CurrentLanguage), 16);
-            metric.ClipText = true; metric.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-            metric.SizeFlagsHorizontal = SizeFlags.ExpandFill; metric.HorizontalAlignment = HorizontalAlignment.Right;
-            controls.AddChild(metric); _metrics[item.Id] = metric;
-            var action = Button(WorkshopText.Get(WorkshopTextKey.Subscribe), () => PerformPrimary(item.Id));
-            action.CustomMinimumSize = new Vector2(100, 38); controls.AddChild(action);
-            var cancel = Button(WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribe), () => _ = Unsubscribe(item.Id));
-            cancel.CustomMinimumSize = new Vector2(120, 38); controls.AddChild(cancel);
-            _actions.Add((item.Id, status, action, cancel)); rows[item.Id] = new(title, cover, placeholder);
-        }
-        Poll();
+        var rows = BindRows(visible);
+        UpdateVisibleActions();
         _ = LoadDetails(visible.Select(i => i.Id).ToArray(), rows, generation, token);
+        RecordPageBuild(started);
     }
 
     private async Task LoadDetails(ulong[] ids, Dictionary<ulong, ItemVisual> rows, int generation, CancellationToken token)
@@ -173,7 +142,8 @@ internal partial class SkinWorkshopPanel : Control
             var covers = new List<Task>();
             foreach (var (id, detail) in details)
             {
-                var row = rows[id]; row.Title.Text = detail.Title;
+                if (!rows.TryGetValue(id, out var row) || !row.Binding.Matches(row.Ticket)) continue;
+                row.Title.Text = detail.Title;
                 if (_metrics.TryGetValue(id, out var metric)) metric.Text = WorkshopSortPolicy.Metric(detail, _sort, ModLocalization.CurrentLanguage);
                 covers.Add(LoadCover(detail.PreviewUrl, row, generation, token));
             }
@@ -186,7 +156,8 @@ internal partial class SkinWorkshopPanel : Control
     private async Task LoadCover(string url, ItemVisual row, int generation, CancellationToken token)
     {
         var texture = await WorkshopCoverCache.Get(url, token);
-        if (texture == null || token.IsCancellationRequested || generation != _generation || !GodotObject.IsInstanceValid(row.Cover)) return;
+        if (texture == null || token.IsCancellationRequested || generation != _generation ||
+            !row.Binding.Matches(row.Ticket) || !GodotObject.IsInstanceValid(row.Cover)) return;
         row.Cover.Texture = texture;
         row.Placeholder.Hide();
         RoundCover(row.Cover);
@@ -216,6 +187,12 @@ internal partial class SkinWorkshopPanel : Control
         }
     }
     private void Poll()
+    {
+        if (_closed) return;
+        UpdateVisibleActions();
+        PollFilters();
+    }
+    private void UpdateVisibleActions()
     {
         if (_closed) return;
         // The browser's CanvasLayer sits above the native UI. Yield to ALL native
@@ -256,7 +233,6 @@ internal partial class SkinWorkshopPanel : Control
             }
             catch { action.Disabled = true; cancel.Disabled = true; label.Text = WorkshopText.Get(WorkshopTextKey.Offline); }
         }
-        PollFilters();
     }
     private void HandleInput(InputEvent ev)
     {
@@ -286,6 +262,7 @@ internal partial class SkinWorkshopPanel : Control
         _closed = true;
         ResetHover();
         LogHoverTiming();
+        LogPageBuildTiming();
         if (GodotObject.IsInstanceValid(_hoverTree)) _hoverTree!.ProcessFrame -= UpdateHover;
         _hoverTree = null;
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;

@@ -5,7 +5,7 @@ namespace STS2SkinChanger.Ui;
 
 internal partial class SkinWorkshopPanel
 {
-    private sealed record ItemVisual(Label Title, TextureRect Cover, Panel Placeholder);
+    private sealed record ItemVisual(WorkshopItemBinding Binding, WorkshopItemTicket Ticket, Label Title, TextureRect Cover, Panel Placeholder);
     private sealed class Marquee(Control row, Control clip, Label label)
     {
         public readonly Control Row = row;
@@ -14,7 +14,7 @@ internal partial class SkinWorkshopPanel
         public ulong Started;
     }
     private readonly List<Marquee> _marquees = [];
-    private Label CreateMarquee(Control row, VBoxContainer labels, string text, ulong itemId)
+    private Label CreateMarquee(Control row, VBoxContainer labels, string text)
     {
         // Control, not Container: the title's full minimum width must not stretch
         // either grid column. Clip only the title, never the interactive tags below.
@@ -25,7 +25,7 @@ internal partial class SkinWorkshopPanel
         ModThemeRuntime.Bind(clip, "title_height", theme => clip.CustomMinimumSize = new Vector2(0, 38 * theme.FontScale));
         return label;
     }
-    private TextureRect CreateCover(HBoxContainer row, ulong itemId, out Panel placeholder)
+    private TextureRect CreateCover(HBoxContainer row, out Panel placeholder)
     {
         var host = new Control { CustomMinimumSize = new Vector2(144, 100), SizeFlagsVertical = SizeFlags.ShrinkBegin, MouseFilter = MouseFilterEnum.Ignore };
         row.AddChild(host);
@@ -48,6 +48,7 @@ internal partial class SkinWorkshopPanel
         var focus = GetViewport().GuiGetFocusOwner();
         foreach (var item in _marquees)
         {
+            if (!item.Row.IsVisibleInTree()) continue;
             var overflow = Math.Max(0, item.Label.GetMinimumSize().X - item.Clip.Size.X + 6);
             var hovered = item.Row.GetGlobalRect().HasPoint(mouse) || focus != null && item.Row.IsAncestorOf(focus);
             if (!hovered || overflow <= 6)

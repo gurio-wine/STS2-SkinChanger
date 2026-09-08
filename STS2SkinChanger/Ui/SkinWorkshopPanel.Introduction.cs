@@ -87,12 +87,13 @@ internal partial class SkinWorkshopPanel
         _introDescriptionHost.AddChild(_introDescription); _introDescription.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
     }
 
-    private void AttachItemClick(PanelContainer panel, ulong id)
+    private void AttachItemClick(PanelContainer panel, WorkshopItemBinding binding)
     {
         panel.MouseFilter = MouseFilterEnum.Stop;
         panel.MouseDefaultCursorShape = CursorShape.PointingHand;
         panel.FocusMode = FocusModeEnum.All;
         var armed = false;
+        var ticket = default(WorkshopItemTicket);
         var pressedAt = Vector2.Zero;
         panel.MouseExited += () => armed = false;
         panel.GuiInput += ev =>
@@ -112,19 +113,19 @@ internal partial class SkinWorkshopPanel
                 panel.AcceptEvent();
                 if (click.Pressed)
                 {
-                    armed = true; pressedAt = panel.GetGlobalMousePosition(); panel.GrabFocus();
+                    armed = true; ticket = binding.Capture(); pressedAt = panel.GetGlobalMousePosition(); panel.GrabFocus();
                 }
                 else
                 {
-                    var open = armed && panel.GetGlobalRect().HasPoint(panel.GetGlobalMousePosition()) &&
+                    var open = armed && binding.Matches(ticket) && panel.GetGlobalRect().HasPoint(panel.GetGlobalMousePosition()) &&
                         pressedAt.DistanceTo(panel.GetGlobalMousePosition()) <= 8;
                     armed = false;
-                    if (open) OpenItem(id);
+                    if (open) OpenItem(binding.Id);
                 }
             }
             else if (ev is InputEventMouseMotion && pressedAt.DistanceTo(panel.GetGlobalMousePosition()) > 8) armed = false;
             else if (panel.HasFocus() && ev.IsActionPressed("ui_accept") && !ev.IsEcho())
-            { panel.AcceptEvent(); OpenItem(id); }
+            { panel.AcceptEvent(); OpenItem(binding.Id); }
         };
     }
 

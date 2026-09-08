@@ -1773,6 +1773,7 @@ Require(
     cleanupFailures[0].Exception.Message == "fixture failure",
     "分阶段清理必须保留准确的失败阶段与异常，供日志定位而不能吞掉原因。");
 
+WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
 internal static class DirectCharacterRuntimeFixture

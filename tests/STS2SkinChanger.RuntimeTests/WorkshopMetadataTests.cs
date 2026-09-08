@@ -163,5 +163,7 @@ internal static class WorkshopMetadataTests
             !Calls(AccessTools.Method(panel, "Lift"), "LoadIntroduction") &&
             Calls(AccessTools.Method(panel, "UpdateHover"), "Observe"),
             "切项路径只抬升物品；文字布局和简介资源请求必须受一秒悬停计时控制。");
+        Require(!Calls(AccessTools.Method(panel, "Rebuild"), "RemoveChild") && !Calls(AccessTools.Method(panel, "Rebuild"), "QueueFree"),
+            "翻页/筛选不能销毁整页控件并重新初始化主题，必须复用页内的物品槽位。");
     }
 }

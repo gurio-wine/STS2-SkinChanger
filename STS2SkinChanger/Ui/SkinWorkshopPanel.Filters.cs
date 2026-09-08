@@ -91,28 +91,42 @@ internal partial class SkinWorkshopPanel
         _targetPicker.SetOptions(ids, _target);
         _loadPicker.SetOptions(WorkshopLoadTags.FilterOptions, _loadFilter);
     }
-    private void AddTags(HFlowContainer flow, WorkshopCatalogItem item)
+    private void BindTags(RowView row, WorkshopCatalogItem item)
     {
-        Button Tag(string title, Action select)
+        var choices = new List<(string Title, Action Select)>
         {
-            var button = Button(title, select);
-            button.CustomMinimumSize = new Vector2(0, 30);
-            button.ClipText = true;
-            button.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-            button.TooltipText = title;
-            button.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
-            ModThemeRuntime.TextControl(button, 15);
-            ModThemeRuntime.Bind(button, "tag_width", theme => button.CustomMinimumSize = new Vector2(
-                Math.Clamp(button.GetThemeFont("font").GetStringSize(button.Text, fontSize: (int)(15 * theme.FontScale)).X + 24, 48, 190 * theme.FontScale), 30 * theme.FontScale));
-            flow.AddChild(button);
-            return button;
-        }
-        _loadTags[item.Id] = Tag(WorkshopLoadTags.Name(SkinWorkshopService.LoadTag(item)), () => SetLoadFilter(SkinWorkshopService.LoadTag(item)));
-        UpdateLoadTag(item, _loadTags[item.Id]);
+            (WorkshopLoadTags.Name(SkinWorkshopService.LoadTag(item)), () => SetLoadFilter(SkinWorkshopService.LoadTag(item)))
+        };
         var targets = item.Targets.Where(WorkshopBrowserPolicy.VisibleTarget).ToArray();
-        foreach (var kind in targets.Select(t => t.Kind).Distinct()) Tag(WorkshopText.Kind(kind), () => SetFilter(kind, ""));
+        foreach (var kind in targets.Select(t => t.Kind).Distinct()) choices.Add((WorkshopText.Kind(kind), () => SetFilter(kind, "")));
         foreach (var target in targets.Where(t => t.Kind == "character" || t.Kind == _kind && t.Target == _target).Distinct())
-            Tag(_names.Name(target.Kind, target.Target), () => SetFilter(target.Kind, target.Target));
+            choices.Add((_names.Name(target.Kind, target.Target), () => SetFilter(target.Kind, target.Target)));
+        while (row.TagSlots.Count < choices.Count)
+        {
+            var tag = new TagView();
+            tag.Button = BoundButton(row.Binding, "", () => tag.Select?.Invoke());
+            tag.Button.ClipText = true; tag.Button.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+            tag.Button.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
+            ModThemeRuntime.TextControl(tag.Button, 15);
+            ModThemeRuntime.Bind(tag.Button, "tag_width", theme => RefreshTagWidth(tag.Button, theme.FontScale));
+            row.Tags.AddChild(tag.Button); row.TagSlots.Add(tag);
+        }
+        for (var index = 0; index < row.TagSlots.Count; index++)
+        {
+            var tag = row.TagSlots[index];
+            tag.Button.Visible = index < choices.Count;
+            tag.Select = index < choices.Count ? choices[index].Select : null;
+            if (index >= choices.Count) continue;
+            tag.Button.Text = choices[index].Title; tag.Button.TooltipText = choices[index].Title;
+            RefreshTagWidth(tag.Button, ModThemeRuntime.Current.FontScale);
+        }
+        _loadTags[item.Id] = row.TagSlots[0].Button;
+        UpdateLoadTag(item, _loadTags[item.Id]);
+    }
+    private static void RefreshTagWidth(Button button, float scale)
+    {
+        button.CustomMinimumSize = new Vector2(Math.Clamp(
+            button.GetThemeFont("font").GetStringSize(button.Text, fontSize: (int)(15 * scale)).X + 24, 48, 190 * scale), 30 * scale);
     }
     private static void UpdateLoadTag(WorkshopCatalogItem item, Button button)
     {
@@ -122,8 +136,7 @@ internal partial class SkinWorkshopPanel
         button.Text = WorkshopLoadTags.Name(tag);
         button.TooltipText = button.Text;
         ModThemeRuntime.TextControl(button, 15, accent: tag == "restart");
-        var scale = ModThemeRuntime.Current.FontScale;
-        button.CustomMinimumSize = new Vector2(Math.Clamp(button.GetThemeFont("font").GetStringSize(button.Text, fontSize: (int)(15 * scale)).X + 24, 48, 190 * scale), 30 * scale);
+        RefreshTagWidth(button, ModThemeRuntime.Current.FontScale);
     }
     private void PollFilters()
     {
