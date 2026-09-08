@@ -283,6 +283,8 @@ internal partial class SkinWorkshopPanel : Control
     {
         _closed = true;
         ResetHover();
+        if (GodotObject.IsInstanceValid(_hoverTree)) _hoverTree!.ProcessFrame -= UpdateHover;
+        _hoverTree = null;
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
         _window = null;
         if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;

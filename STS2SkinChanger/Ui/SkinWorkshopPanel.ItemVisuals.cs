@@ -44,7 +44,6 @@ internal partial class SkinWorkshopPanel
     private void AnimateTitles()
     {
         if (_closed || _suspended || !IsVisibleInTree()) return;
-        UpdateHover();
         var mouse = GetGlobalMousePosition();
         var focus = GetViewport().GuiGetFocusOwner();
         foreach (var item in _marquees)

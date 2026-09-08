@@ -12,6 +12,7 @@ internal static class WorkshopMetadataTests
 
     public static void Run()
     {
+        WorkshopCarouselTests.Run();
         CheckSorting();
         CheckSteamFieldMapping();
         CheckIntroduction();
@@ -128,5 +129,14 @@ internal static class WorkshopMetadataTests
             Calls(AccessTools.Method(panel, "UpdateHover"), "CancelIntroduction") &&
             Calls(AccessTools.Method(panel, "IntroductionCurrent"), "CanDisplay"),
             "鼠标移动离项须立即隐藏简介，异步详情/图片返回前须再次核对悬停项。");
+        Require(Calls(AccessTools.Method(panel, "InitializeHover"), "add_ProcessFrame") &&
+            Calls(AccessTools.Method(panel, "Cleanup"), "remove_ProcessFrame"),
+            "悬停应每帧更新，关闭面板须解除帧事件，不能依赖低频走马灯计时器。");
+        Require(!Calls(AccessTools.Method(panel, "Lift"), "set_ShadowSize") && !Calls(AccessTools.Method(panel, "Lift"), "set_ShadowOffset"),
+            "抬起物品不能在主题面板外额外套厚重阴影边缘。");
+        Require(!Calls(AccessTools.Method(panel, "Lift"), "CreateTween") && Calls(AccessTools.Method(panel, "Lift"), "set_Scale"),
+            "移入物品必须立即放大，不能等待放大动画。");
+        Require(AccessTools.Method(panel, "BeginReturn") is { } shrink && Calls(shrink, "CreateTween") && !Calls(shrink, "Reparent"),
+            "移出时缩小过渡应保留在浮动层，不能提前退回滚动裁剪区域。");
     }
 }

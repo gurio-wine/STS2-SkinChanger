@@ -19,18 +19,14 @@ internal partial class SkinWorkshopPanel
     private Label _introPage = null!;
     private TextureRect _introImage = null!;
     private Control _introImageHost = null!;
-    private Tween? _liftTween;
+    private SceneTree? _hoverTree;
+    private WorkshopCarousel<Texture2D>? _carousel;
+    private readonly Dictionary<HoverItem, Tween> _returnTweens = [];
     private CancellationTokenSource? _introToken;
     private int _introGeneration;
-    private int _imageGeneration;
     private int _hoverPopups;
     private bool _hoverKeyboard;
-    private bool _imageBusy;
-    private double _introAt;
-    private double _nextImageAt;
     private bool _introRequested;
-    private int _imageIndex;
-    private string[] _introImages = [];
 
     private void InitializeHover()
     {
@@ -39,6 +35,8 @@ internal partial class SkinWorkshopPanel
         _floatingItems = new Control { MouseFilter = MouseFilterEnum.Ignore, ClipContents = false };
         AddChild(_floatingItems); _floatingItems.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         CreateIntroduction();
+        _hoverTree = GetTree();
+        _hoverTree.ProcessFrame += UpdateHover;
     }
 
     private void KeepHoverBelow(OptionButton picker)
@@ -139,13 +137,14 @@ internal partial class SkinWorkshopPanel
         var clip = _listScroll.GetGlobalRect();
         return _hoverItems.FirstOrDefault(item => item.Slot.GetGlobalRect().Intersects(clip) &&
             (_hoverKeyboard ? focus != null && (focus == item.Panel || item.Panel.IsAncestorOf(focus)) :
-                clip.Grow(8).HasPoint(mouse) && item.Panel.GetGlobalRect().HasPoint(mouse)));
+                clip.Grow(8).HasPoint(mouse) && (item.Slot.GetGlobalRect().HasPoint(mouse) ||
+                    item == _lifted && item.Panel.GetGlobalRect().HasPoint(mouse))));
     }
 
     private void UpdateHover()
     {
-        if (_hoverPopups > 0 || _closed || _suspended) return;
-        var now = Time.GetTicksMsec() / 1000d;
+        if (_hoverPopups > 0 || _closed || _suspended || !IsVisibleInTree()) return;
+        foreach (var item in _returnTweens.Keys) PositionLift(item);
         var candidate = HoveredItem();
         if (!WorkshopHoverPolicy.CanDisplay(candidate?.Id ?? 0, _lifted?.Id ?? 0, false) && _introToken != null)
             CancelIntroduction();
@@ -153,10 +152,10 @@ internal partial class SkinWorkshopPanel
         // silently swallow a subscribe/tag click. Hide the intro immediately on
         // exit, but defer restoring/moving the actual controls until release.
         if (Input.IsMouseButtonPressed(MouseButton.Left)) return;
-        if (candidate != _lifted || candidate != null && _introToken == null) Lift(candidate, now);
+        if (candidate != _lifted || candidate != null && _introToken == null) Lift(candidate);
         if (_lifted is not { } active) return;
         PositionLift(active);
-        if (!_introRequested && now - _introAt >= .22)
+        if (!_introRequested)
         {
             _introRequested = true;
             _intro.Show(); PositionIntroduction();
@@ -166,51 +165,73 @@ internal partial class SkinWorkshopPanel
         {
             PositionIntroduction();
             if (SkinWorkshopService.CachedDetails(active.Id) is { } details) _introTitle.Text = details.Title;
-            if (_introImages.Length > 1 && !_imageBusy && now >= _nextImageAt && !InstantHover) StepImage(1);
+            _carousel?.Tick(!InstantHover);
         }
     }
 
     private static bool InstantHover => SaveManager.Instance?.PrefsSave?.FastMode == FastModeType.Instant;
 
-    private void Lift(HoverItem? item, double now)
+    private void Lift(HoverItem? item)
     {
-        RestoreLift();
+        if (_lifted is { } previous) BeginReturn(previous);
         CancelIntroduction();
         _lifted = item;
         if (item == null) return;
-        _introAt = now; _introRequested = false; _introToken = new();
+        if (_returnTweens.Remove(item, out var returning)) returning.Kill();
+        _introRequested = false; _introToken = new();
         _introTitle.Text = SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…";
         _introDescription.Text = "…"; _introImage.Texture = null; _introImageStatus.Text = "…"; _introImageStatus.Show();
-        _introImages = []; _introPage.Hide();
+        _introPage.Hide();
         var focus = GetViewport().GuiGetFocusOwner();
         var keepFocus = focus != null && (focus == item.Panel || item.Panel.IsAncestorOf(focus));
-        item.Panel.Reparent(_floatingItems, false);
+        if (item.Panel.GetParent() != _floatingItems) item.Panel.Reparent(_floatingItems, false);
+        _floatingItems.MoveChild(item.Panel, -1);
         item.Panel.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        item.Panel.Scale = Vector2.One * 1.025f;
         PositionLift(item);
         item.Panel.PivotOffset = item.Panel.Size * .5f;
-        if (item.Panel.GetThemeStylebox("panel") is StyleBoxFlat style)
-        { style.ShadowColor = new Color(0, 0, 0, .3f); style.ShadowSize = 6; style.ShadowOffset = new Vector2(0, 5); }
+        // Preserve one themed surface/border. A displaced StyleBox shadow drawn
+        // above the backdrop makes the enlarged item look like two stacked cards.
         if (keepFocus) focus!.GrabFocus();
-        if (InstantHover) item.Panel.Scale = Vector2.One * 1.025f;
-        else
+    }
+
+    private void BeginReturn(HoverItem item)
+    {
+        if (InstantHover) { RestoreItem(item); return; }
+        if (_returnTweens.Remove(item, out var previous)) previous.Kill();
+        var tween = item.Panel.CreateTween().SetIgnoreTimeScale().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+        _returnTweens[item] = tween;
+        tween.TweenProperty(item.Panel, "scale", Vector2.One, .12);
+        tween.Finished += () =>
         {
-            _liftTween = item.Panel.CreateTween().SetIgnoreTimeScale().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
-            _liftTween.TweenProperty(item.Panel, "scale", Vector2.One * 1.025f, .16);
-        }
+            if (_returnTweens.TryGetValue(item, out var current) && current == tween)
+            {
+                _returnTweens.Remove(item);
+                if (item != _lifted) RestoreItem(item);
+            }
+        };
     }
 
     private void PositionLift(HoverItem item)
     {
         item.Panel.Size = item.Slot.Size;
         item.Panel.PivotOffset = item.Panel.Size * .5f;
-        var position = item.Slot.GlobalPosition - new Vector2(0, 3);
+        var amount = Math.Clamp((item.Panel.Scale.X - 1) / .025f, 0, 1);
+        var position = item.Slot.GlobalPosition - new Vector2(0, 3 * amount);
         item.Panel.Position = _floatingItems.GetGlobalTransform().AffineInverse() * position;
     }
 
     private void RestoreLift()
     {
-        _liftTween?.Kill(); _liftTween = null;
-        if (_lifted is { } old && IsInsideTree() && !IsQueuedForDeletion() &&
+        foreach (var (item, tween) in _returnTweens) { tween.Kill(); RestoreItem(item); }
+        _returnTweens.Clear();
+        if (_lifted is { } old) RestoreItem(old);
+        _lifted = null;
+    }
+
+    private void RestoreItem(HoverItem old)
+    {
+        if (IsInsideTree() && !IsQueuedForDeletion() &&
             GodotObject.IsInstanceValid(_layer) && !_layer.IsQueuedForDeletion() &&
             GodotObject.IsInstanceValid(old.Panel) && GodotObject.IsInstanceValid(old.Slot) &&
             !old.Panel.IsQueuedForDeletion() && !old.Slot.IsQueuedForDeletion())
@@ -218,12 +239,10 @@ internal partial class SkinWorkshopPanel
             var focus = GetViewport()?.GuiGetFocusOwner();
             var keepFocus = focus != null && (focus == old.Panel || old.Panel.IsAncestorOf(focus));
             old.Panel.Scale = Vector2.One;
-            if (old.Panel.GetThemeStylebox("panel") is StyleBoxFlat style) style.ShadowSize = 0;
             old.Panel.Reparent(old.Slot, false);
             old.Panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             if (keepFocus && old.Panel.IsInsideTree()) focus!.GrabFocus();
         }
-        _lifted = null;
     }
 
     private void PositionIntroduction()
@@ -247,10 +266,21 @@ internal partial class SkinWorkshopPanel
             if (!IntroductionCurrent(generation, token)) return;
             _introDescription.Text = !detail.Available ? WorkshopDetailsText.Get(WorkshopDetailsTextKey.LoadFailed) :
                 detail.Description.Length > 0 ? detail.Description : WorkshopDetailsText.Get(WorkshopDetailsTextKey.NoDescription);
-            _introImages = detail.Images;
-            _imageIndex = 0; _introPage.Visible = _introImages.Length > 1;
-            if (_introImages.Length == 0) _introImageStatus.Text = WorkshopDetailsText.Get(WorkshopDetailsTextKey.ImageUnavailable);
-            else StepImage(0);
+            _introPage.Visible = detail.Images.Length > 1;
+            if (detail.Images.Length == 0) _introImageStatus.Text = WorkshopDetailsText.Get(WorkshopDetailsTextKey.ImageUnavailable);
+            else
+            {
+                _carousel = new(WorkshopCoverCache.GetPreview, (texture, index, count) =>
+                {
+                    if (!IntroductionCurrent(generation, token)) return;
+                    _introImage.Texture = texture;
+                    _introPage.Text = $"{index + 1} / {count}";
+                    if (texture != null) { _introImageStatus.Hide(); RoundCover(_introImage); }
+                    else _introImageStatus.Text = WorkshopDetailsText.Get(WorkshopDetailsTextKey.ImageUnavailable);
+                }, () => Time.GetTicksMsec() / 1000d);
+                _carousel.Start(detail.Images, token);
+                _carousel.Tick(!InstantHover);
+            }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { ModLog.Info("工坊简介显示失败：" + ex.Message); }
@@ -261,40 +291,11 @@ internal partial class SkinWorkshopPanel
         generation == _introGeneration && GodotObject.IsInstanceValid(_intro) &&
         WorkshopHoverPolicy.CanDisplay(HoveredItem()?.Id ?? 0, _lifted?.Id ?? 0, false);
 
-    private void StepImage(int step)
-    {
-        if (_introImages.Length == 0 || _introToken == null) return;
-        _imageIndex = (_imageIndex + step + _introImages.Length) % _introImages.Length;
-        _introPage.Text = $"{_imageIndex + 1} / {_introImages.Length}";
-        _nextImageAt = Time.GetTicksMsec() / 1000d + 4;
-        _ = LoadIntroductionImage(_introImages[_imageIndex], _introGeneration, ++_imageGeneration, _introToken.Token);
-    }
-
-    private async Task LoadIntroductionImage(string url, int generation, int imageGeneration, CancellationToken token)
-    {
-        _imageBusy = true; _introImage.Texture = null; _introImageStatus.Text = "…"; _introImageStatus.Show();
-        try
-        {
-            var texture = await WorkshopCoverCache.GetPreview(url, token);
-            if (!IntroductionCurrent(generation, token) || imageGeneration != _imageGeneration) return;
-            _introImage.Texture = texture;
-            if (texture != null) { _introImageStatus.Hide(); RoundCover(_introImage); }
-            else _introImageStatus.Text = WorkshopDetailsText.Get(WorkshopDetailsTextKey.ImageUnavailable);
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { ModLog.Info("工坊轮播图显示失败：" + ex.Message); }
-        finally
-        {
-            if (generation == _introGeneration && imageGeneration == _imageGeneration)
-            { _imageBusy = false; _nextImageAt = Time.GetTicksMsec() / 1000d + 4; }
-        }
-    }
-
     private void CancelIntroduction()
     {
-        _introGeneration++; _imageGeneration++;
+        _introGeneration++;
+        _carousel?.Clear(); _carousel = null;
         _introToken?.Cancel(); _introToken?.Dispose(); _introToken = null;
-        _imageBusy = false;
         if (GodotObject.IsInstanceValid(_intro)) { _intro.Hide(); _introImage.Texture = null; }
     }
 
