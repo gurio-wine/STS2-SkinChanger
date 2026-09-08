@@ -1131,17 +1131,7 @@ internal static partial class SkinService
                     GetVisualSelections());
                 InitializeMonsterSkinCategoriesAfterModels();
                 InitializeEventSkinCategoriesAfterModels();
-                var cards = ModelDb.AllCards.ToArray();
-                var entries = cards.Select(card => new CardCatalogEntry(
-                        card.GetType().Name,
-                        FrameworkCardVisualGuard.GetBaselinePortraitPath(card),
-                        GetCardPoolGroupId(card),
-                        GetCardCatalogGroupId(card),
-                        GetCardFilterGroupId(card))
-                    {
-                        IsCharacterPool = IsCharacterCardPool(card)
-                    })
-                    .ToArray();
+                var entries = BuildCardCatalogEntries(ModelDb.AllCards);
 
                 Catalog.FinalizeCardGroups(entries);
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
@@ -1166,6 +1156,26 @@ internal static partial class SkinService
                 ModLog.Error("按卡牌总览分类卡牌皮肤失败：" + exception);
             }
         }
+    }
+
+    private static CardCatalogEntry[] BuildCardCatalogEntries(IEnumerable<CardModel> cards)
+    {
+        var entries = new List<CardCatalogEntry>();
+        foreach (var card in cards)
+        {
+            try
+            {
+                if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var path)) continue;
+                entries.Add(new CardCatalogEntry(card.GetType().Name, path,
+                    GetCardPoolGroupId(card), GetCardCatalogGroupId(card), GetCardFilterGroupId(card))
+                { IsCharacterPool = IsCharacterCardPool(card) });
+            }
+            catch (Exception exception)
+            {
+                FrameworkCardVisualGuard.ReportCardReadFailure(card, exception);
+            }
+        }
+        return entries.ToArray();
     }
 
     private static void InitializeMonsterSkinCategoriesAfterModels()
@@ -3059,7 +3069,7 @@ internal static partial class SkinService
         if (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
             if (lookup.Options.Count == 0) return null;
-            var originalPath = FrameworkCardVisualGuard.GetBaselinePortraitPath(card);
+            if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var originalPath)) return null;
             return new CardPortraitRequest(
                 lookup.GroupId,
                 selection,
@@ -3088,7 +3098,7 @@ internal static partial class SkinService
                 WrapAtlas: true);
         }
 
-        var baselinePath = FrameworkCardVisualGuard.GetBaselinePortraitPath(card);
+        if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var baselinePath)) return null;
         var selectedProviderPath = SelectProviderCardPath(
             optionLookup.MatchedAssetPaths,
             card,
@@ -3252,12 +3262,22 @@ internal static partial class SkinService
         }
     }
 
-    private static CardLookup GetCardLookup(CardModel card) =>
-        _cardLookupCache.GetValue(card, ResolveCardLookup);
+    private static CardLookup GetCardLookup(CardModel card)
+    {
+        var lookup = _cardLookupCache.GetValue(card, ResolveCardLookup);
+        if (lookup.BaselineUnavailable) _cardLookupCache.Remove(card);
+        return lookup;
+    }
 
     private static CardLookup ResolveCardLookup(CardModel card)
     {
         var poolGroupId = GetCardPoolGroupId(card);
+        // Failure to read an intrinsic Mod-card profile is not evidence of skin ownership.
+        // In particular, do not fall back to a vanilla path or suppress the framework for it.
+        if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out _))
+            return new CardLookup(poolGroupId, card.GetType().Name, null, [],
+                new Dictionary<string, CardOptionLookup>(StringComparer.OrdinalIgnoreCase), [])
+            { BaselineUnavailable = true };
         var filterGroupId = GetCardFilterGroupId(card);
         string groupId;
         if (!filterGroupId.Equals(poolGroupId, StringComparison.OrdinalIgnoreCase) &&
@@ -3664,7 +3684,8 @@ internal static partial class SkinService
 
     private static bool CardArtMatches(string assetPath, CardModel card)
     {
-        var portraitIdentity = CardPortraitIdentity(FrameworkCardVisualGuard.GetBaselinePortraitPath(card));
+        if (!FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var path)) return false;
+        var portraitIdentity = CardPortraitIdentity(path);
         var poolGroupId = GetCardPoolGroupId(card);
         var assetIdentity = CardPortraitIdentity(
             assetPath,
@@ -5987,7 +6008,10 @@ internal static partial class SkinService
         CardSkinGroup? Group,
         IReadOnlyList<CardSkinOption> Options,
         IReadOnlyDictionary<string, CardOptionLookup> OptionsById,
-        IReadOnlyList<CardSkinGroup> PriorityGroups);
+        IReadOnlyList<CardSkinGroup> PriorityGroups)
+    {
+        public bool BaselineUnavailable { get; init; }
+    }
 
     private sealed record CardOptionLookup(
         CardSkinOption Option,

@@ -28,9 +28,7 @@ internal static partial class SkinService
                 gamePack = _workshopGamePack;
                 if (baseline == null || gamePack == null) return WorkshopLoadReason.ChangedFiles;
                 if (!WorkshopSourcesUnchanged()) return WorkshopLoadReason.ChangedFiles;
-                cards = ModelDb.AllCards.Select(card => new CardCatalogEntry(card.GetType().Name, FrameworkCardVisualGuard.GetBaselinePortraitPath(card),
-                    GetCardPoolGroupId(card), GetCardCatalogGroupId(card), GetCardFilterGroupId(card))
-                { IsCharacterPool = IsCharacterCardPool(card) }).ToArray();
+                cards = BuildCardCatalogEntries(ModelDb.AllCards);
             }
             var gameVersion = (HarmonyLib.AccessTools.Field(typeof(MegaCrit.Sts2.Core.Modding.ModManager), "_gameVersion")?.GetValue(null))?.ToString();
             var loaded = MegaCrit.Sts2.Core.Modding.ModManager.Mods

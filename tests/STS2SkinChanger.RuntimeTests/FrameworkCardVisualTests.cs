@@ -14,6 +14,8 @@ internal static class FrameworkCardVisualTests
     private static readonly Type Service = Mod.GetType("STS2SkinChanger.Core.SkinService", true)!;
     private static object? _characterOverrides;
     private static bool _throwPortrait;
+    private static CardModel? _brokenCard;
+    private static int _brokenReads;
 
     public static void Run(string frameworkPath)
     {
@@ -114,6 +116,42 @@ internal static class FrameworkCardVisualTests
                 Require(card.Rarity == MegaCrit.Sts2.Core.Entities.Cards.CardRarity.Status,
                     "外观隔离不能修改卡牌真实稀有度。");
             }
+            // A third-party intrinsic profile with a missing binary API must not abort the
+            // catalog or make SC claim that card. Healthy cards on both sides stay available.
+            var collect = AccessTools.Method(Service, "BuildCardCatalogEntries");
+            Require(collect != null, "分类缺少逐卡故障隔离，一张不兼容的 Mod 卡牌仍会中断全部分类。");
+            _brokenCard = modCard;
+            _brokenReads = 0;
+            catalogProperty.SetValue(null, null);
+            cache.SetValue(null, Activator.CreateInstance(cache.FieldType));
+            var entries = (Array)collect!.Invoke(null, [new CardModel[] { card, modCard, uncovered }])!;
+            var names = entries.Cast<object>().Select(entry => (string)AccessTools.Property(entry.GetType(), "TypeName").GetValue(entry)!).ToArray();
+            Require(names.SequenceEqual(new[] { "Infection", "Burn" }),
+                "坏卡必须单独跳过，前后的正常牌不能丢失，也不能伪造原皮路径。");
+            Require(_brokenReads == 1, "单次分类只应读取一次故障卡图。");
+            var optionGroup = ((IList)AccessTools.Field(catalog.GetType(), "_cardGroups").GetValue(catalog)!)[0]!;
+            var portraitOption = ((IList)AccessTools.Property(optionGroup.GetType(), "Options").GetValue(optionGroup)!)[0]!;
+            ((IDictionary)AccessTools.Property(portraitOption.GetType(), "NormalPortraits").GetValue(portraitOption)!)
+                .Add(modCard.GetType().Name, "res://selected/mod-card.png");
+            catalogProperty.SetValue(null, catalog);
+            cache.SetValue(null, Activator.CreateInstance(cache.FieldType));
+            Require(!(bool)AccessTools.Method(Service, "HasCardSkin").Invoke(null, [modCard])!,
+                "读取失败的 Mod 卡牌不应被本 Mod 接管。");
+            Require(AccessTools.Method(Service, "ResolveCardPortraitRequest").Invoke(null, [modCard]) == null,
+                "故障卡不能产生空路径贴图请求。");
+            Require(card.PortraitPath == original && !HasContextStyle(card),
+                "故障卡不能破坏正常卡牌的外观所有权。");
+            try
+            {
+                _ = modCard.PortraitPath;
+                throw new InvalidOperationException("本 Mod 不得吞掉游戏原始调用的外部接口错误。");
+            }
+            catch (MissingMethodException) { }
+            _brokenCard = null;
+            entries = (Array)collect.Invoke(null, [new CardModel[] { card, modCard, uncovered }])!;
+            Require(entries.Length == 3, "一次读取失败不能永久抹掉后来恢复的卡牌。");
+            Require((bool)AccessTools.Method(Service, "HasCardSkin").Invoke(null, [modCard])!,
+                "不能将读取异常缓存成无皮肤，否则配置恢复后仍无法换肤。");
             Console.WriteLine("Framework card visuals passed with " + framework.GetName().Version +
                 ": clean baseline, default/portrait/frame ownership, uncovered cards and unchanged rarity.");
         }
@@ -125,6 +163,7 @@ internal static class FrameworkCardVisualTests
             cache.SetValue(null, oldCache);
             _characterOverrides = null;
             _throwPortrait = false;
+            _brokenCard = null;
         }
     }
 
@@ -204,7 +243,15 @@ internal static class FrameworkCardVisualTests
     private static bool CharacterPrefix(ref object __result) { __result = _characterOverrides!; return false; }
     private static bool ExistsPrefix(ref bool __result) { __result = true; return false; }
     private static bool LogPrefix(string __0) { Console.WriteLine(__0); return false; }
-    private static void ThrowPortraitPrefix() { if (_throwPortrait) throw new TestPortraitException(); }
+    private static void ThrowPortraitPrefix(CardModel __instance)
+    {
+        if (ReferenceEquals(__instance, _brokenCard))
+        {
+            _brokenReads++;
+            throw new MissingMethodException("Fixture.CardAssetProfile..ctor(old signature)");
+        }
+        if (_throwPortrait) throw new TestPortraitException();
+    }
     private sealed class TestPortraitException : Exception;
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 

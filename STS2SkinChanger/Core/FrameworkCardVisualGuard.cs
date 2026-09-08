@@ -14,6 +14,7 @@ internal static class FrameworkCardVisualGuard
     private static readonly object Sync = new();
     private static readonly Harmony Harmony = new(Entry.ModId + ".FrameworkCardVisualGuard");
     private static readonly HashSet<MethodBase> Patched = [];
+    private static readonly HashSet<(Assembly Assembly, string Error)> ReportedCardFailures = [];
     private static volatile bool _discoveryDirty = true;
     private static int _reportedLookupFailure;
     [ThreadStatic] private static CardModel? _baselineCard;
@@ -58,6 +59,33 @@ internal static class FrameworkCardVisualGuard
         _baselineCard = card;
         try { return card.PortraitPath; }
         finally { _baselineCard = previous; }
+    }
+
+    internal static bool TryGetBaselinePortraitPath(CardModel card, out string path)
+    {
+        try
+        {
+            path = GetBaselinePortraitPath(card);
+            return !string.IsNullOrWhiteSpace(path);
+        }
+        catch (Exception exception)
+        {
+            ReportCardReadFailure(card, exception);
+            path = string.Empty;
+            return false;
+        }
+    }
+
+    internal static void ReportCardReadFailure(CardModel card, Exception exception)
+    {
+        var type = card.GetType();
+        var cause = exception.GetBaseException();
+        // One incompatible base profile may affect hundreds of derived cards. Deduplicate
+        // the diagnostic, not the result: a later successful read must still be usable.
+        lock (Sync)
+            if (!ReportedCardFailures.Add((type.Assembly, cause.GetType().FullName + ":" + cause.Message))) return;
+        ModLog.Warn($"跳过无法读取外观定义的卡牌 {type.FullName}（{type.Assembly.GetName().Name}）；" +
+                    "继续处理其它卡牌，不修改该卡的原始资源定义。此保护不代表其依赖兼容问题已解决：" + cause);
     }
 
     private static bool CharacterOverridePrefix(CardModel __0, ref object? __result)
