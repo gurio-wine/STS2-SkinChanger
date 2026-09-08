@@ -17,6 +17,17 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-provider-compatibility")
+{
+    ProviderCompatibilityTests.Run();
+    return;
+}
+if (args.Length == 2 && args[0] == "--audit-provider-compatibility")
+{
+    ProviderCompatibilityTests.Audit(args[1]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-provider-toolbars")
 {
     ProviderToolbarTests.Run();
@@ -269,6 +280,7 @@ ScopedSkinBehaviorTests.Run();
 ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
+ProviderCompatibilityTests.Run();
 AppearanceControlContractTests.Run();
 ModThemeTests.Run();
 AppearanceSelectionHintTests.Run();

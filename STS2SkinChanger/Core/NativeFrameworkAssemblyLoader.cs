@@ -32,16 +32,21 @@ internal static class NativeFrameworkAssemblyLoader
         // Do not introduce a second copy when another loader already owns this identity.
         var identity = AssemblyName.GetAssemblyName(path).FullName;
         if (context.Assemblies.Any(candidate => candidate.FullName == identity)) return false;
-        if (!ProviderAssemblyCompatibility.TryRewriteForCurrentGame(path, out var rewritten, out var calls, out var failure))
+        var compatibility = ProviderAssemblyCompatibility.PrepareForCurrentGame(path);
+        var report = compatibility.Report;
+        if (report.UnresolvedReferences.Count > 0)
+            ModLog.Warn($"原管理器 {Path.GetFileName(path)} 尚有 {report.UnresolvedReferences.Count} 处静态游戏接口未解析：" +
+                string.Join("；", report.UnresolvedReferences.Take(8)) + "；未猜测替代调用，不据此阻止游戏原加载流程。");
+        if (compatibility.Assembly is not { } rewritten)
         {
-            if (failure != null) ModLog.Warn("原管理器游戏接口检查失败，保留游戏加载路径：" + failure);
+            if (report.Failure != null) ModLog.Warn("原管理器游戏接口检查失败，保留游戏加载路径：" + report.Failure);
             return false;
         }
         using (rewritten)
         using (var located = PreserveEntryLocation(rewritten!, path))
             assembly = context.LoadFromStream(located);
         Loaded.Add(path, assembly);
-        ModLog.Info($"原管理器按正常加载流程桥接 {calls} 处游戏版本接口：{Path.GetFileName(path)}；" +
+        ModLog.Info($"原管理器按正常加载流程桥接 {report.Changes.Count} 处已知游戏版本接口：{Path.GetFileName(path)}；" +
                     "全部原功能保留，原 DLL/PCK 未修改。");
         return true;
     }

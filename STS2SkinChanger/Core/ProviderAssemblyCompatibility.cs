@@ -5,15 +5,16 @@ using System.Reflection;
 namespace STS2SkinChanger.Core;
 
 /// <summary>
-/// Rewrites provider IL when a cosmetic DLL was compiled against a game API whose method
-/// parameters stayed stable but whose return type changed between supported game branches.
-/// The CLR includes the return type in a member-reference signature, so a source-compatible
-/// change (for example void -> wrapper object) otherwise becomes MissingMethodException.
+/// Rewrites only verified equivalent game API changes in a cosmetic DLL's in-memory IL.
+/// The CLR includes return types in member signatures, so even a source-compatible change
+/// can need a bridge. Unknown game references are reported, never guessed or deleted.
 /// </summary>
-internal static class ProviderAssemblyCompatibility
+internal static partial class ProviderAssemblyCompatibility
 {
     private const string MegaAnimationStateTypeName =
         "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaAnimationState";
+    private const string SpineAnimationAccessTypeName =
+        "MegaCrit.Sts2.Core.Bindings.MegaSpine.SpineAnimationAccess";
     private static readonly IReadOnlyDictionary<string, string> MegaAnimationMethodAliases =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -29,47 +30,26 @@ internal static class ProviderAssemblyCompatibility
         out int rewrittenCalls,
         out string? failure)
     {
-        rewrittenAssembly = null;
-        rewrittenCalls = 0;
-        failure = null;
-
-        try
-        {
-            var runtimeMethods = FindRuntimeMegaAnimationMethods();
-            if (runtimeMethods.Length == 0)
-            {
-                return false;
-            }
-
-            return TryRewriteRuntimeDrift(
-                assemblyPath,
-                runtimeMethods,
-                out rewrittenAssembly,
-                out rewrittenCalls,
-                out failure);
-        }
-        catch (Exception exception)
-        {
-            failure = exception.GetBaseException().Message;
-            rewrittenAssembly?.Dispose();
-            rewrittenAssembly = null;
-            rewrittenCalls = 0;
-            return false;
-        }
+        var prepared = PrepareForCurrentGame(assemblyPath);
+        rewrittenAssembly = prepared.Assembly;
+        rewrittenCalls = prepared.Report.Changes.Count;
+        failure = prepared.Report.Failure;
+        return rewrittenAssembly != null;
     }
 
     private static MethodInfo[] FindRuntimeMegaAnimationMethods()
     {
-        var animationStateType = AccessTools.TypeByName(MegaAnimationStateTypeName);
-        return animationStateType?
-            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            .Where(method => method.DeclaringType == animationStateType)
-            .ToArray() ?? [];
+        return new[] { MegaAnimationStateTypeName, SpineAnimationAccessTypeName }
+            .Select(name => GameAssembly.GetType(name))
+            .Where(type => type != null)
+            .SelectMany(type => type!.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            .ToArray();
     }
 
     private static bool TryRewriteRuntimeDrift(
         string assemblyPath,
         IReadOnlyList<MethodInfo> runtimeMethods,
+        ProviderCompatibilityReport report,
         out MemoryStream? rewrittenAssembly,
         out int rewrittenCalls,
         out string? failure)
@@ -132,6 +112,7 @@ internal static class ProviderAssemblyCompatibility
         try
         {
             var module = GetRequiredProperty(definition, "MainModule");
+            RewriteKnownTypeMoves(module, report);
             var importReference = module.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public)
                 .Single(method =>
                     method.Name == "ImportReference" &&
@@ -151,6 +132,7 @@ internal static class ProviderAssemblyCompatibility
                     }
 
                     var body = GetRequiredProperty(method, "Body");
+                    var callsBeforeMethod = rewrittenCalls;
                     var instructions = Enumerate(GetRequiredProperty(body, "Instructions")).ToArray();
                     var processor = body.GetType()
                         .GetMethod("GetILProcessor", BindingFlags.Instance | BindingFlags.Public)
@@ -165,11 +147,14 @@ internal static class ProviderAssemblyCompatibility
                         var instruction = instructions[instructionIndex];
                         var operandProperty = instruction.GetType().GetProperty("Operand", BindingFlags.Instance | BindingFlags.Public);
                         var operand = operandProperty?.GetValue(instruction);
-                        if (operand == null ||
+                        if (operand == null || GetInstructionOpCodeName(instruction) is not ("call" or "callvirt") ||
                             !methodReferenceType.IsInstanceOfType(operand))
                         {
                             continue;
                         }
+                        if (instructionIndex > 0 && GetRequiredProperty(
+                                GetRequiredProperty(instructions[instructionIndex - 1], "OpCode"), "OpCodeType").ToString() == "Prefix")
+                            continue; // tail./constrained. require a different stack/receiver contract.
 
                         if (TryRewriteUnsupportedDispose(
                                 method,
@@ -177,10 +162,12 @@ internal static class ProviderAssemblyCompatibility
                                 instructions,
                                 instructionIndex,
                                 operand,
-                                popOpCode,
-                                nopOpCode))
+                                module,
+                                cecilAssembly,
+                                opCodesType))
                         {
                             rewrittenCalls++;
+                            report.Changes.Add($"Spine wrapper cleanup: {operand}");
                             continue;
                         }
 
@@ -199,80 +186,112 @@ internal static class ProviderAssemblyCompatibility
                             continue;
                         }
 
-                        if (!importedRuntimeMethods.TryGetValue(runtimeMethod, out var runtimeReference))
+                        // Every changed call below has a checked signature and an equivalent
+                        // stack contract. Function pointers / delegate construction are not calls.
+                        var callsBefore = rewrittenCalls;
+                        try
                         {
-                            runtimeReference = importReference.Invoke(module, [runtimeMethod])
-                                ?? throw new InvalidOperationException("无法导入当前游戏的动画接口");
-                            importedRuntimeMethods[runtimeMethod] = runtimeReference;
-                        }
-
-                        if (providerReturnName == runtimeReturnName)
-                        {
-                            operandProperty!.SetValue(instruction, runtimeReference);
-                            rewrittenCalls++;
-                            continue;
-                        }
-
-                        if (providerReturnName == typeof(void).FullName && runtimeMethod.ReturnType != typeof(void))
-                        {
-                            operandProperty!.SetValue(instruction, runtimeReference);
-                            var pop = createInstruction.Invoke(null, [popOpCode])
-                                ?? throw new InvalidOperationException("无法生成返回值清理指令");
-                            InvokeProcessor(processor, "InsertAfter", instruction, pop);
-                            rewrittenCalls++;
-                            continue;
-                        }
-
-                        if (runtimeMethod.ReturnType == typeof(void) &&
-                            TryReplaceFollowingPopWithNop(instructions, instruction, nopOpCode))
-                        {
-                            operandProperty!.SetValue(instruction, runtimeReference);
-                            rewrittenCalls++;
-                            continue;
-                        }
-
-                        // Old SetAnimation callers may configure the returned track instead of
-                        // discarding it. v0.111's equivalent is SetAnimation + GetCurrent(trackId).
-                        // Keep the original stack/result contract via a private provider-local
-                        // adapter; never fake a null result or drop the author's track settings.
-                        if (GetInstructionOpCodeName(instruction) is "call" or "callvirt" &&
-                            runtimeMethod.Name == "SetAnimation" &&
-                            runtimeMethod.ReturnType == typeof(void) &&
-                            providerReturnName == "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaTrackEntry" &&
-                            runtimeMethod.GetParameters().Select(parameter => parameter.ParameterType)
-                                .SequenceEqual(new[] { typeof(string), typeof(bool), typeof(int) }))
-                        {
-                            var getCurrent = runtimeMethods.SingleOrDefault(candidate =>
-                                candidate.Name == "GetCurrent" &&
-                                candidate.DeclaringType == runtimeMethod.DeclaringType &&
-                                candidate.ReturnType.FullName == providerReturnName &&
-                                candidate.GetParameters().Select(parameter => parameter.ParameterType)
-                                    .SequenceEqual(new[] { typeof(int) }));
-                            if (getCurrent == null)
-                                continue;
-
-                            if (!trackedSetAdapters.TryGetValue(type, out var adapter))
+                            if (!importedRuntimeMethods.TryGetValue(runtimeMethod, out var runtimeReference))
                             {
-                                var getCurrentReference = importReference.Invoke(module, [getCurrent])!;
-                                adapter = CreateTrackedSetAnimationAdapter(
-                                    cecilAssembly, type, runtimeReference, getCurrentReference, opCodesType);
-                                trackedSetAdapters.Add(type, adapter);
+                                runtimeReference = importReference.Invoke(module, [runtimeMethod])
+                                    ?? throw new InvalidOperationException("无法导入当前游戏的动画接口");
+                                importedRuntimeMethods[runtimeMethod] = runtimeReference;
                             }
 
-                            SetInstruction(instruction, opCodesType.GetField("Call")!.GetValue(null)!, adapter);
-                            rewrittenCalls++;
+                            if (providerReturnName == runtimeReturnName)
+                            {
+                                operandProperty!.SetValue(instruction, runtimeReference);
+                                rewrittenCalls++;
+                                continue;
+                            }
+
+                            if (providerReturnName == typeof(void).FullName && runtimeMethod.ReturnType != typeof(void))
+                            {
+                                operandProperty!.SetValue(instruction, runtimeReference);
+                                var pop = createInstruction.Invoke(null, [popOpCode])
+                                    ?? throw new InvalidOperationException("无法生成返回值清理指令");
+                                InvokeProcessor(processor, "InsertAfter", instruction, pop);
+                                rewrittenCalls++;
+                                continue;
+                            }
+
+                            if (runtimeMethod.ReturnType == typeof(void) &&
+                                TryReplaceFollowingPopWithNop(body, instructions, instruction, nopOpCode))
+                            {
+                                operandProperty!.SetValue(instruction, runtimeReference);
+                                rewrittenCalls++;
+                                continue;
+                            }
+
+                            // Old SetAnimation callers may configure the returned track instead of
+                            // discarding it. v0.111's equivalent is SetAnimation + GetCurrent(trackId).
+                            // Keep the original stack/result contract via a private provider-local
+                            // adapter; never fake a null result or drop the author's track settings.
+                            if (GetInstructionOpCodeName(instruction) is "call" or "callvirt" &&
+                                runtimeMethod.DeclaringType?.FullName == MegaAnimationStateTypeName &&
+                                runtimeMethod.Name == "SetAnimation" &&
+                                runtimeMethod.ReturnType == typeof(void) &&
+                                providerReturnName == "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaTrackEntry" &&
+                                runtimeMethod.GetParameters().Select(parameter => parameter.ParameterType)
+                                    .SequenceEqual(new[] { typeof(string), typeof(bool), typeof(int) }))
+                            {
+                                var getCurrent = runtimeMethods.SingleOrDefault(candidate =>
+                                    candidate.Name == "GetCurrent" &&
+                                    candidate.DeclaringType == runtimeMethod.DeclaringType &&
+                                    candidate.ReturnType.FullName == providerReturnName &&
+                                    candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                                        .SequenceEqual(new[] { typeof(int) }));
+                                if (getCurrent == null)
+                                    continue;
+
+                                if (!trackedSetAdapters.TryGetValue(type, out var adapter))
+                                {
+                                    var getCurrentReference = importReference.Invoke(module, [getCurrent])!;
+                                    adapter = CreateTrackedSetAnimationAdapter(
+                                        cecilAssembly, type, runtimeReference, getCurrentReference, opCodesType);
+                                    trackedSetAdapters.Add(type, adapter);
+                                }
+
+                                SetInstruction(instruction, opCodesType.GetField("Call")!.GetValue(null)!, adapter);
+                                rewrittenCalls++;
+                            }
+                            else if (runtimeMethod.DeclaringType?.FullName == SpineAnimationAccessTypeName &&
+                                     runtimeMethod.ReturnType == typeof(void) &&
+                                     providerReturnName == "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaTrackEntry" &&
+                                     runtimeMethod.Name is "SetAnimation" or "AddAnimation")
+                            {
+                                var adapter = CreateAccessTrackAdapter(module, type, runtimeMethod, cecilAssembly, opCodesType);
+                                SetInstruction(instruction, opCodesType.GetField("Call")!.GetValue(null)!, adapter);
+                                rewrittenCalls++;
+                            }
+                        }
+                        finally
+                        {
+                            if (rewrittenCalls != callsBefore)
+                                report.Changes.Add($"Animation signature: {operand} -> {runtimeMethod.DeclaringType?.FullName}.{runtimeMethod.Name}");
                         }
                     }
+
+                    // Inserted pop/call instructions may push a pre-existing short branch out
+                    // of its signed-byte range. Keep labels and exception boundaries intact.
+                    if (rewrittenCalls != callsBeforeMethod) ExpandShortBranches(body, opCodesType);
                 }
             }
 
-            if (rewrittenCalls == 0)
+            if (report.Changes.Count == 0)
             {
+                AuditGameReferences(module, report);
                 return false;
             }
 
             rewrittenAssembly = new MemoryStream();
             writeAssembly.Invoke(definition, [rewrittenAssembly]);
+            rewrittenAssembly.Position = 0;
+            // Cecil's original MemberRef table retains detached references after replacing
+            // call operands. Audit the written image, not that stale source table.
+            var preparedDefinition = readAssembly.Invoke(null, [rewrittenAssembly])!;
+            try { AuditGameReferences(GetRequiredProperty(preparedDefinition, "MainModule"), report); }
+            finally { (preparedDefinition as IDisposable)?.Dispose(); }
             rewrittenAssembly.Position = 0;
             return true;
         }
@@ -343,14 +362,13 @@ internal static class ProviderAssemblyCompatibility
         IReadOnlyList<object> instructions,
         int instructionIndex,
         object methodReference,
-        object popOpCode,
-        object nopOpCode)
+        object module,
+        Assembly cecilAssembly,
+        Type opCodesType)
     {
         if (!string.Equals(GetRequiredProperty(methodReference, "Name") as string, "Dispose", StringComparison.Ordinal) ||
-            !string.Equals(
-                GetTypeFullName(GetRequiredProperty(methodReference, "DeclaringType")),
-                typeof(IDisposable).FullName,
-                StringComparison.Ordinal) ||
+            !(bool)GetRequiredProperty(methodReference, "HasThis") ||
+            GetTypeFullName(GetRequiredProperty(methodReference, "ReturnType")) != "System.Void" ||
             Enumerate(GetRequiredProperty(methodReference, "Parameters")).Any())
         {
             return false;
@@ -360,7 +378,7 @@ internal static class ProviderAssemblyCompatibility
         if (sourceIndex >= 0 &&
             string.Equals(GetInstructionOpCodeName(instructions[sourceIndex]), "constrained.", StringComparison.Ordinal))
         {
-            sourceIndex--;
+            return false; // A constrained receiver can be a managed pointer, not a wrapper.
         }
 
         if (sourceIndex < 0)
@@ -368,36 +386,50 @@ internal static class ProviderAssemblyCompatibility
             return false;
         }
 
-        var receiverTypeName = TryGetLoadedValueTypeName(method, body, instructions[sourceIndex]);
-        if (string.IsNullOrWhiteSpace(receiverTypeName))
+        var receiverReference = TryGetLoadedValueType(method, body, instructions[sourceIndex]);
+        if (receiverReference == null || !IsGameTypeReference(receiverReference))
         {
             return false;
         }
 
-        var runtimeType = ProviderRuntimeTypeLookupPolicy.TryResolve(
-            receiverTypeName,
-            AccessTools.TypeByName);
-        if (runtimeType == null || typeof(IDisposable).IsAssignableFrom(runtimeType))
+        var runtimeType = GameAssembly.GetType(GetTypeFullName(receiverReference));
+        var bindingType = GameAssembly.GetType("MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaSpineBinding");
+        var declaringReference = GetRequiredProperty(methodReference, "DeclaringType");
+        var declaringName = GetTypeFullName(declaringReference);
+        var scopeName = (string)GetRequiredProperty(GetRequiredProperty(declaringReference, "Scope"), "Name");
+        var knownDispose = (declaringName == typeof(IDisposable).FullName &&
+                            scopeName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib" or "netstandard") ||
+            (IsGameTypeReference(declaringReference) && GameAssembly.GetType(declaringName) is { } declaringType &&
+             bindingType?.IsAssignableFrom(declaringType) == true);
+        if (!knownDispose || runtimeType == null || bindingType?.IsAssignableFrom(runtimeType) != true ||
+            typeof(IDisposable).IsAssignableFrom(runtimeType))
         {
             return false;
         }
 
-        // A provider compiled for a newer game may contain the finally block emitted by a
-        // `using` declaration even though the same runtime wrapper did not implement
-        // IDisposable in an older game. Keep the null check/finally shape intact, consume the
-        // receiver that was loaded for callvirt, and suppress only the unsupported call.
-        SetInstruction(instructions[instructionIndex], popOpCode, null);
-        if (instructionIndex - 1 != sourceIndex)
-        {
-            SetInstruction(instructions[instructionIndex - 1], nopOpCode, null);
-        }
+        // v0.111's binding Dispose releases BoundObject on the calling thread. v0.107
+        // exposes that same object but has no IDisposable wrapper. Preserve the cleanup;
+        // never delete arbitrary IDisposable calls from third-party libraries.
+        var getter = bindingType.GetProperty("BoundObject")?.GetMethod;
+        var dispose = getter?.ReturnType.GetMethod("Dispose", Type.EmptyTypes);
+        if (getter == null || dispose == null) return false;
+        var adapter = NewAdapter(module, GetRequiredProperty(method, "DeclaringType"), "DisposeSpine",
+            Import(module, typeof(void)), [Import(module, bindingType)], cecilAssembly);
+        Emit(adapter, "Ldarg_0", cecilAssembly, opCodesType);
+        Emit(adapter, "Callvirt", cecilAssembly, opCodesType, Import(module, getter));
+        Emit(adapter, "Callvirt", cecilAssembly, opCodesType, Import(module, dispose));
+        Emit(adapter, "Ret", cecilAssembly, opCodesType);
+        SetInstruction(instructions[instructionIndex], opCodesType.GetField("Call")!.GetValue(null)!, adapter);
 
         return true;
     }
 
-    private static string? TryGetLoadedValueTypeName(object method, object body, object instruction)
+    private static object? TryGetLoadedValueType(object method, object body, object instruction)
     {
         var opCodeName = GetInstructionOpCodeName(instruction);
+        if (opCodeName.StartsWith("ldloca", StringComparison.Ordinal) ||
+            opCodeName.StartsWith("ldarga", StringComparison.Ordinal) || opCodeName == "ldflda")
+            return null;
         var operand = instruction.GetType()
             .GetProperty("Operand", BindingFlags.Instance | BindingFlags.Public)
             ?.GetValue(instruction);
@@ -409,7 +441,7 @@ internal static class ProviderAssemblyCompatibility
                 TryParseShortFormIndex(opCodeName, "ldloc."));
             return variable == null
                 ? null
-                : GetTypeFullName(GetRequiredProperty(variable, "VariableType"));
+                : GetRequiredProperty(variable, "VariableType");
         }
 
         if (opCodeName.StartsWith("ldarg", StringComparison.Ordinal))
@@ -421,7 +453,7 @@ internal static class ProviderAssemblyCompatibility
                 var hasThis = (bool)GetRequiredProperty(method, "HasThis");
                 if (argumentIndex == 0 && hasThis)
                 {
-                    return GetTypeFullName(GetRequiredProperty(method, "DeclaringType"));
+                    return GetRequiredProperty(method, "DeclaringType");
                 }
 
                 if (argumentIndex >= 0)
@@ -434,20 +466,20 @@ internal static class ProviderAssemblyCompatibility
 
             return parameter == null
                 ? null
-                : GetTypeFullName(GetRequiredProperty(parameter, "ParameterType"));
+                : GetRequiredProperty(parameter, "ParameterType");
         }
 
         if ((opCodeName.StartsWith("call", StringComparison.Ordinal) ||
              opCodeName == "newobj") && operand != null)
         {
             return opCodeName == "newobj"
-                ? GetTypeFullName(GetRequiredProperty(operand, "DeclaringType"))
-                : GetTypeFullName(GetRequiredProperty(operand, "ReturnType"));
+                ? GetRequiredProperty(operand, "DeclaringType")
+                : GetRequiredProperty(operand, "ReturnType");
         }
 
         if (opCodeName.StartsWith("ldfld", StringComparison.Ordinal) && operand != null)
         {
-            return GetTypeFullName(GetRequiredProperty(operand, "FieldType"));
+            return GetRequiredProperty(operand, "FieldType");
         }
 
         return null;
@@ -488,19 +520,33 @@ internal static class ProviderAssemblyCompatibility
         object methodReference,
         IReadOnlyList<MethodInfo> runtimeMethods)
     {
-        if (!string.Equals(
-                GetTypeFullName(GetRequiredProperty(methodReference, "DeclaringType")),
-                MegaAnimationStateTypeName,
-                StringComparison.Ordinal))
+        var declaring = GetRequiredProperty(methodReference, "DeclaringType");
+        var declaringName = GetTypeFullName(declaring);
+        if (!IsGameTypeReference(declaring) || !(bool)GetRequiredProperty(methodReference, "HasThis") ||
+            (bool)GetRequiredProperty(methodReference, "HasGenericParameters") ||
+            (bool)GetRequiredProperty(methodReference, "IsGenericInstance") ||
+            declaringName is not (MegaAnimationStateTypeName or SpineAnimationAccessTypeName))
         {
             return null;
         }
 
         var methodName = GetRequiredProperty(methodReference, "Name") as string;
         var providerReturnName = GetTypeFullName(GetRequiredProperty(methodReference, "ReturnType"));
+        if (methodName is not ("SetAnimation" or "AddAnimation" or "AddAnimationTracked" or "AddEmptyAnimation") ||
+            providerReturnName is not ("System.Void" or "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaTrackEntry"))
+            return null;
+        runtimeMethods = runtimeMethods.Where(method => method.DeclaringType?.FullName == declaringName && !method.IsStatic).ToArray();
         var parameterNames = Enumerate(GetRequiredProperty(methodReference, "Parameters"))
             .Select(parameter => GetTypeFullName(GetRequiredProperty(parameter, "ParameterType")))
             .ToArray();
+        string[] expectedParameters = methodName switch
+        {
+            "SetAnimation" => ["System.String", "System.Boolean", "System.Int32"],
+            "AddAnimation" or "AddAnimationTracked" => ["System.String", "System.Single", "System.Boolean", "System.Int32"],
+            "AddEmptyAnimation" => ["System.Int32"],
+            _ => []
+        };
+        if (!parameterNames.SequenceEqual(expectedParameters, StringComparer.Ordinal)) return null;
         var sameName = runtimeMethods.Where(method =>
             string.Equals(method.Name, methodName, StringComparison.Ordinal) &&
             method.GetParameters()
@@ -539,6 +585,7 @@ internal static class ProviderAssemblyCompatibility
     }
 
     private static bool TryReplaceFollowingPopWithNop(
+        object body,
         IReadOnlyList<object> instructions,
         object callInstruction,
         object nopOpCode)
@@ -559,6 +606,15 @@ internal static class ProviderAssemblyCompatibility
         }
 
         var next = instructions[index + 1];
+        // Another path or handler may share this pop. Removing it is safe only when the
+        // rewritten call is its sole predecessor and both instructions share a region.
+        if (instructions.Any(item =>
+                item.GetType().GetProperty("Operand")?.GetValue(item) is { } target &&
+                (ReferenceEquals(target, next) || target is IEnumerable targets && targets.Cast<object>().Contains(next))) ||
+            Enumerate(GetRequiredProperty(body, "ExceptionHandlers")).Any(handler =>
+                new[] { "TryStart", "TryEnd", "HandlerStart", "HandlerEnd", "FilterStart" }.Any(name =>
+                    ReferenceEquals(handler.GetType().GetProperty(name)?.GetValue(handler), next))))
+            return false;
         var opCodeProperty = next.GetType().GetProperty("OpCode", BindingFlags.Instance | BindingFlags.Public);
         var opCode = opCodeProperty?.GetValue(next);
         var name = opCode?.GetType().GetProperty("Name", BindingFlags.Instance | BindingFlags.Public)

@@ -3007,11 +3007,15 @@ internal static class ManagedSkinModLoader
         }
 
         var loadContext = AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly());
-        if (ProviderAssemblyCompatibility.TryRewriteForCurrentGame(
-                provider.AssemblyPath,
-                out var rewrittenAssembly,
-                out var rewrittenCalls,
-                out var compatibilityFailure))
+        var compatibility = ProviderAssemblyCompatibility.PrepareForCurrentGame(provider.AssemblyPath);
+        var report = compatibility.Report;
+        if (report.UnresolvedReferences.Count > 0)
+        {
+            ModLog.Warn($"{provider.Name} 在游戏 {report.Target} 仍有 {report.UnresolvedReferences.Count} 处静态接口引用未解析：" +
+                string.Join("；", report.UnresolvedReferences.Take(8)) +
+                "。仅报告差异，不猜测替代调用；未执行路径也可能包含这些引用，不能据此判定整款皮肤失效。");
+        }
+        if (compatibility.Assembly is { } rewrittenAssembly)
         {
             using (rewrittenAssembly)
             {
@@ -3026,14 +3030,15 @@ internal static class ManagedSkinModLoader
                 assemblyIdentity,
                 assembly);
             ModLog.Info(
-                $"已为 {provider.Name} 桥接 {rewrittenCalls} 处跨游戏版本运行时接口调用。" +
-                "该处理按接口签名识别，不依赖皮肤 Mod 名称。");
+                $"已为 {provider.Name} 转换 {report.Changes.Count} 处已知跨版本接口差异，目标 {report.Target}：" +
+                string.Join("；", report.Changes.Distinct().Take(8)) +
+                "。仅改内存副本；按接口签名匹配，不代表未知接口或运行逻辑已兼容。");
             return assembly;
         }
 
-        if (!string.IsNullOrWhiteSpace(compatibilityFailure))
+        if (!string.IsNullOrWhiteSpace(report.Failure))
         {
-            ModLog.Warn($"检查 {provider.Name} 的跨版本运行时接口失败：{compatibilityFailure}");
+            ModLog.Warn($"检查 {provider.Name} 的跨版本运行时接口失败：{report.Failure}");
         }
 
         using (var source = File.OpenRead(provider.AssemblyPath))
