@@ -17,6 +17,24 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-multiplayer-retries")
+{
+    MultiplayerAppearanceIdentityTests.Run(testRetries: true);
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-multiplayer-sources")
+{
+    MultiplayerSourceTests.Run();
+    return;
+}
+if (args.Length == 1 && args[0] == "--test-multiplayer-hands")
+{
+    MultiplayerSourceTests.Run(handsOnly: true);
+    MultiplayerAppearanceIdentityTests.Run(testHands: true);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-storage")
 {
     StorageLifecycleTests.Run();
@@ -314,6 +332,10 @@ FrameworkModelPreviewTests.Run();
 IntrinsicPreviewTests.Run();
 AnimatorPatchDiscoveryTests.Run();
 MultiplayerAppearanceIdentityTests.Run();
+MultiplayerAppearanceIdentityTests.Run(testRetries: true);
+MultiplayerSourceTests.Run();
+MultiplayerSourceTests.Run(handsOnly: true);
+MultiplayerAppearanceIdentityTests.Run(testHands: true);
 OptionalCharacterVfxTests.Run();
 CombatHudLifecycleTests.Run();
 DragHandleHoverTests.Run();

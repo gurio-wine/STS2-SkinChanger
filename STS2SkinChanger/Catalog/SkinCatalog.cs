@@ -1948,6 +1948,7 @@ internal sealed partial class SkinCatalog : IDisposable
         if (eventId != null) return EventSkinPolicy.GroupId(eventId);
 
         var identity = TryGetPrimaryGroup(resourcePath) ??
+                       TryGetCharacterSupplementGroup(resourcePath) ??
                        TryGetCharacterSelectIconGroup(resourcePath) ??
                        TryGetCharacterUiTextureGroup(resourcePath) ??
                        TryGetCharacterMapMarkerGroup(resourcePath) ??

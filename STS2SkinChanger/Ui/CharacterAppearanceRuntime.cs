@@ -1296,16 +1296,17 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
-    internal static void RefreshPlayerAppearance(ulong playerNetId)
+    internal static bool RefreshPlayerAppearance(ulong playerNetId)
     {
-        ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
+        var handRefreshed = MultiplayerTreasureHandAppearance.RefreshPlayer(playerNetId);
         var room = NCombatRoom.Instance;
         if (room == null)
         {
-            return;
+            return handRefreshed;
         }
 
         var rebuilt = false;
+        var failed = false;
         foreach (var creature in room.CreatureNodes.Where(creature =>
                      creature.Entity.Player?.NetId == playerNetId ||
                      creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
@@ -1321,6 +1322,7 @@ internal static class CharacterAppearanceRuntime
             }
             else
             {
+                failed = true;
                 ModLog.Warn($"刷新联机玩家 {playerNetId} 的外观失败：{error}");
             }
         }
@@ -1329,6 +1331,7 @@ internal static class CharacterAppearanceRuntime
         {
             RefreshPlayerAndPetLayout(room);
         }
+        return rebuilt && !failed;
     }
 
     internal static bool RefreshPlayerTransforms(ulong playerNetId)

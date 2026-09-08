@@ -12,6 +12,12 @@ using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 using STS2SkinChanger;
+using Godot;
+using MegaCrit.Sts2.Core.Entities.TreasureRelicPicking;
+using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
+using STS2SkinChanger.Core;
+using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
 
 internal static class MultiplayerAppearanceIdentityTests
 {
@@ -19,8 +25,41 @@ internal static class MultiplayerAppearanceIdentityTests
     private static bool NoSave(ref SaveManager? __result) { __result = null; return false; }
     private static bool LocalPlayer(ref Player? __result) { __result = _localPlayer; return false; }
     private static bool SkipEngine() => false;
+    private static int _mountCalls;
+    private static int _iconFailures;
+    private static bool _appearanceReady;
+    private static bool AllowApply(ref bool __result) { __result = true; return false; }
+    private static bool Mount()
+    {
+        if (++_mountCalls == 1) throw new IOException("fixture: resource temporarily unavailable");
+        return false;
+    }
+    private static bool Icons(ref bool __result)
+    {
+        if (_iconFailures-- > 0) throw new InvalidOperationException("fixture: avatar not ready");
+        __result = _appearanceReady;
+        return false;
+    }
+    private static bool Appearance(ref bool __result) { __result = _appearanceReady; return false; }
+    private static NCombatRoom? _combatRoom;
+    private static NCreature? _failedCreature;
+    private static bool CombatRoom(ref NCombatRoom? __result) { __result = _combatRoom; return false; }
+    private static bool Rebuild(NCreature creature, ref string? error, ref bool __result)
+    {
+        __result = !ReferenceEquals(creature, _failedCreature);
+        error = __result ? null : "fixture: skeleton not ready";
+        return false;
+    }
+    private static readonly List<string> HandRequests = [];
+    private static bool HandTexture(MethodBase __originalMethod, ref Texture2D __result)
+    {
+        HandRequests.Add(__originalMethod.Name + ":" +
+            (MultiplayerSkinSync.GetScopedSelection("defect") ?? SkinService.Config.GetSelection("defect")));
+        __result = null!;
+        return false;
+    }
 
-    internal static void Run()
+    internal static void Run(bool testRetries = false, bool testHands = false)
     {
         var assembly = typeof(Entry).Assembly;
         Type Type(string name) => assembly.GetType("STS2SkinChanger." + name, true)!;
@@ -33,7 +72,7 @@ internal static class MultiplayerAppearanceIdentityTests
         var previousConfig = configProperty.GetValue(null);
         var previousCatalog = catalogProperty.GetValue(null);
         var fields = new[] { "_netService", "_lobby", "_inRun", "_snapshotStage", "_snapshotElapsed",
-            "_needsLobbyRoundReset", "_suspendedLobby", "_resumeRunWhenEnabled", "_runtimeProvidersDirty" };
+            "_needsLobbyRoundReset", "_suspendedLobby", "_resumeRunWhenEnabled", "_runtimeProvidersDirty", "_appearanceRetryCooldown" };
         var previous = fields.ToDictionary(name => name, name => AccessTools.Field(sync, name).GetValue(null));
         var configLoaded = AccessTools.Field(service, "_configLoaded");
         var wasLoaded = configLoaded.GetValue(null);
@@ -135,6 +174,121 @@ internal static class MultiplayerAppearanceIdentityTests
                 $"本机已安装的对方皮肤应按玩家隔离加载并锁定；实际={resolve.Invoke(null, [remoteRobot.Creature, "defect"])}，" +
                 $"收到={advertised.Contains(202UL)}，可用={available[202UL]}。");
             ((IDictionary)AccessTools.Property(configType, "Selections").GetValue(config)!)["defect"] = "pea";
+
+            if (testHands)
+            {
+                var handReady = AccessTools.Method(Type("Core.MultiplayerTreasureHandReadyScopePatch"), "Postfix");
+                Require(handReady != null, "宝箱手部创建后未登记，迟到的玩家外观无法刷新已有手部。");
+                foreach (var name in new[] { "ArmPointingTexture", "ArmRockTexture", "ArmPaperTexture", "ArmScissorsTexture" })
+                    harmony.Patch(AccessTools.PropertyGetter(typeof(CharacterModel), name),
+                        prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(HandTexture)));
+                harmony.Patch(AccessTools.PropertySetter(typeof(TextureRect), "Texture"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(SkipEngine)));
+                harmony.Patch(AccessTools.Method(typeof(GodotObject), "IsInstanceValid"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(AllowApply)));
+                harmony.Patch(AccessTools.Method(typeof(Node), "IsInsideTree"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(AllowApply)));
+                harmony.CreateClassProcessor(Type("Core.MultiplayerTreasureHandMoveScopePatch")).Patch();
+                var hand = (NHandImage)RuntimeHelpers.GetUninitializedObject(typeof(NHandImage));
+                var other = (NHandImage)RuntimeHelpers.GetUninitializedObject(typeof(NHandImage));
+                foreach (var (node, player) in new[] { (hand, remoteRobot), (other, PlayerWithId(previewPlayer, 303UL, robot)) })
+                {
+                    AccessTools.Field(typeof(NHandImage), "<Player>k__BackingField").SetValue(node, player);
+                    AccessTools.Field(typeof(NHandImage), "_textureRect").SetValue(node,
+                        RuntimeHelpers.GetUninitializedObject(typeof(TextureRect)));
+                    handReady!.Invoke(null, [node]);
+                }
+                var refresh = AccessTools.Method(Type("Core.MultiplayerTreasureHandAppearance"), "RefreshPlayer");
+                var move = AccessTools.Method(typeof(NHandImage), "SetTextureToFightMove");
+                try
+                {
+                    HandRequests.Clear();
+                    Require(refresh.Invoke(null, [202UL]) is true && HandRequests.SequenceEqual(["get_ArmPointingTexture:pea"]),
+                        "迟到外观必须只刷新指定玩家的指向手部。");
+                    foreach (var (pose, getter) in new[] { (RelicPickingFightMove.Rock, "ArmRockTexture"),
+                                 (RelicPickingFightMove.Paper, "ArmPaperTexture"), (RelicPickingFightMove.Scissors, "ArmScissorsTexture") })
+                    {
+                        move.Invoke(hand, [pose]);
+                        HandRequests.Clear();
+                        refresh.Invoke(null, [202UL]);
+                        Require(HandRequests.SequenceEqual([$"get_{getter}:pea"]),
+                            "刷新皮肤必须保留猜拳/抓遗物当前姿势，不能回到指向状态。");
+                    }
+                    available.Remove(202UL);
+                    HandRequests.Clear();
+                    refresh.Invoke(null, [202UL]);
+                    Require(HandRequests.SequenceEqual(["get_ArmScissorsTexture:__base__"]),
+                        "对方皮肤不可用时手部也应回退原皮，不能保留上次皮肤。");
+                }
+                finally
+                {
+                    var remove = AccessTools.Method(Type("Core.MultiplayerTreasureHandExitPatch"), "Postfix");
+                    remove.Invoke(null, [hand]); remove.Invoke(null, [other]);
+                }
+                HandRequests.Clear();
+                Require(refresh.Invoke(null, [202UL]) is false && HandRequests.Count == 0,
+                    "退出宝箱后不能刷新已退出的手部节点。");
+                return;
+            }
+
+            if (testRetries)
+            {
+                var runtime = Type("Ui.CharacterAppearanceRuntime");
+                harmony.Patch(AccessTools.Method(runtime, "CanApplySelectionImmediately"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(AllowApply)));
+                harmony.Patch(AccessTools.Method(service, "RefreshSessionRuntimeProviders"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(Mount)));
+                harmony.Patch(AccessTools.Method(Type("Ui.ContextualSkinControls"), "RefreshMultiplayerPlayerIcons"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(Icons)));
+                var refresh = AccessTools.Method(runtime, "RefreshPlayerAppearance");
+                harmony.Patch(refresh, prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests),
+                    refresh.ReturnType == typeof(bool) ? nameof(Appearance) : nameof(SkipEngine)));
+                _mountCalls = 0; _iconFailures = 1; _appearanceReady = false;
+                AccessTools.Field(sync, "_appearanceRetryCooldown").SetValue(null, 0d);
+                AccessTools.Field(sync, "_snapshotStage").SetValue(null, 2);
+                var pending = (HashSet<ulong>)AccessTools.Field(sync, "PendingRefreshes").GetValue(null)!;
+                var pendingIcons = (HashSet<ulong>)AccessTools.Field(sync, "PendingIconRefreshes").GetValue(null)!;
+                var tick = AccessTools.Method(sync, "Tick");
+                tick.Invoke(null, [0.01d]);
+                Require(AccessTools.Field(sync, "_runtimeProvidersDirty").GetValue(null) is true && pending.Contains(202UL),
+                    "资源挂载失败后丢弃了 dirty 标志或玩家刷新请求。");
+                tick.Invoke(null, [0.01d]);
+                Require(_mountCalls == 1, "失败重试不能每帧重建资源，造成卡顿。");
+                tick.Invoke(null, [2.1d]);
+                Require(_mountCalls == 2 && pending.Contains(202UL) && pendingIcons.Contains(202UL),
+                    "模型未就绪/头像异常时不能把刷新请求误报完成。");
+                _appearanceReady = true;
+                tick.Invoke(null, [2.1d]);
+                Require(!pending.Contains(202UL) && !pendingIcons.Contains(202UL) && _mountCalls == 2,
+                    "重试成功应清除对应请求，不能反复重建已挂载资源。");
+
+                // Keep the completion decision real; replace only engine-backed reconstruction.
+                harmony.Unpatch(refresh, HarmonyPatchType.Prefix, harmony.Id);
+                harmony.Patch(AccessTools.PropertyGetter(typeof(NCombatRoom), "Instance"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(CombatRoom)));
+                harmony.Patch(AccessTools.Method(runtime, "TryRebuildCreatureVisuals"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(Rebuild)));
+                harmony.Patch(AccessTools.Method(runtime, "RefreshPlayerAndPetLayout"),
+                    prefix: new HarmonyMethod(typeof(MultiplayerAppearanceIdentityTests), nameof(SkipEngine)));
+                _combatRoom = null;
+                Require(refresh.Invoke(null, [202UL]) is false, "战斗节点尚未创建不能标记模型刷新成功。");
+                _combatRoom = (NCombatRoom)RuntimeHelpers.GetUninitializedObject(typeof(NCombatRoom));
+                var creatures = new List<NCreature>();
+                AccessTools.Field(typeof(NCombatRoom), "_creatureNodes").SetValue(_combatRoom, creatures);
+                Require(refresh.Invoke(null, [202UL]) is false, "房间存在但玩家尚未加入也不能消费请求。");
+                for (var i = 0; i < 2; i++)
+                {
+                    var node = (NCreature)RuntimeHelpers.GetUninitializedObject(typeof(NCreature));
+                    AccessTools.Field(typeof(NCreature), "<Entity>k__BackingField").SetValue(node, remoteRobot.Creature);
+                    creatures.Add(node);
+                }
+                _failedCreature = creatures[1];
+                Require(refresh.Invoke(null, [202UL]) is false, "同一玩家部分模型失败时不能标记全部成功。");
+                _failedCreature = null;
+                Require(refresh.Invoke(null, [202UL]) is true, "全部模型成功刷新后应允许移除请求。");
+                _combatRoom = null;
+                return;
+            }
 
             // Same connected transport, but the lobby's two startup snapshots ran long ago.
             _localPlayer = PlayerWithId(previewPlayer, 101UL, robot);

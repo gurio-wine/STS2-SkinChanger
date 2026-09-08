@@ -314,7 +314,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
-            return Catalog?.GetCompositionSourceOptionIds(groupId, optionId) ?? [];
+            return Catalog?.GetMultiplayerSourceIds(groupId, optionId) ?? [];
         }
     }
 
@@ -330,9 +330,7 @@ internal static partial class SkinService
                 return [];
             }
 
-            return CharacterSkinCompositionPolicy.ResolveAvailableSourceIds(
-                sourceOptionIds,
-                catalog.GetRawCharacterOptions(groupId).Select(option => option.Id));
+            return catalog.ResolveMultiplayerSourceIds(groupId, sourceOptionIds);
         }
     }
 

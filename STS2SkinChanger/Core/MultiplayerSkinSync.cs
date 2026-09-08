@@ -130,6 +130,7 @@ internal static class MultiplayerSkinSync
     private static double _snapshotElapsed;
     private static int _snapshotStage;
     private static bool _runtimeProvidersDirty;
+    private static double _appearanceRetryCooldown;
     private static bool _localTransformAdvertisementDirty;
     private static double _localTransformBroadcastCooldown;
     private static string? _lastSentTransformSignature;
@@ -421,6 +422,7 @@ internal static class MultiplayerSkinSync
             PendingTransformRefreshes.Remove(owner.NetId);
             PendingIconRefreshes.Add(owner.NetId);
             _runtimeProvidersDirty = true;
+            _appearanceRetryCooldown = 0;
         }
         ModLog.Info($"本机手动为联机玩家 {owner.NetId} 设置替代外观：{groupId}/{optionId}；不是该玩家发送的选择。");
         return true;
@@ -680,6 +682,7 @@ internal static class MultiplayerSkinSync
             LastAppliedTransformSignatures.Clear();
             MissingInstalledSkinWarnings.Clear();
             _runtimeProvidersDirty = false;
+            _appearanceRetryCooldown = 0;
             _localTransformAdvertisementDirty = false;
             _localTransformBroadcastCooldown = 0;
             _lastSentTransformSignature = null;
@@ -788,6 +791,7 @@ internal static class MultiplayerSkinSync
             LastAppliedTransformSignatures.Clear();
             MissingInstalledSkinWarnings.Clear();
             _runtimeProvidersDirty = false;
+            _appearanceRetryCooldown = 0;
             _localTransformAdvertisementDirty = false;
             _localTransformBroadcastCooldown = 0;
             _lastSentTransformSignature = null;
@@ -839,82 +843,24 @@ internal static class MultiplayerSkinSync
         }
 
         RetryAdvertisementsWaitingForPlayerIdentity();
+        _appearanceRetryCooldown = Math.Max(0, _appearanceRetryCooldown - delta);
 
         ulong[] pending;
         ulong[] pendingTransforms;
         ulong[] pendingIcons;
         bool refreshProviders;
+        Dictionary<ulong, SessionCharacterSelection> selectionSnapshot;
         lock (Sync)
         {
+            if (!_runtimeProvidersDirty && PendingRefreshes.Count == 0 &&
+                PendingTransformRefreshes.Count == 0 && PendingIconRefreshes.Count == 0) return;
             pending = PendingRefreshes.ToArray();
             pendingTransforms = PendingTransformRefreshes
                 .Where(playerId => !PendingRefreshes.Contains(playerId))
                 .ToArray();
             pendingIcons = PendingIconRefreshes.ToArray();
-            PendingIconRefreshes.Clear();
             refreshProviders = _runtimeProvidersDirty;
-        }
-
-        // A newly registered online provider must be mounted before an avatar getter can resolve
-        // its icon.  Previously icon refresh ran first, so the node was marked handled while the
-        // old/base resource was still mounted.  Keep the icon request pending until this mount is
-        // allowed, then refresh it below.
-        if (refreshProviders && CharacterAppearanceRuntime.CanApplySelectionImmediately())
-        {
-            try
-            {
-                SkinService.RefreshSessionRuntimeProviders();
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn(
-                    "刷新联机皮肤运行时失败，头像刷新将重试：" +
-                    exception.GetBaseException().Message);
-            }
-            finally
-            {
-                lock (Sync)
-                {
-                    _runtimeProvidersDirty = false;
-                }
-                refreshProviders = false;
-            }
-        }
-
-        // Avatar nodes can exist in the lobby while the combat room is unavailable.  Refresh
-        // them independently of the resource/rebuild gate so a received selection is visible
-        // immediately instead of waiting for the run scene to finish loading.
-        if (refreshProviders)
-        {
-            lock (Sync)
-            {
-                foreach (var playerId in pendingIcons)
-                {
-                    PendingIconRefreshes.Add(playerId);
-                }
-            }
-        }
-        foreach (var playerId in pendingIcons.Where(_ => !refreshProviders))
-        {
-            try
-            {
-                // A selection packet can arrive before the lobby/HUD scene has finished adding
-                // its avatar nodes.  Keep the request queued until a real icon is refreshed;
-                // otherwise the one-shot attempt leaves the base icon cached forever.
-                if (!ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerId))
-                {
-                    lock (Sync)
-                    {
-                        PendingIconRefreshes.Add(playerId);
-                    }
-                }
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn(
-                    $"刷新联机玩家 {playerId} 的头像失败：" +
-                    exception.GetBaseException().Message);
-            }
+            selectionSnapshot = new(AvailableSelections);
         }
 
         foreach (var playerId in pendingTransforms)
@@ -949,52 +895,77 @@ internal static class MultiplayerSkinSync
             }
         }
 
-        if ((!refreshProviders && pending.Length == 0) ||
-            !CharacterAppearanceRuntime.CanApplySelectionImmediately())
+        // Failed/early requests remain pending, but must not rebuild a large provider every
+        // frame. Transform-only updates above stay independent of this resource retry delay.
+        if (_appearanceRetryCooldown > 0 ||
+            (!refreshProviders && pending.Length == 0 && pendingIcons.Length == 0))
         {
             return;
         }
 
-        try
+        var canApply = CharacterAppearanceRuntime.CanApplySelectionImmediately();
+        if (refreshProviders)
         {
-            if (refreshProviders)
+            if (!canApply) return;
+            // Clear before mounting: a reentrant new selection is allowed to dirty it again.
+            lock (Sync) _runtimeProvidersDirty = false;
+            try
             {
                 SkinService.RefreshSessionRuntimeProviders();
             }
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn(
-                "刷新联机皮肤运行时失败，已停止本次重试：" +
-                exception.GetBaseException().Message);
-        }
-        finally
-        {
-            lock (Sync)
+            catch (Exception exception)
             {
-                _runtimeProvidersDirty = false;
+                lock (Sync) _runtimeProvidersDirty = true;
+                _appearanceRetryCooldown = 1;
+                ModLog.Warn("刷新联机皮肤运行时失败，保留请求稍后重试：" + exception.GetBaseException().Message);
+                return;
             }
+            lock (Sync) if (_runtimeProvidersDirty) return;
         }
 
+        // Completion belongs to each target, not to the packet or another target's success.
+        // A model rebuild must never discard an avatar that has not entered the tree yet.
+        _appearanceRetryCooldown = 1;
+        foreach (var playerId in pendingIcons)
+        {
+            try
+            {
+                if (ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerId))
+                    lock (Sync) if (IsCurrentSelection(playerId)) PendingIconRefreshes.Remove(playerId);
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn($"刷新联机玩家 {playerId} 的头像失败，保留重试：" + exception.GetBaseException().Message);
+            }
+        }
+        if (!canApply) return;
         foreach (var playerId in pending)
         {
             try
             {
-                CharacterAppearanceRuntime.RefreshPlayerAppearance(playerId);
+                if (CharacterAppearanceRuntime.RefreshPlayerAppearance(playerId))
+                {
+                    lock (Sync)
+                    {
+                        if (IsCurrentSelection(playerId))
+                        {
+                            PendingRefreshes.Remove(playerId);
+                            PendingTransformRefreshes.Remove(playerId);
+                            ModLog.Info($"联机玩家 {playerId} 的场景外观刷新完成；" +
+                                $"皮肤={selectionSnapshot.GetValueOrDefault(playerId)?.OptionId ?? "本机选择"}。");
+                        }
+                    }
+                }
             }
             catch (Exception exception)
             {
                 ModLog.Warn(
-                    $"刷新联机玩家 {playerId} 的外观失败，已停止本次重试：" +
+                    $"刷新联机玩家 {playerId} 的外观失败，保留重试：" +
                     exception.GetBaseException().Message);
             }
-            lock (Sync)
-            {
-                PendingRefreshes.Remove(playerId);
-                PendingTransformRefreshes.Remove(playerId);
-                PendingIconRefreshes.Remove(playerId);
-            }
         }
+        bool IsCurrentSelection(ulong playerId) =>
+            ReferenceEquals(selectionSnapshot.GetValueOrDefault(playerId), AvailableSelections.GetValueOrDefault(playerId));
     }
 
     internal static void OnLocalTransformChanged(string groupId)
@@ -1172,6 +1143,15 @@ internal static class MultiplayerSkinSync
         // listener does not call NRemoteLobbyPlayer.RefreshVisuals.  Refresh the local row from
         // the normal process path instead of waiting for a character change packet.
         ContextualSkinControls.RefreshMultiplayerPlayerIcons(playerNetId);
+        try
+        {
+            MultiplayerTreasureHandAppearance.RefreshPlayer(playerNetId);
+        }
+        catch (Exception exception)
+        {
+            lock (Sync) PendingRefreshes.Add(playerNetId);
+            ModLog.Warn($"刷新本机宝箱手部失败，保留重试：{exception.GetBaseException().Message}");
+        }
     }
 
     internal static void OnLobbyCharacterChanged(StartRunLobby lobby, ulong playerId, bool randomResolution)
@@ -1860,6 +1840,7 @@ internal static class MultiplayerSkinSync
             AvailableSelections[message.PlayerNetId] = next;
             if (appearanceChanged)
             {
+                _appearanceRetryCooldown = 0;
                 PendingRefreshes.Add(message.PlayerNetId);
                 PendingTransformRefreshes.Remove(message.PlayerNetId);
                 PendingIconRefreshes.Add(message.PlayerNetId);
@@ -1889,9 +1870,9 @@ internal static class MultiplayerSkinSync
         if (appearanceChanged || transformChanged)
         {
             ModLog.Info(
-                $"已应用联机玩家 {message.PlayerNetId} 的角色 {message.CharacterId}：" +
+                $"已接收联机玩家 {message.PlayerNetId} 的角色 {message.CharacterId}：" +
                 $"皮肤={effectiveOptionId}，参数项={transforms.Count}，" +
-                $"对方声明={message.OptionId}，已加载对方外观={ownerAppearanceLoaded}，" +
+                $"对方声明={message.OptionId}，已匹配本机来源={ownerAppearanceLoaded}，" +
                 $"头像刷新={(appearanceChanged ? "等待节点刷新" : "仅参数刷新")}。 ");
         }
 

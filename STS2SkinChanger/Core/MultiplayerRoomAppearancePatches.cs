@@ -4,6 +4,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Entities.TreasureRelicPicking;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
@@ -125,6 +126,10 @@ internal static class MultiplayerRestSiteReadyScopePatch
 [HarmonyPatch(typeof(NHandImage), nameof(NHandImage._Ready))]
 internal static class MultiplayerTreasureHandReadyScopePatch
 {
+    [HarmonyPostfix]
+    private static void Postfix(NHandImage __instance) =>
+        MultiplayerTreasureHandAppearance.Remember(__instance, null);
+
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
     private static void Prefix(NHandImage __instance, out IDisposable? __state) =>
@@ -144,6 +149,10 @@ internal static class MultiplayerTreasureHandReadyScopePatch
 [HarmonyPatch]
 internal static class MultiplayerTreasureHandMoveScopePatch
 {
+    [HarmonyPostfix]
+    private static void Postfix(NHandImage __instance, RelicPickingFightMove move) =>
+        MultiplayerTreasureHandAppearance.Remember(__instance, move);
+
     private static MethodBase TargetMethod() =>
         AccessTools.Method(typeof(NHandImage), "SetTextureToFightMove") ??
         throw new MissingMethodException(typeof(NHandImage).FullName, "SetTextureToFightMove");
@@ -159,5 +168,62 @@ internal static class MultiplayerTreasureHandMoveScopePatch
     {
         __state?.Dispose();
         return __exception;
+    }
+}
+
+[HarmonyPatch(typeof(NHandImage), nameof(NHandImage._ExitTree))]
+internal static class MultiplayerTreasureHandExitPatch
+{
+    private static void Postfix(NHandImage __instance) => MultiplayerTreasureHandAppearance.Forget(__instance);
+}
+
+internal static class MultiplayerTreasureHandAppearance
+{
+    private sealed class Hand(NHandImage node, RelicPickingFightMove? move)
+    {
+        internal readonly WeakReference<NHandImage> Node = new(node);
+        internal RelicPickingFightMove? Move = move;
+    }
+
+    private static readonly List<Hand> Hands = [];
+    private static readonly FieldInfo TextureField = AccessTools.Field(typeof(NHandImage), "_textureRect");
+
+    internal static void Remember(NHandImage node, RelicPickingFightMove? move)
+    {
+        var entry = Hands.FirstOrDefault(hand => hand.Node.TryGetTarget(out var target) && ReferenceEquals(node, target));
+        if (entry == null) Hands.Add(new Hand(node, move));
+        else entry.Move = move;
+    }
+
+    internal static void Forget(NHandImage node) => Hands.RemoveAll(hand =>
+        !hand.Node.TryGetTarget(out var target) || ReferenceEquals(node, target));
+
+    internal static bool RefreshPlayer(ulong playerId)
+    {
+        var refreshed = false;
+        foreach (var hand in Hands.ToArray())
+        {
+            if (!hand.Node.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node))
+            {
+                Hands.Remove(hand);
+                continue;
+            }
+            if (node.Player?.NetId != playerId || !node.IsInsideTree() ||
+                TextureField.GetValue(node) is not TextureRect texture || !GodotObject.IsInstanceValid(texture)) continue;
+
+            // Only swap the current pose's texture. Replaying _Ready/DoFightMove would reset
+            // pivots, positions, tweens and game state during grabbing/rock-paper-scissors.
+            using var scope = MultiplayerSkinSync.BeginPlayerSelectionScope(playerId);
+            var character = node.Player.Character;
+            texture.Texture = hand.Move switch
+            {
+                RelicPickingFightMove.Rock => character.ArmRockTexture,
+                RelicPickingFightMove.Paper => character.ArmPaperTexture,
+                RelicPickingFightMove.Scissors => character.ArmScissorsTexture,
+                _ => character.ArmPointingTexture
+            };
+            refreshed = true;
+        }
+        return refreshed;
     }
 }
