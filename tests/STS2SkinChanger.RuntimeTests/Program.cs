@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-provider-toolbars")
+{
+    ProviderToolbarTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-intrinsic-previews")
 {
     IntrinsicPreviewTests.Run();
@@ -242,6 +248,7 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
 }
 
 CreatureVisualParentTests.Run();
+ProviderToolbarTests.Run();
 ManualCharacterVariantTests.Run();
 AppearanceResourceBoundaryTests.Run();
 CreatureIntentLayoutTests.Run();

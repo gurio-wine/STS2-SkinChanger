@@ -1752,38 +1752,10 @@ internal static partial class ContextualSkinControls
         control.ZIndex = Math.Max(control.ZIndex, 100);
         control.MoveToFront();
 
-        // Keep the provider-authored parent and transform. Reparenting or clamping to the
-        // viewport changes the intentional CZN toolbar placement and was the source of several
-        // historical "button moved" regressions. Only remove clipping on the newly-created
-        // toolbar itself; its ancestors remain owned by the game/provider.
+        // The character strip owns its clipping (including arrows/pagination). Only the
+        // provider toolbar may escape that boundary, without changing its authored node path.
         control.ClipContents = false;
-
-        // CZN-style toolbars are intentionally placed beside the game's bottom button strip.
-        // That strip may be a clipped Control, so a panel can be fully outside its parent while
-        // still reporting Visible=true. Disable only that clipping boundary and let the mutation
-        // tracker restore the authored value when the provider is deselected.
-        if (control.GetParent() is Control parent &&
-            parent.ClipContents &&
-            IsOutsideParentRect(control, parent))
-        {
-            parent.ClipContents = false;
-            ModLog.Info(
-                $"已解除选角交互面板父容器裁剪：节点={control.GetPath()} " +
-                $"父容器={parent.GetPath()} global={control.GlobalPosition} " +
-                $"parentGlobal={parent.GlobalPosition} parentSize={parent.Size}");
-        }
-    }
-
-    private static bool IsOutsideParentRect(Control control, Control parent)
-    {
-        var controlPosition = control.GlobalPosition;
-        var controlSize = control.Size;
-        var parentPosition = parent.GlobalPosition;
-        var parentSize = parent.Size;
-        return controlPosition.X < parentPosition.X ||
-               controlPosition.Y < parentPosition.Y ||
-               controlPosition.X + controlSize.X > parentPosition.X + parentSize.X ||
-               controlPosition.Y + controlSize.Y > parentPosition.Y + parentSize.Y;
+        ProviderToolbarCanvas.Bind(control);
     }
 
     private static void RebuildRuntimeProviderCharacterDisplay(
