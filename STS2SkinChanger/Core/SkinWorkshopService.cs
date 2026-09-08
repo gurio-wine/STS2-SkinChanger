@@ -42,13 +42,18 @@ internal static partial class SkinWorkshopService
     private static string CacheRoot => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_workshop");
     public static WorkshopDetails? CachedDetails(ulong id) => CachedMetadata.GetValueOrDefault(id);
     public static IReadOnlyDictionary<ulong, WorkshopDetails> CachedMetadata => SessionDetails.Cached(WorkshopText.SteamLanguage);
+    internal static bool CanReadMetadata(ulong id) => id > 0 &&
+        (Catalog.Any(item => item.Id == id) || CommunityIssues.Any(issue => issue.Id == id));
 
     public static async Task<Dictionary<ulong, WorkshopDetails>> Query(IReadOnlyList<ulong> ids, CancellationToken token)
     {
-        var requested = ids.Where(id => Catalog.Any(item => item.Id == id)).Distinct().Take(12).ToArray();
+        var requested = ids.Where(CanReadMetadata).Distinct().Take(12).ToArray();
         if (requested.Length == 0) return [];
+        // Keep ordinary catalog prefetching, but query error-only IDs just for the
+        // requested page. A large error log must not delay the normal browser.
+        var scope = WorkshopCodeDiagnostics.MetadataIds(Catalog, CommunityIssues.Where(issue => requested.Contains(issue.Id)));
         var language = WorkshopText.SteamLanguage;
-        var details = await SessionDetails.Get(language, Catalog.Select(i=>i.Id).ToArray(), missing=>RefreshDetails(language,missing), token);
+        var details = await SessionDetails.Get(language, scope, missing=>RefreshDetails(language,missing), token);
         return requested.Where(details.ContainsKey).ToDictionary(id => id, id => details[id]);
     }
 
@@ -84,7 +89,9 @@ internal static partial class SkinWorkshopService
                 for (uint i = 0; i < completed.m_unNumResultsReturned; i++)
                 {
                     if (!SteamUGC.GetQueryUGCResult(handle, i, out var item) || item.m_eResult != EResult.k_EResultOK ||
-                        item.m_nConsumerAppID.m_AppId != WorkshopCatalogPolicy.AppId || !requested.Contains(item.m_nPublishedFileId.m_PublishedFileId)) continue;
+                        !requested.Contains(item.m_nPublishedFileId.m_PublishedFileId) ||
+                        item.m_nConsumerAppID.m_AppId != WorkshopCatalogPolicy.AppId &&
+                        !CommunityIssues.Any(issue => issue.Id == item.m_nPublishedFileId.m_PublishedFileId)) continue;
                     SteamUGC.GetQueryUGCPreviewURL(handle, i, out var preview, 4096);
                     ulong? Statistic(EItemStatistic statistic) => SteamUGC.GetQueryUGCStatistic(handle, i, statistic, out var value) ? value : null;
                     var details = WorkshopMetadataReader.Read(item, preview ?? "", Statistic);

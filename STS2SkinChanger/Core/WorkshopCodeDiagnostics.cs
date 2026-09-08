@@ -9,6 +9,10 @@ internal sealed record WorkshopCodeProblem(string Key, ulong Id, string Name, Wo
 }
 internal static class WorkshopCodeDiagnostics
 {
+    // Read-only display scope, not catalog membership or permission to subscribe/load a Mod.
+    internal static ulong[] MetadataIds(IEnumerable<WorkshopCatalogItem> catalog, IEnumerable<WorkshopCodeIssue> issues) =>
+        catalog.Select(item => item.Id).Concat(issues.Select(issue => issue.Id)).Where(id => id > 0).Distinct().ToArray();
+
     internal static WorkshopCodeProblem[] Group(IEnumerable<WorkshopCodeIssue> issues) => issues
         .GroupBy(i => i.Id > 0 ? "id:" + i.Id : "code:" + i.Key).Select(g => new WorkshopCodeProblem(g.Key, g.First().Id,
             g.Select(i => i.ActualName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "", g.ToArray()))

@@ -15,6 +15,8 @@ internal partial class SkinWorkshopPanel
         public Panel Placeholder = null!;
         public Button Action = null!, Cancel = null!;
         public HFlowContainer Tags = null!;
+        public ulong WorkshopId;
+        public Action? PrimaryAction, SecondaryAction;
         public readonly List<TagView> TagSlots = [];
         public ItemVisual Snapshot() => new(Binding, Binding.Capture(), Title, Cover, Placeholder);
     }
@@ -46,7 +48,7 @@ internal partial class SkinWorkshopPanel
         slot.AddChild(panel); panel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect); ModThemeRuntime.Panel(panel);
         panel.MinimumSizeChanged += () => slot.CustomMinimumSize = new Vector2(0, Math.Max(182, panel.GetCombinedMinimumSize().Y));
         var view = new RowView(binding, slot, panel);
-        AttachItemClick(panel, binding);
+        AttachItemClick(panel, binding, () => view.WorkshopId);
         var margin = new MarginContainer { MouseFilter = MouseFilterEnum.Ignore }; panel.AddChild(margin);
         foreach (var edge in new[] { "left", "right", "top", "bottom" }) margin.AddThemeConstantOverride("margin_" + edge, 12);
         var box = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 158), MouseFilter = MouseFilterEnum.Ignore };
@@ -61,31 +63,53 @@ internal partial class SkinWorkshopPanel
         view.Status.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; controls.AddChild(view.Status);
         view.Metric = Text("", 16); view.Metric.ClipText = true; view.Metric.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         view.Metric.SizeFlagsHorizontal = SizeFlags.ExpandFill; view.Metric.HorizontalAlignment = HorizontalAlignment.Right; controls.AddChild(view.Metric);
-        view.Action = BoundButton(binding, "", () => PerformPrimary(binding.Id));
+        view.Action = BoundButton(binding, "", () => view.PrimaryAction?.Invoke());
         view.Action.CustomMinimumSize = new Vector2(100, 38); controls.AddChild(view.Action);
-        view.Cancel = BoundButton(binding, WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribe), () => _ = Unsubscribe(binding.Id));
+        view.Cancel = BoundButton(binding, "", () => view.SecondaryAction?.Invoke());
         view.Cancel.CustomMinimumSize = new Vector2(120, 38); controls.AddChild(view.Cancel);
         return view;
     }
 
-    private Dictionary<ulong, ItemVisual> BindRows(WorkshopCatalogItem[] visible)
+    private void PrepareRows(IReadOnlyList<ulong> bindingIds)
     {
         _pageRows ??= new(PageSize, CreateRow);
-        _pageRows.Bind(visible.Select(item => item.Id).ToArray());
+        _pageRows.Bind(bindingIds);
         _actions.Clear(); _loadTags.Clear(); _metrics.Clear(); _hoverItems.Clear();
         foreach (var marquee in _marquees) { marquee.Started = 0; marquee.Label.Position = Vector2.Zero; }
-        var snapshots = new Dictionary<ulong, ItemVisual>();
         for (var index = 0; index < _pageRows.Slots.Count; index++)
         {
             var view = _pageRows.Slots[index].View;
-            view.Slot.Visible = index < visible.Length;
+            view.Slot.Visible = index < bindingIds.Count;
+            view.WorkshopId = 0; view.PrimaryAction = view.SecondaryAction = null;
             view.Cover.Texture = null; view.Placeholder.Show();
             view.Action.Hide(); view.Cancel.Hide();
             view.Action.Disabled = view.Cancel.Disabled = true;
-            if (index >= visible.Length) continue;
+            view.Action.Text = view.Cancel.Text = "";
+            view.Action.TooltipText = view.Cancel.TooltipText = "";
+            view.Status.Text = view.Status.TooltipText = view.Panel.TooltipText = "";
+            view.Tags.Show(); view.Metric.Show();
+            foreach (var tag in view.TagSlots) { tag.Select = null; tag.Button.Hide(); }
+            if (view.Action.HasMeta("sc_restart_accent") && view.Action.GetMeta("sc_restart_accent").AsBool())
+            {
+                ModThemeRuntime.TextControl(view.Action, 20);
+                view.Action.SetMeta("sc_restart_accent", false);
+            }
+        }
+    }
+
+    private Dictionary<ulong, ItemVisual> BindRows(WorkshopCatalogItem[] visible)
+    {
+        PrepareRows(visible.Select(item => item.Id).ToArray());
+        var snapshots = new Dictionary<ulong, ItemVisual>();
+        for (var index = 0; index < visible.Length; index++)
+        {
+            var view = _pageRows!.Slots[index].View;
             var item = visible[index];
+            view.WorkshopId = item.Id;
+            view.PrimaryAction = () => PerformPrimary(item.Id);
+            view.SecondaryAction = () => _ = Unsubscribe(item.Id);
+            view.Cancel.Text = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribe);
             view.Title.Text = SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…";
-            view.Status.Text = ""; view.Status.TooltipText = "";
             view.Metric.Text = WorkshopSortPolicy.Metric(SkinWorkshopService.CachedDetails(item.Id), _sort, ModLocalization.CurrentLanguage);
             BindTags(view, item);
             _hoverItems.Add(new(item.Id, view.Slot, view.Panel));

@@ -10,7 +10,7 @@ internal static partial class SkinWorkshopService
 
     public static Task<WorkshopIntroduction> Introduction(ulong id, CancellationToken token)
     {
-        if (!Catalog.Any(item => item.Id == id)) return Task.FromResult(new WorkshopIntroduction("", [], false));
+        if (!CanReadMetadata(id)) return Task.FromResult(new WorkshopIntroduction("", [], false));
         var language = WorkshopText.SteamLanguage;
         return Introductions.Get(language + ":" + id, () => LoadIntroduction(id, language), token);
     }
@@ -30,7 +30,8 @@ internal static partial class SkinWorkshopService
             var result = await call.Task;
             if (result.m_eResult != EResult.k_EResultOK || result.m_unNumResultsReturned != 1 ||
                 !SteamUGC.GetQueryUGCResult(handle, 0, out var item) || item.m_eResult != EResult.k_EResultOK ||
-                item.m_nPublishedFileId.m_PublishedFileId != id || item.m_nConsumerAppID.m_AppId != WorkshopCatalogPolicy.AppId)
+                item.m_nPublishedFileId.m_PublishedFileId != id ||
+                item.m_nConsumerAppID.m_AppId != WorkshopCatalogPolicy.AppId && !CommunityIssues.Any(issue => issue.Id == id))
                 return new("", [], false);
             var images = new List<string>();
             var count = Math.Min(64U, SteamUGC.GetQueryUGCNumAdditionalPreviews(handle, 0));

@@ -38,13 +38,10 @@ internal static class WorkshopSubmissionIntegrity
                     candidate.Group, candidate.Sources.Max(s => s.Part), [], candidate.Sources));
             else accepted.Add(new(payload.Item, found!.Name, candidate.Group));
         }
-        // A bad new submission cannot poison a previously verified entry. Revalidate its ID
-        // and game; Steam titles are display-only and may change at any time.
-        var blocked = issues.Where(i => i.Id > 0).Select(i => i.Id).ToHashSet();
+        // This is a successfully read full discussion snapshot. Only its valid codes remain
+        // listed; edited/deleted/broken codes must not resurrect entries from the old cache.
+        // Network/Steam failures preserve the entire snapshot in WorkshopCommunityCatalog.
         var chosen = accepted.GroupBy(e => e.Item.Id).ToDictionary(g => g.Key, g => g.Last());
-        foreach (var old in previous.Entries)
-            if (!chosen.ContainsKey(old.Item.Id) && blocked.Contains(old.Item.Id) && actual.TryGetValue(old.Item.Id, out var identity) &&
-                identity.App == WorkshopCatalogPolicy.AppId) chosen[old.Item.Id] = old with { Name = identity.Name };
         return new(2, chosen.Values.OrderBy(e => e.Item.Id).ToArray(), issues.ToArray());
     }
 }

@@ -87,7 +87,7 @@ internal partial class SkinWorkshopPanel
         _introDescriptionHost.AddChild(_introDescription); _introDescription.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
     }
 
-    private void AttachItemClick(PanelContainer panel, WorkshopItemBinding binding)
+    private void AttachItemClick(PanelContainer panel, WorkshopItemBinding binding, Func<ulong> itemId)
     {
         panel.MouseFilter = MouseFilterEnum.Stop;
         panel.MouseDefaultCursorShape = CursorShape.PointingHand;
@@ -120,12 +120,12 @@ internal partial class SkinWorkshopPanel
                     var open = armed && binding.Matches(ticket) && panel.GetGlobalRect().HasPoint(panel.GetGlobalMousePosition()) &&
                         pressedAt.DistanceTo(panel.GetGlobalMousePosition()) <= 8;
                     armed = false;
-                    if (open) OpenItem(binding.Id);
+                    if (open) OpenItem(itemId());
                 }
             }
             else if (ev is InputEventMouseMotion && pressedAt.DistanceTo(panel.GetGlobalMousePosition()) > 8) armed = false;
             else if (panel.HasFocus() && ev.IsActionPressed("ui_accept") && !ev.IsEcho())
-            { panel.AcceptEvent(); OpenItem(binding.Id); }
+            { panel.AcceptEvent(); OpenItem(itemId()); }
         };
     }
 

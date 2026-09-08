@@ -47,7 +47,7 @@ internal partial class SkinWorkshopPanel
     }
     private void OpenItem(ulong id)
     {
-        if (_closed || !SkinWorkshopService.Catalog.Any(i => i.Id == id)) return;
+        if (_closed || !SkinWorkshopService.CanReadMetadata(id)) return;
         try
         {
             _actionErrors.Remove(id);

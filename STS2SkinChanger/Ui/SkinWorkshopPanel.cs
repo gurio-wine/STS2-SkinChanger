@@ -98,10 +98,7 @@ internal partial class SkinWorkshopPanel : Control
         _rows = new GridContainer { Columns = 2, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         _rows.AddThemeConstantOverride("h_separation", 18);
         _rows.AddThemeConstantOverride("v_separation", 12);
-        var listContent=new VBoxContainer { SizeFlagsHorizontal=SizeFlags.ExpandFill };
-        scroll.AddChild(listContent); listContent.AddChild(_rows);
-        _issueRows=new VBoxContainer { SizeFlagsHorizontal=SizeFlags.ExpandFill,Visible=false };
-        _issueRows.AddThemeConstantOverride("separation",12); listContent.AddChild(_issueRows);
+        scroll.AddChild(_rows);
         var footer = new HBoxContainer(); content.AddChild(footer);
         footer.AddChild(Button(ModLocalization.Get(ModText.Close), Close));
         footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
@@ -125,9 +122,8 @@ internal partial class SkinWorkshopPanel : Control
         _pageToken?.Cancel(); _pageToken?.Dispose(); _pageToken = new();
         var token = _pageToken.Token;
         var generation = ++_generation;
-        foreach(var errorRow in _errorPool)errorRow.Binding.Bind(0);
-        _rows.Visible=!CodeErrors; _issueRows.Visible=CodeErrors;
-        if(CodeErrors) { BindRows([]); RebuildCodeErrors(); UpdateVisibleActions(); RecordPageBuild(started); return; }
+        if (_emptyLabel == null) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
+        if(CodeErrors) { RebuildCodeErrors(generation, token); UpdateVisibleActions(); RecordPageBuild(started); return; }
         _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
         var filtered = FilteredItems();
         _filteredIds = filtered.Select(item => item.Id).ToArray();
@@ -135,7 +131,6 @@ internal partial class SkinWorkshopPanel : Control
         _page = Math.Clamp(_page, 0, pages - 1);
         _previous.Disabled = _page == 0; _next.Disabled = _page + 1 >= pages;
         _pageLabel.Text = $"{_page + 1} / {pages}";
-        if (_emptyLabel == null) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
         _emptyLabel.Text = EmptyText;
         _emptyLabel.Visible = filtered.Length == 0;
         var visible = filtered.Skip(_page * PageSize).Take(PageSize).ToArray();

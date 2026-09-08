@@ -29,10 +29,23 @@ internal static class WorkshopSubmissionIntegrityTests
         var mismatch = WorkshopSubmissionIntegrity.Verify(complete, new Dictionary<ulong, WorkshopIdentity> { [456] = new(2868840, "另外的模组") }, valid);
         Require(mismatch.Entries.Single().Name == "另外的模组" && mismatch.Issues.Length == 0, "工坊改名不能使信息码失效，应更新显示名称。");
         var keep = WorkshopSubmissionIntegrity.Verify(partial, lookup, valid);
-        Require(keep.Entries.Length == 1 && keep.Issues.Any(i => i.Error == WorkshopCodeError.MissingParts), "坏的新投稿不能覆盖仍通过ID核验的完整旧条目。");
-        Require(WorkshopSubmissionIntegrity.Verify(partial, new Dictionary<ulong, WorkshopIdentity> { [456] = new(2868840, "改名") }, valid).Entries.Single().Name == "改名", "缓存回退也不能因名称改变被阻止。");
+        Require(keep.Entries.Length == 0 && keep.Issues.Any(i => i.Error == WorkshopCodeError.MissingParts), "本轮完整读取后只剩缺片码，必须撤下旧社区条目，不能从缓存复活。");
+        Require(WorkshopSubmissionIntegrity.Verify(partial, new Dictionary<ulong, WorkshopIdentity> { [456] = new(2868840, "改名") }, valid).Issues.Single().ActualName == "改名", "撤下后错误项仍应展示Steam当前名称。");
         var single = WorkshopSubmissionCodec.Encode(new(789, [new("character", "silent")]), "1", "0.111").Single();
         var bad = single[..^1] + (single[^1] == '0' ? '1' : '0');
+        var singleLookup = new Dictionary<ulong, WorkshopIdentity> { [789] = new(2868840, "Test skin") };
+        var singleValid = WorkshopSubmissionIntegrity.Verify(Read([single]), singleLookup, WorkshopCommunityState.Empty);
+        var truncated = WorkshopSubmissionIntegrity.Verify(Read([single[..^1]]), singleLookup, singleValid);
+        Require(truncated.Entries.Length == 0 && truncated.Issues is [{ Id: 789 }],
+            "原帖删除最后一位并成功刷新后，只能留下码错误，不能继续出现在普通社区清单。");
+        var browserItems = WorkshopSubmissionCode.Merge([], truncated.Entries.Select(e => e.Item));
+        Require(browserItems.Length == 0, "实际合并的普通浏览清单不能保留被编辑损坏的投稿。");
+        Require(WorkshopSubmissionCode.Merge([new(789, [new("character", "silent")])], []).Length == 1,
+            "社区坏码不能撤销独立收录的内置条目。");
+        Require(WorkshopSubmissionIntegrity.Verify(Read([]), singleLookup, singleValid).Entries.Length == 0,
+            "整条码从原帖删除后也应撤下社区条目。");
+        Require(WorkshopSubmissionIntegrity.Verify(Read([single]), singleLookup, truncated) is { Entries.Length: 1, Issues.Length: 0 },
+            "修复原帖后应重新收录并清除错误。");
         Require(Read([bad]).Issues.Single() is { Id: 789, Total: 1, Sources: [{ Part: 1 }] }, "校验失败仍应保留可解析的物品ID与片号。");
         Require(Read([bad, single.Replace("SCM3 ", "SCM99 ")]).Issues.Select(i => i.Error).ToHashSet().SetEquals(new[] { WorkshopCodeError.Checksum, WorkshopCodeError.Version }), "坏校验及未知版本必须列出，不能静默吞掉。");
         var oldNamed = Read([RawCode(JsonSerializer.Serialize(new { Format = 2, App = 2868840, Name = "中文 SCM2 模组", Scanner = "1", Game = "0.111", Item = new WorkshopCatalogItem(999, [new("cards", "silent")]) }), "SCM2 \"中文 SCM2 模组\" 999 ")]);
@@ -42,6 +55,8 @@ internal static class WorkshopSubmissionIntegrityTests
         Require(Read([legacy]).Issues.Single() is { Id: 100, Error: WorkshopCodeError.Legacy }, "SCM1缺少分片完整性资料，仍不能绕过校验。");
         var mixed = Read([bad, single]);
         Require(mixed.Candidates.Length == 1 && mixed.Issues.Length == 1, "一个坏码不能阻止独立的好码。");
+        Require(WorkshopSubmissionIntegrity.Verify(mixed, singleLookup, singleValid).Entries.Length == 1,
+            "本轮仍存在独立完整码时按该码收录，不应被其它坏码抹掉。");
         var altered = codes[0][..codes[0].LastIndexOf('.')];
         altered = altered[..^1] + (altered[^1] == 'A' ? 'B' : 'A');
         var conflict = Read(codes.Append(Resign(altered + ".00000000")).ToArray());
@@ -63,6 +78,8 @@ internal static class WorkshopSubmissionIntegrityTests
         Require(!filter.Matches(456), "码错误不能混入正在订阅的普通条目。");
         var problem = WorkshopCodeDiagnostics.Group(partial.Issues.Concat(partial.Issues)).Single();
         Require(problem.Sources.Length == codes.Length - 1, "重复问题不应生成重复来源。");
+        Require(WorkshopCodeDiagnostics.MetadataIds([new(123, [new("character", "silent")])], [.. partial.Issues, partial.Issues[0] with { Id = 0 }])
+            .Order().SequenceEqual(new ulong[] { 123, 456 }), "资料读取范围包含普通条目和错误ID，但排除0和重复ID；不会把错误项添加回正常清单。");
         var report = WorkshopCodeDiagnostics.Report(problem, "zhs");
         Require(report.Contains("[SCM-MissingParts]") && report.Contains(codes[0]) && report.Contains("#c100") && report.Contains("缺少："),
             "复制详情必须包含错误类型、缺片、原码及原帖链接。");
@@ -99,6 +116,8 @@ internal static class WorkshopSubmissionIntegrityTests
             var catalog = new WorkshopCommunityCatalog(); await catalog.Replace(() => Task.FromResult(state), path);
             var restored = new WorkshopCommunityCatalog(); await restored.Restore(path);
             Require(restored.State.Issues.Single().Missing.SequenceEqual(state.Issues.Single().Missing), "错误分片信息须缓存。");
+            Require(restored.Items.Select(item => item.Id).SequenceEqual(state.Entries.Select(entry => entry.Item.Id)),
+                "保存和重启恢复必须沿用本轮有效条目，错误状态不能复活已撤下的条目。");
             await File.WriteAllTextAsync(path, JsonSerializer.Serialize(state with { Issues = [.. state.Issues, state.Issues[0] with { Error = WorkshopCodeError.NameMismatch }] }));
             await restored.Restore(path);
             Require(restored.State.Issues.All(i => i.Error != WorkshopCodeError.NameMismatch), "旧缓存的名称错误不能残留在错误列表。");
