@@ -24,14 +24,15 @@ if (args.Length == 1 && args[0] == "--test-provider-compatibility")
 }
 if (args.Length == 1 && args[0] == "--test-workshop-submissions")
 {
+    await WorkshopSubmissionIntegrityTests.Run();
     await WorkshopSubmissionTests.Run();
     return;
 }
 if (args.Length == 1 && args[0] == "--check-workshop-discussion")
 {
     using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
-    var items=await STS2SkinChanger.Core.WorkshopDiscussionSource.ReadAll(STS2SkinChanger.Core.WorkshopDiscussionSource.Fetch,null,timeout.Token);
-    Console.WriteLine($"Live submission discussion read passed: {items.Length} submitted items (read only, no Steam/game initialization).");
+    var read=STS2SkinChanger.Core.WorkshopSubmissionV2.Read(await STS2SkinChanger.Core.WorkshopDiscussionSource.ReadAllPosts(STS2SkinChanger.Core.WorkshopDiscussionSource.Fetch,null,timeout.Token));
+    Console.WriteLine($"Live submission discussion read passed: {read.Candidates.Length} complete submissions, {read.Issues.Length} errors (read only, no Steam/game initialization).");
     return;
 }
 if(args.Length==4 && args[0]=="--audit-workshop-submission")
@@ -309,6 +310,7 @@ SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
 ProviderCompatibilityTests.Run();
 PackageCompatibilityTests.Run();
+await WorkshopSubmissionIntegrityTests.Run();
 await WorkshopSubmissionTests.Run();
 AppearanceControlContractTests.Run();
 ModThemeTests.Run();

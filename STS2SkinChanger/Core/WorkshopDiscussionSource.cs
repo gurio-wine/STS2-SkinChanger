@@ -6,7 +6,10 @@ using System.Text.RegularExpressions;
 
 namespace STS2SkinChanger.Core;
 
-internal sealed record WorkshopDiscussionPage(int Total, int Start, int PageSize, string[] Posts);
+internal sealed record WorkshopDiscussionPage(int Total, int Start, int PageSize, WorkshopCodePost[] Sources)
+{
+    public string[] Posts => Sources.Select(p=>p.Text).ToArray();
+}
 internal static class WorkshopDiscussionSource
 {
     public const string Topic = "592940620292752301";
@@ -18,6 +21,8 @@ internal static class WorkshopDiscussionSource
     private static readonly Regex Classes = Pattern("\\bclass\\s*=\\s*[\"']([^\"']*)[\"']");
     private static readonly Regex Tags = Pattern("<[^>]*>");
     private static readonly Regex Scripts = Pattern("<(script|style)\\b[^>]*>.*?</\\1\\s*>");
+    private static readonly Regex CommentId = Pattern("\\bid\\s*=\\s*[\"']comment_content_([0-9]+)[\"']");
+    private static readonly Regex Breaks = Pattern("<br\\b[^>]*>|</(?:div|p|pre)\\s*>");
 
     public static WorkshopDiscussionPage Parse(string html)
     {
@@ -34,11 +39,12 @@ internal static class WorkshopDiscussionSource
         var size = data.GetProperty("pagesize").GetInt32();
         if (total is < 0 or > 30000 || start < 0 || size is < 1 or > 100 || start > total)
             throw new InvalidDataException("Invalid discussion pagination.");
-        var posts = new List<string>();
+        var posts = new List<WorkshopCodePost>();
         html = Scripts.Replace(html, "");
         var depth = 0;
         var contentStart = -1;
         var replies = 0;
+        var postUrl=Url; var postReply=0; var page=start/size+1;
         foreach (Match div in Divs.Matches(html))
         {
             var closing = div.Value.StartsWith("</", StringComparison.Ordinal);
@@ -47,7 +53,7 @@ internal static class WorkshopDiscussionSource
                 depth += closing ? -1 : 1;
                 if (depth == 0)
                 {
-                    posts.Add(WebUtility.HtmlDecode(Tags.Replace(html[contentStart..div.Index], " ")));
+                    posts.Add(new(WebUtility.HtmlDecode(Tags.Replace(Breaks.Replace(html[contentStart..div.Index], "\n"), "")),postUrl,page,postReply));
                     contentStart = -1;
                 }
             }
@@ -56,7 +62,11 @@ internal static class WorkshopDiscussionSource
                 var classes = Classes.Match(div.Value).Groups[1].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (classes.Contains("forum_op") || classes.Contains("commentthread_comment_text"))
                 {
-                    if (classes.Contains("commentthread_comment_text")) replies++;
+                    var reply=classes.Contains("commentthread_comment_text");
+                    if (reply) replies++;
+                    postReply=reply ? start+replies : 0;
+                    var comment=CommentId.Match(div.Value).Groups[1].Value;
+                    postUrl=Url+(page>1 ? "?ctp="+page : "")+(comment.Length>0 ? "#c"+comment : "");
                     contentStart = div.Index + div.Length; depth = 1;
                 }
             }
@@ -66,13 +76,13 @@ internal static class WorkshopDiscussionSource
         return new(total, start, size, posts.ToArray());
     }
 
-    public static async Task<WorkshopCatalogItem[]> ReadAll(Func<Uri, CancellationToken, Task<string>> fetch,
+    public static async Task<WorkshopCodePost[]> ReadAllPosts(Func<Uri, CancellationToken, Task<string>> fetch,
         IProgress<(int Current, int Total)>? progress, CancellationToken token)
     {
         var first = Parse(await fetch(new Uri(Url), token));
         if (first.Start != 0) throw new InvalidDataException("Discussion did not start at page one.");
         var pages = Math.Max(1, (first.Total + first.PageSize - 1) / first.PageSize);
-        var posts = new List<string>(first.Posts);
+        var posts = new List<WorkshopCodePost>(first.Sources);
         progress?.Report((1, pages));
         for (var page = 2; page <= pages; page++)
         {
@@ -80,11 +90,13 @@ internal static class WorkshopDiscussionSource
             var next = Parse(await fetch(new Uri(Url + "?ctp=" + page), token));
             if (next.Total != first.Total || next.PageSize != first.PageSize || next.Start != (page - 1) * first.PageSize)
                 throw new InvalidDataException("Discussion changed during pagination; retain the last complete catalog.");
-            posts.AddRange(next.Posts);
-            if (posts.Sum(p => (long)p.Length) > 32 * 1024 * 1024) throw new InvalidDataException("Discussion exceeds refresh budget.");
+            // Steam repeats the original post on later pages. It isn't a new submission:
+            // counting it again would make an old group supersede newer replies.
+            posts.AddRange(next.Sources.Where(p=>p.Reply>0));
+            if (posts.Sum(p => (long)p.Text.Length) > 32 * 1024 * 1024) throw new InvalidDataException("Discussion exceeds refresh budget.");
             progress?.Report((page, pages));
         }
-        return WorkshopSubmissionCode.ReadPosts(posts);
+        return posts.ToArray();
     }
 
     internal static async Task<string> Fetch(Uri uri, CancellationToken token)

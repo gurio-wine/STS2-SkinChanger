@@ -20,6 +20,8 @@ internal partial class SkinWorkshopPanel
     private readonly Dictionary<ulong, Button> _loadTags = [];
     private string EmptyText => WorkshopText.Get(_subscriptions.Value.Length > 0 && _subscriptions.Unavailable ? WorkshopTextKey.Offline : WorkshopTextKey.Empty);
     private WorkshopSort _sort = WorkshopSort.Subscriptions;
+    private OptionButton _sortPicker=null!;
+    private bool CodeErrors => _subscriptions.Value=="code_errors";
     private WorkshopCatalogItem[] FilteredItems()
     {
         var filtered = _subscriptions.Filter(WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
@@ -32,6 +34,7 @@ internal partial class SkinWorkshopPanel
         heading.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore });
         var picker = new OptionButton { CustomMinimumSize = new Vector2(245, 42), FitToLongestItem = false, ClipText = true,
             TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis };
+        _sortPicker=picker;
         ContextualSkinControls.ApplyGameTheme(picker);
         foreach (var sort in Enum.GetValues<WorkshopSort>()) picker.AddItem(WorkshopDetailsText.Get((WorkshopDetailsTextKey)sort), (int)sort);
         picker.Select((int)_sort);
@@ -48,7 +51,7 @@ internal partial class SkinWorkshopPanel
         var filters = new HFlowContainer();
         filters.AddThemeConstantOverride("h_separation", 12); filters.AddThemeConstantOverride("v_separation", 8); content.AddChild(filters);
         _subscriptionPicker = new(WorkshopSubscriptionFilter.Name, value =>
-        { _subscriptions.Select(value); _page = 0; RefreshFilters(); Rebuild(); });
+        { _subscriptions.Select(value); _page = 0; _listScroll.ScrollVertical=0; RefreshFilters(); Rebuild(); });
         _typePicker = new(WorkshopText.Kind, id => SetFilter(id, ""));
         _regionPicker = new(id => _names.RegionNames.GetValueOrDefault(id, id), id =>
         { _region = id; _target = ""; RefreshFilters(); _page = 0; Rebuild(); });
@@ -81,10 +84,12 @@ internal partial class SkinWorkshopPanel
     private void RefreshFilters()
     {
         _subscriptionPicker.SetOptions(WorkshopSubscriptionFilter.Options, _subscriptions.Value);
+        _sortPicker.Visible=!CodeErrors;
+        _typePicker.Picker.Visible=_loadPicker.Picker.Visible=!CodeErrors;
         _typePicker.SetOptions(Kinds, _kind);
-        _regionPicker.Picker.Visible = WorkshopBrowserPolicy.HasRegions(_kind);
+        _regionPicker.Picker.Visible = !CodeErrors && WorkshopBrowserPolicy.HasRegions(_kind);
         _regionPicker.SetOptions(_names.Regions(_kind).Keys, _region);
-        _targetPicker.Picker.Visible = _kind.Length > 0;
+        _targetPicker.Picker.Visible = !CodeErrors && _kind.Length > 0;
         var ids = SkinWorkshopService.Catalog.SelectMany(i => i.Targets).Where(t => t.Kind == _kind && WorkshopBrowserPolicy.VisibleTarget(t))
             .Select(t => t.Target).Where(id => RegionMembers == null || RegionMembers.Contains(id)).Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(id => _names.Name(_kind, id), StringComparer.CurrentCulture);
@@ -140,6 +145,7 @@ internal partial class SkinWorkshopPanel
     }
     private void PollFilters()
     {
+        if(CodeErrors)return;
         _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
         foreach (var item in SkinWorkshopService.Catalog)
             if (_loadTags.TryGetValue(item.Id, out var button)) UpdateLoadTag(item, button);

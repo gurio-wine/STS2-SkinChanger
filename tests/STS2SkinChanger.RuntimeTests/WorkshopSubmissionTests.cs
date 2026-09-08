@@ -52,16 +52,16 @@ internal static class WorkshopSubmissionTests
         Require(parsed.Posts.Length == 2 && WorkshopSubmissionCode.ReadPosts(parsed.Posts).Length == 1,
             "只读取帖子内容；忽略脚本与页面其它区域里的伪造投稿。");
         var requests = new List<string>();
-        var read = await WorkshopDiscussionSource.ReadAll((uri, _) =>
+        var read = WorkshopSubmissionCode.ReadPosts((await WorkshopDiscussionSource.ReadAllPosts((uri, _) =>
         {
             requests.Add(uri.Query);
             return Task.FromResult(uri.Query.Length == 0 ? html : Page(2,1,1,WorkshopSubmissionCode.Encode([items[1]],"1","0.111").Single()));
-        }, null, default);
+        }, null, default)).Select(p=>p.Text));
         Require(read.Select(i=>i.Id).SequenceEqual(new ulong[] { 1,2 }) && requests.SequenceEqual(new[] { "", "?ctp=2" }),
             "必须读取所有分页，而不是仅主楼/第一页。");
         try
         {
-            await WorkshopDiscussionSource.ReadAll((uri,_) => Task.FromResult(html),null,default);
+            await WorkshopDiscussionSource.ReadAllPosts((uri,_) => Task.FromResult(html),null,default);
             throw new Exception("分页返回第一页时被误认为成功。");
         }
         catch (InvalidDataException) { }
@@ -72,7 +72,7 @@ internal static class WorkshopSubmissionTests
         await CacheAndLanguages(items);
         await MetadataDelta();
         ScanPackages();
-        Console.WriteLine("Workshop submissions passed: independent batch codes, validation, bounded expansion, built-in precedence and complete pagination.");
+        Console.WriteLine("Legacy codec and submission infrastructure passed: bounded decoding, built-in precedence, complete pagination and cache rollback.");
     }
 
     internal static void Audit(string gamePack,string directory,ulong id)
@@ -91,8 +91,7 @@ internal static class WorkshopSubmissionTests
             }
         var result=WorkshopSubmissionScanner.Scan(new(id,Path.GetFileName(directory),directory),gamePack,cards.Distinct().ToArray(),"0.111.0",new Dictionary<string,string>());
         Require(result.Item!=null,result.Error);
-        var codes=WorkshopSubmissionCode.Encode([result.Item!],"1.0.3.3","0.111.0");
-        Console.WriteLine($"Read-only submission audit: {id}; targets={JsonSerializer.Serialize(result.Item!.Targets)}; restart={result.Item.RestartRequired}; code lengths={string.Join(',',codes.Select(c=>c.Length))}");
+        Console.WriteLine($"Read-only submission audit: {id}; targets={JsonSerializer.Serialize(result.Item!.Targets)}; restart={result.Item.RestartRequired}; SCM2 generation requires verified Steam name in game.");
     }
 
     private static void ScanPackages()
@@ -149,11 +148,12 @@ internal static class WorkshopSubmissionTests
         try
         {
             var catalog=new WorkshopCommunityCatalog();
-            await catalog.Replace(()=>Task.FromResult(new[]{items[0]}),i=>Task.FromResult(i),path);
+            var state=new WorkshopCommunityState(2,[new(items[0],"Name","0123456789ABCDEF01234567")],[]);
+            await catalog.Replace(()=>Task.FromResult(state),path);
             var saved=await File.ReadAllTextAsync(path);
-            try { await catalog.Replace(()=>throw new IOException("page two offline"),i=>Task.FromResult(i),path); throw new Exception("Load failure was ignored."); }
+            try { await catalog.Replace(()=>throw new IOException("page two offline"),path); throw new Exception("Load failure was ignored."); }
             catch(IOException) { }
-            try { await catalog.Replace(()=>Task.FromResult(new[]{items[1]}),_=>throw new IOException("Steam verification offline"),path); throw new Exception("Verification failure was ignored."); }
+            try { await catalog.Replace(()=>throw new IOException("Steam verification offline"),path); throw new Exception("Verification failure was ignored."); }
             catch(IOException) { }
             Require(catalog.Items.Single().Id==1 && await File.ReadAllTextAsync(path)==saved,"刷新失败不能丢失内存或磁盘的完整清单。");
             var restored=new WorkshopCommunityCatalog();

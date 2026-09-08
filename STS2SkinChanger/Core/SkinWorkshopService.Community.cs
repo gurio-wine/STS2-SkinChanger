@@ -18,6 +18,7 @@ internal static partial class SkinWorkshopService
     public static bool CommunityBusy => _communityBusy;
     public static bool CommunityFailed => _communityFailed;
     public static string CommunityProgress => _communityProgress;
+    public static IReadOnlyList<WorkshopCodeIssue> CommunityIssues => Community.State.Issues;
 
     internal static void StartCommunityRefresh()
     {
@@ -31,7 +32,8 @@ internal static partial class SkinWorkshopService
         _communityBusy = true; _communityFailed = false; _communityProgress = "";
         try
         {
-            var path = System.IO.Path.Combine(CacheRoot, "community-catalog.json");
+            // The old cache has neither names nor completeness proof, and must not bypass SCM2.
+            var path = System.IO.Path.Combine(CacheRoot, "community-catalog-v2.json");
             if (restore)
             {
                 try { await Community.Restore(path); PublishCommunity(); }
@@ -39,11 +41,15 @@ internal static partial class SkinWorkshopService
             }
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(15));
             var progress = new Progress<(int Current, int Total)>(p => _communityProgress = $"{p.Current}/{p.Total}");
-            await Community.Replace(
-                () => Task.Run(() => WorkshopDiscussionSource.ReadAll(WorkshopDiscussionSource.Fetch, progress, timeout.Token), timeout.Token),
-                items => VerifyCommunity(items, timeout.Token), path);
+            await Community.Replace(async () =>
+            {
+                var read=await Task.Run(async ()=>WorkshopSubmissionV2.Read(await WorkshopDiscussionSource.ReadAllPosts(
+                    WorkshopDiscussionSource.Fetch,progress,timeout.Token)),timeout.Token);
+                var identities=await QuerySubmissionIdentities(read.Candidates.Select(c=>c.Payload.Item.Id).Concat(read.Issues.Select(i=>i.Id)),timeout.Token);
+                return WorkshopSubmissionIntegrity.Verify(read,identities,Community.State);
+            }, path);
             PublishCommunity();
-            ModLog.Info($"工坊投稿帖完整刷新成功：{Community.Items.Length} 项，合并后 {Catalog.Count} 项；未订阅或执行任何投稿内容。");
+            ModLog.Info($"工坊投稿帖完整刷新成功：{Community.Items.Length} 项，码错误 {CommunityIssues.Count} 项，合并后 {Catalog.Count} 项；未订阅或执行任何投稿内容。");
         }
         catch (Exception ex)
         {
@@ -55,22 +61,21 @@ internal static partial class SkinWorkshopService
     private static void PublishCommunity()
     {
         var next = WorkshopSubmissionCode.Merge(Items.Value, Community.Items);
-        var current = _combinedItems ?? Items.Value;
-        if (current.Length == next.Length && current.Zip(next).All(p => p.First.Id == p.Second.Id &&
-            p.First.RestartRequired == p.Second.RestartRequired && p.First.Targets.SequenceEqual(p.Second.Targets))) return;
         _combinedItems = next;
+        // Errors can change without valid membership changing; the error filter must refresh too.
         _communityRevision++;
     }
-    private static async Task<WorkshopCatalogItem[]> VerifyCommunity(WorkshopCatalogItem[] items, CancellationToken token)
+    private static async Task<Dictionary<ulong,WorkshopIdentity>> QuerySubmissionIdentities(IEnumerable<ulong> ids, CancellationToken token)
     {
-        var valid = new HashSet<ulong>();
-        foreach (var chunk in items.Select(i => i.Id).Distinct().Chunk(100))
+        var valid = new Dictionary<ulong,WorkshopIdentity>();
+        foreach (var chunk in ids.Where(id=>id>0).Distinct().Chunk(100))
         {
             token.ThrowIfCancellationRequested();
             var handle = SteamUGC.CreateQueryUGCDetailsRequest(chunk.Select(id => new PublishedFileId_t(id)).ToArray(), (uint)chunk.Length);
             if (handle == UGCQueryHandle_t.Invalid) throw new IOException("Steam item verification unavailable.");
             try
             {
+                if(!SteamUGC.SetLanguage(handle,"english"))throw new IOException("Cannot set submission identity language.");
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(25));
                 using var call = new MegaCrit.Sts2.Core.Multiplayer.Transport.Steam.SteamCallResult<SteamUGCQueryCompleted_t>(SteamUGC.SendQueryUGCRequest(handle), timeout.Token);
@@ -84,13 +89,13 @@ internal static partial class SkinWorkshopService
                     if (!SteamUGC.GetQueryUGCResult(handle, index, out var detail)) throw new IOException("Incomplete Steam item verification.");
                     if (detail.m_eResult is not (EResult.k_EResultOK or EResult.k_EResultFileNotFound or EResult.k_EResultAccessDenied or EResult.k_EResultInvalidParam))
                         throw new IOException("Transient Steam item verification failure: " + detail.m_eResult);
-                    if (detail.m_eResult == EResult.k_EResultOK && detail.m_nConsumerAppID.m_AppId == WorkshopCatalogPolicy.AppId &&
-                        chunk.Contains(detail.m_nPublishedFileId.m_PublishedFileId)) valid.Add(detail.m_nPublishedFileId.m_PublishedFileId);
+                    if (detail.m_eResult == EResult.k_EResultOK && chunk.Contains(detail.m_nPublishedFileId.m_PublishedFileId))
+                        valid[detail.m_nPublishedFileId.m_PublishedFileId]=new(detail.m_nConsumerAppID.m_AppId,detail.m_rgchTitle??"");
                 }
             }
             finally { SteamUGC.ReleaseQueryUGCRequest(handle); }
         }
-        return items.Where(i => valid.Contains(i.Id)).ToArray();
+        return valid;
     }
 
     public static async Task<WorkshopLocalSubmission[]> SubmissionCandidates(CancellationToken token)
@@ -139,9 +144,11 @@ internal static partial class SkinWorkshopService
             .ToDictionary(g => g.Key, g => g.First().manifest!.version ?? "", StringComparer.OrdinalIgnoreCase);
         var installed = selected.Where(s => IsSubscribed(s.Id) && TryInstalled(s.Id, out var root) &&
             System.IO.Path.GetFullPath(root).Equals(System.IO.Path.GetFullPath(s.Directory), StringComparison.OrdinalIgnoreCase)).ToArray();
+        var identities=await QuerySubmissionIdentities(installed.Select(s=>s.Id),token);
         return await SkinService.RunWorkshopScan(() =>
         {
             var items = new List<WorkshopCatalogItem>();
+            var codes=new List<string>();
             var rejected = selected.Length - installed.Length;
             for (var i = 0; i < installed.Length; i++)
             {
@@ -149,12 +156,21 @@ internal static partial class SkinWorkshopService
                 var local = installed[i];
                 progress.Report((i, installed.Length, local.Name));
                 var result = WorkshopSubmissionScanner.Scan(local, snapshot.GamePack, snapshot.Cards, gameVersion, dependencies, snapshot.Baselines);
-                if (result.Item != null) items.Add(result.Item);
-                else { rejected++; ModLog.Info($"投稿扫描 {local.Id} 未识别：{result.Error}"); }
+                if (result.Item != null && identities.TryGetValue(local.Id,out var identity) && identity.App==WorkshopCatalogPolicy.AppId && !string.IsNullOrWhiteSpace(identity.Name))
+                {
+                    try
+                    {
+                        codes.AddRange(WorkshopSubmissionV2.Encode(result.Item,identity.Name,Entry.InternalTestVersion,gameVersion));
+                        items.Add(result.Item);
+                    }
+                    catch(Exception ex) when(ex is not OperationCanceledException)
+                    { rejected++; ModLog.Warn($"投稿编码 {local.Id} 失败：{ex.GetBaseException().Message}"); }
+                }
+                else { rejected++; ModLog.Info($"投稿扫描 {local.Id} 未识别：{(result.Item==null ? result.Error : "未取得本游戏的有效 Steam 工坊名称")}"); }
                 progress.Report((i + 1, installed.Length, local.Name));
             }
             token.ThrowIfCancellationRequested();
-            return (WorkshopSubmissionCode.Encode(items, Entry.InternalTestVersion, gameVersion), items.Count, rejected);
+            return (codes.ToArray(), items.Count, rejected);
         }, token);
     }
 }
