@@ -1958,29 +1958,13 @@ internal static class CardInspectSkinControls
         var popup = dropdown.GetPopup();
         popup.AddThemeFontSizeOverride("font_size", 20);
         popup.AboutToPopup += () => PopulateOptions(screen, selector, dropdown);
+        // PresetChoiceColoring forwards the visible ItemList's mouse/keyboard focus as IDs.
+        // Do not also poll PopupMenu.GetFocusedItem: its hidden rows have different geometry
+        // and a deferred mouse callback can overwrite the visible row's preview.
         popup.IdFocused += id => PreviewSelection(
             screen,
             dropdown,
             popup.GetItemIndex(checked((int)id)));
-        popup.WindowInput += inputEvent =>
-        {
-            if (inputEvent is not InputEventMouseMotion)
-            {
-                return;
-            }
-
-            // PopupMenu updates its focused row during the same mouse event. Read it on the next
-            // idle step so mouse hover and keyboard focus share the same preview path.
-            Callable.From(() =>
-            {
-                if (GodotObject.IsInstanceValid(screen) &&
-                    GodotObject.IsInstanceValid(popup) &&
-                    popup.Visible)
-                {
-                    PreviewSelection(screen, dropdown, popup.GetFocusedItem());
-                }
-            }).CallDeferred();
-        };
         popup.PopupHide += () => RestorePreview(screen);
         dropdown.ItemSelected += index => ApplySelection(
             screen,

@@ -41,6 +41,7 @@ internal static class CardSkinRefreshContractTests
             .Where(method => method.Name.Contains("<PreviewSelection>", StringComparison.Ordinal))
             .SelectMany(Calls);
         Require(previewClosureCalls.Contains(refresh), "悬浮单卡预览也必须使用完整刷新，且保留临时皮肤作用域。");
+        CheckHoverPreviewRouting(assembly);
 
         var remember = controls.GetMethod("RememberPreviewMode", BindingFlags.Static | BindingFlags.Public)!;
         var stateType = controls.GetNestedType("CardPreviewState", BindingFlags.NonPublic)!;
@@ -74,6 +75,37 @@ internal static class CardSkinRefreshContractTests
             "目标游戏版本的卡牌刷新职责发生变化，需要重新审查换肤顺序。");
         CheckRefreshDiagnostics(assembly, controls, refresh);
         Console.WriteLine("Card skin refresh contracts passed: library, presets, single-card selection, hover and pooled upgrade context.");
+    }
+
+    private static void CheckHoverPreviewRouting(Assembly assembly)
+    {
+        var inspect = assembly.GetType("STS2SkinChanger.Ui.CardInspectSkinControls", true)!;
+        var preview = inspect.GetMethod("PreviewSelection", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var attach = inspect.GetMethod("Attach", BindingFlags.Static | BindingFlags.Public)!;
+        var callbacks = assembly.GetTypes()
+            .Where(type => type.FullName?.StartsWith(inspect.FullName + "+", StringComparison.Ordinal) == true)
+            .SelectMany(type => type.GetMethods(BindingFlags.Instance | BindingFlags.Static |
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            .Where(method => method.Name.Contains("<Attach>", StringComparison.Ordinal) && method.GetMethodBody() != null)
+            .Select(Calls).Where(calls => calls.Contains(preview)).ToArray();
+
+        // The visible ItemList and its host PopupMenu can have different row heights. Each
+        // preview callback must consume the focused ID, never poll the host's later mouse row:
+        // that row can be A while the pointer is still inside visible B (whose focus is deduped).
+        Require(callbacks.Length > 0 && callbacks.All(calls => calls.Any(call =>
+                call.DeclaringType == typeof(Godot.PopupMenu) && call.Name == nameof(Godot.PopupMenu.GetItemIndex))),
+            "悬停预览存在绕过可见列表焦点 ID 的回调；同一行内移动会被底层菜单的旧行覆盖。");
+        var subscriptions = Calls(attach);
+        Require(subscriptions.Any(call => call.Name == "add_IdFocused") &&
+                subscriptions.Any(call => call.Name == "add_PopupHide") &&
+                subscriptions.Any(call => call.Name == "add_ItemSelected"),
+            "修复悬停不能丢失焦点预览、关闭恢复或点击确认的事件连接。");
+        var populate = inspect.GetMethod("PopulateOptions", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var append = assembly.GetType("STS2SkinChanger.Ui.SkinWorkshopEntry", true)!
+            .GetMethod("Append", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Require(Calls(populate).Contains(append) && Calls(append).Any(call =>
+                call.DeclaringType?.Name == "PresetChoiceColoring" && call.Name == "Attach"),
+            "单卡选项必须接上可见列表，让其鼠标与键盘焦点继续驱动预览。");
     }
 
     private static void CheckRefreshDiagnostics(Assembly assembly, Type controls, MethodInfo refresh)
