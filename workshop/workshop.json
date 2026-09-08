@@ -3,13 +3,13 @@
   "publishedFileId": 3787302680,
   "title": "Skin Changer",
   "statementHeading": "Statement",
-  "version": "1.0.0",
-  "internalTestVersion": "1.0.0.2",
+  "version": "1.0.1",
+  "internalTestVersion": "1.0.1.0",
   "featureUpdate": "",
   "cardPriorityUpdate": "",
   "multiplayerUpdate": "",
   "limitations": "",
-  "description": "Switch character, card, monster, Ancient, merchant, creature and event skins, with previews in the Other Compendium.\n\n[h1]NO RESTART! SWITCH AND USE INSTANTLY![/h1]\n\n[h2]Details[/h2]\n[list]\n[*]Switch skins in character select and compendiums, or adjust appearance during a run.\n[*]Organize your choices with priorities, presets, skin combinations and bundles.\n[*]Browse the curated Workshop catalog and subscribe or unsubscribe in-game.\n[*]Customizable themes and 15 interface languages.\n[/list]\n\n[h2]Important[/h2]\nSupports the v0.107.1 main branch and v0.111.0 public beta.\nSkins are subscribed separately. Skin Changer adjusts its load order and prompts for a restart when needed. Multiplayer only shows skins installed on both sides.\n\n[h2]Limitations[/h2]\n[list]\n[*]Skins with special code, gameplay changes or custom managers may need compatibility work.\n[*]Newly subscribed skins may need a restart; check their Workshop labels.\n[/list]\n\n[h2]Open Source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Version[/h2]\n1.0.0\n\nThis mod was developed with substantial assistance from GPT and DeepSeek. More feature requests and suggestions are welcome!",
+  "description": "Switch character, card, monster, Ancient, merchant, creature and event skins, with previews in the Other Compendium.\n\n[h1]NO RESTART! SWITCH AND USE INSTANTLY![/h1]\n\n[h2]Details[/h2]\n[list]\n[*]Switch skins in character select and compendiums, or adjust appearance during a run.\n[*]Organize your choices with priorities, presets, skin combinations and bundles.\n[*]Browse the curated Workshop catalog and subscribe or unsubscribe in-game.\n[*]Customizable themes and 15 interface languages.\n[/list]\n\n[h2]Important[/h2]\nSupports the v0.107.1 main branch and v0.111.0 public beta.\nSkins are subscribed separately. Skin Changer adjusts its load order and prompts for a restart when needed. Multiplayer only shows skins installed on both sides.\n\n[h2]Limitations[/h2]\n[list]\n[*]Skins with special code, gameplay changes or custom managers may need compatibility work.\n[*]Newly subscribed skins may need a restart; check their Workshop labels.\n[/list]\n\n[h2]Open Source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Version[/h2]\n1.0.1\n\nThis mod was developed with substantial assistance from GPT and DeepSeek. More feature requests and suggestions are welcome!",
   "visibility": 0,
   "contentFolder": "content",
   "previewFile": "SkinChanger.jpg",
@@ -26,6 +26,6 @@
     "screenshot/upload/10.jpg",
     "screenshot/upload/11.jpg"
   ],
-  "changeNote": "1.0.0: Add a curated in-game Workshop with type/region/subscription filters, covers, subscription management and download progress; show restart requirements before subscribing and hot-load supported resource-only skins. Add Workshop entries to all skin priority panels, unify highlighted skin choices, and include recent appearance/layout fixes. / 1.0.0 正式发布：新增内置清单式游戏内创意工坊，支持类型、地区、订阅状态筛选，封面、订阅管理及下载进度；订阅前显示重启要求，支持的纯资源皮肤可下载后使用。补齐各类皮肤优先级面板入口，统一特殊选项的强调色，并包含近期外观与定位修复。",
+  "changeNote": "1.0.1: Fix intermittent card-skin hover previews showing the previous option. Coordinate RitsuLib character card overrides with per-card skin selection to keep baseline portraits and frame styles separate. / 1.0.1：修复卡牌皮肤悬停预览偶尔停留在上一选项；协调 RitsuLib 角色级卡面覆盖与单卡皮肤选择，避免原皮卡图和卡框外形混入其它来源。",
   "localizationsFile": "localizations.json"
 }
