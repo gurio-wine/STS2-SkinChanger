@@ -7,16 +7,20 @@ internal sealed class WorkshopCommunityCatalog
 {
     public WorkshopCommunityState State { get; private set; } = WorkshopCommunityState.Empty;
     public WorkshopCatalogItem[] Items => State.Entries.Select(e => e.Item).ToArray();
-    public async Task Replace(Func<Task<WorkshopCommunityState>> load, string cachePath)
+    public async Task Replace(Func<Task<WorkshopCommunityState>> load, string cachePath, Action<string, Action>? cacheWriter = null)
     {
         var state = await load();
         Validate(state);
         var json = JsonSerializer.Serialize(state);
         if (System.Text.Encoding.UTF8.GetByteCount(json) > 32 * 1024 * 1024) throw new InvalidDataException("Community catalog cache too large.");
-        Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-        var temp = cachePath + ".tmp";
-        await File.WriteAllTextAsync(temp, json);
-        File.Move(temp, cachePath, overwrite: true);
+        void Write()
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+            var temp = cachePath + ".tmp";
+            File.WriteAllText(temp, json);
+            File.Move(temp, cachePath, overwrite: true);
+        }
+        await Task.Run(() => { if (cacheWriter == null) Write(); else cacheWriter(cachePath, Write); });
         State = state;
     }
     public async Task Restore(string cachePath)

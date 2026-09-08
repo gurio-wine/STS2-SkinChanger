@@ -45,7 +45,7 @@ internal partial class ModThemeEditor
 
     private void BuildPresetPanel()
     {
-        _presets = new ModThemePresets(System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_theme_presets.json"));
+        _presets = new ModThemePresets(SkinChangerPaths.Configuration("skin_changer_theme_presets.json"));
         _selectedPresetId = _presets.FindMatchingId(ModThemeRuntime.Current, _selectedPresetId) ?? ModThemePresets.DefaultId;
         _presetPanel = new PanelContainer { Name = "ThemePresets", Visible = false,
             MouseFilter = Control.MouseFilterEnum.Stop };

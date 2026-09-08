@@ -47,7 +47,7 @@ internal static partial class SkinWorkshopService
                     WorkshopDiscussionSource.Fetch,progress,timeout.Token)),timeout.Token);
                 var identities=await QuerySubmissionIdentities(read.Candidates.Select(c=>c.Payload.Item.Id).Concat(read.Issues.Select(i=>i.Id)),timeout.Token);
                 return WorkshopSubmissionIntegrity.Verify(read,identities,Community.State);
-            }, path);
+            }, path, SkinChangerPaths.WriteCache);
             PublishCommunity();
             ModLog.Info($"工坊投稿帖完整刷新成功：{Community.Items.Length} 项，码错误 {CommunityIssues.Count} 项，合并后 {Catalog.Count} 项；未订阅或执行任何投稿内容。");
         }

@@ -17,6 +17,18 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-storage")
+{
+    StorageLifecycleTests.Run();
+    await StorageLifecycleTests.TestQuitAndLockedFiles();
+    return;
+}
+if (args.Length == 3 && args[0] == "--storage-exit-probe")
+{
+    StorageLifecycleTests.ExitProbe(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-provider-compatibility")
 {
     ProviderCompatibilityTests.Run();
@@ -286,6 +298,8 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
     return;
 }
 
+StorageLifecycleTests.Run();
+await StorageLifecycleTests.TestQuitAndLockedFiles();
 CreatureVisualParentTests.Run();
 ProviderToolbarTests.Run();
 ManualCharacterVariantTests.Run();

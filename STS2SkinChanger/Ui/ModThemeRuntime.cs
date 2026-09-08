@@ -8,7 +8,7 @@ internal enum ModThemeSurface { Panel, Button, Hover, Selected, Disabled, Focus 
 // Explicit opt-in only: never walk the game's tree or mutate a cached native Theme resource.
 internal static class ModThemeRuntime
 {
-    public static string Path => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_theme.json");
+    public static string Path => SkinChangerPaths.Configuration("skin_changer_theme.json");
     private static readonly Lazy<ModThemeSession> Editing = new(() => new(ModThemeStore.Load(Path)));
     public static ModThemeSession Session => Editing.Value;
     public static ModThemeSettings Current => Session.Current;

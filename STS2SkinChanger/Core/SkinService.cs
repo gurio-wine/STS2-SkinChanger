@@ -747,9 +747,9 @@ internal static partial class SkinService
         }
     }
 
-    private static string ConfigPath => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer.json");
+    private static string ConfigPath => SkinChangerPaths.Configuration("skin_changer.json");
     private static string LegacyConfigPath =>
-        System.IO.Path.Combine(OS.GetUserDataDir(), "sts2_skin_switcher.json");
+        SkinChangerPaths.Configuration("sts2_skin_switcher.json");
 
     public static void SuppressLoadOrderWarning()
     {
@@ -1065,12 +1065,9 @@ internal static partial class SkinService
                 MountedLocalizationFiles.Clear();
                 LocalizationStateCache.Clear();
                 _mountedLocalizationSignature = null;
-                CleanupOldOverlays();
-                CleanupPreparedRuntimeOverlayCache();
-                // Protocol 9 no longer downloads multiplayer skins. Keep one startup sweep so
-                // files left by older releases are removed instead of becoming permanent disk
-                // usage after the feature is retired.
-                OnlineSkinCache.CleanupStaleSessionsAtStartup();
+                var cleaned = SkinChangerPaths.Storage.CleanCaches();
+                if (cleaned.RemovedFiles > 0) ModLog.Info($"已清理 {cleaned.RemovedFiles} 个过期皮肤缓存文件。");
+                foreach (var error in cleaned.Errors) ModLog.Warn("部分旧缓存清理失败：" + error);
                 var gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
                 ModLog.Info($"已定位游戏主资源包：{gamePckPath}");
                 var loadedMods = ManagedSkinModLoader.GetCatalogMods()
@@ -3591,9 +3588,9 @@ internal static partial class SkinService
                 throw new InvalidOperationException("独立卡牌资源包没有产生新的可挂载文件。");
             }
             var overlayPath = System.IO.Path.Combine(
-                OS.GetUserDataDir(),
+                SkinChangerPaths.CacheDirectory,
                 $"sts2_skin_overlay_{_sessionId}_{generation:D3}_card_{sourceName}.pck");
-            PckArchive.Write(overlayPath, newFiles);
+            SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.Write(overlayPath, newFiles));
             if (!ProjectSettings.LoadResourcePack(overlayPath, replaceFiles: true))
             {
                 throw new InvalidOperationException("Godot 拒绝加载批量独立卡牌资源包。");
@@ -5275,9 +5272,8 @@ internal static partial class SkinService
         if (overlay.Files.Count > 0)
         {
             var directory = PreparedRuntimeOverlayDirectory();
-            Directory.CreateDirectory(directory);
             overlayPath = System.IO.Path.Combine(directory, $"{generation:D3}.pck");
-            PckArchive.Write(overlayPath, overlay.Files);
+            SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.Write(overlayPath, overlay.Files));
             overlaySize = new FileInfo(overlayPath).Length;
         }
 
@@ -5937,13 +5933,13 @@ internal static partial class SkinService
             if (overlayPath == null)
             {
                 overlayPath = System.IO.Path.Combine(
-                    OS.GetUserDataDir(),
+                    SkinChangerPaths.CacheDirectory,
                     $"sts2_skin_overlay_{_sessionId}_{++_overlayGeneration:D3}_{category}.pck");
                 var sources = files.ToDictionary(
                     pair => pair.Key,
                     pair => (pair.Value.Archive, pair.Value.Path),
                     StringComparer.OrdinalIgnoreCase);
-                PckArchive.WriteFromArchives(overlayPath, sources);
+                SkinChangerPaths.WriteCache(overlayPath, () => PckArchive.WriteFromArchives(overlayPath, sources));
             }
 
             MountedOverlayCache[signature] = overlayPath;
@@ -6449,16 +6445,11 @@ internal static partial class SkinService
         $"res://images/packed/character_select/char_select_{characterId}_locked.png"
     ];
 
-    private static string PreparedRuntimeOverlayDirectory() =>
-        System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(),
-            "Gurio.SkinChanger",
-            "runtime",
-            _sessionId);
+    private static string PreparedRuntimeOverlayDirectory() => SkinChangerPaths.RuntimeCacheDirectory;
 
     private static SkinConfig LoadConfig()
     {
-        if (File.Exists(ConfigPath))
+        if (File.Exists(ConfigPath) || File.Exists(ConfigPath + ".bak"))
         {
             return RecoverInterruptedCharacterSkinBundleSession(SkinConfig.Load(ConfigPath));
         }
@@ -7241,45 +7232,6 @@ internal static partial class SkinService
         return result;
     }
 
-    private static void CleanupOldOverlays()
-    {
-        var directory = OS.GetUserDataDir();
-        foreach (var file in Directory.EnumerateFiles(directory, "sts2_skin_overlay_*.pck"))
-        {
-            try
-            {
-                File.Delete(file);
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn($"无法清理旧皮肤缓存 {file}：{exception.Message}");
-            }
-        }
-    }
-
-    private static void CleanupPreparedRuntimeOverlayCache()
-    {
-        var root = System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(),
-            "Gurio.SkinChanger",
-            "runtime");
-        if (!Directory.Exists(root))
-        {
-            return;
-        }
-
-        foreach (var directory in Directory.EnumerateDirectories(root))
-        {
-            try
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-            catch (Exception exception)
-            {
-                ModLog.Warn($"无法清理旧角色预览缓存 {directory}：{exception.Message}");
-            }
-        }
-    }
 }
 
 internal sealed record MountedProviderPackState(

@@ -57,6 +57,9 @@ using (var contentManifest = JsonDocument.Parse(File.ReadAllText(contentManifest
 var contentDllPath = Path.Combine(contentFolder, "Gurio.SkinChanger.dll");
 if (!File.Exists(contentDllPath))
     throw new FileNotFoundException("Workshop content DLL not found.", contentDllPath);
+var cleanupWorkerPath = Path.Combine(contentFolder, "SkinChanger.CacheCleanup.exe");
+if (!File.Exists(cleanupWorkerPath))
+    throw new FileNotFoundException("Workshop package is missing the Windows exit-cache cleanup helper.", cleanupWorkerPath);
 Console.WriteLine(
     $"Verified workshop package version {config.Version}; DLL SHA256=" +
     Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(contentDllPath))));

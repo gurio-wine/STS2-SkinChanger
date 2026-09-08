@@ -39,7 +39,7 @@ internal static partial class SkinWorkshopService
     private static readonly System.Net.Http.HttpClient Images = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
     private static readonly SemaphoreSlim ImageGate = new(3);
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SkinCatalog, HashSet<ulong>> ActiveItems = new();
-    private static string CacheRoot => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_workshop");
+    private static string CacheRoot => SkinChangerPaths.WorkshopCacheDirectory;
     public static WorkshopDetails? CachedDetails(ulong id) => CachedMetadata.GetValueOrDefault(id);
     public static IReadOnlyDictionary<ulong, WorkshopDetails> CachedMetadata => SessionDetails.Cached(WorkshopText.SteamLanguage);
     internal static bool CanReadMetadata(ulong id) => id > 0 &&
@@ -99,8 +99,8 @@ internal static partial class SkinWorkshopService
                     result[id] = details;
                     try
                     {
-                        Directory.CreateDirectory(cache);
-                        await File.WriteAllTextAsync(System.IO.Path.Combine(cache, id + ".json"), JsonSerializer.Serialize(details));
+                        var metadataPath = System.IO.Path.Combine(cache, id + ".json");
+                        await Task.Run(() => SkinChangerPaths.WriteCache(metadataPath, () => File.WriteAllText(metadataPath, JsonSerializer.Serialize(details))));
                     }
                     catch (IOException) { }
                     catch (UnauthorizedAccessException) { }
@@ -148,11 +148,13 @@ internal static partial class SkinWorkshopService
             if (!WorkshopCatalogPolicy.IsSafeCover(bytes)) return null;
             try
             {
-                Directory.CreateDirectory(cache);
-                await File.WriteAllBytesAsync(cachePath, bytes, token);
-                // Only our bounded preview cache, never subscribed mods or downloaded PCKs.
-                var keep = new DirectoryInfo(cache).EnumerateFiles("*.img").OrderByDescending(file => file.LastWriteTimeUtc).ToArray();
-                foreach (var old in keep.Skip(128)) old.Delete();
+                await Task.Run(() => SkinChangerPaths.WriteCache(cachePath, () =>
+                {
+                    File.WriteAllBytes(cachePath, bytes);
+                    // Only our bounded preview cache, never subscribed mods or downloaded PCKs.
+                    var keep = new DirectoryInfo(cache).EnumerateFiles("*.img").OrderByDescending(file => file.LastWriteTimeUtc).ToArray();
+                    foreach (var old in keep.Skip(128)) old.Delete();
+                }), token);
             }
             catch (IOException) { }
             return bytes;

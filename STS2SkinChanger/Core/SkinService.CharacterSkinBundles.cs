@@ -52,7 +52,7 @@ internal static partial class SkinService
         new(StringComparer.OrdinalIgnoreCase);
 
     private static string CharacterSkinBundleRunSnapshotPath =>
-        Path.Combine(OS.GetUserDataDir(), "skin_changer_bundle_run_restore.json");
+        SkinChangerPaths.Configuration("skin_changer_bundle_run_restore.json");
 
     public static IReadOnlyList<CharacterSkinBundle> GetCharacterSkinBundles(string groupId)
     {

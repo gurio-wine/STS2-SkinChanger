@@ -18,7 +18,7 @@ internal static partial class SkinService
     {
         var slot = SaveManager.Instance.GetProfileScopedPath("skin-changer") + (multiplayer ? ":mp" : ":sp");
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(slot)));
-        return Path.Combine(OS.GetUserDataDir(), "skin_changer_bundle_runs", key + ".json");
+        return SkinChangerPaths.Storage.RunRecordFile(key + ".json");
     }
 
     private static void CaptureCharacterSkinBundleRunPresets()

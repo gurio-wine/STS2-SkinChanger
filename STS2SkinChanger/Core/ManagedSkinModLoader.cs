@@ -589,7 +589,6 @@ internal static class ManagedSkinModLoader
                 "皮肤切换仍可工作，但 DLL 皮肤提供者的呈现补丁不会被接管。");
         }
 
-        CleanupOldProviderNamespaces();
         var mods = ModManager.Mods.ToArray();
         var descriptors = GetProviderProbeDescriptors(mods);
         string? gamePckPath = null;
@@ -3440,23 +3439,6 @@ internal static class ManagedSkinModLoader
                     $"通知 Mod 加载监听器 {handler.Method.DeclaringType?.FullName}.{handler.Method.Name} 失败：" +
                     exception.GetBaseException().Message);
             }
-        }
-    }
-
-    private static void CleanupOldProviderNamespaces()
-    {
-        try
-        {
-            foreach (var path in Directory.EnumerateFiles(
-                         OS.GetUserDataDir(),
-                         "sts2_skin_provider_namespace_*.pck"))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (Exception exception)
-        {
-            ModLog.Warn("无法清理旧的提供者命名空间缓存：" + exception.Message);
         }
     }
 
