@@ -31,7 +31,7 @@ if (args.Length == 1 && args[0] == "--test-workshop-submissions")
 if (args.Length == 1 && args[0] == "--check-workshop-discussion")
 {
     using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
-    var read=STS2SkinChanger.Core.WorkshopSubmissionV2.Read(await STS2SkinChanger.Core.WorkshopDiscussionSource.ReadAllPosts(STS2SkinChanger.Core.WorkshopDiscussionSource.Fetch,null,timeout.Token));
+    var read=STS2SkinChanger.Core.WorkshopSubmissionCodec.Read(await STS2SkinChanger.Core.WorkshopDiscussionSource.ReadAllPosts(STS2SkinChanger.Core.WorkshopDiscussionSource.Fetch,null,timeout.Token));
     Console.WriteLine($"Live submission discussion read passed: {read.Candidates.Length} complete submissions, {read.Issues.Length} errors (read only, no Steam/game initialization).");
     return;
 }

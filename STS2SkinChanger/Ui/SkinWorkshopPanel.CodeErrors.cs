@@ -11,7 +11,7 @@ internal partial class SkinWorkshopPanel
     private sealed class CodeErrorRow
     {
         public PanelContainer Panel = null!;
-        public Label Title = null!, Names = null!, Reason = null!, Group = null!;
+        public Label Title = null!, Reason = null!, Group = null!;
         public OptionButton Source = null!;
         public WorkshopPagedChoice SourceChoice = null!;
         public int SourceIndex;
@@ -41,8 +41,6 @@ internal partial class SkinWorkshopPanel
             row.Title.Text = (problem.Name.Length > 0 ? problem.Name : WorkshopCodeErrorText.Get(WorkshopCodeUi.Unknown)) +
                 (problem.Id > 0 ? $"  ·  ID {problem.Id}" : $"  ·  {problem.Issues[0].Key}");
             row.Title.TooltipText = row.Title.Text;
-            row.Names.Text = string.Join("\n", problem.Issues.Select(issue => WorkshopCodeErrorText.Get(WorkshopCodeUi.Submitted, issue.Name.Length > 0 ? issue.Name : "—") + "  ·  " +
-                WorkshopCodeErrorText.Get(WorkshopCodeUi.Actual, issue.ActualName.Length > 0 ? issue.ActualName : "—")).Distinct());
             row.Reason.Text = string.Join(" · ", problem.Issues.Select(issue => $"[SCM-{issue.Error}] " + WorkshopCodeErrorText.Error(issue.Error)).Distinct());
             row.Group.Text = string.Join("\n", problem.Issues.Select(issue =>
                 (issue.Group.Length > 0 ? WorkshopCodeErrorText.Get(WorkshopCodeUi.Group, issue.Group) : WorkshopCodeErrorText.Get(WorkshopCodeUi.Code, issue.Key)) +
@@ -63,15 +61,15 @@ internal partial class SkinWorkshopPanel
         var margin = new MarginContainer(); foreach (var edge in new[] { "left", "right", "top", "bottom" }) margin.AddThemeConstantOverride("margin_" + edge, 12);
         row.Panel.AddChild(margin); var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 6); margin.AddChild(box);
         row.Title = Text("", 23, true); row.Title.ClipText = true; row.Title.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; box.AddChild(row.Title);
-        row.Names = Text("", 17); row.Reason = Text("", 18, true); row.Group = Text("", 16);
-        foreach (var label in new[] { row.Names, row.Reason, row.Group }) { label.AutowrapMode = TextServer.AutowrapMode.WordSmart; label.MaxLinesVisible = 3; label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; label.SizeFlagsHorizontal = SizeFlags.ExpandFill; box.AddChild(label); }
+        row.Reason = Text("", 18, true); row.Group = Text("", 16);
+        foreach (var label in new[] { row.Reason, row.Group }) { label.AutowrapMode = TextServer.AutowrapMode.WordSmart; label.MaxLinesVisible = 3; label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; label.SizeFlagsHorizontal = SizeFlags.ExpandFill; box.AddChild(label); }
         var actions = new HBoxContainer(); actions.AddThemeConstantOverride("separation", 10); box.AddChild(actions);
         string SourceName(string value)
         {
             if (row.Sources.Length == 0) return "—";
             var source = row.Sources[int.TryParse(value, out var n) ? Math.Clamp(n, 0, row.Sources.Length - 1) : 0];
             return (source.Reply == 0 ? WorkshopCodeErrorText.Get(WorkshopCodeUi.MainPost) : WorkshopCodeErrorText.Get(WorkshopCodeUi.Source, source.Page, source.Reply)) +
-                $" · {WorkshopSubmissionV2.Fingerprint(source.Code)}";
+                $" · {WorkshopSubmissionCodec.Fingerprint(source.Code)}";
         }
         row.SourceChoice = new(SourceName, value => row.SourceIndex = int.TryParse(value, out var n) ? n : 0, () => SourceName(""));
         row.Source = row.SourceChoice.Picker; actions.AddChild(row.Source);

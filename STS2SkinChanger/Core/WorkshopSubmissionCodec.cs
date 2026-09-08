@@ -8,23 +8,23 @@ using System.Text.Unicode;
 
 namespace STS2SkinChanger.Core;
 
-internal static class WorkshopSubmissionV2
+internal static class WorkshopSubmissionCodec
 {
     internal const int MaxCodeLength = 1800;
     private const int MaxExpandedBytes = 128 * 1024;
     private static readonly JsonSerializerOptions Json = new() { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All), MaxDepth = 8 };
     private static readonly Regex Header = new("^SCM2\\s+(?<name>\"(?:\\\\.|[^\"\\\\])*\")\\s+(?<id>[0-9]+)\\s+(?<group>[A-Fa-f0-9]{24})\\s+(?<part>[0-9]+)/(?<total>[0-9]+)\\s+(?<body>[A-Za-z0-9_-]+)\\.(?<sum>[A-Fa-f0-9]{8})$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+    private static readonly Regex Header3 = new(@"^SCM3\s+(?<id>[0-9]+)\s+(?<group>[A-Fa-f0-9]{24})\s+(?<part>[0-9]+)/(?<total>[0-9]+)\s+(?<body>[A-Za-z0-9_-]+)\.(?<sum>[A-Fa-f0-9]{8})$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static readonly Regex Starts = new(@"(?<!\w)SCM\d+\b", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static readonly Regex Recover = new("^SCM[0-9]+\\s+(?:(?<name>\"(?:\\\\.|[^\"\\\\])*\")\\s+)?(?<id>[0-9]+)?(?:\\s+(?<group>[A-Fa-f0-9]{24})(?:\\s+(?<part>[0-9]+)/(?<total>[0-9]+))?)?", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-    private sealed record Part(ulong Id, string Name, string Group, int Index, int Total, string Body, WorkshopCodeSource Source);
+    private sealed record Part(ulong Id, int Format, string Group, int Index, int Total, string Body, WorkshopCodeSource Source);
     private sealed class CodeFailure(WorkshopCodeError error) : Exception { internal WorkshopCodeError Error => error; }
     internal static string Fingerprint(string text) => Hash(Encoding.UTF8.GetBytes(text), 12);
     private static string Hash(byte[] bytes, int chars) => Convert.ToHexString(SHA256.HashData(bytes))[..chars];
 
-    internal static string[] Encode(WorkshopCatalogItem item, string name, string scanner, string game)
+    internal static string[] Encode(WorkshopCatalogItem item, string scanner, string game)
     {
-        name = WorkshopSubmissionIntegrity.NormalizeName(name);
-        var payload = new WorkshopNamedPayload(2, WorkshopCatalogPolicy.AppId, name, scanner, game, item);
+        var payload = new WorkshopCodePayload(3, WorkshopCatalogPolicy.AppId, scanner, game, item);
         Validate(payload);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, Json);
         if (bytes.Length > MaxExpandedBytes) throw new InvalidDataException("Submission too large.");
@@ -32,9 +32,8 @@ internal static class WorkshopSubmissionV2
         using (var zip = new BrotliStream(stream, CompressionLevel.Optimal, true)) zip.Write(bytes);
         var packed = stream.ToArray();
         var body = Convert.ToBase64String(packed).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var header = $"SCM2 {JsonSerializer.Serialize(name, Json)} {item.Id} {Hash(packed, 24)} ";
+        var header = $"SCM3 {item.Id} {Hash(packed, 24)} ";
         var size = MaxCodeLength - header.Length - 32;
-        if (size < 256) throw new InvalidDataException("Submission name too long.");
         var total = (body.Length + size - 1) / size;
         if (total > 128) throw new InvalidDataException("Too many fragments.");
         return Enumerable.Range(0, total).Select(index =>
@@ -77,7 +76,7 @@ internal static class WorkshopSubmissionV2
             var first = group.First(); var sources = group.Select(p => p.Source).Distinct().ToArray();
             var distinct = group.DistinctBy(p => (p.Index, p.Body)).ToArray();
             var missing = Enumerable.Range(1, first.Total).Except(distinct.Select(p => p.Index)).ToArray();
-            WorkshopCodeError? error = group.Any(p => p.Id != first.Id || p.Name != first.Name || p.Total != first.Total) ||
+            WorkshopCodeError? error = group.Any(p => p.Id != first.Id || p.Format != first.Format || p.Total != first.Total) ||
                 distinct.GroupBy(p => p.Index).Any(g => g.Count() > 1) ? WorkshopCodeError.Conflict :
                 missing.Length > 0 ? WorkshopCodeError.MissingParts : null;
             if (error == null)
@@ -96,9 +95,10 @@ internal static class WorkshopSubmissionV2
                         output.Write(buffer, 0, count);
                     }
                     expanded += (int)output.Length;
-                    var payload = JsonSerializer.Deserialize<WorkshopNamedPayload>(output.ToArray(), Json) ?? throw new CodeFailure(WorkshopCodeError.InvalidData);
+                    // SCM2's historical Name is ignored. SCM3 has no name field at all.
+                    var payload = JsonSerializer.Deserialize<WorkshopCodePayload>(output.ToArray(), Json) ?? throw new CodeFailure(WorkshopCodeError.InvalidData);
                     Validate(payload);
-                    if (payload.Item.Id != first.Id || payload.Name != first.Name) throw new CodeFailure(WorkshopCodeError.Conflict);
+                    if (payload.Item.Id != first.Id || payload.Format != first.Format) throw new CodeFailure(WorkshopCodeError.Conflict);
                     candidates.Add(new(payload, first.Group, sources));
                 }
                 catch (CodeFailure ex) { error = ex.Error; }
@@ -106,7 +106,7 @@ internal static class WorkshopSubmissionV2
                 { error = WorkshopCodeError.InvalidData; }
             }
             if (expanded > 32 * 1024 * 1024) throw new InvalidDataException("Submission expansion budget exceeded.");
-            if (error is { } reason) issues.Add(new(first.Group, first.Id, first.Name, "", reason, first.Group, first.Total, missing, sources));
+            if (error is { } reason) issues.Add(new(first.Group, first.Id, "", "", reason, first.Group, first.Total, missing, sources));
         }
         return new(candidates.ToArray(), issues.GroupBy(i => (i.Key, i.Id, i.Error)).Select(g => g.First() with
         { Sources = g.SelectMany(i => i.Sources).Distinct().ToArray() }).ToArray());
@@ -130,17 +130,15 @@ internal static class WorkshopSubmissionV2
     private static Part Parse(string raw, WorkshopCodeSource source)
     {
         if (raw.Length > MaxCodeLength) throw new CodeFailure(WorkshopCodeError.TooLarge);
-        if (!raw.StartsWith("SCM2 ", StringComparison.Ordinal)) throw new CodeFailure(WorkshopCodeError.Version);
-        var match = Header.Match(raw);
-        if (!match.Success) throw new CodeFailure(Recover.Match(raw).Groups["name"].Success ? WorkshopCodeError.Format : WorkshopCodeError.MissingName);
-        var name = JsonSerializer.Deserialize<string>(match.Groups["name"].Value) ?? "";
-        if (string.IsNullOrWhiteSpace(name)) throw new CodeFailure(WorkshopCodeError.MissingName);
-        if (name.Length > 256 || name.Any(char.IsControl)) throw new CodeFailure(WorkshopCodeError.InvalidData);
+        var format = raw.StartsWith("SCM3 ", StringComparison.Ordinal) ? 3 : raw.StartsWith("SCM2 ", StringComparison.Ordinal) ? 2 : 0;
+        if (format == 0) throw new CodeFailure(WorkshopCodeError.Version);
+        var match = (format == 3 ? Header3 : Header).Match(raw);
+        if (!match.Success) throw new CodeFailure(WorkshopCodeError.Format);
         var id = ulong.Parse(match.Groups["id"].Value);
         var index = int.Parse(match.Groups["part"].Value); var total = int.Parse(match.Groups["total"].Value);
         if (id is 0 or 3787302680 || total is < 1 or > 128 || index < 1 || index > total) throw new CodeFailure(WorkshopCodeError.Format);
         if (Hash(Encoding.UTF8.GetBytes(raw[..raw.LastIndexOf('.')]), 8) != match.Groups["sum"].Value.ToUpperInvariant()) throw new CodeFailure(WorkshopCodeError.Checksum);
-        return new(id, name, match.Groups["group"].Value.ToUpperInvariant(), index, total, match.Groups["body"].Value, source with { Part = index });
+        return new(id, format, match.Groups["group"].Value.ToUpperInvariant(), index, total, match.Groups["body"].Value, source with { Part = index });
     }
     private static WorkshopCodeIssue RecoverIssue(WorkshopCodeSource source, WorkshopCodeError error)
     {
@@ -153,12 +151,11 @@ internal static class WorkshopSubmissionV2
     }
     private static WorkshopCodeIssue Issue(WorkshopCodeSource source, WorkshopCodeError error, ulong id = 0, string name = "", string group = "") =>
         new(Fingerprint(source.Code), id, name, "", error, group, 0, [], [source]);
-    private static void Validate(WorkshopNamedPayload payload)
+    private static void Validate(WorkshopCodePayload payload)
     {
-        if (payload.Format != 2) throw new CodeFailure(WorkshopCodeError.Version);
+        if (payload.Format is not (2 or 3)) throw new CodeFailure(WorkshopCodeError.Version);
         if (payload.App != WorkshopCatalogPolicy.AppId) throw new CodeFailure(WorkshopCodeError.WrongGame);
-        if (string.IsNullOrWhiteSpace(payload.Name)) throw new CodeFailure(WorkshopCodeError.MissingName);
-        if (payload.Name.Length > 256 || payload.Name.Any(char.IsControl) || payload.Scanner is not { Length: > 0 and <= 32 } ||
+        if (payload.Scanner is not { Length: > 0 and <= 32 } ||
             payload.Game is not { Length: <= 64 } || !ValidItem(payload.Item))
             throw new CodeFailure(WorkshopCodeError.InvalidData);
     }

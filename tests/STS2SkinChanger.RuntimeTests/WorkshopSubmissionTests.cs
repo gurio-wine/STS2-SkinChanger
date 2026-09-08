@@ -91,7 +91,8 @@ internal static class WorkshopSubmissionTests
             }
         var result=WorkshopSubmissionScanner.Scan(new(id,Path.GetFileName(directory),directory),gamePack,cards.Distinct().ToArray(),"0.111.0",new Dictionary<string,string>());
         Require(result.Item!=null,result.Error);
-        Console.WriteLine($"Read-only submission audit: {id}; targets={JsonSerializer.Serialize(result.Item!.Targets)}; restart={result.Item.RestartRequired}; SCM2 generation requires verified Steam name in game.");
+        var codes=WorkshopSubmissionCodec.Encode(result.Item!,Entry.InternalTestVersion,"0.111.0");
+        Console.WriteLine($"Read-only submission audit: {id}; targets={JsonSerializer.Serialize(result.Item!.Targets)}; restart={result.Item.RestartRequired}; SCM3 code lengths={string.Join(',',codes.Select(c=>c.Length))}; no Mod names encoded.");
     }
 
     private static void ScanPackages()

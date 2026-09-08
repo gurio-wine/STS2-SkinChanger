@@ -11,7 +11,7 @@ internal static class WorkshopCodeDiagnostics
 {
     internal static WorkshopCodeProblem[] Group(IEnumerable<WorkshopCodeIssue> issues) => issues
         .GroupBy(i => i.Id > 0 ? "id:" + i.Id : "code:" + i.Key).Select(g => new WorkshopCodeProblem(g.Key, g.First().Id,
-            g.Select(i => i.Name).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? g.Select(i => i.ActualName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "", g.ToArray()))
+            g.Select(i => i.ActualName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "", g.ToArray()))
         .OrderBy(g => g.Sources.Length == 0 ? int.MaxValue : g.Sources.Min(s => s.Order)).ToArray();
     internal static bool SafeSource(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
         uri.Host == "steamcommunity.com" && uri.Port == 443 && uri.UserInfo.Length == 0 && uri.AbsolutePath.TrimEnd('/') == new Uri(WorkshopDiscussionSource.Url).AbsolutePath.TrimEnd('/') &&
@@ -24,14 +24,14 @@ internal static class WorkshopCodeDiagnostics
         foreach (var issue in problem.Issues)
         {
             report.AppendLine($"[SCM-{issue.Error}] " + WorkshopCodeErrorText.ForLanguage(language, 13 + (int)issue.Error));
-            report.AppendLine(T(WorkshopCodeUi.Submitted, issue.Name)).AppendLine(T(WorkshopCodeUi.Actual, issue.ActualName));
+            if(issue.ActualName.Length>0)report.AppendLine(T(WorkshopCodeUi.Actual, issue.ActualName));
             if (issue.Group.Length > 0) report.AppendLine(T(WorkshopCodeUi.Group, issue.Group));
             if (issue.Total > 0) report.AppendLine(T(WorkshopCodeUi.Parts, issue.Sources.Where(s => s.Part > 0).Select(s => s.Part).Distinct().Count(), issue.Total));
             if (issue.Missing.Length > 0) report.AppendLine(T(WorkshopCodeUi.Missing, string.Join(", ", issue.Missing)));
         }
         foreach (var source in problem.Sources)
         {
-            report.AppendLine(T(WorkshopCodeUi.Code, WorkshopSubmissionV2.Fingerprint(source.Code)));
+            report.AppendLine(T(WorkshopCodeUi.Code, WorkshopSubmissionCodec.Fingerprint(source.Code)));
             report.AppendLine(source.Reply == 0 ? T(WorkshopCodeUi.MainPost) : T(WorkshopCodeUi.Source, source.Page, source.Reply)).AppendLine(source.Url).AppendLine(source.Code);
         }
         return report.ToString();

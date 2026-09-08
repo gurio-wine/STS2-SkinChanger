@@ -32,7 +32,7 @@ internal static partial class SkinWorkshopService
         _communityBusy = true; _communityFailed = false; _communityProgress = "";
         try
         {
-            // The old cache has neither names nor completeness proof, and must not bypass SCM2.
+            // SCM1's cache has no group completeness proof. Keep the grouped cache format.
             var path = System.IO.Path.Combine(CacheRoot, "community-catalog-v2.json");
             if (restore)
             {
@@ -43,7 +43,7 @@ internal static partial class SkinWorkshopService
             var progress = new Progress<(int Current, int Total)>(p => _communityProgress = $"{p.Current}/{p.Total}");
             await Community.Replace(async () =>
             {
-                var read=await Task.Run(async ()=>WorkshopSubmissionV2.Read(await WorkshopDiscussionSource.ReadAllPosts(
+                var read=await Task.Run(async ()=>WorkshopSubmissionCodec.Read(await WorkshopDiscussionSource.ReadAllPosts(
                     WorkshopDiscussionSource.Fetch,progress,timeout.Token)),timeout.Token);
                 var identities=await QuerySubmissionIdentities(read.Candidates.Select(c=>c.Payload.Item.Id).Concat(read.Issues.Select(i=>i.Id)),timeout.Token);
                 return WorkshopSubmissionIntegrity.Verify(read,identities,Community.State);
@@ -75,7 +75,6 @@ internal static partial class SkinWorkshopService
             if (handle == UGCQueryHandle_t.Invalid) throw new IOException("Steam item verification unavailable.");
             try
             {
-                if(!SteamUGC.SetLanguage(handle,"english"))throw new IOException("Cannot set submission identity language.");
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(25));
                 using var call = new MegaCrit.Sts2.Core.Multiplayer.Transport.Steam.SteamCallResult<SteamUGCQueryCompleted_t>(SteamUGC.SendQueryUGCRequest(handle), timeout.Token);
@@ -144,7 +143,6 @@ internal static partial class SkinWorkshopService
             .ToDictionary(g => g.Key, g => g.First().manifest!.version ?? "", StringComparer.OrdinalIgnoreCase);
         var installed = selected.Where(s => IsSubscribed(s.Id) && TryInstalled(s.Id, out var root) &&
             System.IO.Path.GetFullPath(root).Equals(System.IO.Path.GetFullPath(s.Directory), StringComparison.OrdinalIgnoreCase)).ToArray();
-        var identities=await QuerySubmissionIdentities(installed.Select(s=>s.Id),token);
         return await SkinService.RunWorkshopScan(() =>
         {
             var items = new List<WorkshopCatalogItem>();
@@ -156,17 +154,17 @@ internal static partial class SkinWorkshopService
                 var local = installed[i];
                 progress.Report((i, installed.Length, local.Name));
                 var result = WorkshopSubmissionScanner.Scan(local, snapshot.GamePack, snapshot.Cards, gameVersion, dependencies, snapshot.Baselines);
-                if (result.Item != null && identities.TryGetValue(local.Id,out var identity) && identity.App==WorkshopCatalogPolicy.AppId && !string.IsNullOrWhiteSpace(identity.Name))
+                if (result.Item != null)
                 {
                     try
                     {
-                        codes.AddRange(WorkshopSubmissionV2.Encode(result.Item,identity.Name,Entry.InternalTestVersion,gameVersion));
+                        codes.AddRange(WorkshopSubmissionCodec.Encode(result.Item,Entry.InternalTestVersion,gameVersion));
                         items.Add(result.Item);
                     }
                     catch(Exception ex) when(ex is not OperationCanceledException)
                     { rejected++; ModLog.Warn($"投稿编码 {local.Id} 失败：{ex.GetBaseException().Message}"); }
                 }
-                else { rejected++; ModLog.Info($"投稿扫描 {local.Id} 未识别：{(result.Item==null ? result.Error : "未取得本游戏的有效 Steam 工坊名称")}"); }
+                else { rejected++; ModLog.Info($"投稿扫描 {local.Id} 未识别：{result.Error}"); }
                 progress.Report((i + 1, installed.Length, local.Name));
             }
             token.ThrowIfCancellationRequested();
