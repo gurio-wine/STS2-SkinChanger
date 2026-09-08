@@ -5,6 +5,7 @@ internal static class WorkshopTests
 {
     public static void Run()
     {
+        WorkshopMetadataTests.Run();
         var policy = typeof(Entry).Assembly.GetType("STS2SkinChanger.Core.WorkshopCatalogPolicy");
         Require(policy != null, "缺少工坊清单验证和按目标过滤的生产实现。");
         object Call(string method, params object[] args) => policy!.GetMethod(method)!.Invoke(null, args)!;

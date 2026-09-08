@@ -4,7 +4,7 @@
   "author": "Gurio",
   "description": "自由切换角色、卡牌、怪物、先古、商人、生物和事件皮肤。支持优先级、预设、皮肤组合和游戏内创意工坊。界面支持15种语言。 Switch character, card, monster, Ancient, merchant, creature and event skins. Includes priorities, presets, skin combinations and an in-game Workshop. Available in 15 languages.",
   "version": "1.0.1",
-  "internal_test_version": "1.0.1.0",
+  "internal_test_version": "1.0.1.1",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

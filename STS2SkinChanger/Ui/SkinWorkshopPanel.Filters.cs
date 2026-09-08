@@ -19,9 +19,26 @@ internal partial class SkinWorkshopPanel
     private Label? _emptyLabel;
     private readonly Dictionary<ulong, Button> _loadTags = [];
     private string EmptyText => WorkshopText.Get(_subscriptions.Value.Length > 0 && _subscriptions.Unavailable ? WorkshopTextKey.Offline : WorkshopTextKey.Empty);
-    private WorkshopCatalogItem[] FilteredItems() => _subscriptions.Filter(
-        WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
-            .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item)))).ToArray();
+    private WorkshopSort _sort = WorkshopSort.Subscriptions;
+    private WorkshopCatalogItem[] FilteredItems()
+    {
+        var filtered = _subscriptions.Filter(WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
+            .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item)))).ToDictionary(item => item.Id);
+        return WorkshopSortPolicy.OrderIds(filtered.Keys, SkinWorkshopService.CachedMetadata, _sort).Select(id => filtered[id]).ToArray();
+    }
+
+    private void BuildSort(HBoxContainer heading)
+    {
+        heading.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore });
+        var picker = new OptionButton { CustomMinimumSize = new Vector2(245, 42), FitToLongestItem = false, ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis };
+        ContextualSkinControls.ApplyGameTheme(picker);
+        foreach (var sort in Enum.GetValues<WorkshopSort>()) picker.AddItem(WorkshopDetailsText.Get((WorkshopDetailsTextKey)sort), (int)sort);
+        picker.Select((int)_sort);
+        picker.ItemSelected += index => { _sort = (WorkshopSort)picker.GetItemId((int)index); _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
+        heading.AddChild(picker);
+        KeepHoverBelow(picker);
+    }
     private IReadOnlySet<string>? RegionMembers => _region.Length == 0 ? null : _names.Regions(_kind).GetValueOrDefault(_region) ?? new HashSet<string>();
     private void BuildFilters(VBoxContainer content)
     {
@@ -37,7 +54,8 @@ internal partial class SkinWorkshopPanel
         { _region = id; _target = ""; RefreshFilters(); _page = 0; Rebuild(); });
         _targetPicker = new(id => _names.Name(_kind, id), id => { _target = id; _page = 0; Rebuild(); });
         _loadPicker = new(WorkshopLoadTags.Name, SetLoadFilter);
-        foreach (var picker in new[] { _subscriptionPicker, _typePicker, _regionPicker, _targetPicker, _loadPicker }) filters.AddChild(picker.Picker);
+        foreach (var picker in new[] { _subscriptionPicker, _typePicker, _regionPicker, _targetPicker, _loadPicker })
+        { filters.AddChild(picker.Picker); KeepHoverBelow(picker.Picker); }
         InferRegion(); RefreshFilters();
     }
     private void SetLoadFilter(string value)
@@ -113,7 +131,7 @@ internal partial class SkinWorkshopPanel
         foreach (var item in SkinWorkshopService.Catalog)
             if (_loadTags.TryGetValue(item.Id, out var button)) UpdateLoadTag(item, button);
         if (GodotObject.IsInstanceValid(_emptyLabel)) _emptyLabel!.Text = EmptyText;
-        if (FilteredItems().Select(item => item.Id).SequenceEqual(_filteredIds) || _filterRebuildPending) return;
+        if (Input.IsMouseButtonPressed(MouseButton.Left) || FilteredItems().Select(item => item.Id).SequenceEqual(_filteredIds) || _filterRebuildPending) return;
         _filterRebuildPending = true;
         // Subscription/load-state changes may happen off-page. Rebuild only when
         // membership changes, after input dispatch; keep the page unless out of range.

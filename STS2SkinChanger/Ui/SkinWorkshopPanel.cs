@@ -22,6 +22,8 @@ internal partial class SkinWorkshopPanel : Control
     private Label _pageLabel = null!;
     private Button _previous = null!;
     private Button _next = null!;
+    private ScrollContainer _listScroll = null!;
+    private readonly Dictionary<ulong, Label> _metrics = [];
     private readonly List<(ulong Id, Label Status, Button Action, Button Cancel)> _actions = [];
 
     internal static void Show(Node origin, string kind, string target, Action refresh, string region = "")
@@ -82,8 +84,10 @@ internal partial class SkinWorkshopPanel : Control
         heading.AddChild(Text(WorkshopText.EntryLabel, 27, true));
         var submit = Button(WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitMod), () => { });
         submit.Pressed += () => OpenSubmission(submit); heading.AddChild(submit);
+        BuildSort(heading);
         BuildFilters(content);
         var scroll = new ScrollContainer { SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+        _listScroll = scroll;
         content.AddChild(scroll);
         _rows = new GridContainer { Columns = 2, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         _rows.AddThemeConstantOverride("h_separation", 18);
@@ -98,17 +102,19 @@ internal partial class SkinWorkshopPanel : Control
         footer.AddChild(_pageLabel);
         _next = Button(WorkshopText.Get(WorkshopTextKey.Next), () => { _page++; scroll.ScrollVertical = 0; Rebuild(); });
         footer.AddChild(_next);
+        InitializeHover();
         _origin.TreeExited += Close;
         Rebuild();
     }
 
     private void Rebuild()
     {
+        ResetHover();
         _pageToken?.Cancel(); _pageToken?.Dispose(); _pageToken = new();
         var token = _pageToken.Token;
         var generation = ++_generation;
         foreach (var child in _rows.GetChildren()) { _rows.RemoveChild(child); child.QueueFree(); }
-        _actions.Clear(); _marquees.Clear(); _loadTags.Clear(); _emptyLabel = null;
+        _actions.Clear(); _marquees.Clear(); _loadTags.Clear(); _metrics.Clear(); _hoverItems.Clear(); _emptyLabel = null;
         _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
         var filtered = FilteredItems();
         _filteredIds = filtered.Select(item => item.Id).ToArray();
@@ -121,19 +127,31 @@ internal partial class SkinWorkshopPanel : Control
         var rows = new Dictionary<ulong, ItemVisual>();
         foreach (var item in visible)
         {
+            var slot = new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore,
+                CustomMinimumSize = new Vector2(0, 182) };
+            _rows.AddChild(slot);
             var itemPanel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-            _rows.AddChild(itemPanel); ModThemeRuntime.Panel(itemPanel);
-            var itemMargin = new MarginContainer(); itemPanel.AddChild(itemMargin);
+            slot.AddChild(itemPanel); itemPanel.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect); ModThemeRuntime.Panel(itemPanel);
+            itemPanel.MinimumSizeChanged += () => slot.CustomMinimumSize = new Vector2(0, Math.Max(182, itemPanel.GetCombinedMinimumSize().Y));
+            _hoverItems.Add(new(item.Id, slot, itemPanel));
+            AttachItemClick(itemPanel, item.Id);
+            // Decorative layout must pass clicks to the item; only actual tag
+            // and subscription buttons consume input independently.
+            var itemMargin = new MarginContainer { MouseFilter = MouseFilterEnum.Ignore }; itemPanel.AddChild(itemMargin);
             foreach (var edge in new[] { "left", "right", "top", "bottom" }) itemMargin.AddThemeConstantOverride("margin_" + edge, 12);
-            var itemBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 158) };
+            var itemBox = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 158), MouseFilter = MouseFilterEnum.Ignore };
             itemBox.AddThemeConstantOverride("separation", 8); itemMargin.AddChild(itemBox);
-            var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 14); itemBox.AddChild(row);
+            var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore }; row.AddThemeConstantOverride("separation", 14); itemBox.AddChild(row);
             var cover = CreateCover(row, item.Id, out var placeholder);
-            var labels = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill }; row.AddChild(labels);
+            var labels = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore }; row.AddChild(labels);
             var title = CreateMarquee(itemPanel, labels, SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…", item.Id);
-            var tags = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill }; labels.AddChild(tags); AddTags(tags, item);
-            var controls = new HBoxContainer(); itemBox.AddChild(controls);
+            var tags = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore }; labels.AddChild(tags); AddTags(tags, item);
+            var controls = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore }; itemBox.AddChild(controls);
             var status = Text("", 16); status.SizeFlagsHorizontal = SizeFlags.ExpandFill; status.ClipText = true; status.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis; controls.AddChild(status);
+            var metric = Text(WorkshopSortPolicy.Metric(SkinWorkshopService.CachedDetails(item.Id), _sort, ModLocalization.CurrentLanguage), 16);
+            metric.ClipText = true; metric.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+            metric.SizeFlagsHorizontal = SizeFlags.ExpandFill; metric.HorizontalAlignment = HorizontalAlignment.Right;
+            controls.AddChild(metric); _metrics[item.Id] = metric;
             var action = Button(WorkshopText.Get(WorkshopTextKey.Subscribe), () => PerformPrimary(item.Id));
             action.CustomMinimumSize = new Vector2(100, 38); controls.AddChild(action);
             var cancel = Button(WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribe), () => _ = Unsubscribe(item.Id));
@@ -154,6 +172,7 @@ internal partial class SkinWorkshopPanel : Control
             foreach (var (id, detail) in details)
             {
                 var row = rows[id]; row.Title.Text = detail.Title;
+                if (_metrics.TryGetValue(id, out var metric)) metric.Text = WorkshopSortPolicy.Metric(detail, _sort, ModLocalization.CurrentLanguage);
                 covers.Add(LoadCover(detail.PreviewUrl, row, generation, token));
             }
             await Task.WhenAll(covers);
@@ -200,6 +219,7 @@ internal partial class SkinWorkshopPanel : Control
         // The browser's CanvasLayer sits above the native UI. Yield to ALL native
         // modals, including another Mod's subscription notice, not only our own.
         _suspended = MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
+        if (_suspended) ResetHover();
         _layer.Visible = !_suspended;
         foreach (var (id, label, action, cancel) in _actions)
         {
@@ -238,6 +258,10 @@ internal partial class SkinWorkshopPanel : Control
     }
     private void HandleInput(InputEvent ev)
     {
+        if (ev is InputEventMouse) _hoverKeyboard = false;
+        else if (ev is InputEventKey { Pressed: true } or InputEventJoypadButton { Pressed: true }) _hoverKeyboard = true;
+        // Do not wait for the animation timer to hide the old introduction on exit.
+        if (ev is InputEventMouseMotion) UpdateHover();
         if (!_closed && !_suspended && ev.IsActionPressed("ui_cancel") && !ev.IsEcho())
         {
             GetViewport().SetInputAsHandled();
@@ -248,6 +272,7 @@ internal partial class SkinWorkshopPanel : Control
     private void Close()
     {
         if (_closed) return; _closed = true;
+        ResetHover();
         if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;
         _pageToken?.Cancel();
         _layer.Hide();
@@ -257,6 +282,7 @@ internal partial class SkinWorkshopPanel : Control
     private void Cleanup()
     {
         _closed = true;
+        ResetHover();
         if (GodotObject.IsInstanceValid(_window)) _window!.WindowInput -= HandleInput;
         _window = null;
         if (GodotObject.IsInstanceValid(_origin)) _origin.TreeExited -= Close;

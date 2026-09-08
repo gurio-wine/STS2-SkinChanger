@@ -8,7 +8,6 @@ internal static class WorkshopBrowserInteractionTests
         WorkshopEntryTests.Run();
         WorkshopSubscriptionFilterTests.Run();
         CheckSessionCache();
-        CheckTitleHoverTransitions();
         CheckLoadTagsAndSubmissionLinks();
         CheckNativeLinkControls();
         var assembly = typeof(Entry).Assembly;
@@ -37,37 +36,11 @@ internal static class WorkshopBrowserInteractionTests
         var panel = assembly.GetType("STS2SkinChanger.Ui.SkinWorkshopPanel", true)!;
         static bool Calls(MethodBase method, string target) => HarmonyLib.PatchProcessor.GetOriginalInstructions(method)
             .Any(i => i.operand is MethodInfo call && call.Name == target);
-        var cover = HarmonyLib.AccessTools.Method(panel, "CreateCover");
-        var title = HarmonyLib.AccessTools.Method(panel, "CreateMarquee");
-        Require(Calls(cover, "add_Pressed") && Calls(title, "add_Pressed"), "封面和名字都必须绑定原生点击，不能只有鼠标光标。");
-        foreach (var signal in new[] { "add_MouseEntered", "add_MouseExited", "add_VisibilityChanged", "add_TreeExiting" })
-            Require(Calls(title, signal), "标题强调色需要由鼠标进入/离开和隐藏/退树事件控制，不能被遗留焦点锁住。");
         Require(assembly.GetType("STS2SkinChanger.Ui.WorkshopSubscriptionDialog") == null, "订阅后的独立重启弹窗已取消，不能保留另一路弹窗调度。");
         var links = assembly.GetType("STS2SkinChanger.Ui.WorkshopCommunityLinks", true)!;
         Require(Calls(HarmonyLib.AccessTools.Method(panel, "OpenItem"), "OpenItem") &&
             Calls(HarmonyLib.AccessTools.Method(links, "Open"), "ActivateGameOverlayToWebPage") &&
             Calls(HarmonyLib.AccessTools.Method(links, "Open"), "ShellOpen"), "物品和投稿必须共用 Steam 覆盖层/客户端回退路径。");
-    }
-
-    private static void CheckTitleHoverTransitions()
-    {
-        var type = typeof(Entry).Assembly.GetType("STS2SkinChanger.Ui.WorkshopTitleHover");
-        Require(type != null, "标题必须直接处理进入/离开事件，不能在信号内反读引擎尚未更新的悬停状态。");
-        var colors = new List<bool>();
-        var hover = Activator.CreateInstance(type!, (Action<bool>)(accent => colors.Add(accent)))!;
-        void Send(string name) => type!.GetMethod(name)!.Invoke(hover, null);
-        Send("Refresh");
-        Require(colors[^1] == false, "未悬停的初始标题应使用普通文字色。");
-        Send("Enter");
-        Require(colors[^1], "收到进入事件就应立即强调，不能等引擎更新状态。");
-        Send("Refresh");
-        Require(colors[^1], "悬停中调整主题应保留强调状态。");
-        Send("Exit");
-        Require(!colors[^1], "离开标题应立即恢复普通文字色，包括点击后鼠标离开的情况。");
-        Send("Refresh");
-        Require(!colors[^1], "离开后主题刷新不能再次染成强调色。");
-        Send("Enter"); Send("Exit"); Send("Exit");
-        Require(!colors[^1], "隐藏或关闭界面时重复清理不能反转颜色。");
     }
 
     private static void CheckLoadTagsAndSubmissionLinks()

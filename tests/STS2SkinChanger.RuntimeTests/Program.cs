@@ -23,6 +23,12 @@ if (args.Length == 2 && args[0] == "--test-framework-card-visuals")
     return;
 }
 
+if (args.Length == 2 && args[0] == "--inspect-workshop-metadata")
+{
+    WorkshopLiveMetadataCheck.Run(args[1]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-workshop")
 {
     WorkshopTests.Run();

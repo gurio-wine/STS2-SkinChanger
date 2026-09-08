@@ -10,7 +10,6 @@ using STS2SkinChanger.Catalog;
 
 namespace STS2SkinChanger.Core;
 
-internal sealed record WorkshopDetails(string Title, string PreviewUrl);
 internal sealed class WorkshopDownload
 {
     public WorkshopTextKey State = WorkshopTextKey.Waiting;
@@ -24,7 +23,7 @@ internal sealed class WorkshopDownload
 }
 
 // Permanent, explicitly requested subscriptions. Never calls OnlineSkinCache or removes Steam files.
-internal static class SkinWorkshopService
+internal static partial class SkinWorkshopService
 {
     private static readonly Lazy<WorkshopCatalogItem[]> Items = new(() =>
     {
@@ -42,6 +41,9 @@ internal static class SkinWorkshopService
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SkinCatalog, HashSet<ulong>> ActiveItems = new();
     private static string CacheRoot => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_workshop");
     public static WorkshopDetails? CachedDetails(ulong id) => SessionDetails.TryGet(WorkshopText.SteamLanguage, out var details) ? details.GetValueOrDefault(id) : null;
+    private static readonly Dictionary<ulong, WorkshopDetails> EmptyDetails = [];
+    public static IReadOnlyDictionary<ulong, WorkshopDetails> CachedMetadata =>
+        SessionDetails.TryGet(WorkshopText.SteamLanguage, out var details) ? details : EmptyDetails;
 
     public static async Task<Dictionary<ulong, WorkshopDetails>> Query(IReadOnlyList<ulong> ids, CancellationToken token)
     {
@@ -86,7 +88,8 @@ internal static class SkinWorkshopService
                     if (!SteamUGC.GetQueryUGCResult(handle, i, out var item) || item.m_eResult != EResult.k_EResultOK ||
                         item.m_nConsumerAppID.m_AppId != WorkshopCatalogPolicy.AppId || !requested.Contains(item.m_nPublishedFileId.m_PublishedFileId)) continue;
                     SteamUGC.GetQueryUGCPreviewURL(handle, i, out var preview, 4096);
-                    var details = new WorkshopDetails(item.m_rgchTitle, preview ?? "");
+                    ulong? Statistic(EItemStatistic statistic) => SteamUGC.GetQueryUGCStatistic(handle, i, statistic, out var value) ? value : null;
+                    var details = WorkshopMetadataReader.Read(item, preview ?? "", Statistic);
                     var id = item.m_nPublishedFileId.m_PublishedFileId;
                     result[id] = details;
                     try

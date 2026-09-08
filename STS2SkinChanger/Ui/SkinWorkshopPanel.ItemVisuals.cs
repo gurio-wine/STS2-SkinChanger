@@ -18,32 +18,16 @@ internal partial class SkinWorkshopPanel
     {
         // Control, not Container: the title's full minimum width must not stretch
         // either grid column. Clip only the title, never the interactive tags below.
-        var clip = new Button { ClipContents = true, Flat = true, CustomMinimumSize = new Vector2(0, 38), SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseDefaultCursorShape = CursorShape.PointingHand };
-        foreach (var state in new[] { "normal", "hover", "pressed", "disabled" }) clip.AddThemeStyleboxOverride(state, new StyleBoxEmpty());
-        var focusStyle = new StyleBoxFlat(); clip.AddThemeStyleboxOverride("focus", focusStyle);
-        ModThemeRuntime.Bind(clip, "title_focus", theme => ModThemeRuntime.ApplyStyle(focusStyle, ModThemeSurface.Focus, theme));
-        clip.Pressed += () => OpenItem(itemId);
+        var clip = new Control { ClipContents = true, CustomMinimumSize = new Vector2(0, 38), SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore };
         labels.AddChild(clip);
         var label = Text(text, 22); clip.AddChild(label);
-        // Control emits the mouse signal before BaseButton updates IsHovered.
-        // Use the event itself, not the stale flag. Focus keeps the native outline,
-        // but a previous mouse click must not leave the title accented on exit.
-        var hover = new WorkshopTitleHover(accent => label.AddThemeColorOverride("font_color", accent ? ModThemeRuntime.Accent : ModThemeRuntime.Text));
-        clip.MouseEntered += hover.Enter; clip.MouseExited += hover.Exit;
-        clip.VisibilityChanged += () => { if (!clip.IsVisibleInTree()) hover.Exit(); };
-        clip.TreeExiting += hover.Exit;
-        ModThemeRuntime.Bind(label, "workshop_link", _ => hover.Refresh());
         _marquees.Add(new(row, clip, label));
         ModThemeRuntime.Bind(clip, "title_height", theme => clip.CustomMinimumSize = new Vector2(0, 38 * theme.FontScale));
         return label;
     }
     private TextureRect CreateCover(HBoxContainer row, ulong itemId, out Panel placeholder)
     {
-        var host = new Button { Flat = true, CustomMinimumSize = new Vector2(144, 100), MouseDefaultCursorShape = CursorShape.PointingHand, SizeFlagsVertical = SizeFlags.ShrinkBegin };
-        foreach (var state in new[] { "normal", "hover", "pressed", "disabled" }) host.AddThemeStyleboxOverride(state, new StyleBoxEmpty());
-        var focusStyle = new StyleBoxFlat(); host.AddThemeStyleboxOverride("focus", focusStyle);
-        ModThemeRuntime.Bind(host, "cover_focus", theme => ModThemeRuntime.ApplyStyle(focusStyle, ModThemeSurface.Focus, theme));
-        host.Pressed += () => OpenItem(itemId);
+        var host = new Control { CustomMinimumSize = new Vector2(144, 100), SizeFlagsVertical = SizeFlags.ShrinkBegin, MouseFilter = MouseFilterEnum.Ignore };
         row.AddChild(host);
         placeholder = new Panel { MouseFilter = MouseFilterEnum.Ignore };
         host.AddChild(placeholder); placeholder.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -60,6 +44,7 @@ internal partial class SkinWorkshopPanel
     private void AnimateTitles()
     {
         if (_closed || _suspended || !IsVisibleInTree()) return;
+        UpdateHover();
         var mouse = GetGlobalMousePosition();
         var focus = GetViewport().GuiGetFocusOwner();
         foreach (var item in _marquees)
@@ -91,15 +76,15 @@ internal partial class SkinWorkshopPanel
         """ });
     private static void RoundCover(TextureRect cover)
     {
+        // Reusing the carousel texture must not add another resize handler/binding.
+        if (cover.Material is ShaderMaterial existing)
+        {
+            RefreshCoverSize(cover, existing);
+            return;
+        }
         var material = new ShaderMaterial { Shader = CoverShader.Value };
         cover.Material = material;
-        void Resize()
-        {
-            if (!GodotObject.IsInstanceValid(cover) || cover.Texture is not { } texture) return;
-            var size = texture.GetSize();
-            var factor = Math.Min(cover.Size.X / Math.Max(1, size.X), cover.Size.Y / Math.Max(1, size.Y));
-            material.SetShaderParameter("surface_size", size * factor);
-        }
+        void Resize() => RefreshCoverSize(cover, material);
         cover.Resized += Resize;
         ModThemeRuntime.Bind(cover, "workshop_cover", theme =>
         {
@@ -107,12 +92,11 @@ internal partial class SkinWorkshopPanel
             Resize();
         });
     }
-}
-
-internal sealed class WorkshopTitleHover(Action<bool> applyAccent)
-{
-    private bool _hovered;
-    public void Enter() { _hovered = true; Refresh(); }
-    public void Exit() { _hovered = false; Refresh(); }
-    public void Refresh() => applyAccent(_hovered);
+    private static void RefreshCoverSize(TextureRect cover, ShaderMaterial material)
+    {
+        if (!GodotObject.IsInstanceValid(cover) || cover.Texture is not { } texture) return;
+        var size = texture.GetSize();
+        var factor = Math.Min(cover.Size.X / Math.Max(1, size.X), cover.Size.Y / Math.Max(1, size.Y));
+        material.SetShaderParameter("surface_size", size * factor);
+    }
 }
