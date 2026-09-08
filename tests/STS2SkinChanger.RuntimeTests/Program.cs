@@ -17,6 +17,17 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-intrinsic-previews")
+{
+    IntrinsicPreviewTests.Run();
+    return;
+}
+if (args.Length == 2 && args[0] == "--audit-intrinsic-previews")
+{
+    IntrinsicPreviewTests.Audit(args[1]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--test-framework-card-visuals")
 {
     FrameworkCardVisualTests.Run(args[1]);
@@ -240,6 +251,7 @@ PresentationNodeOwnershipTests.Run();
 RenderedPreviewFramingTests.Run();
 FrameworkSelectorCycleTests.Run();
 FrameworkModelPreviewTests.Run();
+IntrinsicPreviewTests.Run();
 AnimatorPatchDiscoveryTests.Run();
 MultiplayerAppearanceIdentityTests.Run();
 OptionalCharacterVfxTests.Run();

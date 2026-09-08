@@ -46,6 +46,7 @@ internal static class FrameworkModelPreview
             staged.Initialize(control, container, owner, groupId ?? character.Id.Entry);
             container.AddChild(staged);
             ApplyRuntimeSpine(visuals, character, groupId);
+            var intrinsicReady = IntrinsicCharacterPreview.Replay(owner, character, groupId);
             // Same selected, node-local cosmetic finishing as a live hot swap. Never replay
             // NCombatRoom callbacks or the original NCreature lifecycle in a menu preview.
             CharacterAppearanceRuntime.ReplaySelectedCreatureNodeReady(owner);
@@ -60,7 +61,10 @@ internal static class FrameworkModelPreview
                 previous.QueueFree();
             }
             staged.Name = "PreviewSprite";
-            staged.BeginCapture();
+            // Custom characters can inject their actor through CallDeferred in their visual
+            // Ready postfix. Queue capture after that injection instead of measuring its base.
+            if (intrinsicReady) Callable.From(staged.BeginCapture).CallDeferred();
+            else staged.BeginCapture();
             ModLog.Info($"已刷新选角小模型：{character.Id.Entry}/{(groupId == null ? "unmanaged" : SkinService.Config.GetSelection(groupId))}；" +
                         $"模型类型={visuals.GetType().Name}；完整模型子节点={visuals.GetChildCount()}。");
             staged = null;
