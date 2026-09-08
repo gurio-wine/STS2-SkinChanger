@@ -28,7 +28,7 @@ internal static partial class SkinService
                 gamePack = _workshopGamePack;
                 if (baseline == null || gamePack == null) return WorkshopLoadReason.ChangedFiles;
                 if (!WorkshopSourcesUnchanged()) return WorkshopLoadReason.ChangedFiles;
-                cards = ModelDb.AllCards.Select(card => new CardCatalogEntry(card.GetType().Name, card.PortraitPath,
+                cards = ModelDb.AllCards.Select(card => new CardCatalogEntry(card.GetType().Name, FrameworkCardVisualGuard.GetBaselinePortraitPath(card),
                     GetCardPoolGroupId(card), GetCardCatalogGroupId(card), GetCardFilterGroupId(card))
                 { IsCharacterPool = IsCharacterCardPool(card) }).ToArray();
             }

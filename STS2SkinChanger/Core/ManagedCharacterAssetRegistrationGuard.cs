@@ -66,6 +66,7 @@ internal static class ManagedCharacterAssetRegistrationGuard
 
     private static void EnsureFrameworkPatchesInstalled()
     {
+        FrameworkCardVisualGuard.EnsureInstalled();
         var prefix = AccessTools.DeclaredMethod(
             typeof(ManagedCharacterAssetRegistrationGuard),
             nameof(RegistrationPrefix));

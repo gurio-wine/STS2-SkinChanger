@@ -1134,7 +1134,7 @@ internal static partial class SkinService
                 var cards = ModelDb.AllCards.ToArray();
                 var entries = cards.Select(card => new CardCatalogEntry(
                         card.GetType().Name,
-                        card.PortraitPath,
+                        FrameworkCardVisualGuard.GetBaselinePortraitPath(card),
                         GetCardPoolGroupId(card),
                         GetCardCatalogGroupId(card),
                         GetCardFilterGroupId(card))
@@ -3058,15 +3058,15 @@ internal static partial class SkinService
         var selection = GetEffectiveCardSelection(card, lookup);
         if (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
         {
-            return lookup.Options.Count == 0
-                ? null
-                : new CardPortraitRequest(
-                    lookup.GroupId,
-                    selection,
-                    card.PortraitPath,
-                    $"{lookup.GroupId}\n{selection}\npck\n{card.PortraitPath}",
-                    UseSelectedProvider: false,
-                    WrapAtlas: false);
+            if (lookup.Options.Count == 0) return null;
+            var originalPath = FrameworkCardVisualGuard.GetBaselinePortraitPath(card);
+            return new CardPortraitRequest(
+                lookup.GroupId,
+                selection,
+                originalPath,
+                $"{lookup.GroupId}\n{selection}\npck\n{originalPath}",
+                UseSelectedProvider: false,
+                WrapAtlas: false);
         }
 
         if (!lookup.OptionsById.TryGetValue(selection, out var optionLookup))
@@ -3088,10 +3088,11 @@ internal static partial class SkinService
                 WrapAtlas: true);
         }
 
+        var baselinePath = FrameworkCardVisualGuard.GetBaselinePortraitPath(card);
         var selectedProviderPath = SelectProviderCardPath(
             optionLookup.MatchedAssetPaths,
             card,
-            card.PortraitPath);
+            baselinePath);
         return selectedProviderPath == null
             // The winning provider may own only the frame/layout. Missing layers belong to the
             // game baseline, never to the next provider in the priority list. Load an isolated
@@ -3100,8 +3101,8 @@ internal static partial class SkinService
             ? new CardPortraitRequest(
                 lookup.GroupId,
                 SkinCatalog.BaseOptionId,
-                card.PortraitPath,
-                $"{lookup.GroupId}\n{selection}\nbase-fallback\n{card.PortraitPath}",
+                baselinePath,
+                $"{lookup.GroupId}\n{selection}\nbase-fallback\n{baselinePath}",
                 UseSelectedProvider: false,
                 WrapAtlas: false)
             : new CardPortraitRequest(
@@ -3663,7 +3664,7 @@ internal static partial class SkinService
 
     private static bool CardArtMatches(string assetPath, CardModel card)
     {
-        var portraitIdentity = CardPortraitIdentity(card.PortraitPath);
+        var portraitIdentity = CardPortraitIdentity(FrameworkCardVisualGuard.GetBaselinePortraitPath(card));
         var poolGroupId = GetCardPoolGroupId(card);
         var assetIdentity = CardPortraitIdentity(
             assetPath,

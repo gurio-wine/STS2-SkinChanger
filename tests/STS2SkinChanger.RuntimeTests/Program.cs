@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 2 && args[0] == "--test-framework-card-visuals")
+{
+    FrameworkCardVisualTests.Run(args[1]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-workshop")
 {
     WorkshopTests.Run();
