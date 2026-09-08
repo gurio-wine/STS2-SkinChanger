@@ -3016,6 +3016,14 @@ internal sealed partial class SkinCatalog : IDisposable
                 var hasNormalPortrait = option.NormalPortraits.TryGetValue(
                     card.TypeName,
                     out var normalPortrait);
+                if (option.StatefulArt != null)
+                {
+                    normalPortrait = option.StatefulArt.DefaultPortrait(card, option.Assets);
+                    hasNormalPortrait = normalPortrait != null;
+                    assets = hasNormalPortrait
+                        ? new[] { new KeyValuePair<string, ResourceAsset>(normalPortrait!, option.Assets[normalPortrait!]) }
+                        : [];
+                }
                 var hasAncientPortrait = option.AncientPortraits.TryGetValue(
                     card.TypeName,
                     out var ancientPortrait);
@@ -4992,6 +5000,16 @@ internal sealed partial class SkinCatalog : IDisposable
         }
         foreach (var index in cosmeticIndexes)
         {
+            if (StatefulCardArtContract.Scan(index.Mod) is { } statefulArt)
+            {
+                var atlas = statefulArt.ReadAtlas(index);
+                if (atlas.Count > 0)
+                    options.Add(new CardSkinOption(index.Mod.Id, index.Mod.Name,
+                        new Dictionary<string, string>(), new Dictionary<string, AncientCardPortrait>(),
+                        atlas, index.Mod.RootPath, index.Mod.Id) { StatefulArt = statefulArt with
+                        { AvailablePortraits = atlas.Keys.ToHashSet(StringComparer.Ordinal) } });
+                continue;
+            }
             var providerBehavior = ProviderCardBehaviorScanner.Scan(
                 index.Mod.RootPath,
                 index.Assets.Values);
@@ -5951,6 +5969,18 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         foreach (var index in indexes)
         {
+            if (StatefulCardArtContract.Scan(index.Mod) is { } statefulArt)
+            {
+                foreach (var (groupId, assets) in statefulArt.CharacterAssets(index))
+                {
+                    if (!knownCharacterGroupIds.Contains(groupId)) continue;
+                    if (!groups.TryGetValue(groupId, out var group))
+                        groups[groupId] = group = new SkinGroup(groupId, DisplayName(groupId));
+                    group.Options.RemoveAll(option => option.EffectiveProviderId == index.Mod.Id);
+                    group.Options.Add(new SkinOption(index.Mod.Id, index.Mod.Name, assets, ProviderId: index.Mod.Id));
+                }
+                continue;
+            }
             var enabledGroupIds = ReadEnabledRuntimeGroupIds(index.Mod);
             var frameworkContracts = FrameworkSkinContractScanner.Scan(
                     index.Mod.RootPath,
@@ -7481,6 +7511,7 @@ internal sealed record CardSkinOption(
     string? ProviderId = null,
     IReadOnlyDictionary<string, CardPresentationDefinition>? Presentations = null)
 {
+    public StatefulCardArtContract? StatefulArt { get; init; }
     public IReadOnlyDictionary<string, ResourceAsset> Assets { get; init; } =
         PckAssets ?? new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, CardPresentationDefinition> CardPresentations { get; init; } =
@@ -7530,7 +7561,8 @@ internal sealed record CardSkinOption(
             CardPresentations = presentations,
             CardNames = names,
             ProviderRootPath = ProviderRootPath ?? other.ProviderRootPath,
-            ProviderId = ProviderId ?? other.ProviderId
+            ProviderId = ProviderId ?? other.ProviderId,
+            StatefulArt = StatefulArt ?? other.StatefulArt
         };
     }
 

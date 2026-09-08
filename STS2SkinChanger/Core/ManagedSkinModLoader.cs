@@ -153,6 +153,15 @@ internal static class ManagedSkinModLoader
     internal static Assembly? GetActiveProviderAssembly(string providerId) =>
         ActiveProviderRuntimes.TryGetValue(providerId, out var runtime) ? runtime.Assembly : null;
 
+    internal static Assembly? GetStatefulCardArtAssembly(string providerId)
+    {
+        if (!ProviderAssemblies.TryGetValue(providerId, out var provider) ||
+            StatefulCardArtContract.Read(provider.AssemblyPath) == null) return null;
+        var assembly = GetOrLoadProviderAssembly(provider);
+        if (assembly != null) EnsureProviderGodotScripts(providerId);
+        return assembly;
+    }
+
     internal static void EnsureProviderSettings(Mod mod)
     {
         // A details-page request may precede the first selection. Do not initialize every DLL
@@ -858,6 +867,8 @@ internal static class ManagedSkinModLoader
             }
 
             lookupMethod.Invoke(null, [assembly]);
+            if (StatefulCardArtContract.Read(provider.AssemblyPath) is {} statefulContract)
+                StatefulCardArtRuntime.Ensure(providerId, statefulContract);
             ModLog.Info(
                 $"已按当前选择注册 {provider.Name} 的 Godot 场景脚本类型，" +
                 "此注册步骤本身未执行其初始化器或 Harmony 补丁。");
@@ -948,6 +959,12 @@ internal static class ManagedSkinModLoader
 
     private static void ActivateProvider(string providerId, ProviderAssembly provider)
     {
+        // Stateful card providers have object-scoped adapters, never an active global PatchAll.
+        if (StatefulCardArtContract.Read(provider.AssemblyPath) is {} statefulContract)
+        {
+            StatefulCardArtRuntime.Ensure(providerId, statefulContract);
+            return;
+        }
         Assembly? assembly = null;
         IReadOnlyList<object> runEnvironmentControllers = [];
         var runEnvironmentEnabled = RunEnvironmentProviderIds.Contains(providerId);
@@ -3021,7 +3038,7 @@ internal static class ManagedSkinModLoader
         {
             using (rewrittenAssembly)
             {
-                using var settingsAssembly = RewriteProviderSettings(rewrittenAssembly!, provider.Name);
+                using var settingsAssembly = RewriteProviderSettings(rewrittenAssembly!, provider.Name, provider.AssemblyPath);
                 var input = settingsAssembly ?? rewrittenAssembly!;
                 assembly = loadContext?.LoadFromStream(input) ?? Assembly.Load(input.ToArray());
             }
@@ -3044,7 +3061,7 @@ internal static class ManagedSkinModLoader
         }
 
         using (var source = File.OpenRead(provider.AssemblyPath))
-        using (var settingsAssembly = RewriteProviderSettings(source, provider.Name))
+        using (var settingsAssembly = RewriteProviderSettings(source, provider.Name, provider.AssemblyPath))
         {
             assembly = settingsAssembly != null
                 ? loadContext?.LoadFromStream(settingsAssembly) ?? Assembly.Load(settingsAssembly.ToArray())
@@ -3058,8 +3075,16 @@ internal static class ManagedSkinModLoader
         return assembly;
     }
 
-    private static MemoryStream? RewriteProviderSettings(Stream source, string name)
+    private static MemoryStream? RewriteProviderSettings(Stream source, string name, string assemblyPath)
     {
+        // Fail closed here: falling through to the original DLL would restore its automatic
+        // all-card factories even when its initialization method is never called.
+        if (StatefulCardArtContract.Read(assemblyPath) is { } cardContract)
+        {
+            var isolated = StatefulCardArtAssemblyCompatibility.Rewrite(source, cardContract, out var factories);
+            ModLog.Info($"已隔离 {name} 的 {factories} 个全局卡牌工厂，动态显示将按单卡选择启用；原文件未修改。");
+            return isolated;
+        }
         try
         {
             var result = MerchantSettingsAssemblyCompatibility.Rewrite(source, out var changed);

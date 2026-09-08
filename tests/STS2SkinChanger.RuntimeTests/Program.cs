@@ -17,6 +17,19 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 3 && args[0] == "--audit-stateful-card-art")
+{
+    StatefulCardArtTests.Audit(args[1], args[2]);
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-stateful-card-boundaries")
+{
+    StatefulCardArtTests.CheckObservers();
+    Console.WriteLine("Stateful card runtime boundaries passed: native Harmony installation, per-provider eligibility and observer-only action hooks.");
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-multiplayer-retries")
 {
     MultiplayerAppearanceIdentityTests.Run(testRetries: true);
@@ -1252,6 +1265,7 @@ foreach (System.Collections.DictionaryEntry pack in compositionPacks)
     }
 }
 
+StatefulCardArtTests.CheckObservers();
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 RequiredLibraryVisualGuardTests.Run(args);
 WorkshopTests.Run();

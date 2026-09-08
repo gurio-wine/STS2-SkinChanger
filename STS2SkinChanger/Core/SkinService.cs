@@ -2810,15 +2810,25 @@ internal static partial class SkinService
         return (SkinCatalog.BaseOptionId, null);
     }
 
+    internal static CardSkinOption? GetSelectedCardOption(CardModel card)
+    {
+        lock (Sync)
+        {
+            var lookup = GetCardLookup(card);
+            return lookup.OptionsById.GetValueOrDefault(GetEffectiveCardSelection(card, lookup))?.Option;
+        }
+    }
+
     public static CardPresentationDefinition? GetCardPresentation(CardModel card)
     {
         lock (Sync)
         {
             var lookup = GetCardLookup(card);
             var selection = GetEffectiveCardSelection(card, lookup);
-            return lookup.OptionsById.TryGetValue(selection, out var option)
-                ? option.Option.CardPresentations.GetValueOrDefault(lookup.CardType)
-                : null;
+            if (!lookup.OptionsById.TryGetValue(selection, out var option)) return null;
+            if (option.Option.StatefulArt != null)
+                return StatefulCardArtRuntime.For(option.Option)?.Presentation(card);
+            return option.Option.CardPresentations.GetValueOrDefault(lookup.CardType);
         }
     }
 
@@ -3082,6 +3092,13 @@ internal static partial class SkinService
         var configuredPath = optionLookup.Option.GetPortraitPath(
             lookup.CardType,
             IsAncientStyleEnabled(optionLookup.Option, lookup.CardType, card));
+        if (optionLookup.Option.StatefulArt != null && StatefulCardArtRuntime.For(optionLookup.Option) is {} runtime)
+        {
+            if (!runtime.Enabled && FrameworkCardVisualGuard.TryGetBaselinePortraitPath(card, out var originalPath))
+                return new CardPortraitRequest(lookup.GroupId, SkinCatalog.BaseOptionId, originalPath,
+                    $"{lookup.GroupId}\n{selection}\nstateful-disabled\n{originalPath}", false, false);
+            configuredPath = runtime.Portrait(card, configuredPath) ?? configuredPath;
+        }
         if (!string.IsNullOrWhiteSpace(configuredPath))
         {
             return new CardPortraitRequest(

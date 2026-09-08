@@ -162,3 +162,5 @@ dotnet publish tools/WorkshopPublisher/WorkshopPublisher.csproj -c Release
 ```
 
 最后一条仅构建上传工具，不会上传工坊。上传和本地部署必须另行执行，并核对正式版兼容产物及各部署目标的版本/哈希。
+
+动态卡图接管检查：`dotnet run --project tests/STS2SkinChanger.RuntimeTests -c Release -- --audit-stateful-card-art <游戏PCK> <Rixian的MSPain目录>`。只读核对私有图集、状态/升级卡图、完整资源依赖、角色发布门槛及加载副本的自动节点隔离；不执行原 Mod 初始化器、不启动游戏。`--test-stateful-card-boundaries` 单独验证两版本的 Harmony 安装边界，保证动作观察器不替换游戏结算 Task。测试版使用 `ReleaseBeta` 和对应 `GameAssemblyDir`。

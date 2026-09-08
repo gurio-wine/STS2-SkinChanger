@@ -372,6 +372,7 @@ internal static class CardSkinControls
 
     public static void RestoreBaselineLayout(NCard card)
     {
+        StatefulCardArtView.BeforeRefresh(card, reload: true);
         if (PresentationLayouts.TryGetValue(card, out var presentation))
         {
             foreach (var addedNode in presentation.AddedNodes)
@@ -437,6 +438,7 @@ internal static class CardSkinControls
         // callbacks, and final presentation still respects explicitly edited layers.
         ApplySelectedPresentation(card, ownership);
         ApplySelectedPortraitToNode(card, ownership);
+        StatefulCardArtView.Apply(card, ownership);
         ExternalCardVisualBridge.SynchronizeProvider(card);
     }
 
@@ -2518,13 +2520,22 @@ internal static class CardLayoutFinalPatch
     }
 
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NCard __instance, System.Reflection.MethodBase __originalMethod)
+    private static void Prefix(NCard __instance, System.Reflection.MethodBase __originalMethod)
+    {
+        if (__originalMethod.Name == nameof(NCard.UpdateVisuals))
+            StatefulCardArtView.BeforeRefresh(__instance, reload: false);
+    }
+
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(NCard __instance, System.Reflection.MethodBase __originalMethod, object[] __args)
     {
         // 基线已在 Priority.First 的 Postfix 中捕获，避免把其他 Mod 后置
         // 修改过的卡框误当成原版。这里最后只做当前所有者的呈现。
         var externalOwnership = ExternalCardVisualBridge.GetOwnership(__instance);
         CardSkinControls.ApplySelectedPresentation(__instance, externalOwnership);
         CardSkinControls.ApplySelectedPortraitToNode(__instance, externalOwnership);
+        StatefulCardArtView.Apply(__instance, externalOwnership,
+            __args.OfType<CardPreviewMode>().FirstOrDefault());
         CardRefreshDiagnostics.Record(__instance, "managed", __originalMethod);
         ExternalCardVisualBridge.SynchronizeProvider(__instance);
         CardRefreshDiagnostics.Record(__instance, "editor", __originalMethod);
