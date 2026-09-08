@@ -34,7 +34,7 @@ internal static class FrameworkSkinContractScanner
             return [];
         }
 
-        var primaryAssembly = Path.Combine(providerRoot, providerId + ".dll");
+        var primaryAssembly = SkinPackagePaths.Resolve(providerRoot, providerId, ".dll");
         var assemblyPaths = File.Exists(primaryAssembly)
             ? [primaryAssembly]
             : Directory.EnumerateFiles(providerRoot, "*.dll", SearchOption.TopDirectoryOnly)

@@ -15,7 +15,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.3.1";
+    public const string InternalTestVersion = "1.0.3.2";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -34,6 +34,7 @@ public static class Entry
         try
         {
             harmony.PatchAll();
+            ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
             ModLog.Info("代码补丁已加载。等待游戏资源初始化。");
         }
         catch (Exception exception)

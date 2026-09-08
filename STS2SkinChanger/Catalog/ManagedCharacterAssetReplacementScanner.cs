@@ -33,7 +33,7 @@ internal static class ManagedCharacterAssetReplacementScanner
             return [];
         }
 
-        var primaryAssembly = System.IO.Path.Combine(providerRoot, providerId + ".dll");
+        var primaryAssembly = SkinPackagePaths.Resolve(providerRoot, providerId, ".dll");
         var assemblyPaths = File.Exists(primaryAssembly)
             ? [primaryAssembly]
             : Directory.EnumerateFiles(providerRoot, "*.dll", SearchOption.TopDirectoryOnly)

@@ -17,7 +17,61 @@ internal static class ProviderCompatibilityTests
         CheckFixture();
         CheckReturnedTrackAdapters();
         CheckDisposeAndOwnership();
+        CheckExhaustTaskReturn();
         Console.WriteLine("Provider compatibility passed: type relocation, value-type animation calls, unresolved references and source preservation.");
+    }
+
+    private static object? _exhaustTask;
+    private static bool ProvideExhaustTask(ref object __result) { __result = _exhaustTask!; return false; }
+
+    private static void CheckExhaustTaskReturn()
+    {
+        var game = typeof(MegaSprite).Assembly;
+        var actual = game.GetType("MegaCrit.Sts2.Core.Commands.CardCmd")!.GetMethod("Exhaust")!;
+        var definition = CreateAssembly();
+        var module = Property(definition, "MainModule")!;
+        var owner = Items(Property(module, "Types")!).First();
+        var caller = Method(owner, module, "Exhaust", typeof(Task));
+        var reference = Import(module, actual);
+        Set(reference, "ReturnType", Import(module, typeof(Task)));
+        Emit(caller, "Ldnull"); Emit(caller, "Ldnull"); Emit(caller, "Ldc_I4_0"); Emit(caller, "Ldc_I4_0");
+        Emit(caller, "Call", reference); Emit(caller, "Ret");
+        var path = Path.Combine(Path.GetTempPath(), "sc-task-return-" + Guid.NewGuid().ToString("N") + ".dll");
+        var context = new AssemblyLoadContext("sc-task-return", isCollectible: true);
+        var harmony = new Harmony("Gurio.SkinChanger.Tests.TaskReturn");
+        try
+        {
+            using var bytes = new MemoryStream();
+            Invoke(definition, "Write", bytes);
+            File.WriteAllBytes(path, bytes.ToArray());
+            var result = Runtime.GetMethod("PrepareForCurrentGame")!.Invoke(null, [path])!;
+            var report = Property(result, "Report")!;
+            using var converted = (MemoryStream?)Property(result, "Assembly");
+            Require(Property(report, "Failure") == null && !Items(Property(report, "UnresolvedReferences")!).Any(),
+                "旧版消耗卡牌 Task 返回值没有转换到当前游戏：" + report);
+            Require((converted != null) == (actual.ReturnType != typeof(Task)), "正式版原签名不能被多余转换。");
+            bytes.Position = 0;
+            var generated = context.LoadFromStream(converted ?? bytes);
+            var invoke = generated.ManifestModule.GetMethods().Single(m => m.Name == "Exhaust");
+            harmony.Patch(actual, prefix: new HarmonyMethod(typeof(ProviderCompatibilityTests), nameof(ProvideExhaustTask)));
+            var resultType = actual.ReturnType.IsGenericType ? actual.ReturnType.GetGenericArguments()[0] : typeof(int);
+            var completionType = typeof(TaskCompletionSource<>).MakeGenericType(resultType);
+            var completion = Activator.CreateInstance(completionType)!;
+            _exhaustTask = completionType.GetProperty("Task")!.GetValue(completion);
+            var task = (Task)invoke.Invoke(null, null)!;
+            Require(ReferenceEquals(task, _exhaustTask) && !task.IsCompleted, "转换不得替换或提前完成异步消耗任务。");
+            completionType.GetMethod("SetException", [typeof(Exception)])!.Invoke(completion, [new ApplicationException("exhaust-probe")]);
+            Require(task.IsFaulted && task.Exception!.InnerException!.Message == "exhaust-probe",
+                "转换不能吞掉原异步异常。");
+        }
+        finally
+        {
+            _exhaustTask = null;
+            harmony.UnpatchAll(harmony.Id);
+            context.Unload();
+            ((IDisposable)definition).Dispose();
+            File.Delete(path);
+        }
     }
 
     private static void CheckDisposeAndOwnership()

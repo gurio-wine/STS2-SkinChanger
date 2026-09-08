@@ -64,6 +64,8 @@
              Link="FrameworkRelicVisualPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs"
              Link="FrameworkSkinContractScanner.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/SkinPackagePaths.cs"
+             Link="SkinPackagePaths.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/DirectCharacterRuntimeTargetScanner.cs"
              Link="DirectCharacterRuntimeTargetScanner.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/ProviderInstanceIdentityPolicy.cs"

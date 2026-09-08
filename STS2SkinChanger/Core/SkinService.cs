@@ -1082,7 +1082,7 @@ internal static partial class SkinService
                         mod.manifest!.id!,
                         mod.manifest.name ?? mod.manifest.id!,
                         mod.manifest.hasPck
-                            ? System.IO.Path.Combine(mod.path, mod.manifest.id + ".pck")
+                            ? SkinPackagePaths.Resolve(mod.path, mod.manifest.id!, ".pck")
                             : null,
                         ManagedSkinModLoader.ShouldTreatAsGameplayBaseline(mod, loadedMods),
                         mod.path,

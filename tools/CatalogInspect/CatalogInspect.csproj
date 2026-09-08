@@ -6,26 +6,23 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../STS2SkinChanger/Core/GamePackLocator.cs" Link="GamePackLocator.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/RuntimeDependencyIsolationPolicy.cs" Link="RuntimeDependencyIsolationPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/OptionalSkinFrameworkPolicy.cs" Link="OptionalSkinFrameworkPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/CharacterGroupEvidencePolicy.cs" Link="CharacterGroupEvidencePolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs" Link="DirectCharacterRuntimeTargetPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/RuntimeProviderScopePolicy.cs" Link="RuntimeProviderScopePolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/AliasedDependencyCachePolicy.cs" Link="AliasedDependencyCachePolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/CharacterSkinCompositionPolicy.cs" Link="CharacterSkinCompositionPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Pck/PckArchive.cs" Link="PckArchive.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/SkinCatalog.cs" Link="SkinCatalog.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/CardSkinOptionNamingPolicy.cs" Link="CardSkinOptionNamingPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/CardLayoutVariantPolicy.cs" Link="CardLayoutVariantPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPresentationScanner.cs" Link="ManagedCardPresentationScanner.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/ManagedCardPortraitReplacementScanner.cs" Link="ManagedCardPortraitReplacementScanner.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/ProviderCardBehaviorScanner.cs" Link="ProviderCardBehaviorScanner.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/ManagedCharacterAssetReplacementScanner.cs" Link="ManagedCharacterAssetReplacementScanner.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/DirectCharacterRuntimeTargetScanner.cs" Link="DirectCharacterRuntimeTargetScanner.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/FrameworkSkinContractScanner.cs" Link="FrameworkSkinContractScanner.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/ProviderInstanceIdentityPolicy.cs" Link="ProviderInstanceIdentityPolicy.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/ManagedMonsterSceneScanner.cs" Link="ManagedMonsterSceneScanner.cs" />
-    <Compile Include="../../STS2SkinChanger/Catalog/RuntimeMonsterVisualModeScanner.cs" Link="RuntimeMonsterVisualModeScanner.cs" />
+    <Reference Include="0Harmony">
+      <HintPath>$(GameAssemblyDir)/0Harmony.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- Inspect the production catalog itself; copied source lists drift as partials grow. -->
+    <ProjectReference Include="../../STS2SkinChanger/STS2SkinChanger.csproj" />
+    <Reference Include="sts2">
+      <HintPath>$(GameAssemblyDir)/sts2.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(GameAssemblyDir)/GodotSharp.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Steamworks.NET">
+      <HintPath>$(GameAssemblyDir)/Steamworks.NET.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 </Project>

@@ -14,6 +14,7 @@
 - 优先使用 codebase-memory-mcp 的图查询；当前 Windows 索引名为 `STS2-SkinChanger`。索引时明确传入仓库绝对路径，不索引整个用户目录。
 - MCP 未重新连接时，可用 `C:/Users/gurio/.local/bin/codebase-memory-mcp.exe cli` 调用同一套工具。工具不可用、索引排除或解析不完整时再用 `rg`，不要运行 CodeGraph。
 - 直接在 master 修改；不创建隔离工作区，尽量不派子智能体。
+- 排查中已确认原因的错误直接修复并验证，不再单独停下来询问是否修复；涉及新的设计取舍、额外权限或无法确认原因时再说明。
 - 改完后提交，并提升四段内测版本。同步 csproj、Entry、SkinChanger.json 和 workshop/workshop.json 的内测标记；上传时再提升三段公开版本。
 - 不控制游戏做实机测试，由用户检查画面。构建和离线测试成功不能代表游戏表现已修复。
 

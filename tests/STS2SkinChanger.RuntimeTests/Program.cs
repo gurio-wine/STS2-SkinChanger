@@ -22,6 +22,16 @@ if (args.Length == 1 && args[0] == "--test-provider-compatibility")
     ProviderCompatibilityTests.Run();
     return;
 }
+if (args.Length == 1 && args[0] == "--test-package-compatibility")
+{
+    PackageCompatibilityTests.Run();
+    return;
+}
+if (args.Length == 3 && args[0] == "--audit-package-compatibility")
+{
+    PackageCompatibilityTests.Audit(args[1], args[2]);
+    return;
+}
 if (args.Length == 2 && args[0] == "--audit-provider-compatibility")
 {
     ProviderCompatibilityTests.Audit(args[1]);
@@ -281,6 +291,7 @@ ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
 ProviderCompatibilityTests.Run();
+PackageCompatibilityTests.Run();
 AppearanceControlContractTests.Run();
 ModThemeTests.Run();
 AppearanceSelectionHintTests.Run();

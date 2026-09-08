@@ -151,6 +151,31 @@ internal static partial class ProviderAssemblyCompatibility
         return module.GetType().GetMethod("ImportReference", [parameterType])!.Invoke(module, [value])!;
     }
 
+    private static bool TryRewriteTaskReturn(object module, object instruction, object member, ProviderCompatibilityReport report)
+    {
+        var declaring = GetRequiredProperty(member, "DeclaringType");
+        // v0.111 returns the pile-add result; the v0.107 caller only awaits completion.
+        // Task<T> is a Task, so the same object preserves completion, cancellation and faults.
+        // The reverse direction is NOT equivalent: an old Task cannot invent a result value.
+        if (!IsGameTypeReference(declaring) || GetInstructionOpCodeName(instruction) != "call" ||
+            GetTypeFullName(declaring) != "MegaCrit.Sts2.Core.Commands.CardCmd" ||
+            (string)GetRequiredProperty(member, "Name") != "Exhaust" || (bool)GetRequiredProperty(member, "HasThis") ||
+            (bool)GetRequiredProperty(member, "HasGenericParameters") || (bool)GetRequiredProperty(member, "IsGenericInstance") ||
+            GetTypeFullName(GetRequiredProperty(member, "ReturnType")) != typeof(Task).FullName) return false;
+        var parameters = Enumerate(GetRequiredProperty(member, "Parameters"))
+            .Select(parameter => GetTypeFullName(GetRequiredProperty(parameter, "ParameterType"))).ToArray();
+        if (!parameters.SequenceEqual(new[] { "MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext",
+                "MegaCrit.Sts2.Core.Models.CardModel", "System.Boolean", "System.Boolean" })) return false;
+        var current = GameAssembly.GetType(GetTypeFullName(declaring))?.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .SingleOrDefault(method => method.Name == "Exhaust" && !method.IsGenericMethod &&
+                method.GetParameters().Select(p => RuntimeTypeName(p.ParameterType)).SequenceEqual(parameters));
+        if (current == null || !current.ReturnType.IsConstructedGenericType ||
+            current.ReturnType.GetGenericTypeDefinition() != typeof(Task<>)) return false;
+        instruction.GetType().GetProperty("Operand")!.SetValue(instruction, Import(module, current));
+        report.Changes.Add($"Task return: {member} -> {RuntimeTypeName(current.ReturnType)}; original Task identity retained");
+        return true;
+    }
+
     private static object NewAdapter(object module, object owner, string name, object returns,
         IEnumerable<object> parameterTypes, Assembly cecil)
     {

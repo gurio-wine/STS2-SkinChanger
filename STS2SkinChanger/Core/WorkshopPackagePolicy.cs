@@ -45,6 +45,7 @@ internal static class WorkshopPackagePolicy
                     if (!hp.GetBoolean()) return Reject(WorkshopLoadReason.IncompleteResources);
                     var root = Path.GetDirectoryName(manifest)!;
                     var pck = Path.Combine(root, pckName + ".pck");
+                    if (!File.Exists(pck)) pck = SkinPackagePaths.Resolve(root, id!, ".pck");
                     if (!File.Exists(pck)) return Reject(WorkshopLoadReason.InvalidPackage);
                     var versionReason = CheckVersion(j, gameVersion);
                     if (versionReason != WorkshopLoadReason.None) return Reject(versionReason);
@@ -60,7 +61,7 @@ internal static class WorkshopPackagePolicy
                         }
                     }
                     var hasDll = j.TryGetProperty("has_dll", out var hd) && hd.GetBoolean();
-                    if (hasDll && !File.Exists(Path.Combine(root, id + ".dll"))) return Reject(WorkshopLoadReason.InvalidPackage);
+                    if (hasDll && !File.Exists(SkinPackagePaths.Resolve(root, id!, ".dll"))) return Reject(WorkshopLoadReason.InvalidPackage);
                     // The directory keeps the DLL for declaration scanners, but it must not be
                     // classified as a live code provider after the code-free proof below.
                     mods.Add(new(id!, j.TryGetProperty("name", out var n) ? n.GetString() ?? id! : id!, pck, false, root, false));

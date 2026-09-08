@@ -156,6 +156,12 @@ internal static partial class ProviderAssemblyCompatibility
                                 GetRequiredProperty(instructions[instructionIndex - 1], "OpCode"), "OpCodeType").ToString() == "Prefix")
                             continue; // tail./constrained. require a different stack/receiver contract.
 
+                        if (TryRewriteTaskReturn(module, instruction, operand, report))
+                        {
+                            rewrittenCalls++;
+                            continue;
+                        }
+
                         if (TryRewriteUnsupportedDispose(
                                 method,
                                 body,

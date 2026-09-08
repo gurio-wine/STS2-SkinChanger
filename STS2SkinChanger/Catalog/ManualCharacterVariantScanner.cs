@@ -103,7 +103,7 @@ internal static class ManualCharacterVariantScanner
             if (options.Length == 0 || !Directory.Exists(index.Mod.RootPath)) continue;
             try
             {
-                var primary = Path.Combine(index.Mod.RootPath, index.Mod.ResourceNamespaceId + ".dll");
+                var primary = SkinPackagePaths.Resolve(index.Mod.RootPath, index.Mod.ResourceNamespaceId, ".dll");
                 var paths = File.Exists(primary) ? [primary] : Directory.GetFiles(index.Mod.RootPath, "*.dll");
                 if (!File.Exists(primary) && paths.Length != 1) continue;
                 var states = paths.SelectMany(ScanAssembly).DistinctBy(s => s.Id).ToArray();

@@ -683,6 +683,7 @@ internal static class ManagedSkinModLoader
                 : ModLoadState.Loaded;
             ManagedModInstances.Add(mod);
             NotifyModDetected(mod);
+            ProviderManifestCompatibility.AcknowledgeManagedBranch(mod, provider.HasResourceBackedCosmetics);
             if (originalState == ModLoadState.DisabledDuplicate ||
                 !provider.Id.Equals(mod.manifest?.id, StringComparison.OrdinalIgnoreCase))
             {
@@ -770,12 +771,14 @@ internal static class ManagedSkinModLoader
             return;
         }
 
-        var assemblyPath = Path.GetFullPath(Path.Combine(mod.path, mod.manifest.id + ".dll"));
+        var assemblyPath = Path.GetFullPath(SkinPackagePaths.Resolve(mod.path, mod.manifest.id, ".dll"));
         if (!File.Exists(assemblyPath))
         {
             ModLog.Warn($"找不到皮肤提供者程序集 {assemblyPath}。");
             return;
         }
+        if (!Path.GetFileNameWithoutExtension(assemblyPath).Equals(mod.manifest.id, StringComparison.OrdinalIgnoreCase))
+            ModLog.Info($"已按清单文件配对定位 {mod.manifest.id} 的皮肤包：{Path.GetFileName(assemblyPath)}；逻辑 ID 和原文件保持不变。");
 
         var hasDeclarativeCharacterAssetReplacement =
             ManagedCharacterAssetReplacementScanner.Scan(mod.path, mod.manifest.id).Count > 0 ||
@@ -3639,7 +3642,7 @@ internal static class ManagedSkinModLoader
             manifest.id!,
             manifest.name ?? manifest.id!,
             manifest.hasPck
-                ? Path.Combine(mod.path, manifest.id + ".pck")
+                ? SkinPackagePaths.Resolve(mod.path, manifest.id!, ".pck")
                 : null,
             OptionalSkinFrameworkPolicy.ShouldTreatAsGameplayBaseline(
                 manifest.affectsGameplay,
@@ -3682,7 +3685,7 @@ internal static class ManagedSkinModLoader
             return cached;
         }
 
-        var pckPath = Path.Combine(mod.path, manifest.id + ".pck");
+        var pckPath = SkinPackagePaths.Resolve(mod.path, manifest.id, ".pck");
         if (!File.Exists(pckPath))
         {
             return false;

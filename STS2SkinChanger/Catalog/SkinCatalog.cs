@@ -1186,9 +1186,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return false;
         }
 
-        var assemblyPath = System.IO.Path.Combine(
-            mod.RootPath,
-            mod.ResourceNamespaceId + ".dll");
+        var assemblyPath = SkinPackagePaths.Resolve(mod.RootPath, mod.ResourceNamespaceId, ".dll");
         try
         {
             var info = new FileInfo(assemblyPath);
@@ -4508,9 +4506,7 @@ internal sealed partial class SkinCatalog : IDisposable
     {
         foreach (var index in indexes.Where(index => index.Mod.HasDll && index.Mod.RootPath != null))
         {
-            var primaryAssembly = System.IO.Path.Combine(
-                index.Mod.RootPath!,
-                index.Mod.ResourceNamespaceId + ".dll");
+            var primaryAssembly = SkinPackagePaths.Resolve(index.Mod.RootPath!, index.Mod.ResourceNamespaceId, ".dll");
             var assemblyPaths = File.Exists(primaryAssembly)
                 ? [primaryAssembly]
                 : Directory.EnumerateFiles(
