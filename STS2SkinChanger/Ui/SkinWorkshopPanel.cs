@@ -8,6 +8,9 @@ internal partial class SkinWorkshopPanel : Control
 {
     private const int PageSize = 8;
     private bool _suspended;
+    private WorkshopSubmissionPanel? _submission;
+    private Button _communityRefresh=null!;
+    private int _communityRevision=-1;
     private static readonly string[] Kinds = ["", "character", "cards", "monster", "ancient", "merchant", "companion", "event"];
     private string _kind = "";
     private string _target = "";
@@ -85,6 +88,8 @@ internal partial class SkinWorkshopPanel : Control
         heading.AddChild(Text(WorkshopText.EntryLabel, 27, true));
         var submit = Button(WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitMod), () => { });
         submit.Pressed += () => OpenSubmission(submit); heading.AddChild(submit);
+        _communityRefresh=Button(WorkshopSubmissionText.Get(SubmissionText.Refresh),()=>_ = SkinWorkshopService.RefreshCommunity());
+        heading.AddChild(_communityRefresh);
         BuildSort(heading);
         BuildFilters(content);
         var scroll = new ScrollContainer { SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
@@ -106,6 +111,7 @@ internal partial class SkinWorkshopPanel : Control
         InitializeHover();
         _origin.TreeExited += Close;
         _originConnected = true;
+        _communityRevision=SkinWorkshopService.CommunityRevision;
         Rebuild();
     }
 
@@ -189,6 +195,14 @@ internal partial class SkinWorkshopPanel : Control
     private void Poll()
     {
         if (_closed) return;
+        _communityRefresh.Disabled=SkinWorkshopService.CommunityBusy;
+        _communityRefresh.Text=WorkshopSubmissionText.Get(SkinWorkshopService.CommunityBusy ? SubmissionText.Refreshing : SubmissionText.Refresh);
+        _communityRefresh.TooltipText=SkinWorkshopService.CommunityFailed ? WorkshopSubmissionText.Get(SubmissionText.RefreshFailed) : SkinWorkshopService.CommunityProgress;
+        if (_communityRevision!=SkinWorkshopService.CommunityRevision)
+        {
+            _communityRevision=SkinWorkshopService.CommunityRevision;
+            _names=WorkshopTargetNames.Build(); RefreshFilters(); Rebuild();
+        }
         UpdateVisibleActions();
         PollFilters();
     }
@@ -197,7 +211,7 @@ internal partial class SkinWorkshopPanel : Control
         if (_closed) return;
         // The browser's CanvasLayer sits above the native UI. Yield to ALL native
         // modals, including another Mod's subscription notice, not only our own.
-        _suspended = MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
+        _suspended = _submission != null || MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
         if (_suspended) ResetHover();
         _layer.Visible = !_suspended;
         foreach (var (id, label, action, cancel) in _actions)
@@ -236,6 +250,7 @@ internal partial class SkinWorkshopPanel : Control
     }
     private void HandleInput(InputEvent ev)
     {
+        if (_submission != null) return;
         if (ev is InputEventMouse) _hoverKeyboard = false;
         else if (ev is InputEventKey { Pressed: true } or InputEventJoypadButton { Pressed: true }) _hoverKeyboard = true;
         // Do not wait for the animation timer to hide the old introduction on exit.
@@ -250,6 +265,7 @@ internal partial class SkinWorkshopPanel : Control
     private void Close()
     {
         if (_closed) return; _closed = true;
+        _submission?.Close(); _submission=null;
         ResetHover();
         DisconnectOrigin();
         _pageToken?.Cancel();
@@ -260,6 +276,7 @@ internal partial class SkinWorkshopPanel : Control
     private void Cleanup()
     {
         _closed = true;
+        _submission?.Close(); _submission=null;
         ResetHover();
         LogHoverTiming();
         LogPageBuildTiming();

@@ -1,0 +1,37 @@
+# 工坊社区投稿 Implementation Plan
+
+**Goal:** 玩家批量扫描已订阅的本地皮肤并复制多条投稿码；每次启动及手动刷新读取固定投稿帖全部公开页面，校验后合入游戏内工坊。
+
+**Architecture:** 本地扫描、纯数据编解码、固定讨论帖读取、经 Steam 核验的社区清单、现有主题 UI 五部分独立。内置清单优先，社区条目不改变订阅或当前皮肤。网络/分页失败保留完整旧缓存，不以部分结果替换。
+
+**Tech Stack:** C# / .NET 9、Godot、Steamworks.NET、现有皮肤 Catalog，无额外运行依赖。
+
+**Spec:** 本会话用户要求，已明确授权直接实现。直接 master，不启动游戏，不自动发帖，不上传工坊。
+
+## Global Constraints
+
+- 正式版 v0.107.1、测试版 v0.111.0；发布 AnyCPU；四段内测版本，提交后双目录部署。
+- UI 复用现有主题、固定头尾及可滚动列表，15 种语言。
+- 仅固定 HTTPS Steam 讨论帖；分页与解压有资源上限，格式错误不能执行任何代码。
+- 校验工坊物品属于本游戏；标题封面取 Steam，不使用投稿里的任意 URL。
+
+## Tasks
+
+- [x] 编解码与合并：`WorkshopSubmissionCode`；测试批量拆码、乱序独立解码、损坏/未知版本/膨胀输入拒绝、分类校验、同工坊 ID 去重而非同 Mod ID 合并。
+- [x] 讨论读取：`WorkshopDiscussionSource`；测试主楼/回复、HTML 编码、分页连续性、失败保留缓存、固定目标及限额；只读实测投稿帖。
+- [x] 本地扫描及社区服务：复用 `SkinCatalog.Build/FinalizeCardGroups/ExportWorkshopCatalog`；读取已下载订阅的清单，不执行 DLL；逐个后台扫描并报告进度；Steam UGC 验证物品所属游戏。
+- [x] UI：投稿按钮打开批量选择/扫描/复制界面，保留打开讨论区；增加刷新按钮与状态；关闭取消本地扫描，异步结果不触碰已释放组件。
+- [x] 验证：双版本 RuntimeTests、LogicTests、构建环境检查、实包只读扫描、实际讨论页读取；更新 README、内测号、停机部署与哈希核对；随代码提交。
+
+## Execution
+
+使用 writing-plans、executing-plans、test-driven-development；本会话执行，不派子智能体。先添加测试入口并观察缺失功能失败，再实现上述生产逻辑；每一项验证通过后标记完成。
+
+## 验证记录
+
+- RuntimeTests（Release 正式版引用、ReleaseBeta v0.111.0 引用）、LogicTests、Test-BuildEnvironment 均通过。
+- `--check-workshop-discussion` 匿名只读读取实际固定投稿帖通过；当前无 SCM1 投稿，真实多页内容用分页夹具验证，未发测试留言。
+- 实包 `3787753911`（劣人 TV）识别为猎手角色及猎手/事件/衍生卡分类，投稿码 232 字符；`3797741578` 识别为亡灵契约师卡牌，196 字符。原包未修改、DLL 未执行。
+- 单个 150 目标的大包可跨码合并；每条上限 1800 字符。缓存完整替换、失败回退和仅新增 ID 查询已测试。
+- 不启动游戏。新增 UI、实际 Steam 登录态收录仍需用户实测；本轮不上传工坊。
+- 已部署内测 `1.0.3.3`：`workshop/content`、测试版工坊目录 `steamapps/workshop/content/2868840/3787302680`、正式版 `depot_2868841/mods/_workshop_formal_cache/3787302680` 四份部署文件分别与构建/源码哈希一致。主 DLL SHA-256：`8233279394979C8DDE0141F56927781310910AFCEA262FA50FBEE4B06DE85520`。

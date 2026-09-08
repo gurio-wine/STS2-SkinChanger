@@ -11,6 +11,23 @@ internal static partial class SkinService
     private static Dictionary<string, (long Length, DateTime Modified)> _workshopSourceStamps = [];
     private static readonly SemaphoreSlim WorkshopRegistrationGate = new(1);
 
+    // Scanning and hot registration share the catalog's metadata caches, never build both concurrently.
+    internal static async Task<T> RunWorkshopScan<T>(Func<T> scan, CancellationToken token)
+    {
+        await WorkshopRegistrationGate.WaitAsync(token);
+        try { return await Task.Run(scan,token); }
+        finally { WorkshopRegistrationGate.Release(); }
+    }
+
+    internal static (string GamePack, CardCatalogEntry[] Cards, SkinModDescriptor[] Baselines) CaptureWorkshopScanContext()
+    {
+        lock (Sync)
+        {
+            if (Catalog == null || _workshopGamePack == null) throw new InvalidOperationException("Skin catalog is not ready.");
+            return (_workshopGamePack, BuildCardCatalogEntries(ModelDb.AllCards), _workshopDescriptors.Where(m=>m.AffectsGameplay).ToArray());
+        }
+    }
+
     internal static async Task<WorkshopLoadReason> TryRegisterWorkshopResources(string directory)
     {
         await WorkshopRegistrationGate.WaitAsync();

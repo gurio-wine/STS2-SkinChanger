@@ -55,11 +55,14 @@ internal partial class SkinWorkshopPanel
         }
         catch (Exception ex) { ShowActionError(id, ex); }
     }
-    private static void OpenSubmission(Button button)
+    private void OpenSubmission(Button button)
     {
         try
         {
-            WorkshopCommunityLinks.OpenDiscussion(presets: false);
+            if (_submission != null) return;
+            ResetHover();
+            _submission=WorkshopSubmissionPanel.Show(this,()=> { _submission=null; if(!_closed)Poll(); });
+            UpdateVisibleActions();
             button.Text = WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitMod);
             button.TooltipText = "";
         }

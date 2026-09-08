@@ -31,36 +31,34 @@ internal static partial class SkinWorkshopService
         using var reader = new StreamReader(stream);
         return WorkshopCatalogPolicy.Parse(reader.ReadToEnd());
     });
-    public static IReadOnlyList<WorkshopCatalogItem> Catalog => Items.Value;
+    public static IReadOnlyList<WorkshopCatalogItem> Catalog => _combinedItems ?? Items.Value;
     private static readonly Dictionary<ulong, WorkshopDownload> Downloads = [];
     private static readonly Dictionary<ulong, TaskCompletionSource<EResult>> Waiters = [];
-    private static readonly WorkshopSessionCache<Dictionary<ulong, WorkshopDetails>> SessionDetails = new();
+    private static readonly WorkshopCatalogSession<WorkshopDetails> SessionDetails = new();
     private static Callback<DownloadItemResult_t>? _downloadCallback;
     private static readonly System.Net.Http.HttpClient Images = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
     private static readonly SemaphoreSlim ImageGate = new(3);
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SkinCatalog, HashSet<ulong>> ActiveItems = new();
     private static string CacheRoot => System.IO.Path.Combine(OS.GetUserDataDir(), "skin_changer_workshop");
-    public static WorkshopDetails? CachedDetails(ulong id) => SessionDetails.TryGet(WorkshopText.SteamLanguage, out var details) ? details.GetValueOrDefault(id) : null;
-    private static readonly Dictionary<ulong, WorkshopDetails> EmptyDetails = [];
-    public static IReadOnlyDictionary<ulong, WorkshopDetails> CachedMetadata =>
-        SessionDetails.TryGet(WorkshopText.SteamLanguage, out var details) ? details : EmptyDetails;
+    public static WorkshopDetails? CachedDetails(ulong id) => CachedMetadata.GetValueOrDefault(id);
+    public static IReadOnlyDictionary<ulong, WorkshopDetails> CachedMetadata => SessionDetails.Cached(WorkshopText.SteamLanguage);
 
     public static async Task<Dictionary<ulong, WorkshopDetails>> Query(IReadOnlyList<ulong> ids, CancellationToken token)
     {
         var requested = ids.Where(id => Catalog.Any(item => item.Id == id)).Distinct().Take(12).ToArray();
         if (requested.Length == 0) return [];
         var language = WorkshopText.SteamLanguage;
-        var details = await SessionDetails.Get(language, () => RefreshDetails(language), token);
+        var details = await SessionDetails.Get(language, Catalog.Select(i=>i.Id).ToArray(), missing=>RefreshDetails(language,missing), token);
         return requested.Where(details.ContainsKey).ToDictionary(id => id, id => details[id]);
     }
 
-    private static async Task<Dictionary<ulong, WorkshopDetails>> RefreshDetails(string language)
+    private static async Task<Dictionary<ulong, WorkshopDetails>> RefreshDetails(string language, ulong[] missing)
     {
         // Refresh the curated metadata once at the first open, not once per page.
         // UI cancellation must not dispose the Steam handle shared by later pages.
         var cache = System.IO.Path.Combine(CacheRoot, language);
         var result = new Dictionary<ulong, WorkshopDetails>();
-        foreach (var id in Catalog.Select(item => item.Id))
+        foreach (var id in missing)
         {
             try
             {
@@ -72,7 +70,7 @@ internal static partial class SkinWorkshopService
             catch (UnauthorizedAccessException) { }
             catch (JsonException) { }
         }
-        foreach (var requested in Catalog.Select(item => item.Id).Chunk(1000))
+        foreach (var requested in missing.Chunk(1000))
         {
             var handle = UGCQueryHandle_t.Invalid;
             try
@@ -108,7 +106,7 @@ internal static partial class SkinWorkshopService
                 if (handle != UGCQueryHandle_t.Invalid) SteamUGC.ReleaseQueryUGCRequest(handle);
             }
         }
-        ModLog.Info($"工坊资料本次启动刷新结束：{language}，{result.Count}/{Catalog.Count} 项；之后筛选/翻页复用内存缓存。");
+        ModLog.Info($"工坊资料增量刷新结束：{language}，{result.Count}/{missing.Length} 项；已有物品筛选/翻页复用内存缓存。");
         return result;
     }
 
