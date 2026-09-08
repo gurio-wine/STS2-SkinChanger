@@ -46,10 +46,18 @@
 - 最终验证：Release 正式版、ReleaseBeta 测试版全套 RuntimeTests、LogicTests、Test-BuildEnvironment 通过。实际讨论页匿名只读检查通过，目前 0 个完整投稿组、0 个码错误；Steam 登录态名称核验及游戏 UI 待用户实测。
 - 停机部署到 `workshop/content`、测试版工坊目录和正式版快照缓存，四个部署文件分别核对哈希一致。主 DLL 版本 `1.0.3.4`，SHA-256 `B0BFDC656B108A202D0857FEEB2E6F6E63F9826D8AC38081FFDCC62698412A62`。本轮未上传工坊。
 
-## 当前规则（1.0.3.5 / SCM3）
+## 信息码规则（1.0.3.5 起 / SCM3）
 
 - 用户撤销名称写入要求：新码的明文头部和压缩内容均无 Mod 名称，不设可选项。生成不再依赖 Steam 标题查询；导入仍核验 ID 与所属游戏，名称仅从 Steam 获取以供显示。
 - 完整组、片号、校验、分类格式及来源定位保留。兼容读取 SCM2，忽略其历史名称；SCM1 仍因缺少组完整性信息不收录。旧缓存中的缺名/错名错误不再显示。
 - 错误列表移除名称对照行，保留在线名称、ID、错误类型、分片、楼层及复制原码/定位原帖功能。15 种语言的旧码错误说明已同步改为缺少组完整性信息。
 - Release 正式版与 ReleaseBeta 测试版 RuntimeTests、LogicTests、Test-BuildEnvironment 通过；验证新码头部/压缩载荷无名称、SCM2 兼容、改名不阻断及旧名称错误缓存清理。未启动游戏。
 - 已停机部署 `1.0.3.5` 到 `workshop/content`、测试版工坊目录和正式版快照缓存；四个文件哈希分别一致，主 DLL SHA-256 `7443A84709A02BEC0010AE15BBC7AE0716ECCFA5819A27C6F4692EBEB8C55388`，未上传工坊。
+
+## 投稿候选范围修正（1.0.3.6）
+
+- 只从运行中的 `SkinCatalog.ExportWorkshopCatalog()` 识别结果取工坊 ID，再排除当前内置/有效社区清单已有 ID；不再枚举所有订阅或仅凭 `affects_gameplay=false` 判断皮肤。仍要求已订阅且本地文件已下载。
+- 按工坊物品 ID 去重；同名或同 manifest ID 的不同工坊来源互不误排除，正式版缓存来源同样适用。尚未收录、只有错误码的物品可重新投稿。
+- 读取候选期间、社区清单更新后、返回选择和开始扫描时重新过滤，清除已失效的勾选。没有候选时不捕获全卡牌扫描上下文。
+- 新增真实 PCK 回归夹具验证识别/非皮肤边界、同 ID 多来源、正式版来源、内置与社区排除、重复项、无 ID、自身和空识别结果；正式版 Release、测试版 ReleaseBeta RuntimeTests、LogicTests、Test-BuildEnvironment 通过。未启动游戏；界面表现由用户实测。
+- 已停机部署 `1.0.3.6` 到 `workshop/content`、测试版工坊目录和正式版快照缓存；四个文件分别核对哈希一致，主 DLL SHA-256 `BD70444A1B46389DAE74BFDB3CB3D2E7C86CC842CE1DCC475249A5890D383C16`。未上传工坊。

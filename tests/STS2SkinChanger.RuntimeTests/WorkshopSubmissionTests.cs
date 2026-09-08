@@ -72,6 +72,7 @@ internal static class WorkshopSubmissionTests
         await CacheAndLanguages(items);
         await MetadataDelta();
         ScanPackages();
+        SubmissionCandidates();
         Console.WriteLine("Legacy codec and submission infrastructure passed: bounded decoding, built-in precedence, complete pagination and cache rollback.");
     }
 
@@ -123,6 +124,50 @@ internal static class WorkshopSubmissionTests
             Require(scan.Item is { RestartRequired:true },"未被覆盖的内容不能承诺免重启。");
             File.WriteAllText(manifest,original.Replace("\"affects_gameplay\":false","\"affects_gameplay\":true"));
             Require(WorkshopSubmissionScanner.ReadDescriptors(source).Length==0,"玩法Mod不能仅因有PCK而成为投稿皮肤候选。");
+        }
+        finally { root.Delete(true); }
+    }
+
+    private static void SubmissionCandidates()
+    {
+        var filter = WorkshopSubmissionCandidatePolicy.Filter;
+        var root = Directory.CreateTempSubdirectory("sc-submission-candidates-");
+        try
+        {
+            const string resource = "res://animations/characters/necrobinder/model.tres";
+            var files = new Dictionary<string, byte[]> { [resource] = Encoding.UTF8.GetBytes("[gd_resource type=\"Resource\" format=3]\n[resource]\n") };
+            var game = Path.Combine(root.FullName, "game.pck"); PckArchive.Write(game, files);
+            var mods = new List<SkinModDescriptor>();
+            var installed = new List<WorkshopLocalSubmission>();
+            foreach (var id in new ulong[] { 101, 102, 103, 104, 105, 0, 3787302680 })
+            {
+                // Same manifest ID across Workshop items; the formal cache is a valid source too.
+                var directory = Path.Combine(root.FullName, id == 104 ? "_workshop_formal_cache" : "2868840", id.ToString());
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(Path.Combine(directory, "skin.json"),
+                    """{"id":"skin","name":"Same name","has_dll":false,"has_pck":true,"affects_gameplay":false}""");
+                PckArchive.Write(Path.Combine(directory, "skin.pck"), id == 105
+                    ? new Dictionary<string, byte[]> { ["res://unmanaged/settings.txt"] = [1] } : files);
+                mods.AddRange(WorkshopSubmissionScanner.ReadDescriptors(directory));
+                installed.Add(new(id, "Same name", directory));
+            }
+            using var live = SkinCatalog.Build(game, mods);
+            live.FinalizeCardGroups([]);
+            var recognized = live.ExportWorkshopCatalog();
+            Require(recognized.Any(i => i.Id == 104) && recognized.All(i => i.Id != 105),
+                "真实目录识别应覆盖正式版缓存；非玩法声明和资源包不等于皮肤识别。");
+            var listed = WorkshopSubmissionCode.Merge([new(101, [new("character", "necrobinder")])],
+                [new(102, [new("character", "necrobinder")])]);
+            var choices = filter(installed.Concat([installed[2]]), recognized, listed);
+            Require(choices.Select(c => c.Id).Order().SequenceEqual(new ulong[] { 103, 104 }),
+                "仅显示已识别且未收录的皮肤：排除内置/社区已有ID、非皮肤、本Mod和无工坊ID；同名同ID差分按工坊来源分别保留且去重。");
+            Require(choices.Single(c => c.Id == 104).Directory == installed[3].Directory,
+                "候选不能按相同Mod名称或manifest ID串到其它来源路径。");
+            Require(filter(choices, recognized, listed.Concat([new(103, [new("character", "necrobinder")])]))
+                .Select(c => c.Id).SequenceEqual(new ulong[] { 104 }), "开始扫描/返回选择时应剔除刚被社区收录的ID。");
+            Require(filter(installed, [], listed).Length == 0, "没有实际识别结果时不能回退成全部已订阅Mod。");
+            Require(filter(installed, [new(103, [new("cards", "necrobinder")])], listed).Single().Id == 103,
+                "只含卡面、不含角色模型的已识别皮肤也应可以投稿。");
         }
         finally { root.Delete(true); }
     }

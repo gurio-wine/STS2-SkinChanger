@@ -99,24 +99,16 @@ internal static partial class SkinWorkshopService
 
     public static async Task<WorkshopLocalSubmission[]> SubmissionCandidates(CancellationToken token)
     {
-        // Including Steam-locally-disabled subscriptions is read-only; never enable them here.
-        var counter = typeof(SteamUGC).GetMethod("GetNumSubscribedItems", [typeof(bool)]);
-        var count = counter != null ? (uint)counter.Invoke(null, [true])! : SteamUGC.GetNumSubscribedItems();
-        if (count > 20000) throw new InvalidDataException("Too many subscribed items.");
-        var ids = new PublishedFileId_t[count];
-        var listing = typeof(SteamUGC).GetMethod("GetSubscribedItems", [typeof(PublishedFileId_t[]), typeof(uint), typeof(bool)]);
-        var returned = listing != null ? (uint)listing.Invoke(null, [ids, count, true])! : SteamUGC.GetSubscribedItems(ids, count);
+        // Reuse already recognized resources. Opening this panel must not scan every subscription.
+        var recognized = SkinService.Catalog?.ExportWorkshopCatalog() ?? [];
+        var pending = WorkshopSubmissionCandidatePolicy.EligibleIds(recognized, Catalog);
         var installed = new List<(ulong Id, string Path)>();
-        var candidates = ids.Take((int)returned).Select(i => i.m_PublishedFileId)
-            .Concat(ModManager.Mods.Select(m => STS2SkinChanger.Catalog.SkinCatalog.WorkshopSourceId(m.path))).Where(i => i > 0).Distinct();
-        foreach (var source in candidates)
+        foreach (var source in pending)
         {
-            var id = new PublishedFileId_t(source);
             token.ThrowIfCancellationRequested();
-            if (id.m_PublishedFileId == 3787302680) continue;
             if (IsSubscribed(source) && TryInstalled(source, out var directory)) installed.Add((source, directory));
         }
-        return await Task.Run(() =>
+        var result = await Task.Run(() =>
         {
             var candidates = new List<WorkshopLocalSubmission>();
             foreach (var item in installed)
@@ -131,18 +123,25 @@ internal static partial class SkinWorkshopService
             }
             return candidates.OrderBy(c => c.Name, StringComparer.CurrentCulture).ToArray();
         }, token);
+        // A community refresh may have finished while the manifests were being read.
+        return FilterSubmissionCandidates(result);
     }
+
+    internal static WorkshopLocalSubmission[] FilterSubmissionCandidates(IEnumerable<WorkshopLocalSubmission> candidates) =>
+        WorkshopSubmissionCandidatePolicy.Filter(candidates, SkinService.Catalog?.ExportWorkshopCatalog() ?? [], Catalog);
 
     public static async Task<(string[] Codes, int Accepted, int Rejected)> ScanSubmissions(WorkshopLocalSubmission[] selected,
         IProgress<(int Current, int Total, string Name)> progress, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
+        var installed = FilterSubmissionCandidates(selected).Where(s => IsSubscribed(s.Id) && TryInstalled(s.Id, out var root) &&
+            System.IO.Path.GetFullPath(root).Equals(System.IO.Path.GetFullPath(s.Directory), StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (installed.Length == 0) return ([], 0, selected.Length);
         var snapshot = SkinService.CaptureWorkshopScanContext();
         var gameVersion = AccessTools.Field(typeof(ModManager), "_gameVersion")?.GetValue(null)?.ToString() ?? "";
         var dependencies = ModManager.Mods.Where(m => m.state == ModLoadState.Loaded && m.manifest?.id != null)
             .GroupBy(m => m.manifest!.id!, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().manifest!.version ?? "", StringComparer.OrdinalIgnoreCase);
-        var installed = selected.Where(s => IsSubscribed(s.Id) && TryInstalled(s.Id, out var root) &&
-            System.IO.Path.GetFullPath(root).Equals(System.IO.Path.GetFullPath(s.Directory), StringComparison.OrdinalIgnoreCase)).ToArray();
         return await SkinService.RunWorkshopScan(() =>
         {
             var items = new List<WorkshopCatalogItem>();

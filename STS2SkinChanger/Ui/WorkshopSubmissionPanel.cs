@@ -21,6 +21,7 @@ internal partial class WorkshopSubmissionPanel : Control
     private LineEdit _search = null!;
     private bool _busy;
     private bool _closed;
+    private int _candidateRevision = -1;
     private bool Alive => !_closed && GodotObject.IsInstanceValid(this) && IsInsideTree();
 
     internal static WorkshopSubmissionPanel Show(Node origin, Action closed)
@@ -40,7 +41,13 @@ internal partial class WorkshopSubmissionPanel : Control
         _window = GetWindow(); _window.WindowInput += OnInput; _origin.TreeExited += Close;
         TreeExiting += Cleanup;
         var modalTimer = new Godot.Timer { WaitTime = .1, Autostart = true, ProcessMode = ProcessModeEnum.Always };
-        modalTimer.Timeout += () => { if (Alive) _layer.Visible = MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal == null; };
+        modalTimer.Timeout += () =>
+        {
+            if (!Alive) return;
+            _layer.Visible = MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal == null;
+            if (!_busy && _candidateRevision >= 0 && !_back.Visible &&
+                _candidateRevision != SkinWorkshopService.CommunityRevision) ShowChoices();
+        };
         AddChild(modalTimer);
         var mask = new ColorRect { Color = new Color(0, 0, 0, .5f), MouseFilter = MouseFilterEnum.Stop };
         AddChild(mask); mask.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -81,6 +88,9 @@ internal partial class WorkshopSubmissionPanel : Control
     private void ShowChoices()
     {
         if (!Alive || _busy) return;
+        _candidateRevision = SkinWorkshopService.CommunityRevision;
+        _candidates = SkinWorkshopService.FilterSubmissionCandidates(_candidates);
+        _selected.IntersectWith(_candidates.Select(item => item.Id));
         ClearRows(); _tools.Show(); _back.Hide(); _scan.Show();
         foreach (var local in _candidates)
         {
