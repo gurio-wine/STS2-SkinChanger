@@ -377,7 +377,7 @@ internal static class CardSkinControls
         {
             foreach (var addedNode in presentation.AddedNodes)
             {
-                if (!GodotObject.IsInstanceValid(addedNode))
+                if (!GodotObject.IsInstanceValid(addedNode) || addedNode.IsQueuedForDeletion())
                 {
                     continue;
                 }
@@ -403,6 +403,28 @@ internal static class CardSkinControls
                 BaselineLayouts.Remove(card);
             }
         }
+    }
+
+    internal static void ReleasePresentationForReuse(NCard card)
+    {
+        // Pool return clears _model directly; set_Model also assigns the new model BEFORE
+        // Reload. Restore while the old model still owns this snapshot, or hidden text and
+        // type plaques become the next card's baseline (native Reload does not unhide them).
+        // Reparenting within hand/drag/queue is NOT reuse and must retain its selected skin.
+        StatefulCardArtView.Release(card);
+        if (PresentationLayouts.TryGetValue(card, out _)) RestoreBaselineLayout(card);
+        BaselineLayouts.Remove(card);
+        PreviewModes.Remove(card);
+    }
+
+    private static void TrackAddedPresentationNode(NCard card, Node node) =>
+        PresentationLayouts.GetValue(card, static _ => new CardPresentationState([])).AddedNodes.Add(node);
+
+    private static void ReleaseSelectedPresentation(NCard card)
+    {
+        // Do not discard the lease without restoring it when a skin is disabled by its own
+        // settings, or when a card editor acquires the frame. Leave unrelated UI-only cards alone.
+        if (PresentationLayouts.TryGetValue(card, out _)) RestoreBaselineLayout(card);
     }
 
     public static void ReapplyQueuedCardPortraits(NCardPlayQueue queue)
@@ -455,8 +477,8 @@ internal static class CardSkinControls
         // explicitly configured that card there. Other cards remain managed here.
         if (externalOwnership.Frame)
         {
+            ReleaseSelectedPresentation(card);
             ApplyBuiltInOverlay(card, null);
-            PresentationLayouts.Remove(card);
             return;
         }
 
@@ -464,18 +486,15 @@ internal static class CardSkinControls
         ApplyBuiltInOverlay(card, presentation);
         if (presentation == null)
         {
-            PresentationLayouts.Remove(card);
+            ReleaseSelectedPresentation(card);
             return;
         }
 
-        PresentationLayouts.Remove(card);
+        // Only adopt nodes created by this renderer, never all nodes added since Reload.
+        // UI mods can add their own overlays after baseline capture. Keep our node ownership
+        // across repeated UpdateVisuals/tree re-entry until a real refresh releases it.
+        PresentationLayouts.GetValue(card, static _ => new CardPresentationState([]));
         ApplyManagedCardPresentation(card, presentation, externalOwnership.Text);
-        if (BaselineLayouts.TryGetValue(card, out var baseline))
-        {
-            PresentationLayouts.Add(
-                card,
-                new CardPresentationState(baseline.FindAddedNodes(card)));
-        }
     }
 
     private static void ApplyManagedCardPresentation(
@@ -757,32 +776,33 @@ internal static class CardSkinControls
             parent != null &&
             !string.IsNullOrWhiteSpace(presentation.FrameOverlay))
         {
-            overlay = new TextureRect
+            overlay = parent.GetNodeOrNull<TextureRect>(FullFrameOverlayName);
+            if (overlay == null)
             {
-                Name = FullFrameOverlayName,
-                Texture = SkinService.LoadCardPresentationResource<Texture2D>(
-                    card.Model,
-                    presentation.FrameOverlay),
-                MouseFilter = Control.MouseFilterEnum.Ignore,
-                ZIndex = ancientBorder!.ZIndex,
-                AnchorLeft = 0.5f,
-                AnchorTop = 0.5f,
-                AnchorRight = 0.5f,
-                AnchorBottom = 0.5f,
-                GrowHorizontal = Control.GrowDirection.Both,
-                GrowVertical = Control.GrowDirection.Both,
-                PivotOffset = new Vector2(CardVisualRightEdge, CardVisualBottomEdge),
-                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
-                OffsetTop = presentation.FrameOverlayOffsetTop ?? -CardVisualBottomEdge,
-                OffsetBottom = presentation.FrameOverlayOffsetBottom ?? CardVisualBottomEdge,
-                OffsetLeft = presentation.FrameOverlayOffsetLeft ?? -CardVisualRightEdge,
-                OffsetRight = presentation.FrameOverlayOffsetRight ?? CardVisualRightEdge,
-                Scale = new Vector2(
-                    presentation.FrameOverlayScaleX ?? 1f,
-                    presentation.FrameOverlayScaleY ?? 1f)
-            };
-            parent.AddChild(overlay);
+                overlay = new TextureRect
+                {
+                    Name = FullFrameOverlayName,
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                    AnchorLeft = 0.5f,
+                    AnchorTop = 0.5f,
+                    AnchorRight = 0.5f,
+                    AnchorBottom = 0.5f,
+                    GrowHorizontal = Control.GrowDirection.Both,
+                    GrowVertical = Control.GrowDirection.Both,
+                    PivotOffset = new Vector2(CardVisualRightEdge, CardVisualBottomEdge),
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                    StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered
+                };
+                parent.AddChild(overlay);
+                TrackAddedPresentationNode(card, overlay);
+            }
+            overlay.Texture = SkinService.LoadCardPresentationResource<Texture2D>(card.Model, presentation.FrameOverlay);
+            overlay.ZIndex = ancientBorder!.ZIndex;
+            overlay.OffsetTop = presentation.FrameOverlayOffsetTop ?? -CardVisualBottomEdge;
+            overlay.OffsetBottom = presentation.FrameOverlayOffsetBottom ?? CardVisualBottomEdge;
+            overlay.OffsetLeft = presentation.FrameOverlayOffsetLeft ?? -CardVisualRightEdge;
+            overlay.OffsetRight = presentation.FrameOverlayOffsetRight ?? CardVisualRightEdge;
+            overlay.Scale = new Vector2(presentation.FrameOverlayScaleX ?? 1f, presentation.FrameOverlayScaleY ?? 1f);
         }
 
         if (parent == null)
@@ -887,6 +907,7 @@ internal static class CardSkinControls
                 Visible = false
             };
             body.AddChild(overlay);
+            TrackAddedPresentationNode(card, overlay);
             body.MoveChild(overlay, Math.Max(0, description.GetIndex()));
         }
 
@@ -922,13 +943,14 @@ internal static class CardSkinControls
 
     private static void RemoveNormalTextBackground(NCard card)
     {
-        var overlay = card.GetNodeOrNull<TextureRect>(NormalTextBackgroundOverlayName);
+        var overlay = card.Body?.GetNodeOrNull<TextureRect>(NormalTextBackgroundOverlayName);
         if (overlay == null)
         {
             return;
         }
 
         overlay.GetParent()?.RemoveChild(overlay);
+        if (PresentationLayouts.TryGetValue(card, out var presentation)) presentation.AddedNodes.Remove(overlay);
         overlay.QueueFree();
     }
 
@@ -1748,8 +1770,7 @@ internal static class CardSkinControls
 
     private sealed class CardLayoutState(
         CardModel? model,
-        IReadOnlyList<CanvasItemState> items,
-        IReadOnlySet<ulong> baselineNodeIds)
+        IReadOnlyList<CanvasItemState> items)
     {
         private static readonly string[] NodePaths =
         [
@@ -1802,21 +1823,10 @@ internal static class CardSkinControls
                     (item as TextureRect)?.FlipV,
                     (item as AnimatedSprite2D)?.IsPlaying()))
                 .ToArray();
-            var nodeIds = Descendants(card)
-                .Select(node => node.GetInstanceId())
-                .ToHashSet();
-            return new CardLayoutState(card.Model, states, nodeIds);
+            return new CardLayoutState(card.Model, states);
         }
 
         public bool BelongsTo(CardModel? currentModel) => ReferenceEquals(model, currentModel);
-
-        public IReadOnlyList<Node> FindAddedNodes(NCard card) =>
-            Descendants(card)
-                .Where(node => !baselineNodeIds.Contains(node.GetInstanceId()))
-                .Where(node => node.GetParent() == card ||
-                               (node.GetParent() is { } parent &&
-                                baselineNodeIds.Contains(parent.GetInstanceId())))
-                .ToArray();
 
         public void Restore()
         {
@@ -1889,7 +1899,7 @@ internal static class CardSkinControls
         bool? WasPlaying);
 
     private sealed record CardPresentationState(
-        IReadOnlyList<Node> AddedNodes);
+        List<Node> AddedNodes);
 
     private sealed class CardPreviewState
     {
@@ -2486,6 +2496,29 @@ internal static class CardBuiltInOverlayPatch
         CardSkinControls.ApplyBuiltInOverlay(__instance, ExternalCardVisualBridge.GetOwnership(__instance).Frame
             ? null : SkinService.GetCardPresentation(__instance.Model));
     }
+}
+
+[HarmonyPatch(typeof(NCard), "set_Model")]
+internal static class CardLayoutModelRebindPatch
+{
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance, CardModel? value)
+    {
+        if (!ReferenceEquals(__instance.Model, value)) CardSkinControls.ReleasePresentationForReuse(__instance);
+    }
+}
+
+[HarmonyPatch]
+internal static class CardLayoutPoolReleasePatch
+{
+    private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(NCard), "OnFreedToPool");
+        yield return AccessTools.Method(typeof(NCard), "OnReturnedFromPool");
+    }
+
+    [HarmonyPriority(Priority.First)]
+    private static void Prefix(NCard __instance) => CardSkinControls.ReleasePresentationForReuse(__instance);
 }
 
 [HarmonyPatch]

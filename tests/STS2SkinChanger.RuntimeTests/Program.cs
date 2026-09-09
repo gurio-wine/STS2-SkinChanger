@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] is "--test-card-layout-reuse" or "--test-card-node-ownership")
+{
+    CardPresentationLifecycleTests.Run(ownershipOnly: args[0] == "--test-card-node-ownership");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--audit-stateful-card-art")
 {
     StatefulCardArtTests.Audit(args[1], args[2]);
@@ -1265,6 +1271,7 @@ foreach (System.Collections.DictionaryEntry pack in compositionPacks)
     }
 }
 
+CardPresentationLifecycleTests.Run();
 StatefulCardArtTests.CheckObservers();
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 RequiredLibraryVisualGuardTests.Run(args);

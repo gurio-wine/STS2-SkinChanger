@@ -286,15 +286,6 @@ internal partial class StatefulCardArtWatcher : Node
     }
 }
 
-[HarmonyPatch(typeof(NCard), "set_Model")]
-internal static class StatefulCardModelRebindPatch
-{
-    private static void Prefix(NCard __instance, CardModel? value)
-    {
-        if (!ReferenceEquals(__instance.Model, value)) StatefulCardArtView.Release(__instance);
-    }
-}
-
 [HarmonyPatch(typeof(NCard), nameof(NCard._ExitTree))]
 internal static class StatefulCardTreeExitPatch
 {

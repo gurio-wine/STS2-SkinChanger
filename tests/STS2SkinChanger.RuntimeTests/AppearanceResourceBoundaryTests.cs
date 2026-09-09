@@ -101,7 +101,7 @@ internal static class AppearanceResourceBoundaryTests
         var layoutType = controls.GetNestedType("CardLayoutState", BindingFlags.NonPublic)!;
         var itemType = controls.GetNestedType("CanvasItemState", BindingFlags.NonPublic)!;
         var layout = Activator.CreateInstance(layoutType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
-            [model, Array.CreateInstance(itemType, 0), new HashSet<ulong>()], null)!;
+            [model, Array.CreateInstance(itemType, 0)], null)!;
         layouts.GetType().GetMethod("Add")!.Invoke(layouts, [card, layout]);
         try
         {
