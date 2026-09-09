@@ -3,154 +3,154 @@
     "language": "schinese",
     "title": "皮肤切换器",
     "statementHeading": "声明",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "支持切换角色、卡牌、怪物、先古、商人、生物和事件皮肤，提供其它图鉴方便预览。\n\n[h1]无需重启！切换即用！[/h1]\n\n[h2]详细[/h2]\n[list]\n[*]在选角和图鉴中切换皮肤，局内也能调整外观。\n[*]用优先级、预设、皮肤合并和皮肤包管理搭配。\n[*]游戏内浏览收录的工坊皮肤，支持订阅和取消订阅。\n[*]界面支持15种语言，主题可自定义。\n[/list]\n\n[h2]注意[/h2]\n支持 v0.107.1 正式版和 v0.111.0 公开测试版。\n皮肤需另行订阅。本 Mod 会自动调整加载顺序，需要时提示重启。联机仅显示双方已安装的皮肤。\n\n[h2]限制[/h2]\n[list]\n[*]包含特殊代码、玩法或自带管理器的皮肤，可能仍需适配。\n[*]新订阅皮肤是否需要重启，以工坊列表标签为准。\n[/list]\n\n[h2]开源[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]版本[/h2]\n1.0.5\n\n本 Mod 依赖 GPT 和 DeepSeek 协助开发，欢迎提出更多需求！"
+    "description": "支持切换角色、卡牌、怪物、先古、商人、生物和事件皮肤，提供其它图鉴方便预览。\n\n[h1]无需重启！切换即用！[/h1]\n\n[h2]详细[/h2]\n[list]\n[*]在选角和图鉴中切换皮肤，局内也能调整外观。\n[*]用优先级、预设、皮肤合并和皮肤包管理搭配。\n[*]游戏内浏览收录的工坊皮肤，支持订阅和取消订阅。\n[*]界面支持15种语言，主题可自定义。\n[/list]\n\n[h2]注意[/h2]\n支持 v0.107.1 正式版和 v0.111.0 公开测试版。\n皮肤需另行订阅。本 Mod 会自动调整加载顺序，需要时提示重启。联机仅显示双方已安装的皮肤。\n\n[h2]限制[/h2]\n[list]\n[*]包含特殊代码、玩法或自带管理器的皮肤，可能仍需适配。\n[*]新订阅皮肤是否需要重启，以工坊列表标签为准。\n[/list]\n\n[h2]开源[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]版本[/h2]\n1.0.6\n\n本 Mod 依赖 GPT 和 DeepSeek 协助开发，欢迎提出更多需求！"
   },
   {
     "language": "tchinese",
     "title": "外觀切換器",
     "statementHeading": "聲明",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "支援切換角色、卡牌、怪物、先古、商人、生物及事件外觀，提供其他圖鑑方便預覽。\n\n[h1]無需重新啟動！切換即用！[/h1]\n\n[h2]詳細內容[/h2]\n[list]\n[*]在選角及圖鑑中切換外觀，局內也能調整。\n[*]用優先順序、預設、外觀合併及組合包管理搭配。\n[*]遊戲內瀏覽收錄的工坊外觀，支援訂閱及取消訂閱。\n[*]介面支援15種語言，主題可自訂。\n[/list]\n\n[h2]注意[/h2]\n支援 v0.107.1 正式版與 v0.111.0 公開測試版。\n外觀需另行訂閱。本 Mod 會自動調整載入順序，必要時提示重新啟動。連線僅顯示雙方已安裝的外觀。\n\n[h2]限制[/h2]\n[list]\n[*]包含特殊程式、玩法或自帶管理器的外觀，可能仍需適配。\n[*]新訂閱外觀是否需要重新啟動，請看工坊清單標籤。\n[/list]\n\n[h2]開源[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]版本[/h2]\n1.0.5\n\n本 Mod 依賴 GPT 與 DeepSeek 協助開發，歡迎提出更多需求！"
+    "description": "支援切換角色、卡牌、怪物、先古、商人、生物及事件外觀，提供其他圖鑑方便預覽。\n\n[h1]無需重新啟動！切換即用！[/h1]\n\n[h2]詳細內容[/h2]\n[list]\n[*]在選角及圖鑑中切換外觀，局內也能調整。\n[*]用優先順序、預設、外觀合併及組合包管理搭配。\n[*]遊戲內瀏覽收錄的工坊外觀，支援訂閱及取消訂閱。\n[*]介面支援15種語言，主題可自訂。\n[/list]\n\n[h2]注意[/h2]\n支援 v0.107.1 正式版與 v0.111.0 公開測試版。\n外觀需另行訂閱。本 Mod 會自動調整載入順序，必要時提示重新啟動。連線僅顯示雙方已安裝的外觀。\n\n[h2]限制[/h2]\n[list]\n[*]包含特殊程式、玩法或自帶管理器的外觀，可能仍需適配。\n[*]新訂閱外觀是否需要重新啟動，請看工坊清單標籤。\n[/list]\n\n[h2]開源[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]版本[/h2]\n1.0.6\n\n本 Mod 依賴 GPT 與 DeepSeek 協助開發，歡迎提出更多需求！"
   },
   {
     "language": "japanese",
     "title": "スキン切替ツール",
     "statementHeading": "クレジット",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "キャラクター、カード、モンスター、エンシェント、商人、生物、イベントのスキンを切り替え。「その他」図鑑でプレビューできます。\n\n[h1]再起動不要！切り替えてすぐ使える！[/h1]\n\n[h2]詳細[/h2]\n[list]\n[*]キャラクター選択や図鑑でスキンを切り替え、プレイ中も外見を調整。\n[*]優先順位、プリセット、スキン合成、セットで好みの組み合わせを管理。\n[*]ゲーム内で収録済みワークショップスキンを閲覧・購読・解除。\n[*]テーマのカスタマイズと15言語に対応。\n[/list]\n\n[h2]注意[/h2]\n正式版 v0.107.1 と公開ベータ版 v0.111.0 に対応しています。\nスキンは別途購読してください。読み込み順を自動調整し、必要なら再起動を案内します。マルチプレイでは双方にインストール済みのスキンのみ表示します。\n\n[h2]制限事項[/h2]\n[list]\n[*]特殊なコード、ゲームシステム変更、独自管理機能を持つスキンは追加対応が必要な場合があります。\n[*]新規購読後の再起動の要否は、ワークショップ一覧のラベルで確認できます。\n[/list]\n\n[h2]オープンソース[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]バージョン[/h2]\n1.0.5\n\n本ModはGPTとDeepSeekの支援を活用して開発されています。追加の要望や提案を歓迎します！"
+    "description": "キャラクター、カード、モンスター、エンシェント、商人、生物、イベントのスキンを切り替え。「その他」図鑑でプレビューできます。\n\n[h1]再起動不要！切り替えてすぐ使える！[/h1]\n\n[h2]詳細[/h2]\n[list]\n[*]キャラクター選択や図鑑でスキンを切り替え、プレイ中も外見を調整。\n[*]優先順位、プリセット、スキン合成、セットで好みの組み合わせを管理。\n[*]ゲーム内で収録済みワークショップスキンを閲覧・購読・解除。\n[*]テーマのカスタマイズと15言語に対応。\n[/list]\n\n[h2]注意[/h2]\n正式版 v0.107.1 と公開ベータ版 v0.111.0 に対応しています。\nスキンは別途購読してください。読み込み順を自動調整し、必要なら再起動を案内します。マルチプレイでは双方にインストール済みのスキンのみ表示します。\n\n[h2]制限事項[/h2]\n[list]\n[*]特殊なコード、ゲームシステム変更、独自管理機能を持つスキンは追加対応が必要な場合があります。\n[*]新規購読後の再起動の要否は、ワークショップ一覧のラベルで確認できます。\n[/list]\n\n[h2]オープンソース[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]バージョン[/h2]\n1.0.6\n\n本ModはGPTとDeepSeekの支援を活用して開発されています。追加の要望や提案を歓迎します！"
   },
   {
     "language": "koreana",
     "title": "스킨 체인저",
     "statementHeading": "고지",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "캐릭터, 카드, 몬스터, 고대인, 상인, 생물 및 이벤트 스킨을 전환하고 기타 도감에서 미리 볼 수 있습니다.\n\n[h1]재시작 불필요! 전환 즉시 적용![/h1]\n\n[h2]상세 기능[/h2]\n[list]\n[*]캐릭터 선택과 도감에서 스킨을 바꾸고, 런 중에도 외형을 조절합니다.\n[*]우선순위, 프리셋, 스킨 병합과 묶음으로 조합을 관리합니다.\n[*]게임 내 창작마당 목록을 보고 구독하거나 구독을 취소합니다.\n[*]테마 설정과 15개 언어를 지원합니다.\n[/list]\n\n[h2]주의[/h2]\n정식 버전 v0.107.1 및 공개 베타 v0.111.0을 지원합니다.\n스킨은 별도로 구독해야 합니다. 로드 순서를 자동 조정하고 필요하면 재시작을 안내합니다. 멀티플레이는 양쪽에 설치된 스킨만 표시합니다.\n\n[h2]제한 사항[/h2]\n[list]\n[*]특수 코드, 게임플레이 변경 또는 자체 관리자가 있는 스킨은 추가 호환 작업이 필요할 수 있습니다.\n[*]새로 구독한 스킨의 재시작 필요 여부는 창작마당 목록의 태그를 확인하세요.\n[/list]\n\n[h2]오픈 소스[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]버전[/h2]\n1.0.5\n\n이 Mod는 GPT와 DeepSeek의 도움을 받아 개발되었습니다. 더 많은 기능 요청과 제안을 환영합니다!"
+    "description": "캐릭터, 카드, 몬스터, 고대인, 상인, 생물 및 이벤트 스킨을 전환하고 기타 도감에서 미리 볼 수 있습니다.\n\n[h1]재시작 불필요! 전환 즉시 적용![/h1]\n\n[h2]상세 기능[/h2]\n[list]\n[*]캐릭터 선택과 도감에서 스킨을 바꾸고, 런 중에도 외형을 조절합니다.\n[*]우선순위, 프리셋, 스킨 병합과 묶음으로 조합을 관리합니다.\n[*]게임 내 창작마당 목록을 보고 구독하거나 구독을 취소합니다.\n[*]테마 설정과 15개 언어를 지원합니다.\n[/list]\n\n[h2]주의[/h2]\n정식 버전 v0.107.1 및 공개 베타 v0.111.0을 지원합니다.\n스킨은 별도로 구독해야 합니다. 로드 순서를 자동 조정하고 필요하면 재시작을 안내합니다. 멀티플레이는 양쪽에 설치된 스킨만 표시합니다.\n\n[h2]제한 사항[/h2]\n[list]\n[*]특수 코드, 게임플레이 변경 또는 자체 관리자가 있는 스킨은 추가 호환 작업이 필요할 수 있습니다.\n[*]새로 구독한 스킨의 재시작 필요 여부는 창작마당 목록의 태그를 확인하세요.\n[/list]\n\n[h2]오픈 소스[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]버전[/h2]\n1.0.6\n\n이 Mod는 GPT와 DeepSeek의 도움을 받아 개발되었습니다. 더 많은 기능 요청과 제안을 환영합니다!"
   },
   {
     "language": "russian",
     "title": "Менеджер обликов",
     "statementHeading": "Заявление",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Меняйте облики персонажей, карт, монстров, Древних, торговцев, существ и событий. Просматривайте их в разделе «Другое».\n\n[h1]БЕЗ ПЕРЕЗАПУСКА! МЕНЯЙТЕ И ИСПОЛЬЗУЙТЕ СРАЗУ![/h1]\n\n[h2]Подробности[/h2]\n[list]\n[*]Меняйте облики при выборе персонажа и в энциклопедиях, настраивайте внешность в забеге.\n[*]Собирайте сочетания с помощью приоритетов, пресетов, объединений и наборов.\n[*]Просматривайте встроенный каталог Мастерской, подписывайтесь и отписывайтесь в игре.\n[*]Настраиваемые темы и 15 языков интерфейса.\n[/list]\n\n[h2]Важно[/h2]\nПоддерживаются основная версия v0.107.1 и публичная бета v0.111.0.\nОблики нужно подписать отдельно. Мод сам меняет порядок загрузки и при необходимости предлагает перезапуск. В сетевой игре видны лишь облики, установленные у обоих игроков.\n\n[h2]Ограничения[/h2]\n[list]\n[*]Облики с особым кодом, изменением игрового процесса или своим менеджером могут требовать доработки совместимости.\n[*]Нужен ли перезапуск после новой подписки, указано на метке в каталоге Мастерской.\n[/list]\n\n[h2]Открытый код[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Версия[/h2]\n1.0.5\n\nМод разработан при значительной помощи GPT и DeepSeek. Предлагайте новые функции и пожелания!"
+    "description": "Меняйте облики персонажей, карт, монстров, Древних, торговцев, существ и событий. Просматривайте их в разделе «Другое».\n\n[h1]БЕЗ ПЕРЕЗАПУСКА! МЕНЯЙТЕ И ИСПОЛЬЗУЙТЕ СРАЗУ![/h1]\n\n[h2]Подробности[/h2]\n[list]\n[*]Меняйте облики при выборе персонажа и в энциклопедиях, настраивайте внешность в забеге.\n[*]Собирайте сочетания с помощью приоритетов, пресетов, объединений и наборов.\n[*]Просматривайте встроенный каталог Мастерской, подписывайтесь и отписывайтесь в игре.\n[*]Настраиваемые темы и 15 языков интерфейса.\n[/list]\n\n[h2]Важно[/h2]\nПоддерживаются основная версия v0.107.1 и публичная бета v0.111.0.\nОблики нужно подписать отдельно. Мод сам меняет порядок загрузки и при необходимости предлагает перезапуск. В сетевой игре видны лишь облики, установленные у обоих игроков.\n\n[h2]Ограничения[/h2]\n[list]\n[*]Облики с особым кодом, изменением игрового процесса или своим менеджером могут требовать доработки совместимости.\n[*]Нужен ли перезапуск после новой подписки, указано на метке в каталоге Мастерской.\n[/list]\n\n[h2]Открытый код[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Версия[/h2]\n1.0.6\n\nМод разработан при значительной помощи GPT и DeepSeek. Предлагайте новые функции и пожелания!"
   },
   {
     "language": "german",
     "title": "Skin-Wechsler",
     "statementHeading": "Erklärung",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Wechsle Skins für Charaktere, Karten, Monster, Ahnen, Händler, Kreaturen und Ereignisse. Vorschauen gibt es unter „Sonstiges“.\n\n[h1]KEIN NEUSTART! WECHSELN UND SOFORT VERWENDEN![/h1]\n\n[h2]Details[/h2]\n[list]\n[*]Wechsle Skins in der Charakterauswahl und den Sammlungen oder passe das Aussehen im Lauf an.\n[*]Ordne deine Auswahl mit Prioritäten, Vorlagen, Skin-Kombinationen und Paketen.\n[*]Durchsuche den kuratierten Workshop-Katalog und abonniere oder bestelle Skins im Spiel ab.\n[*]Anpassbare Designs und 15 Oberflächensprachen.\n[/list]\n\n[h2]Wichtig[/h2]\nUnterstützt die Hauptversion v0.107.1 und die öffentliche Beta v0.111.0.\nSkins werden separat abonniert. Die Mod passt ihre Ladereihenfolge an und fordert bei Bedarf zum Neustart auf. Im Mehrspieler werden nur beidseitig installierte Skins angezeigt.\n\n[h2]Einschränkungen[/h2]\n[list]\n[*]Skins mit speziellem Code, Gameplay-Änderungen oder eigenen Managern können zusätzliche Anpassungen benötigen.\n[*]Ob ein neu abonnierter Skin einen Neustart benötigt, zeigt seine Markierung im Workshop-Katalog.\n[/list]\n\n[h2]Open Source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Version[/h2]\n1.0.5\n\nDiese Mod wurde mit umfangreicher Unterstützung von GPT und DeepSeek entwickelt. Weitere Wünsche und Vorschläge sind willkommen!"
+    "description": "Wechsle Skins für Charaktere, Karten, Monster, Ahnen, Händler, Kreaturen und Ereignisse. Vorschauen gibt es unter „Sonstiges“.\n\n[h1]KEIN NEUSTART! WECHSELN UND SOFORT VERWENDEN![/h1]\n\n[h2]Details[/h2]\n[list]\n[*]Wechsle Skins in der Charakterauswahl und den Sammlungen oder passe das Aussehen im Lauf an.\n[*]Ordne deine Auswahl mit Prioritäten, Vorlagen, Skin-Kombinationen und Paketen.\n[*]Durchsuche den kuratierten Workshop-Katalog und abonniere oder bestelle Skins im Spiel ab.\n[*]Anpassbare Designs und 15 Oberflächensprachen.\n[/list]\n\n[h2]Wichtig[/h2]\nUnterstützt die Hauptversion v0.107.1 und die öffentliche Beta v0.111.0.\nSkins werden separat abonniert. Die Mod passt ihre Ladereihenfolge an und fordert bei Bedarf zum Neustart auf. Im Mehrspieler werden nur beidseitig installierte Skins angezeigt.\n\n[h2]Einschränkungen[/h2]\n[list]\n[*]Skins mit speziellem Code, Gameplay-Änderungen oder eigenen Managern können zusätzliche Anpassungen benötigen.\n[*]Ob ein neu abonnierter Skin einen Neustart benötigt, zeigt seine Markierung im Workshop-Katalog.\n[/list]\n\n[h2]Open Source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Version[/h2]\n1.0.6\n\nDiese Mod wurde mit umfangreicher Unterstützung von GPT und DeepSeek entwickelt. Weitere Wünsche und Vorschläge sind willkommen!"
   },
   {
     "language": "french",
     "title": "Gestionnaire de skins",
     "statementHeading": "Déclaration",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Changez les skins des personnages, cartes, monstres, Anciens, marchands, créatures et événements. Prévisualisez-les dans « Autres ».\n\n[h1]AUCUN REDÉMARRAGE ! CHANGEZ ET UTILISEZ IMMÉDIATEMENT ![/h1]\n\n[h2]Détails[/h2]\n[list]\n[*]Changez les skins à la sélection du personnage, dans les collections ou ajustez l’apparence en partie.\n[*]Gérez vos combinaisons avec les priorités, préréglages, fusions de skins et packs.\n[*]Parcourez le catalogue Workshop sélectionné, abonnez-vous et désabonnez-vous en jeu.\n[*]Thèmes personnalisables et interface en 15 langues.\n[/list]\n\n[h2]Attention[/h2]\nCompatible avec la version principale v0.107.1 et la bêta publique v0.111.0.\nLes skins s’abonnent séparément. Le mod ajuste son ordre de chargement et demande un redémarrage si nécessaire. En multijoueur, seuls les skins installés des deux côtés sont affichés.\n\n[h2]Limitations[/h2]\n[list]\n[*]Les skins avec du code spécial, des modifications du jeu ou leur propre gestionnaire peuvent nécessiter une adaptation.\n[*]Pour les nouveaux abonnements, consultez le label du catalogue Workshop indiquant si un redémarrage est nécessaire.\n[/list]\n\n[h2]Open source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Version[/h2]\n1.0.5\n\nCe mod a été développé avec une aide importante de GPT et DeepSeek. Vos demandes de fonctionnalités et suggestions sont les bienvenues !"
+    "description": "Changez les skins des personnages, cartes, monstres, Anciens, marchands, créatures et événements. Prévisualisez-les dans « Autres ».\n\n[h1]AUCUN REDÉMARRAGE ! CHANGEZ ET UTILISEZ IMMÉDIATEMENT ![/h1]\n\n[h2]Détails[/h2]\n[list]\n[*]Changez les skins à la sélection du personnage, dans les collections ou ajustez l’apparence en partie.\n[*]Gérez vos combinaisons avec les priorités, préréglages, fusions de skins et packs.\n[*]Parcourez le catalogue Workshop sélectionné, abonnez-vous et désabonnez-vous en jeu.\n[*]Thèmes personnalisables et interface en 15 langues.\n[/list]\n\n[h2]Attention[/h2]\nCompatible avec la version principale v0.107.1 et la bêta publique v0.111.0.\nLes skins s’abonnent séparément. Le mod ajuste son ordre de chargement et demande un redémarrage si nécessaire. En multijoueur, seuls les skins installés des deux côtés sont affichés.\n\n[h2]Limitations[/h2]\n[list]\n[*]Les skins avec du code spécial, des modifications du jeu ou leur propre gestionnaire peuvent nécessiter une adaptation.\n[*]Pour les nouveaux abonnements, consultez le label du catalogue Workshop indiquant si un redémarrage est nécessaire.\n[/list]\n\n[h2]Open source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Version[/h2]\n1.0.6\n\nCe mod a été développé avec une aide importante de GPT et DeepSeek. Vos demandes de fonctionnalités et suggestions sont les bienvenues !"
   },
   {
     "language": "italian",
     "title": "Gestore delle skin",
     "statementHeading": "Dichiarazione",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Cambia le skin di personaggi, carte, mostri, Antichi, mercanti, creature ed eventi. Visualizza le anteprime nella sezione «Altro».\n\n[h1]NESSUN RIAVVIO! CAMBIA E USA SUBITO![/h1]\n\n[h2]Dettagli[/h2]\n[list]\n[*]Cambia skin nella selezione del personaggio e nelle raccolte, o regola l’aspetto durante la partita.\n[*]Gestisci le combinazioni con priorità, preset, fusioni di skin e pacchetti.\n[*]Sfoglia il catalogo Workshop selezionato, iscriviti e annulla iscrizioni nel gioco.\n[*]Temi personalizzabili e interfaccia in 15 lingue.\n[/list]\n\n[h2]Attenzione[/h2]\nSupporta la versione principale v0.107.1 e la beta pubblica v0.111.0.\nLe skin vanno sottoscritte separatamente. Il mod regola l’ordine di caricamento e chiede un riavvio se necessario. In multigiocatore mostra solo skin installate da entrambe le parti.\n\n[h2]Limitazioni[/h2]\n[list]\n[*]Skin con codice speciale, modifiche al gioco o gestori propri possono richiedere adattamenti.\n[*]Le etichette nel catalogo Workshop indicano se una nuova skin richiede il riavvio.\n[/list]\n\n[h2]Open source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versione[/h2]\n1.0.5\n\nQuesto mod è stato sviluppato con un notevole aiuto di GPT e DeepSeek. Richieste e suggerimenti sono benvenuti!"
+    "description": "Cambia le skin di personaggi, carte, mostri, Antichi, mercanti, creature ed eventi. Visualizza le anteprime nella sezione «Altro».\n\n[h1]NESSUN RIAVVIO! CAMBIA E USA SUBITO![/h1]\n\n[h2]Dettagli[/h2]\n[list]\n[*]Cambia skin nella selezione del personaggio e nelle raccolte, o regola l’aspetto durante la partita.\n[*]Gestisci le combinazioni con priorità, preset, fusioni di skin e pacchetti.\n[*]Sfoglia il catalogo Workshop selezionato, iscriviti e annulla iscrizioni nel gioco.\n[*]Temi personalizzabili e interfaccia in 15 lingue.\n[/list]\n\n[h2]Attenzione[/h2]\nSupporta la versione principale v0.107.1 e la beta pubblica v0.111.0.\nLe skin vanno sottoscritte separatamente. Il mod regola l’ordine di caricamento e chiede un riavvio se necessario. In multigiocatore mostra solo skin installate da entrambe le parti.\n\n[h2]Limitazioni[/h2]\n[list]\n[*]Skin con codice speciale, modifiche al gioco o gestori propri possono richiedere adattamenti.\n[*]Le etichette nel catalogo Workshop indicano se una nuova skin richiede il riavvio.\n[/list]\n\n[h2]Open source[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versione[/h2]\n1.0.6\n\nQuesto mod è stato sviluppato con un notevole aiuto di GPT e DeepSeek. Richieste e suggerimenti sono benvenuti!"
   },
   {
     "language": "polish",
     "title": "Menedżer skórek",
     "statementHeading": "Oświadczenie",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Zmieniaj skórki postaci, kart, potworów, Pradawnych, kupców, stworzeń i wydarzeń. Podgląd znajdziesz w sekcji „Inne”.\n\n[h1]BEZ RESTARTU! ZMIEŃ I UŻYWAJ OD RAZU![/h1]\n\n[h2]Szczegóły[/h2]\n[list]\n[*]Zmieniaj skórki przy wyborze postaci i w kolekcjach lub dostosuj wygląd podczas rozgrywki.\n[*]Zarządzaj zestawami za pomocą priorytetów, presetów, łączenia skórek i pakietów.\n[*]Przeglądaj wybrany katalog Warsztatu, subskrybuj i anuluj subskrypcje w grze.\n[*]Konfigurowalne motywy i interfejs w 15 językach.\n[/list]\n\n[h2]Uwaga[/h2]\nObsługuje wersję główną v0.107.1 i publiczną betę v0.111.0.\nSkórki wymagają osobnej subskrypcji. Mod ustawia kolejność ładowania i w razie potrzeby prosi o restart. W grze wieloosobowej widać tylko skórki zainstalowane po obu stronach.\n\n[h2]Ograniczenia[/h2]\n[list]\n[*]Skórki ze specjalnym kodem, zmianami rozgrywki lub własnymi menedżerami mogą wymagać dostosowania.\n[*]Etykiety w katalogu Warsztatu informują, czy nowo subskrybowana skórka wymaga restartu.\n[/list]\n\n[h2]Otwarty kod[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Wersja[/h2]\n1.0.5\n\nMod został opracowany przy znacznym wsparciu GPT i DeepSeek. Zapraszamy do zgłaszania kolejnych potrzeb i pomysłów!"
+    "description": "Zmieniaj skórki postaci, kart, potworów, Pradawnych, kupców, stworzeń i wydarzeń. Podgląd znajdziesz w sekcji „Inne”.\n\n[h1]BEZ RESTARTU! ZMIEŃ I UŻYWAJ OD RAZU![/h1]\n\n[h2]Szczegóły[/h2]\n[list]\n[*]Zmieniaj skórki przy wyborze postaci i w kolekcjach lub dostosuj wygląd podczas rozgrywki.\n[*]Zarządzaj zestawami za pomocą priorytetów, presetów, łączenia skórek i pakietów.\n[*]Przeglądaj wybrany katalog Warsztatu, subskrybuj i anuluj subskrypcje w grze.\n[*]Konfigurowalne motywy i interfejs w 15 językach.\n[/list]\n\n[h2]Uwaga[/h2]\nObsługuje wersję główną v0.107.1 i publiczną betę v0.111.0.\nSkórki wymagają osobnej subskrypcji. Mod ustawia kolejność ładowania i w razie potrzeby prosi o restart. W grze wieloosobowej widać tylko skórki zainstalowane po obu stronach.\n\n[h2]Ograniczenia[/h2]\n[list]\n[*]Skórki ze specjalnym kodem, zmianami rozgrywki lub własnymi menedżerami mogą wymagać dostosowania.\n[*]Etykiety w katalogu Warsztatu informują, czy nowo subskrybowana skórka wymaga restartu.\n[/list]\n\n[h2]Otwarty kod[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Wersja[/h2]\n1.0.6\n\nMod został opracowany przy znacznym wsparciu GPT i DeepSeek. Zapraszamy do zgłaszania kolejnych potrzeb i pomysłów!"
   },
   {
     "language": "brazilian",
     "title": "Gerenciador de Visuais",
     "statementHeading": "Declaração",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Troque visuais de personagens, cartas, monstros, Anciões, mercadores, criaturas e eventos. Veja as prévias na seção “Outros”.\n\n[h1]SEM REINICIAR! TROQUE E USE NA HORA![/h1]\n\n[h2]Detalhes[/h2]\n[list]\n[*]Troque visuais na seleção de personagem e nas coleções ou ajuste a aparência durante a partida.\n[*]Organize combinações com prioridades, predefinições, fusões de visuais e pacotes.\n[*]Navegue pelo catálogo selecionado da Oficina, inscreva-se e cancele inscrições no jogo.\n[*]Temas personalizáveis e interface em 15 idiomas.\n[/list]\n\n[h2]Atenção[/h2]\nCompatível com a versão principal v0.107.1 e a beta pública v0.111.0.\nOs visuais precisam de inscrições separadas. O mod ajusta a ordem de carregamento e avisa quando é preciso reiniciar. No multijogador, só exibe visuais instalados dos dois lados.\n\n[h2]Limitações[/h2]\n[list]\n[*]Visuais com código especial, alterações de jogabilidade ou gerenciadores próprios podem precisar de adaptação.\n[*]As etiquetas do catálogo da Oficina indicam se um novo visual exige reinício.\n[/list]\n\n[h2]Código aberto[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versão[/h2]\n1.0.5\n\nEste mod foi desenvolvido com grande ajuda do GPT e do DeepSeek. Novos pedidos e sugestões são bem-vindos!"
+    "description": "Troque visuais de personagens, cartas, monstros, Anciões, mercadores, criaturas e eventos. Veja as prévias na seção “Outros”.\n\n[h1]SEM REINICIAR! TROQUE E USE NA HORA![/h1]\n\n[h2]Detalhes[/h2]\n[list]\n[*]Troque visuais na seleção de personagem e nas coleções ou ajuste a aparência durante a partida.\n[*]Organize combinações com prioridades, predefinições, fusões de visuais e pacotes.\n[*]Navegue pelo catálogo selecionado da Oficina, inscreva-se e cancele inscrições no jogo.\n[*]Temas personalizáveis e interface em 15 idiomas.\n[/list]\n\n[h2]Atenção[/h2]\nCompatível com a versão principal v0.107.1 e a beta pública v0.111.0.\nOs visuais precisam de inscrições separadas. O mod ajusta a ordem de carregamento e avisa quando é preciso reiniciar. No multijogador, só exibe visuais instalados dos dois lados.\n\n[h2]Limitações[/h2]\n[list]\n[*]Visuais com código especial, alterações de jogabilidade ou gerenciadores próprios podem precisar de adaptação.\n[*]As etiquetas do catálogo da Oficina indicam se um novo visual exige reinício.\n[/list]\n\n[h2]Código aberto[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versão[/h2]\n1.0.6\n\nEste mod foi desenvolvido com grande ajuda do GPT e do DeepSeek. Novos pedidos e sugestões são bem-vindos!"
   },
   {
     "language": "thai",
     "title": "ตัวสลับสกิน",
     "statementHeading": "คำชี้แจง",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "เปลี่ยนสกินตัวละคร การ์ด มอนสเตอร์ Ancient พ่อค้า สิ่งมีชีวิตและเหตุการณ์ ดูตัวอย่างในหมวด “อื่น ๆ”\n\n[h1]ไม่ต้องเริ่มเกมใหม่! สลับแล้วใช้ได้ทันที![/h1]\n\n[h2]รายละเอียด[/h2]\n[list]\n[*]เปลี่ยนสกินที่หน้าเลือกตัวละครและสารานุกรม หรือปรับรูปลักษณ์ระหว่างเล่น\n[*]จัดชุดด้วยลำดับความสำคัญ พรีเซ็ต การรวมสกิน และชุดสกิน\n[*]ดูรายการเวิร์กชอปที่คัดไว้ สมัครและยกเลิกได้ในเกม\n[*]ปรับแต่งธีมได้ รองรับ 15 ภาษา\n[/list]\n\n[h2]ข้อควรทราบ[/h2]\nรองรับเวอร์ชันหลัก v0.107.1 และเบต้าสาธารณะ v0.111.0\nต้องสมัครสกินแยกต่างหาก ม็อดจัดลำดับโหลดและแจ้งให้เริ่มใหม่เมื่อจำเป็น โหมดหลายคนแสดงเฉพาะสกินที่ติดตั้งทั้งสองฝ่าย\n\n[h2]ข้อจำกัด[/h2]\n[list]\n[*]สกินที่ใช้โค้ดพิเศษ เปลี่ยนระบบเกม หรือมีตัวจัดการเอง อาจต้องปรับความเข้ากันได้\n[*]ดูป้ายในรายการเวิร์กชอปว่าสกินที่สมัครใหม่ต้องเริ่มเกมใหม่หรือไม่\n[/list]\n\n[h2]โอเพนซอร์ส[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]เวอร์ชัน[/h2]\n1.0.5\n\nMod นี้พัฒนาด้วยความช่วยเหลือจาก GPT และ DeepSeek ยินดีรับคำขอและข้อเสนอแนะ!"
+    "description": "เปลี่ยนสกินตัวละคร การ์ด มอนสเตอร์ Ancient พ่อค้า สิ่งมีชีวิตและเหตุการณ์ ดูตัวอย่างในหมวด “อื่น ๆ”\n\n[h1]ไม่ต้องเริ่มเกมใหม่! สลับแล้วใช้ได้ทันที![/h1]\n\n[h2]รายละเอียด[/h2]\n[list]\n[*]เปลี่ยนสกินที่หน้าเลือกตัวละครและสารานุกรม หรือปรับรูปลักษณ์ระหว่างเล่น\n[*]จัดชุดด้วยลำดับความสำคัญ พรีเซ็ต การรวมสกิน และชุดสกิน\n[*]ดูรายการเวิร์กชอปที่คัดไว้ สมัครและยกเลิกได้ในเกม\n[*]ปรับแต่งธีมได้ รองรับ 15 ภาษา\n[/list]\n\n[h2]ข้อควรทราบ[/h2]\nรองรับเวอร์ชันหลัก v0.107.1 และเบต้าสาธารณะ v0.111.0\nต้องสมัครสกินแยกต่างหาก ม็อดจัดลำดับโหลดและแจ้งให้เริ่มใหม่เมื่อจำเป็น โหมดหลายคนแสดงเฉพาะสกินที่ติดตั้งทั้งสองฝ่าย\n\n[h2]ข้อจำกัด[/h2]\n[list]\n[*]สกินที่ใช้โค้ดพิเศษ เปลี่ยนระบบเกม หรือมีตัวจัดการเอง อาจต้องปรับความเข้ากันได้\n[*]ดูป้ายในรายการเวิร์กชอปว่าสกินที่สมัครใหม่ต้องเริ่มเกมใหม่หรือไม่\n[/list]\n\n[h2]โอเพนซอร์ส[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]เวอร์ชัน[/h2]\n1.0.6\n\nMod นี้พัฒนาด้วยความช่วยเหลือจาก GPT และ DeepSeek ยินดีรับคำขอและข้อเสนอแนะ!"
   },
   {
     "language": "turkish",
     "title": "Görünüm Değiştirici",
     "statementHeading": "Açıklama",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Karakter, kart, canavar, Kadim, tüccar, yaratık ve olay görünümlerini değiştirin. “Diğer” bölümünde önizleyin.\n\n[h1]YENİDEN BAŞLATMA YOK! DEĞİŞTİR VE HEMEN KULLAN![/h1]\n\n[h2]Ayrıntılar[/h2]\n[list]\n[*]Karakter seçimi ve koleksiyonlarda görünüm değiştirin veya oyun sırasında dış görünümü ayarlayın.\n[*]Öncelikler, önayarlar, görünüm birleştirme ve paketlerle kombinasyonlar oluşturun.\n[*]Seçilmiş Atölye kataloğunu inceleyin; oyunda abone olun veya aboneliği iptal edin.\n[*]Özelleştirilebilir temalar ve 15 arayüz dili.\n[/list]\n\n[h2]Dikkat[/h2]\nAna sürüm v0.107.1 ve herkese açık beta v0.111.0 desteklenir.\nGörünümlere ayrıca abone olunmalıdır. Mod yükleme sırasını ayarlar ve gerekirse yeniden başlatmanızı ister. Çok oyunculuda yalnızca iki tarafta da kurulu görünümler gösterilir.\n\n[h2]Sınırlamalar[/h2]\n[list]\n[*]Özel kod, oynanış değişiklikleri veya kendi yöneticisini kullanan görünümler uyumluluk düzenlemesi gerektirebilir.\n[*]Yeni aboneliğin yeniden başlatma gerektirip gerektirmediği Atölye kataloğundaki etikette belirtilir.\n[/list]\n\n[h2]Açık kaynak[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Sürüm[/h2]\n1.0.5\n\nBu mod GPT ve DeepSeek'in önemli desteğiyle geliştirilmiştir. Yeni istek ve önerilerinizi bekliyoruz!"
+    "description": "Karakter, kart, canavar, Kadim, tüccar, yaratık ve olay görünümlerini değiştirin. “Diğer” bölümünde önizleyin.\n\n[h1]YENİDEN BAŞLATMA YOK! DEĞİŞTİR VE HEMEN KULLAN![/h1]\n\n[h2]Ayrıntılar[/h2]\n[list]\n[*]Karakter seçimi ve koleksiyonlarda görünüm değiştirin veya oyun sırasında dış görünümü ayarlayın.\n[*]Öncelikler, önayarlar, görünüm birleştirme ve paketlerle kombinasyonlar oluşturun.\n[*]Seçilmiş Atölye kataloğunu inceleyin; oyunda abone olun veya aboneliği iptal edin.\n[*]Özelleştirilebilir temalar ve 15 arayüz dili.\n[/list]\n\n[h2]Dikkat[/h2]\nAna sürüm v0.107.1 ve herkese açık beta v0.111.0 desteklenir.\nGörünümlere ayrıca abone olunmalıdır. Mod yükleme sırasını ayarlar ve gerekirse yeniden başlatmanızı ister. Çok oyunculuda yalnızca iki tarafta da kurulu görünümler gösterilir.\n\n[h2]Sınırlamalar[/h2]\n[list]\n[*]Özel kod, oynanış değişiklikleri veya kendi yöneticisini kullanan görünümler uyumluluk düzenlemesi gerektirebilir.\n[*]Yeni aboneliğin yeniden başlatma gerektirip gerektirmediği Atölye kataloğundaki etikette belirtilir.\n[/list]\n\n[h2]Açık kaynak[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Sürüm[/h2]\n1.0.6\n\nBu mod GPT ve DeepSeek'in önemli desteğiyle geliştirilmiştir. Yeni istek ve önerilerinizi bekliyoruz!"
   },
   {
     "language": "latam",
     "title": "Gestor de aspectos",
     "statementHeading": "Declaración",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Cambia aspectos de personajes, cartas, monstruos, Antiguos, mercaderes, criaturas y eventos. Mira las vistas previas en «Otros».\n\n[h1]¡SIN REINICIAR! ¡CAMBIA Y ÚSALO AL INSTANTE![/h1]\n\n[h2]Detalles[/h2]\n[list]\n[*]Cambia aspectos en la selección de personaje y las colecciones, o ajusta la apariencia durante la partida.\n[*]Organiza combinaciones con prioridades, preajustes, fusiones de aspectos y paquetes.\n[*]Explora el catálogo seleccionado del Workshop, suscríbete y cancela suscripciones en el juego.\n[*]Temas personalizables e interfaz en 15 idiomas.\n[/list]\n\n[h2]Atención[/h2]\nCompatible con la versión principal v0.107.1 y la beta pública v0.111.0.\nLos aspectos se suscriben por separado. El mod ajusta el orden de carga y avisa si hace falta reiniciar. En multijugador solo muestra aspectos instalados en ambos equipos.\n\n[h2]Limitaciones[/h2]\n[list]\n[*]Los aspectos con código especial, cambios de jugabilidad o administradores propios pueden necesitar adaptación.\n[*]Las etiquetas del catálogo Workshop indican si un aspecto recién suscrito requiere reiniciar.\n[/list]\n\n[h2]Código abierto[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versión[/h2]\n1.0.5\n\nEste mod fue desarrollado con mucha ayuda de GPT y DeepSeek. ¡Se aceptan más solicitudes y sugerencias!"
+    "description": "Cambia aspectos de personajes, cartas, monstruos, Antiguos, mercaderes, criaturas y eventos. Mira las vistas previas en «Otros».\n\n[h1]¡SIN REINICIAR! ¡CAMBIA Y ÚSALO AL INSTANTE![/h1]\n\n[h2]Detalles[/h2]\n[list]\n[*]Cambia aspectos en la selección de personaje y las colecciones, o ajusta la apariencia durante la partida.\n[*]Organiza combinaciones con prioridades, preajustes, fusiones de aspectos y paquetes.\n[*]Explora el catálogo seleccionado del Workshop, suscríbete y cancela suscripciones en el juego.\n[*]Temas personalizables e interfaz en 15 idiomas.\n[/list]\n\n[h2]Atención[/h2]\nCompatible con la versión principal v0.107.1 y la beta pública v0.111.0.\nLos aspectos se suscriben por separado. El mod ajusta el orden de carga y avisa si hace falta reiniciar. En multijugador solo muestra aspectos instalados en ambos equipos.\n\n[h2]Limitaciones[/h2]\n[list]\n[*]Los aspectos con código especial, cambios de jugabilidad o administradores propios pueden necesitar adaptación.\n[*]Las etiquetas del catálogo Workshop indican si un aspecto recién suscrito requiere reiniciar.\n[/list]\n\n[h2]Código abierto[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versión[/h2]\n1.0.6\n\nEste mod fue desarrollado con mucha ayuda de GPT y DeepSeek. ¡Se aceptan más solicitudes y sugerencias!"
   },
   {
     "language": "spanish",
     "title": "Gestor de aspectos",
     "statementHeading": "Declaración",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "multiplayerUpdate": "",
     "cardPriorityUpdate": "",
     "featureUpdate": "",
     "limitations": "",
-    "description": "Cambia aspectos de personajes, cartas, monstruos, Antiguos, mercaderes, criaturas y eventos. Mira las vistas previas en «Otros».\n\n[h1]¡SIN REINICIAR! ¡CAMBIA Y ÚSALO AL INSTANTE![/h1]\n\n[h2]Detalles[/h2]\n[list]\n[*]Cambia aspectos en la selección de personaje y las colecciones, o ajusta la apariencia durante la partida.\n[*]Organiza combinaciones con prioridades, preajustes, fusiones de aspectos y paquetes.\n[*]Explora el catálogo seleccionado del Workshop, suscríbete y cancela suscripciones en el juego.\n[*]Temas personalizables e interfaz en 15 idiomas.\n[/list]\n\n[h2]Atención[/h2]\nCompatible con la versión principal v0.107.1 y la beta pública v0.111.0.\nLos aspectos se suscriben por separado. El mod ajusta el orden de carga y avisa si hace falta reiniciar. En multijugador solo muestra aspectos instalados en ambos equipos.\n\n[h2]Limitaciones[/h2]\n[list]\n[*]Los aspectos con código especial, cambios de jugabilidad o gestores propios pueden necesitar adaptación.\n[*]Las etiquetas del catálogo Workshop indican si un aspecto recién suscrito requiere reiniciar.\n[/list]\n\n[h2]Código abierto[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versión[/h2]\n1.0.5\n\nEste mod se ha desarrollado con una ayuda importante de GPT y DeepSeek. ¡Se aceptan más peticiones y sugerencias!"
+    "description": "Cambia aspectos de personajes, cartas, monstruos, Antiguos, mercaderes, criaturas y eventos. Mira las vistas previas en «Otros».\n\n[h1]¡SIN REINICIAR! ¡CAMBIA Y ÚSALO AL INSTANTE![/h1]\n\n[h2]Detalles[/h2]\n[list]\n[*]Cambia aspectos en la selección de personaje y las colecciones, o ajusta la apariencia durante la partida.\n[*]Organiza combinaciones con prioridades, preajustes, fusiones de aspectos y paquetes.\n[*]Explora el catálogo seleccionado del Workshop, suscríbete y cancela suscripciones en el juego.\n[*]Temas personalizables e interfaz en 15 idiomas.\n[/list]\n\n[h2]Atención[/h2]\nCompatible con la versión principal v0.107.1 y la beta pública v0.111.0.\nLos aspectos se suscriben por separado. El mod ajusta el orden de carga y avisa si hace falta reiniciar. En multijugador solo muestra aspectos instalados en ambos equipos.\n\n[h2]Limitaciones[/h2]\n[list]\n[*]Los aspectos con código especial, cambios de jugabilidad o gestores propios pueden necesitar adaptación.\n[*]Las etiquetas del catálogo Workshop indican si un aspecto recién suscrito requiere reiniciar.\n[/list]\n\n[h2]Código abierto[/h2]\nhttps://github.com/gurio-wine/STS2-SkinChanger\n\n[h2]Versión[/h2]\n1.0.6\n\nEste mod se ha desarrollado con una ayuda importante de GPT y DeepSeek. ¡Se aceptan más peticiones y sugerencias!"
   }
 ]
