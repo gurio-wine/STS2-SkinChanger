@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text;
@@ -21,6 +22,10 @@ internal sealed partial class SkinCatalog : IDisposable
         PropertyNameCaseInsensitive = true
     };
     private static readonly object RuntimeAncientImageCacheSync = new();
+    // An index owns a stable open PCK snapshot. Cache dependency paths, not loaded textures;
+    // rebuilding the catalog creates new indexes and naturally invalidates this weak cache.
+    private static readonly ConditionalWeakTable<PckResourceIndex,
+        Dictionary<string, IReadOnlyCollection<ResourceFile>>> ProviderNamespaceFiles = new();
     private static readonly Dictionary<string, RuntimeAncientImageCacheEntry> RuntimeAncientImageCache =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly object ManagedScriptCountCacheSync = new();
@@ -2653,6 +2658,18 @@ internal sealed partial class SkinCatalog : IDisposable
         string providerId)
     {
         var idToken = NormalizeResourceToken(providerId);
+        var cache = ProviderNamespaceFiles.GetValue(index, static _ => new(StringComparer.OrdinalIgnoreCase));
+        lock (cache)
+        {
+            if (cache.TryGetValue(idToken, out var cached)) return cached;
+            var files = ScanProviderNamespaceFiles(index, idToken);
+            cache.Add(idToken, files);
+            return files;
+        }
+    }
+
+    private static IReadOnlyCollection<ResourceFile> ScanProviderNamespaceFiles(PckResourceIndex index, string idToken)
+    {
         var paths = index.Archive.Paths
             .Where(path => IsProviderNamespacePath(path, idToken))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);

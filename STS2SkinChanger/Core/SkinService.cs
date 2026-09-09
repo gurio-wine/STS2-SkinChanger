@@ -5924,7 +5924,12 @@ internal static partial class SkinService
             return;
         }
 
-        MountArchiveOverlay(files, "cards", "Godot 拒绝加载生成的卡牌皮肤资源包。");
+        // Resolve ownership first, then package the already-disjoint target paths by source
+        // archive. Toggling a tiny provider must not create a new combined copy of every other
+        // enabled pack. Unchanged slices reuse MountArchiveOverlay's deterministic cache.
+        foreach (var slice in files.GroupBy(pair => pair.Value.Archive))
+            MountArchiveOverlay(slice.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase),
+                "cards", "Godot 拒绝加载生成的卡牌皮肤资源包。");
         // The baseline card pack intentionally reclaims canonical source/import/remap paths.
         // Cached binary AtlasTexture overlays must therefore reacquire only the bridge paths
         // they actually depend on when the corresponding skin is requested again.

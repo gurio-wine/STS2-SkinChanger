@@ -1,6 +1,7 @@
 using Godot;
 using HarmonyLib;
 using System.Runtime.CompilerServices;
+using System.Diagnostics;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.UI;
 using MegaCrit.Sts2.Core.Models;
@@ -1660,16 +1661,43 @@ internal static class CardSkinControls
     {
         Callable.From(() =>
         {
-            if (!GodotObject.IsInstanceValid(screen) || !change())
+            if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(selector) ||
+                !GodotObject.IsInstanceValid(overlay)) return;
+            var started = Stopwatch.GetTimestamp();
+            var before = CaptureCardSelections(screen, groupId);
+            var captured = Stopwatch.GetTimestamp();
+            if (!change())
             {
                 ModLog.Error($"调整卡牌皮肤优先级失败：{SkinService.LastError}");
                 return;
             }
-
+            var changed = Stopwatch.GetTimestamp();
             Populate(selector, groupId);
             BuildPriorityOverlay(screen, selector, overlay);
-            RefreshVisibleCards(screen, groupId);
+            var rebuilt = Stopwatch.GetTimestamp();
+            RefreshVisibleCards(screen, groupId, before);
+            ModLog.Info($"卡牌优先级耗时：{groupId}；选择快照={Stopwatch.GetElapsedTime(started, captured).TotalMilliseconds:F1} ms，" +
+                $"资源与保存={Stopwatch.GetElapsedTime(captured, changed).TotalMilliseconds:F1} ms，" +
+                $"列表={Stopwatch.GetElapsedTime(changed, rebuilt).TotalMilliseconds:F1} ms，" +
+                $"卡面={Stopwatch.GetElapsedTime(rebuilt).TotalMilliseconds:F1} ms。");
         }).CallDeferred();
+    }
+
+    private static Dictionary<NCard, (CardModel Model, string Selection)>? CaptureCardSelections(NCardLibrary screen, string groupId)
+    {
+        try
+        {
+            return Descendants(screen).OfType<NCard>()
+                .Where(card => GodotObject.IsInstanceValid(card) && card.Model != null && SkinService.CardBelongsToGroup(card.Model, groupId))
+                .ToDictionary(card => card, card => (card.Model!, SkinService.GetEffectiveCardSelection(card.Model!)));
+        }
+        catch (Exception exception)
+        {
+            // An optional optimization must not prevent a change when an external card cannot
+            // report its old identity. Null uses the established full-refresh fallback.
+            ModLog.Warn("读取卡牌换肤前状态失败，本次使用完整刷新：" + exception.GetBaseException().Message);
+            return null;
+        }
     }
 
     public static void RememberPreviewMode(NCard card, CardPreviewMode previewMode)
@@ -1703,10 +1731,13 @@ internal static class CardSkinControls
         card.UpdateVisuals(pile, previewMode);
     }
 
-    private static void RefreshVisibleCards(NCardLibrary screen, string groupId)
+    private static void RefreshVisibleCards(NCardLibrary screen, string groupId,
+        IReadOnlyDictionary<NCard, (CardModel Model, string Selection)>? before = null)
     {
         try
         {
+            var refreshed = 0;
+            var skipped = 0;
             foreach (var card in Descendants(screen).OfType<NCard>())
             {
                 if (card.Model == null ||
@@ -1715,9 +1746,20 @@ internal static class CardSkinControls
                     continue;
                 }
 
-                CardRefreshDiagnostics.Begin(card,
+                if (before != null && before.TryGetValue(card, out var old) &&
+                    ReferenceEquals(old.Model, card.Model) &&
+                    old.Selection.Equals(SkinService.GetEffectiveCardSelection(card.Model), StringComparison.OrdinalIgnoreCase))
+                {
+                    // Coverage/priority colors may change even when this card keeps its winner.
+                    UpdateLibrarySourceIndicators(card);
+                    skipped++;
+                    continue;
+                }
+                // Detailed native snapshots are expensive; retain a small sample per operation
+                // rather than serializing every card's materials and scheduling hundreds of timers.
+                CardRefreshDiagnostics.Begin(card, refreshed < 3 && (
                     PresentationLayouts.TryGetValue(card, out _) ||
-                    SkinService.GetCardPresentation(card.Model) != null);
+                    SkinService.GetCardPresentation(card.Model) != null));
                 try
                 {
                     RefreshCardSkin(card);
@@ -1726,7 +1768,9 @@ internal static class CardSkinControls
                 {
                     CardRefreshDiagnostics.End(card);
                 }
+                refreshed++;
             }
+            ModLog.Info($"卡牌分类刷新：{groupId}；重载={refreshed}，来源未变跳过={skipped}。");
         }
         catch (Exception exception)
         {
