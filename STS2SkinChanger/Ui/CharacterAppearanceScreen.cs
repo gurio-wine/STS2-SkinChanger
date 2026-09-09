@@ -731,6 +731,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         SkinWorkshopEntry.Append(_skinDropdown);
+        if (_skinDropdown.GetPopup().GetNodeOrNull<ItemList>("SCColoredChoices") is { } choices)
+            CharacterSkinRandomExclusionUi.Attach(_skinDropdown, choices, () =>
+                _group != null && SkinService.Catalog?.IsCharacterAppearanceGroup(_group.Id) == true
+                    ? _group.Id : null);
         var selection = CharacterAppearanceRuntime.GetRequestedOption(_group.Id) ??
                         (hasMonsterPriorityContext
                             ? SkinService.GetMonsterOverrideSelection(_group.Id)

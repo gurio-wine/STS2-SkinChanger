@@ -774,6 +774,7 @@ internal static partial class ContextualSkinControls
                 for (var i = 0; i < Math.Min(themedList.ItemCount, dropdown.ItemCount); i++)
                     if (IsAccentedCharacterOption(dropdown.GetItemMetadata(i).AsString()))
                         themedList.SetItemCustomFgColor(i, new Color(theme.AccentColor));
+                CharacterSkinRandomExclusionUi.Refresh(dropdown);
             });
             if (GameFont != null)
             {
@@ -822,6 +823,12 @@ internal static partial class ContextualSkinControls
             };
         }
 
+        CharacterSkinRandomExclusionUi.Attach(dropdown, list, () =>
+        {
+            var id = selector.GetMeta(GroupMeta, string.Empty).AsString();
+            return FindAncestor<NCharacterSelectScreen>(selector) != null &&
+                   SkinService.Catalog?.IsCharacterAppearanceGroup(id) == true ? id : null;
+        });
         RefreshCharacterBundlePopupList(dropdown, list);
     }
 
@@ -849,6 +856,7 @@ internal static partial class ContextualSkinControls
         {
             list.Select(dropdown.Selected);
         }
+        CharacterSkinRandomExclusionUi.Refresh(dropdown);
         list.Visible = true;
         return true;
     }

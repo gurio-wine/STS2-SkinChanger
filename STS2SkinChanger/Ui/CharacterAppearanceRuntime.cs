@@ -1069,6 +1069,11 @@ internal static class CharacterAppearanceRuntime
         }
     }
 
+    // The native flag only checks for a non-null task, which survives death and revival.
+    // Do not clear that game-owned task: other combat code may still await it.
+    internal static bool HasActiveDeathAnimation(NCreature creature) =>
+        creature.DeathAnimationTask is { IsCompleted: false };
+
     private static bool CanApplySelectionNow()
     {
         try
@@ -1086,7 +1091,7 @@ internal static class CharacterAppearanceRuntime
             }
 
             return NCombatRoom.Instance?.CreatureNodes.All(creature =>
-                       !creature.IsPlayingDeathAnimation) != false;
+                       !HasActiveDeathAnimation(creature)) != false;
         }
         catch
         {
@@ -1180,7 +1185,7 @@ internal static class CharacterAppearanceRuntime
                 continue;
             }
 
-            if (creature.IsPlayingDeathAnimation)
+            if (HasActiveDeathAnimation(creature))
             {
                 errors.Add(modelId + ": death animation");
                 continue;
@@ -1311,7 +1316,7 @@ internal static class CharacterAppearanceRuntime
                      creature.Entity.Player?.NetId == playerNetId ||
                      creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
         {
-            if (creature.IsPlayingDeathAnimation)
+            if (HasActiveDeathAnimation(creature))
             {
                 continue;
             }
@@ -1347,7 +1352,7 @@ internal static class CharacterAppearanceRuntime
                      creature.Entity.Player?.NetId == playerNetId ||
                      creature.Entity.PetOwner?.NetId == playerNetId).ToArray())
         {
-            if (!creature.IsPlayingDeathAnimation)
+            if (!HasActiveDeathAnimation(creature))
             {
                 ApplyStoredTransform(creature);
                 refreshed++;
@@ -1526,6 +1531,7 @@ internal static class CharacterAppearanceRuntime
             ConnectSpineAnimatorSignalsMethod?.Invoke(creature, null);
             UpdatePhobiaModeMethod?.Invoke(creature, null);
             ReplaySelectedCreatureReady(creature);
+            RestoreDeadCreaturePose(creature, newAnimator);
             CaptureVisualBaseline(newVisuals);
             var newBaseScale = newVisuals.GetMeta(BaseVisualScaleMeta, newVisuals.Scale).AsVector2();
             var newBaseDefaultScale = newVisuals
@@ -1583,6 +1589,18 @@ internal static class CharacterAppearanceRuntime
             ModLog.Error($"重建 {creature.Entity.ModelId.Entry} 的实战外观失败：{exception}");
             return false;
         }
+    }
+
+    private static void RestoreDeadCreaturePose(NCreature creature, CreatureAnimator? animator)
+    {
+        // Match NCreature._Ready for a retained dead body, without replaying combat death,
+        // disabling input again, or replacing the game's original death/revival task.
+        if (!creature.Entity.IsDead || animator?.HasTrigger("Dead") != true) return;
+        creature.SetAnimationTrigger("Dead");
+        var track = creature.SpineAnimation.GetCurrentTrack();
+        try { track?.SetTrackTime(track.GetAnimationEnd()); }
+        // Only the beta wrapper implements IDisposable; keep the shared formal-built DLL.
+        finally { ((object?)track as IDisposable)?.Dispose(); }
     }
 
     private static void AttachReplacementCreatureVisuals(

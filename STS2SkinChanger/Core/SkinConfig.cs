@@ -64,6 +64,9 @@ internal sealed class SkinConfig
     // A next-run instruction, not a provider ID. Keep the actual loaded source separate.
     public List<string> RandomCharacterSkinGroups { get; set; } = [];
 
+    public Dictionary<string, List<string>> RandomCharacterSkinExclusions { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public List<SlotVisibilitySelection> SlotVisibilitySelections { get; set; } = [];
 
     // Legacy migration input only. Current versions treat icon packs as ordinary character skins
@@ -172,6 +175,7 @@ internal sealed class SkinConfig
         var copy = (SkinConfig)MemberwiseClone();
         copy.Selections = new(Selections, StringComparer.OrdinalIgnoreCase);
         copy.RandomCharacterSkinGroups = RandomCharacterSkinGroups.ToList();
+        copy.CopyRandomCharacterSkinExclusionsFrom(this);
         copy.SlotVisibilitySelections = SlotVisibilitySelections
             .Select(state => state with { SourceSlots = state.SourceSlots.ToArray() }).ToList();
         copy.VisualProviderPriority = VisualProviderPriority.ToList();
@@ -194,6 +198,10 @@ internal sealed class SkinConfig
         copy.EventSkinPriorities = EventSkinPriorities.Clone();
         return copy;
     }
+
+    internal void CopyRandomCharacterSkinExclusionsFrom(SkinConfig source) =>
+        RandomCharacterSkinExclusions = source.RandomCharacterSkinExclusions.ToDictionary(
+            pair => pair.Key, pair => pair.Value.ToList(), StringComparer.OrdinalIgnoreCase);
 
     public static SkinConfig Load(string path)
     {
@@ -258,6 +266,14 @@ internal sealed class SkinConfig
         config.RandomCharacterSkinGroups = (config.RandomCharacterSkinGroups ?? [])
             .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // Keep missing skin IDs, so unsubscribing temporarily does not erase preferences.
+        config.RandomCharacterSkinExclusions = (config.RandomCharacterSkinExclusions ?? [])
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key))
+            .GroupBy(pair => pair.Key.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.SelectMany(pair => pair.Value ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim())
+                .Where(RandomCharacterSkinPolicy.IsCandidate)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList(), StringComparer.OrdinalIgnoreCase);
         config.Selections ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         config.Selections = new Dictionary<string, string>(
             config.Selections,

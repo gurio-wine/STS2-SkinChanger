@@ -4,6 +4,30 @@ namespace STS2SkinChanger.Core;
 
 internal static partial class SkinService
 {
+    internal static bool IsCharacterSkinExcludedFromRandom(string groupId, string optionId) =>
+        Config.RandomCharacterSkinExclusions.TryGetValue(groupId, out var excluded) &&
+        excluded.Contains(optionId, StringComparer.OrdinalIgnoreCase);
+
+    internal static bool ToggleCharacterSkinRandomExclusion(string groupId, string optionId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId) || !RandomCharacterSkinPolicy.IsCandidate(optionId)) return false;
+        lock (Sync)
+        {
+            var next = Config.CloneForBundleTransaction();
+            if (!next.RandomCharacterSkinExclusions.TryGetValue(groupId, out var excluded))
+                next.RandomCharacterSkinExclusions[groupId] = excluded = [];
+            if (excluded.RemoveAll(id => id.Equals(optionId, StringComparison.OrdinalIgnoreCase)) == 0)
+                excluded.Add(optionId);
+            if (excluded.Count == 0) next.RandomCharacterSkinExclusions.Remove(groupId);
+            // Only persist the candidate preference. Do not mount resources or change the
+            // current selection, saved run result, bundle contents or multiplayer appearance.
+            return CommitBundleConfiguration(next, () => { }, () => { }, () => { });
+        }
+    }
+
+    internal static IEnumerable<string> FilterRandomCharacterSkinCandidates(string groupId, IEnumerable<string> options) =>
+        options.Where(id => !IsCharacterSkinExcludedFromRandom(groupId, id));
+
     internal static bool IsRandomCharacterSkinEnabled(string groupId) =>
         Config.RandomCharacterSkinGroups.Contains(groupId, StringComparer.OrdinalIgnoreCase);
 
@@ -59,7 +83,8 @@ internal static partial class SkinService
                 .Where(bundle => GetCharacterSkinBundleCharacterOption(groupId, bundle.Name) != null)
                 .Select(bundle => CharacterSkinBundlePolicy.CreateSelectionOptionId(bundle.Name)));
         // Independent cosmetic RNG: never advance the game's seeded gameplay generators.
-        var selected = RandomCharacterSkinPolicy.Draw(visible, System.Random.Shared.Next);
+        var selected = RandomCharacterSkinPolicy.Draw(
+            FilterRandomCharacterSkinCandidates(groupId, visible), System.Random.Shared.Next);
         var isBundle = CharacterSkinBundlePolicy.TryGetSelectionBundleName(selected, out var bundleName);
         var skin = isBundle ? GetCharacterSkinBundleCharacterOption(groupId, bundleName) : selected;
         if (!ClearSelectedCharacterSkinBundle(groupId)) return;

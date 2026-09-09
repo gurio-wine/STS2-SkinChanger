@@ -83,6 +83,7 @@ internal static class PresetChoiceColoring
             StyleSelection();
             for (var i = 0; i < Math.Min(list.ItemCount, picker.ItemCount); i++)
                 list.SetItemCustomFgColor(i, Owned(i) ? ModThemeRuntime.Accent : ModThemeRuntime.Text);
+            CharacterSkinRandomExclusionUi.Refresh(picker);
         });
         RefreshItems(picker, list, isAccented);
     }
@@ -97,6 +98,7 @@ internal static class PresetChoiceColoring
             if (isAccented(picker.GetItemMetadata(i).AsString())) list.SetItemCustomFgColor(i, ModThemeRuntime.Accent);
         }
         if (picker.Selected >= 0 && picker.Selected < list.ItemCount) list.Select(picker.Selected);
+        CharacterSkinRandomExclusionUi.Refresh(picker);
         Callable.From(() =>
         {
             if (!GodotObject.IsInstanceValid(list) || !GodotObject.IsInstanceValid(picker)) return;

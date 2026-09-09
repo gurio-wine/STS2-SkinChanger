@@ -38,7 +38,7 @@ internal partial class CharacterAppearanceScreen
         foreach (var creature in NCombatRoom.Instance?.CreatureNodes ?? [])
         {
             if (!GodotObject.IsInstanceValid(creature) || !creature.IsVisibleInTree() ||
-                creature.IsPlayingDeathAnimation ||
+                CharacterAppearanceRuntime.HasActiveDeathAnimation(creature) ||
                 !CharacterAppearanceRuntime.TryGetCreatureAppearance(creature, out _) ||
                 !_dragSurface.TryGetCreatureTargetRect(creature, out var rect)) continue;
             var kind = creature.Entity.IsPlayer ? AppearanceTargetKind.Character :

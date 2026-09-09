@@ -465,6 +465,8 @@ internal static partial class SkinService
             // appearance snapshot independently so Continue can restore it before assets load.
             try { SaveCharacterSkinBundleRunPresets(); }
             catch (Exception exception) { ModLog.Error("保存离开对局前的皮肤包记录失败：" + exception); }
+            // Random exclusions are a persistent preference, not a pack's run-only override.
+            snapshot.CopyRandomCharacterSkinExclusionsFrom(Config);
             Config = snapshot;
             CharacterPreviewSelections.Clear();
             CardPreviewSelections.Clear();
@@ -543,6 +545,7 @@ internal static partial class SkinService
         try
         {
             var restored = SkinConfig.Load(CharacterSkinBundleRunSnapshotPath);
+            restored.CopyRandomCharacterSkinExclusionsFrom(current);
             restored.Save(ConfigPath);
             DeleteCharacterSkinBundleRunSnapshot();
             ModLog.Info("检测到上次游戏在皮肤包生效期间退出，已恢复进入该局前的预设。");
