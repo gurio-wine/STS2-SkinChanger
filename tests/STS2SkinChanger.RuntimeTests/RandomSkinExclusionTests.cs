@@ -8,6 +8,11 @@ internal static class RandomSkinExclusionTests
 {
     private static string _path = "";
     private static bool ConfigPath(ref string __result) { __result = _path; return false; }
+    private static readonly Dictionary<string, Color> StateColors = new();
+    private static void CaptureStateColor(string name, Color color)
+    {
+        StateColors[name] = color;
+    }
 
     internal static void Run()
     {
@@ -43,6 +48,7 @@ internal static class RandomSkinExclusionTests
             bool Toggle(string group, string option) => (bool)toggle.Invoke(null, [group, option])!;
             Require(Excluded("silent", "SKIN:A") && Excluded("silent", "skin:b") && !Excluded("regent", "skin:a"),
                 "排除记录必须合并大小写同名角色、去重，且不能串角色。");
+            CheckInteractionColors(ui);
             Require(!Excluded("silent", "__random_character_skin__") && !Excluded("silent", "__workshop__"), "命令项不能被标记。");
             var copy = AccessTools.Method(property.PropertyType, "CloneForBundleTransaction").Invoke(config, null)!;
             ((IList)((IDictionary)copy.GetType().GetProperty("RandomCharacterSkinExclusions")!.GetValue(copy)!)["silent"]!).Clear();
@@ -52,6 +58,11 @@ internal static class RandomSkinExclusionTests
             Require(!Toggle("silent", "__workshop__") && !Toggle("silent", "__random_character_skin__"), "不能右键命令项更改配置。");
             var bundle = (string)AccessTools.Method(assembly.GetType("STS2SkinChanger.Core.CharacterSkinBundlePolicy", true)!, "CreateSelectionOptionId").Invoke(null, ["test"])!;
             Require(Toggle("silent", bundle), "皮肤包必须支持独立排除。");
+            AccessTools.Method(ui, "ApplyInteractionColors").Invoke(null,
+                ["silent", bundle, "__base__", Colors.White, new Color(.8f, .6f, .2f, 1), (Action<string, Color>)CaptureStateColor]);
+            Require(StateColors.Values.All(value => value == new Color(.8f, .6f, .2f, .5f)),
+                "已排除的皮肤包和原皮在悬停/选中时应同时保留强调色和半透明。");
+            StateColors.Clear();
             var pool = new[] { "skin:a", "skin:b", "__base__", bundle, "merge:a" };
             var candidates = ((IEnumerable<string>)filter.Invoke(null, ["silent", pool])!).ToArray();
             Require(candidates.SequenceEqual(new[] { "skin:a", "merge:a" }), "随机候选必须实际过滤，不能只是淡化名称。");
@@ -82,6 +93,44 @@ internal static class RandomSkinExclusionTests
             Directory.Delete(directory, true);
         }
         Console.WriteLine("Random exclusion passed: per-character persistence, normalization, toggle and candidate filtering.");
+    }
+
+    private static void CheckInteractionColors(Type ui)
+    {
+        var apply = AccessTools.Method(ui, "ApplyInteractionColors")
+            ?? throw new InvalidOperationException("单项颜色在悬停和选中时被覆盖；必须设置三种交互状态的文字颜色。");
+        var normal = new Color(.2f, .4f, .6f, 1);
+        var accent = new Color(.8f, .6f, .2f, 1);
+        try
+        {
+            // Capture the emitted theme writes; run real exclusion and color policy.
+            foreach (var (group, hover, selected, hoverAlpha, selectedAlpha) in new[]
+            {
+                ("silent", "skin:a", "skin:enabled", .5f, 1f),
+                ("silent", "skin:enabled", "skin:a", 1f, .5f),
+                ("silent", "skin:a", "skin:a", .5f, .5f),
+                ("regent", "skin:a", "skin:a", 1f, 1f),
+                (null, "skin:a", "skin:a", 1f, 1f),
+                ("silent", null, "skin:a", 1f, .5f)
+            })
+            {
+                StateColors.Clear();
+                apply.Invoke(null, [group, hover, selected, normal, accent, (Action<string, Color>)CaptureStateColor]);
+                Require(StateColors.Count == 3 &&
+                    StateColors["font_hovered_color"] == new Color(.2f, .4f, .6f, hoverAlpha) &&
+                    StateColors["font_selected_color"] == new Color(.2f, .4f, .6f, selectedAlpha) &&
+                    StateColors["font_hovered_selected_color"] == new Color(.2f, .4f, .6f, hoverAlpha),
+                    "悬停和选中必须各自按所在角色、所在行计算透明度，不能相互污染。");
+            }
+            var controls = ui.GetMethods(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+                .Concat(ui.GetNestedTypes(BindingFlags.NonPublic).SelectMany(t => t.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)));
+            var calls = controls.SelectMany(m => PatchProcessor.GetOriginalInstructions(m))
+                .Select(i => i.operand).OfType<MethodInfo>().Select(m => m.Name).ToHashSet();
+            Require(calls.Contains("add_MouseExited") && calls.Contains("add_ItemSelected") && calls.Contains("GetSelectedItems"),
+                "鼠标离开和键盘选择也必须更新交互颜色，不能只修右键瞬间。");
+        }
+        finally { StateColors.Clear(); }
     }
 
     private static void Require(bool condition, string message)
