@@ -54,7 +54,7 @@ internal static class ManagedCardPortraitReplacementScanner
         return portraits;
     }
 
-    private static IReadOnlyList<string> GetAssemblyPaths(string providerRoot, string providerId)
+    internal static IReadOnlyList<string> GetAssemblyPaths(string providerRoot, string providerId)
     {
         var primaryAssembly = SkinPackagePaths.Resolve(providerRoot, providerId, ".dll");
         if (File.Exists(primaryAssembly))

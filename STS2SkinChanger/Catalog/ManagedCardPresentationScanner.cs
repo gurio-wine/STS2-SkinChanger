@@ -14,7 +14,7 @@ namespace STS2SkinChanger.Catalog;
 /// borrow its full-height portrait node for ordinary alternate art, while keeping provider
 /// initializers and Harmony patches disabled.
 /// </summary>
-internal static class ManagedCardPresentationScanner
+internal static partial class ManagedCardPresentationScanner
 {
     private static readonly IReadOnlyDictionary<ushort, OpCode> OpCodesByValue =
         typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)

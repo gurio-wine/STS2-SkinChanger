@@ -256,7 +256,8 @@ foreach (var option in catalog.PckCardOptions)
         $"{option.CardPresentations.Count(pair => pair.Value.UseFullFrameArt)} full-frame, " +
         $"{option.CardPresentations.Count(pair => pair.Value.UseExpandedPortraitLayout)} expanded-portrait, " +
         $"{namespaceFiles.Count} namespace files, " +
-        $"{option.CardPresentations.Count} presentations");
+        $"{option.CardPresentations.Count} presentations, " +
+        $"{option.CardSurfaces.Count} card surfaces");
     if (showAssets)
     {
         foreach (var presentation in option.CardPresentations.OrderBy(

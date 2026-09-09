@@ -2819,6 +2819,16 @@ internal static partial class SkinService
         }
     }
 
+    internal static CardSurfaceDefinition? GetCardSurface(CardModel card)
+    {
+        lock (Sync)
+        {
+            var lookup = GetCardLookup(card);
+            return lookup.OptionsById.GetValueOrDefault(GetEffectiveCardSelection(card, lookup))?
+                .Option.CardSurfaces.GetValueOrDefault(lookup.CardType);
+        }
+    }
+
     public static CardPresentationDefinition? GetCardPresentation(CardModel card)
     {
         lock (Sync)

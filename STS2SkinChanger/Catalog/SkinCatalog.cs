@@ -5031,6 +5031,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 index.Mod.RootPath,
                 index.Assets.Values);
             var exportedPortraits = LoadExportedCardPortraits(index);
+            var exportedSurface = exportedPortraits.Normal.Count + exportedPortraits.Ancient.Count + exportedPortraits.Modes.Count > 0
+                ? ManagedCardPresentationScanner.ScanExportedSurface(index.Mod.RootPath, index.Mod.ResourceNamespaceId)
+                : null;
             var normalPortraits = new Dictionary<string, string>(
                 exportedPortraits.Normal,
                 StringComparer.OrdinalIgnoreCase);
@@ -5169,7 +5172,13 @@ internal sealed partial class SkinCatalog : IDisposable
                         .ToDictionary(
                             pair => pair.Key,
                             pair => pair.Value,
-                            StringComparer.OrdinalIgnoreCase));
+                            StringComparer.OrdinalIgnoreCase))
+                {
+                    CardSurfaces = exportedSurface == null ? new Dictionary<string, CardSurfaceDefinition>() :
+                        exportedPortraits.Normal.Keys.Concat(exportedPortraits.Ancient.Keys)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToDictionary(key => key, _ => exportedSurface, StringComparer.OrdinalIgnoreCase)
+                };
                 options.AddRange(CardLayoutVariantPolicy.Expand(option, index.Mod.ResourceNamespaceId));
             }
 
@@ -5218,7 +5227,11 @@ internal sealed partial class SkinCatalog : IDisposable
                     modeAssets,
                     index.Mod.RootPath,
                     index.Mod.Id,
-                    Presentations: modePresentations));
+                    Presentations: modePresentations)
+                {
+                    CardSurfaces = exportedSurface == null ? new Dictionary<string, CardSurfaceDefinition>() :
+                        mode.Portraits.Keys.ToDictionary(key => key, _ => exportedSurface, StringComparer.OrdinalIgnoreCase)
+                });
             }
         }
 
@@ -7529,6 +7542,8 @@ internal sealed record CardSkinOption(
     IReadOnlyDictionary<string, CardPresentationDefinition>? Presentations = null)
 {
     public StatefulCardArtContract? StatefulArt { get; init; }
+    public IReadOnlyDictionary<string, CardSurfaceDefinition> CardSurfaces { get; init; } =
+        new Dictionary<string, CardSurfaceDefinition>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, ResourceAsset> Assets { get; init; } =
         PckAssets ?? new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, CardPresentationDefinition> CardPresentations { get; init; } =
@@ -7565,6 +7580,8 @@ internal sealed record CardSkinOption(
             presentations[pair.Key] = pair.Value;
         }
         var names = new Dictionary<string, string>(CardNames, StringComparer.OrdinalIgnoreCase);
+        var surfaces = new Dictionary<string, CardSurfaceDefinition>(CardSurfaces, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in other.CardSurfaces) surfaces[pair.Key] = pair.Value;
         foreach (var pair in other.CardNames)
         {
             names[pair.Key] = pair.Value;
@@ -7577,6 +7594,7 @@ internal sealed record CardSkinOption(
             Assets = assets,
             CardPresentations = presentations,
             CardNames = names,
+            CardSurfaces = surfaces,
             ProviderRootPath = ProviderRootPath ?? other.ProviderRootPath,
             ProviderId = ProviderId ?? other.ProviderId,
             StatefulArt = StatefulArt ?? other.StatefulArt

@@ -373,6 +373,7 @@ internal static class CardSkinControls
 
     public static void RestoreBaselineLayout(NCard card)
     {
+        CardSurfaceView.Release(card);
         StatefulCardArtView.BeforeRefresh(card, reload: true);
         if (PresentationLayouts.TryGetValue(card, out var presentation))
         {
@@ -408,6 +409,7 @@ internal static class CardSkinControls
 
     internal static void ReleasePresentationForReuse(NCard card)
     {
+        CardSurfaceView.Release(card);
         // Pool return clears _model directly; set_Model also assigns the new model BEFORE
         // Reload. Restore while the old model still owns this snapshot, or hidden text and
         // type plaques become the next card's baseline (native Reload does not unhide them).
@@ -1037,6 +1039,7 @@ internal static class CardSkinControls
         // Do not overwrite a still-running editor's explicit static/GIF portrait.
         if (externalOwnership.Portrait)
         {
+            CardSurfaceView.Release(card);
             return;
         }
 
@@ -1052,6 +1055,7 @@ internal static class CardSkinControls
         if (target != null)
         {
             target.Texture = portrait;
+            CardSurfaceView.ApplyPortrait(card, target);
         }
     }
 
@@ -1736,6 +1740,7 @@ internal static class CardSkinControls
     {
         try
         {
+            CardSurfaceView.RefreshTinyCards();
             var refreshed = 0;
             var skipped = 0;
             foreach (var card in Descendants(screen).OfType<NCard>())
@@ -2372,6 +2377,7 @@ internal static class CardInspectSkinControls
 
     private static void RefreshMatchingCards(Node? root, string cardId)
     {
+        CardSurfaceView.RefreshTinyCards();
         if (root == null)
         {
             return;

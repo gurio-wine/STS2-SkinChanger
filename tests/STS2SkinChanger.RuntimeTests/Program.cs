@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length is 1 or 2 && args[0] == "--test-exported-card-surface")
+{
+    ExportedCardSurfaceTests.Run(args.Length == 2 ? args[1] : null);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-card-priority-performance")
 {
     CardPriorityPerformanceTests.Run();
@@ -1279,6 +1285,7 @@ foreach (System.Collections.DictionaryEntry pack in compositionPacks)
 
 CardPresentationLifecycleTests.Run();
 CardPriorityPerformanceTests.Run();
+ExportedCardSurfaceTests.Run();
 StatefulCardArtTests.CheckObservers();
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 RequiredLibraryVisualGuardTests.Run(args);
