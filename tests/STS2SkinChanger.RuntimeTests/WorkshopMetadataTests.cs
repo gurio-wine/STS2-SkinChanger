@@ -14,6 +14,7 @@ internal static class WorkshopMetadataTests
     {
         WorkshopCarouselTests.Run();
         CheckSorting();
+        WorkshopReplySortTests.Run();
         CheckSteamFieldMapping();
         CheckIntroduction();
         CheckHover();
@@ -62,7 +63,7 @@ internal static class WorkshopMetadataTests
         details.Add(2UL, Detail("""{"Title":"B","PreviewUrl":"","Subscriptions":50,"LifetimeSubscriptions":100,"Favorites":9,"Comments":3,"Score":0.5,"VotesUp":1,"VotesDown":0,"Created":300,"Updated":200}"""));
         details.Add(3UL, Detail("""{"Title":"C","PreviewUrl":"","Subscriptions":0,"LifetimeSubscriptions":20,"Favorites":2,"Comments":11,"Score":0.7,"VotesUp":7,"VotesDown":3,"Created":200,"Updated":500}"""));
         details.Add(4UL, Detail("""{"Title":"old cache","PreviewUrl":""}"""));
-        ulong[] Order(string sort, ulong[]? ids = null) => (ulong[])type.GetMethod("OrderIds")!.Invoke(null, [ids ?? new ulong[] { 4, 3, 2, 1, 5 }, details, Enum.Parse(kind, sort)])!;
+        ulong[] Order(string sort, ulong[]? ids = null) => (ulong[])type.GetMethod("OrderIds")!.Invoke(null, [ids ?? new ulong[] { 4, 3, 2, 1, 5 }, details, Enum.Parse(kind, sort), false, null])!;
         Require(Order("Subscriptions").SequenceEqual(new ulong[] { 2, 1, 3, 4, 5 }), "订阅最多须全量排序，已知零订阅应在未知统计之前，不能只排序当前页。");
         Require(Order("LifetimeSubscriptions").Take(3).SequenceEqual(new ulong[] { 1, 2, 3 }), "累计独立订阅不能复用当前订阅数字。");
         Require(Order("Rating").Take(3).SequenceEqual(new ulong[] { 1, 3, 2 }), "好评优先使用 Steam 综合评分，不把仅一票的 100% 好评排在前面。");
@@ -71,7 +72,7 @@ internal static class WorkshopMetadataTests
         Require(Order("Comments").Take(3).SequenceEqual(new ulong[] { 3, 1, 2 }), "留言最多按留言数排序。");
         Require(Order("Favorites").Take(3).SequenceEqual(new ulong[] { 2, 1, 3 }), "收藏最多按收藏数排序。");
         Require(Order("Subscriptions", [5, 4]).SequenceEqual(new ulong[] { 4, 5 }), "统计同值/未知项需稳定次序，不能反复换位。");
-        string Metric(string sort, object? detail) => (string)type.GetMethod("Metric")!.Invoke(null, [detail, Enum.Parse(kind, sort), "zhs"])!;
+        string Metric(string sort, object? detail) => (string)type.GetMethod("Metric")!.Invoke(null, [detail, Enum.Parse(kind, sort), "zhs", null])!;
         Require(Metric("Subscriptions", details[1UL]).Contains("10") && Metric("LifetimeSubscriptions", details[1UL]).Contains("500"), "按钮前的数字必须来自当前排序字段。");
         Require(Metric("Comments", details[1UL]).Contains("7") && Metric("Favorites", details[1UL]).Contains("5"), "收藏/留言数字不能串用订阅数。");
         Require(Metric("Rating", details[1UL]).Contains("80") && Metric("Rating", details[1UL]).Contains("100"), "评分显示同时包含综合评分和评价总数。");

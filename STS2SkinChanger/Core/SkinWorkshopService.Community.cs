@@ -19,6 +19,7 @@ internal static partial class SkinWorkshopService
     public static bool CommunityFailed => _communityFailed;
     public static string CommunityProgress => _communityProgress;
     public static IReadOnlyList<WorkshopCodeIssue> CommunityIssues => Community.State.Issues;
+    public static IReadOnlyDictionary<ulong, int> CommunityReplies { get; private set; } = new Dictionary<ulong, int>();
 
     internal static void StartCommunityRefresh()
     {
@@ -61,6 +62,8 @@ internal static partial class SkinWorkshopService
     private static void PublishCommunity()
     {
         var next = WorkshopSubmissionCode.Merge(Items.Value, Community.Items);
+        CommunityReplies = Community.State.Entries.Where(entry => entry.Reply is >= 0)
+            .GroupBy(entry => entry.Item.Id).ToDictionary(group => group.Key, group => group.Max(entry => entry.Reply!.Value));
         _combinedItems = next;
         // Errors can change without valid membership changing; the error filter must refresh too.
         _communityRevision++;

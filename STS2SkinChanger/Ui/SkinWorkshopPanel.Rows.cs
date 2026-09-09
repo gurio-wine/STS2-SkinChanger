@@ -110,7 +110,7 @@ internal partial class SkinWorkshopPanel
             view.SecondaryAction = () => _ = Unsubscribe(item.Id);
             view.Cancel.Text = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribe);
             view.Title.Text = SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…";
-            view.Metric.Text = WorkshopSortPolicy.Metric(SkinWorkshopService.CachedDetails(item.Id), _sort, ModLocalization.CurrentLanguage);
+            view.Metric.Text = ItemMetric(item.Id);
             BindTags(view, item);
             _hoverItems.Add(new(item.Id, view.Slot, view.Panel));
             _actions.Add((item.Id, view.Status, view.Action, view.Cancel));

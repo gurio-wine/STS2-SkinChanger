@@ -17,12 +17,22 @@ internal sealed record WorkshopDetails(string Title, string PreviewUrl)
     public uint? Updated { get; init; }
 }
 
-internal enum WorkshopSort { Subscriptions, LifetimeSubscriptions, Rating, Published, Updated, Comments, Favorites }
+internal enum WorkshopSort { Subscriptions, LifetimeSubscriptions, Rating, Published, Updated, Comments, Favorites, LatestReply }
 
 internal static class WorkshopSortPolicy
 {
-    public static ulong[] OrderIds(IEnumerable<ulong> ids, IReadOnlyDictionary<ulong, WorkshopDetails> details, WorkshopSort sort) =>
-        ids.OrderByDescending(id => Value(details.GetValueOrDefault(id), sort)).ThenBy(id => id).ToArray();
+    public static ulong[] OrderIds(IEnumerable<ulong> ids, IReadOnlyDictionary<ulong, WorkshopDetails> details, WorkshopSort sort,
+        bool reverse = false, IReadOnlyDictionary<ulong, int>? replies = null)
+    {
+        decimal? Key(ulong id) => sort == WorkshopSort.LatestReply
+            ? Math.Max(-1, replies?.GetValueOrDefault(id, -1) ?? -1)
+            : Value(details.GetValueOrDefault(id), sort);
+        // Unknown Steam statistics always stay last. A missing discussion floor, however,
+        // is explicitly the oldest (-1), before the original post (0) when reversed.
+        return ids.Select(id => (Id: id, Value: Key(id))).OrderBy(item => !item.Value.HasValue)
+            .ThenBy(item => reverse ? item.Value : -item.Value).ThenBy(item => item.Id)
+            .Select(item => item.Id).ToArray();
+    }
 
     private static decimal? Value(WorkshopDetails? detail, WorkshopSort sort) => sort switch
     {
@@ -36,8 +46,11 @@ internal static class WorkshopSortPolicy
         _ => null
     };
 
-    public static string Metric(WorkshopDetails? detail, WorkshopSort sort, string language)
+    public static string Metric(WorkshopDetails? detail, WorkshopSort sort, string language, int? reply = null)
     {
+        if (sort == WorkshopSort.LatestReply)
+            return reply is >= 0 ? string.Format(CultureInfo.CurrentCulture,
+                WorkshopDetailsText.ForLanguage(language, WorkshopDetailsTextKey.ReplyNumber), reply.Value) : "—";
         if (Value(detail, sort) is not { } value) return "—";
         var key = (WorkshopDetailsTextKey)((int)WorkshopDetailsTextKey.SubscriptionCount + (int)sort);
         if (sort == WorkshopSort.Rating)

@@ -14,7 +14,11 @@ internal sealed record WorkshopCodePayload(int Format, uint App, string Scanner,
 internal sealed record WorkshopCodeCandidate(WorkshopCodePayload Payload, string Group, WorkshopCodeSource[] Sources);
 internal sealed record WorkshopCodeRead(WorkshopCodeCandidate[] Candidates, WorkshopCodeIssue[] Issues);
 internal sealed record WorkshopIdentity(uint App, string Name);
-internal sealed record WorkshopVerifiedSubmission(WorkshopCatalogItem Item, string Name, string Group);
+internal sealed record WorkshopVerifiedSubmission(WorkshopCatalogItem Item, string Name, string Group)
+{
+    // Missing in older caches. Zero is the original post, not "no discussion source".
+    public int? Reply { get; init; }
+}
 internal sealed record WorkshopCommunityState(int Format, WorkshopVerifiedSubmission[] Entries, WorkshopCodeIssue[] Issues)
 {
     internal static WorkshopCommunityState Empty => new(2, [], []);
@@ -36,7 +40,8 @@ internal static class WorkshopSubmissionIntegrity
             if (error is { } invalid)
                 issues.Add(new(candidate.Group, payload.Item.Id, "", found?.Name ?? "", invalid,
                     candidate.Group, candidate.Sources.Max(s => s.Part), [], candidate.Sources));
-            else accepted.Add(new(payload.Item, found!.Name, candidate.Group));
+            else accepted.Add(new(payload.Item, found!.Name, candidate.Group)
+            { Reply = candidate.Sources.Max(source => source.Reply) });
         }
         // This is a successfully read full discussion snapshot. Only its valid codes remain
         // listed; edited/deleted/broken codes must not resurrect entries from the old cache.

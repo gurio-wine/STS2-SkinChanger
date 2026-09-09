@@ -151,7 +151,7 @@ internal partial class SkinWorkshopPanel : Control
             {
                 if (!rows.TryGetValue(id, out var row) || !row.Binding.Matches(row.Ticket)) continue;
                 row.Title.Text = detail.Title;
-                if (_metrics.TryGetValue(id, out var metric)) metric.Text = WorkshopSortPolicy.Metric(detail, _sort, ModLocalization.CurrentLanguage);
+                if (_metrics.TryGetValue(id, out var metric)) metric.Text = ItemMetric(id);
                 covers.Add(LoadCover(detail.PreviewUrl, row, generation, token));
             }
             await Task.WhenAll(covers);

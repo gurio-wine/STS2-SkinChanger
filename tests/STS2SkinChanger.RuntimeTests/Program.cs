@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-workshop-reply-sort")
+{
+    WorkshopReplySortTests.Run();
+    return;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--test-exported-card-surface")
 {
     ExportedCardSurfaceTests.Run(args.Length == 2 ? args[1] : null);

@@ -37,7 +37,7 @@ internal sealed class WorkshopCommunityCatalog
     {
         if (state is not { Format: 2, Entries: not null, Issues: not null } || state.Entries.Length > 20000 || state.Issues.Length > 10000 ||
             state.Entries.Any(e => e == null || e.Name is not { Length: <= 1024 } || e.Group is not { Length: 24 } || e.Item == null ||
-                !Hex(e.Group, 24) || !WorkshopSubmissionCodec.ValidItem(e.Item)) ||
+                !Hex(e.Group, 24) || !WorkshopSubmissionCodec.ValidItem(e.Item) || e.Reply is < 0 or > 30000) ||
             state.Issues.Any(i => i == null || !Hex(i.Key, 12) && !Hex(i.Key, 24) || !Enum.IsDefined(i.Error) ||
                 i.Name is not { Length: <= 4096 } || i.ActualName is not { Length: <= 1024 } || i.Group == null ||
                 i.Group.Length != 0 && !Hex(i.Group, 24) || i.Total is < 0 or > 128 || i.Missing is not { Length: <= 128 } ||

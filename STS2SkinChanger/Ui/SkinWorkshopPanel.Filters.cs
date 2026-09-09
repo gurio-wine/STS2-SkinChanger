@@ -21,22 +21,40 @@ internal partial class SkinWorkshopPanel
     private string EmptyText => WorkshopText.Get(_subscriptions.Value.Length > 0 && _subscriptions.Unavailable ? WorkshopTextKey.Offline : WorkshopTextKey.Empty);
     private WorkshopSort _sort = WorkshopSort.Subscriptions;
     private OptionButton _sortPicker=null!;
+    private bool _reverseSort;
+    private OptionButton _sortDirectionPicker = null!;
     private bool CodeErrors => _subscriptions.Value=="code_errors";
     private WorkshopCatalogItem[] FilteredItems()
     {
         var filtered = _subscriptions.Filter(WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
             .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item)))).ToDictionary(item => item.Id);
-        return WorkshopSortPolicy.OrderIds(filtered.Keys, SkinWorkshopService.CachedMetadata, _sort).Select(id => filtered[id]).ToArray();
+        return WorkshopSortPolicy.OrderIds(filtered.Keys, SkinWorkshopService.CachedMetadata, _sort,
+            _reverseSort, SkinWorkshopService.CommunityReplies).Select(id => filtered[id]).ToArray();
     }
+
+    private string ItemMetric(ulong id) => WorkshopSortPolicy.Metric(SkinWorkshopService.CachedDetails(id), _sort,
+        ModLocalization.CurrentLanguage, SkinWorkshopService.CommunityReplies.GetValueOrDefault(id, -1));
 
     private void BuildSort(HBoxContainer heading)
     {
         heading.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Ignore });
+        var direction = new OptionButton { CustomMinimumSize = new Vector2(130, 42), FitToLongestItem = false, ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis };
+        _sortDirectionPicker = direction;
+        ContextualSkinControls.ApplyGameTheme(direction);
+        direction.AddItem(WorkshopDetailsText.Get(WorkshopDetailsTextKey.Forward), 0);
+        direction.AddItem(WorkshopDetailsText.Get(WorkshopDetailsTextKey.Reverse), 1);
+        direction.Select(_reverseSort ? 1 : 0);
+        direction.ItemSelected += index =>
+        { _reverseSort = direction.GetItemId((int)index) == 1; _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
+        heading.AddChild(direction);
+        KeepHoverBelow(direction);
         var picker = new OptionButton { CustomMinimumSize = new Vector2(245, 42), FitToLongestItem = false, ClipText = true,
             TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis };
         _sortPicker=picker;
         ContextualSkinControls.ApplyGameTheme(picker);
-        foreach (var sort in Enum.GetValues<WorkshopSort>()) picker.AddItem(WorkshopDetailsText.Get((WorkshopDetailsTextKey)sort), (int)sort);
+        foreach (var sort in Enum.GetValues<WorkshopSort>()) picker.AddItem(WorkshopDetailsText.Get(
+            sort == WorkshopSort.LatestReply ? WorkshopDetailsTextKey.LatestReply : (WorkshopDetailsTextKey)sort), (int)sort);
         picker.Select((int)_sort);
         picker.ItemSelected += index => { _sort = (WorkshopSort)picker.GetItemId((int)index); _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
         heading.AddChild(picker);
@@ -85,6 +103,7 @@ internal partial class SkinWorkshopPanel
     {
         _subscriptionPicker.SetOptions(WorkshopSubscriptionFilter.Options, _subscriptions.Value);
         _sortPicker.Visible=!CodeErrors;
+        _sortDirectionPicker.Visible=!CodeErrors;
         _typePicker.Picker.Visible=_loadPicker.Picker.Visible=!CodeErrors;
         _typePicker.SetOptions(Kinds, _kind);
         _regionPicker.Picker.Visible = !CodeErrors && WorkshopBrowserPolicy.HasRegions(_kind);
