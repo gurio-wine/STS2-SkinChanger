@@ -159,9 +159,23 @@ internal static class StatefulCardArtRuntime
                 var data = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var language in new[] { "eng", LocManager.Instance.Language }.Distinct())
                 {
-                    if (!_localizations.TryGetValue(Contract.ResourceRoot + "/localization/" + language + "/" + name + ".json", out var bytes)) continue;
-                    var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(bytes);
-                    if (parsed != null) foreach (var pair in parsed) data[pair.Key] = pair.Value;
+                    var path = Contract.ResourceRoot + "/localization/" + language + "/" + name + ".json";
+                    if (!_localizations.TryGetValue(path, out var bytes)) continue;
+                    try
+                    {
+                        // PCK files can include a UTF-8 BOM just like loose JSON files. The
+                        // byte-span JSON reader does not consume it automatically.
+                        var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+                            System.Text.Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF'));
+                        if (parsed != null) foreach (var pair in parsed) data[pair.Key] = pair.Value;
+                    }
+                    catch (System.Text.Json.JsonException exception)
+                    {
+                        // Credits are optional: retain English/other tables and continue
+                        // activating the visual runtime even if one translation is malformed.
+                        if (Warnings.Add("localization:" + path + exception.Message))
+                            ModLog.Warn($"Stateful card art localization {path}: {exception.Message}; skipping this optional text table only, card visuals remain enabled.");
+                    }
                 }
                 // Dedicated table names are rewritten in the loaded provider copy. Never replace
                 // another Mod's generic "artists"/"event_chatter" tables or game localization.

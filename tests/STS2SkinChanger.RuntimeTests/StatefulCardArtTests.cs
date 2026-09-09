@@ -9,6 +9,9 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Localization;
+using System.Runtime.CompilerServices;
+using System.Text;
 
 internal static class StatefulCardArtTests
 {
@@ -41,6 +44,7 @@ internal static class StatefulCardArtTests
         CheckRuntimeIsolation(providerRoot);
         CheckPortraitBoundary(misc.StatefulArt!);
         CheckResourceClosure(catalog, misc);
+        CheckLocalizationFiles(providerRoot, misc.StatefulArt!);
         CheckObservers();
         var probe = SkinCatalog.ProbeSkinProviders([new SkinModDescriptor("HideDetailsMod", "Rixian's MSPain",
             Path.Combine(providerRoot, "HideDetailsMod.pck"), false, providerRoot, true)], gamePack).Single();
@@ -50,6 +54,7 @@ internal static class StatefulCardArtTests
 
     internal static void CheckObservers()
     {
+        CheckLocalizationBoundary();
         var assembly = typeof(STS2SkinChanger.Entry).Assembly;
         foreach (var name in new[] { "StatefulCardPlayCosmeticPatch", "StatefulDamageCosmeticPatch", "StatefulSideTurnCosmeticPatch" })
         {
@@ -78,6 +83,75 @@ internal static class StatefulCardArtTests
         }
         finally { harmony.UnpatchAll(harmony.Id); }
     }
+
+    private static void CheckLocalizationFiles(string providerRoot, StatefulCardArtContract contract)
+    {
+        using var pack = PckArchive.Open(Path.Combine(providerRoot, "HideDetailsMod.pck"));
+        var files = pack.Paths.Where(path => path.StartsWith(contract.ResourceRoot + "/localization/", StringComparison.Ordinal) &&
+            new[] { "artists.json", "usernames.json", "event_chatter.json" }.Contains(Path.GetFileName(path)))
+            .ToDictionary(path => path, pack.ReadFile, StringComparer.Ordinal);
+        Require(files.Count > 0, "actual localization fixture missing");
+        foreach (var language in files.Keys.Select(path => path.Split('/')[^2]).Distinct())
+            WithLocalizationRuntime(contract, files, language, tables =>
+                Require(tables[contract.LocalizationPrefix + "artists"].Keys.Any(), "shipped artist credits were not installed"));
+        Console.WriteLine($"Stateful localization package passed: {files.Count} shipped tables, including UTF-8 BOM input.");
+    }
+
+    private static void CheckLocalizationBoundary()
+    {
+        var contract = new StatefulCardArtContract("unused.dll", "Art", "Img", "Settings",
+            "res://test/images/atlases/card_atlas.sprites/", new Dictionary<string, string[]>(), new HashSet<string>());
+        var files = new Dictionary<string, byte[]>(StringComparer.Ordinal)
+        {
+            ["res://test/localization/eng/artists.json"] = Encoding.UTF8.GetBytes("{\"name\":\"Artist\",\"fallback\":\"English\"}"),
+            ["res://test/localization/zhs/artists.json"] = [0xef, 0xbb, 0xbf, .. Encoding.UTF8.GetBytes("{\"name\":\"画师\"}")],
+            ["res://test/localization/eng/usernames.json"] = Encoding.UTF8.GetBytes("{\"author\":\"Author\"}")
+        };
+        WithLocalizationRuntime(contract, files, "zhs", tables =>
+        {
+            Require(tables[contract.LocalizationPrefix + "artists"].GetRawText("name") == "画师", "BOM translation lost");
+            Require(tables[contract.LocalizationPrefix + "artists"].GetRawText("fallback") == "English", "English fallback lost");
+        });
+        files["res://test/localization/zhs/artists.json"] = Encoding.UTF8.GetBytes("{broken");
+        WithLocalizationRuntime(contract, files, "zhs", tables =>
+        {
+            Require(tables[contract.LocalizationPrefix + "artists"].GetRawText("name") == "Artist", "bad optional locale erased fallback");
+            Require(tables[contract.LocalizationPrefix + "usernames"].GetRawText("author") == "Author", "bad locale blocked another table");
+        });
+    }
+
+    private static void WithLocalizationRuntime(StatefulCardArtContract contract, Dictionary<string, byte[]> files,
+        string language, Action<Dictionary<string, LocTable>> verify)
+    {
+        // Exercise the production installation path without starting Godot, loading provider
+        // code or reading/writing any player configuration. Restore the game's test singleton.
+        var original = LocManager.Instance;
+        var manager = (LocManager)RuntimeHelpers.GetUninitializedObject(typeof(LocManager));
+        var unrelated = new LocTable("artists", new() { ["name"] = "Other provider" });
+        var tables = new Dictionary<string, LocTable> { ["artists"] = unrelated };
+        AccessTools.Field(typeof(LocManager), "_tables").SetValue(manager, tables);
+        AccessTools.PropertySetter(typeof(LocManager), "Language").Invoke(manager, [language]);
+        var runtime = (StatefulCardArtRuntime.Runtime)RuntimeHelpers.GetUninitializedObject(typeof(StatefulCardArtRuntime.Runtime));
+        AccessTools.Field(runtime.GetType(), "<Contract>k__BackingField").SetValue(runtime, contract);
+        AccessTools.Field(runtime.GetType(), "_localizations").SetValue(runtime, files);
+        var logging = new Harmony("Gurio.SkinChanger.tests.stateful-localization-log");
+        try
+        {
+            logging.Patch(AccessTools.Method(typeof(ModLog), nameof(ModLog.Warn)),
+                prefix: new HarmonyMethod(typeof(StatefulCardArtTests), nameof(LogWithoutEngine)));
+            AccessTools.PropertySetter(typeof(LocManager), "Instance").Invoke(null, [manager]);
+            runtime.InstallLocalization();
+            verify(tables);
+            Require(ReferenceEquals(tables["artists"], unrelated), "provider overwrote an unowned localization table");
+        }
+        finally
+        {
+            AccessTools.PropertySetter(typeof(LocManager), "Instance").Invoke(null, [original]);
+            logging.UnpatchAll(logging.Id);
+        }
+    }
+
+    private static bool LogWithoutEngine(string message) { Console.WriteLine(message); return false; }
 
     private static void CheckResourceClosure(SkinCatalog catalog, CardSkinOption option)
     {
