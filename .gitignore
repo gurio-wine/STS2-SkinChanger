@@ -24,6 +24,7 @@
 /tests/STS2SkinChanger.FrameworkTests/obj/
 /compat/ThunninoiSkinManagerCompat/bin/
 /compat/ThunninoiSkinManagerCompat/obj/
+/.tmp-boundary-audit/
 /workshop/content/
 *.user
 *.suo
