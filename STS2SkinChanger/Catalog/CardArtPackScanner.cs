@@ -241,9 +241,9 @@ internal static class CardArtPackScanner
         using var stream = OpenRead(packPath);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        // The bundle is one line of JSON, so it only ever arrives in pieces. Every `source_path`
-        // starts an entry, letting each override be decoded and released independently instead
-        // of holding the whole bundle, or even the whole chunk, in memory.
+        // The bundle is one line of JSON, so it only ever arrives in pieces. Every override is a
+        // closed object of its own, letting each one be decoded and released independently
+        // instead of holding the whole bundle, or even the whole chunk, in memory.
         const int chunkChars = 512 * 1024;
         var buffer = new char[chunkChars];
         var carry = string.Empty;
@@ -266,7 +266,7 @@ internal static class CardArtPackScanner
                 break;
             }
 
-            // Everything before the final entry boundary is complete and can be decoded now.
+            // Everything before the last closed object is complete and can be decoded now.
             var (entries, remainder) = CardArtPackScanPolicy.SplitEntries(window);
             foreach (var entry in entries)
             {
@@ -276,7 +276,7 @@ internal static class CardArtPackScanner
             carry = remainder;
         }
 
-        // The last entry is closed by the bundle's own trailing brackets.
+        // The bundle's own closing brackets are all that is left once the last entry closed.
         if (carry.Length > 0)
         {
             Merge(best, CardArtPackScanPolicy.ParseCards(carry), packId);

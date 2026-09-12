@@ -138,6 +138,29 @@ internal static class CardArtPackTests
                     "Sample_Pack.cardartpack.json",
                     StringComparison.OrdinalIgnoreCase),
                 $"the fuller rendition must win, kept {Path.GetFileName(widened[0].Path)}.");
+
+            // Regression: each override stores its payloads *before* its own source_path, so
+            // entries must be delimited by their braces. Reading between two paths instead would
+            // give every card the artwork of the entry after it and drop the bundle's last card.
+            var orderRoot = Path.Combine(root, "order");
+            Directory.CreateDirectory(orderRoot);
+            File.WriteAllText(
+                Path.Combine(orderRoot, "Order_Pack.cardartpack.json"),
+                "{\"format\":\"card_art_bundle\",\"version\":1,\"count\":2,\"overrides\":[" +
+                Entry("res://images/packed/card_portraits/silent/abrasive.png", "full_art",
+                    MakePng(1000, 760, withAlpha: true), MakePng(1212, 1704, withAlpha: false)) + "," +
+                Entry("res://images/packed/card_portraits/silent/accelerant.png", "full_art",
+                    MakePng(500, 380, withAlpha: true), MakePng(600, 844, withAlpha: false)) + "]}",
+                new UTF8Encoding(false));
+
+            var ordered = CardArtPackScanner.Scan([orderRoot]).Packs.Single().Cards;
+            Require(ordered.Count == 2,
+                $"both entries must be read, got {ordered.Count}: " +
+                string.Join(", ", ordered.Select(card => card.CardId)));
+            Require(ReadPngSize(ordered.Single(card => card.CardId == "abrasive").Bytes) == (1212, 1704),
+                "a card must display the artwork stored in its own entry, not the next entry's.");
+            Require(ReadPngSize(ordered.Single(card => card.CardId == "accelerant").Bytes) == (600, 844),
+                "the last entry of a bundle must keep its own artwork.");
         }
         finally
         {
@@ -210,6 +233,39 @@ internal static class CardArtPackTests
             .ToArray();
         Require(duplicated.Length == 0,
             "a pack must not address the same card twice: " + string.Join(", ", duplicated));
+
+        // One card per override: a bundle whose artwork shifted by one entry, or whose final entry
+        // was dropped, cannot match the number of entries the bundle actually declares.
+        var declared = CountDeclaredEntries(silent.Path);
+        Require(silent.Cards.Count == declared,
+            $"an installed pack must yield one card per entry: declared {declared}, " +
+            $"read {silent.Cards.Count}.");
+    }
+
+    /// <summary>Counts a bundle's override entries without using the reader under test.</summary>
+    private static int CountDeclaredEntries(string packPath)
+    {
+        const string marker = "\"source_path\"";
+        var count = 0;
+        using var reader = new StreamReader(packPath);
+        var buffer = new char[1 << 20];
+        var overlap = string.Empty;
+        int read;
+        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            var window = overlap + new string(buffer, 0, read);
+            for (var index = window.IndexOf(marker, StringComparison.Ordinal);
+                 index >= 0;
+                 index = window.IndexOf(marker, index + marker.Length, StringComparison.Ordinal))
+            {
+                count++;
+            }
+
+            // A marker straddling two reads must still be counted exactly once.
+            overlap = window[^Math.Min(marker.Length - 1, window.Length)..];
+        }
+
+        return count;
     }
 
     private static (int Width, int Height) ReadPngSize(byte[] bytes) =>

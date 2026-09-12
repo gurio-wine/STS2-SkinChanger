@@ -138,22 +138,17 @@ internal static partial class CardArtPackScanPolicy
     /// Reads every override object out of one bundle's raw text, keeping the largest rendition
     /// when a card is repeated.
     ///
-    /// The text may be a whole bundle, a single slice, or a slice plus the next entry's preamble;
-    /// only entries that carry a source path and a decodable PNG survive, so no separate framing
-    /// check is needed. Callers that must reject a non-bundle file check the header first.
+    /// The text may be a whole bundle or any slice of one; only entries that carry a source path
+    /// and a decodable PNG survive, so no separate framing check is needed. Callers that must
+    /// reject a non-bundle file check the header first.
     /// </summary>
     public static IReadOnlyList<CardArtPackCard> ParseCards(string bundleText)
     {
         var best = new Dictionary<string, CardArtPackCard>(StringComparer.OrdinalIgnoreCase);
-
-        // A `source_path` always starts an entry, so everything between two of them is exactly
-        // one override object.
-        var matches = SourcePathRegex().Matches(bundleText);
-        for (var index = 0; index < matches.Count; index++)
+        var (entries, _) = SplitEntries(bundleText);
+        foreach (var entry in entries)
         {
-            var start = matches[index].Index;
-            var end = index + 1 < matches.Count ? matches[index + 1].Index : bundleText.Length;
-            Add(best, bundleText[start..end]);
+            Add(best, entry);
         }
 
         return best.Values
@@ -163,9 +158,6 @@ internal static partial class CardArtPackScanPolicy
 
     private static void Add(IDictionary<string, CardArtPackCard> target, string entry)
     {
-        // The slice runs from this entry's source_path to the start of the next one, so it may
-        // still carry the closing braces of the bundle. Those follow the last key and are never
-        // matched, while the base64 payloads can themselves end in '=', so nothing is trimmed.
         if (SourcePathRegex().Match(entry) is not { Success: true } source)
         {
             return;
@@ -229,27 +221,79 @@ internal static partial class CardArtPackScanPolicy
             : null;
 
     /// <summary>
-    /// Extracts every complete override object from a window that may begin or end mid-entry.
-    /// A trailing fragment is returned separately so the caller can prepend it to the next read.
+    /// Extracts every complete override object from a window that may begin or end mid-entry, and
+    /// returns the trailing text that is not closed yet so the caller can prepend it to the next
+    /// read.
+    ///
+    /// An entry is delimited by its own braces and never by one of its fields. The editor writes
+    /// the payloads *before* the path inside each object, so a slice taken between two
+    /// <c>source_path</c> values would hand every card the artwork of the entry that follows it —
+    /// which is exactly the order the bundle stores. Only object boundaries are positional here.
     /// </summary>
     public static (IReadOnlyList<string> Entries, string Remainder) SplitEntries(string window)
     {
         var entries = new List<string>();
-        var matches = SourcePathRegex().Matches(window);
-        if (matches.Count == 0)
+        var openBraces = new List<int>(4);
+        var inString = false;
+
+        // Everything before this offset is complete and has been read; what follows may still be
+        // an unfinished object and has to be scanned again with the next chunk.
+        var boundary = 0;
+        for (var index = 0; index < window.Length; index++)
         {
-            return (entries, window);
+            var character = window[index];
+            if (inString)
+            {
+                // Paths and base64 never carry escapes, but honouring them keeps the scan exact.
+                if (character == '\\')
+                {
+                    index++;
+                }
+                else if (character == '"')
+                {
+                    inString = false;
+                }
+
+                continue;
+            }
+
+            switch (character)
+            {
+                case '"':
+                    inString = true;
+                    break;
+                case '{':
+                    openBraces.Add(index);
+                    break;
+                case '}':
+                    if (openBraces.Count == 0)
+                    {
+                        break;
+                    }
+
+                    var start = openBraces[^1];
+                    openBraces.RemoveAt(openBraces.Count - 1);
+                    boundary = index + 1;
+                    var candidate = window[start..boundary];
+                    if (IsEntryObject(candidate))
+                    {
+                        entries.Add(candidate);
+                    }
+
+                    break;
+            }
         }
 
-        for (var index = 0; index + 1 < matches.Count; index++)
-        {
-            var start = matches[index].Index;
-            entries.Add(window[start..matches[index + 1].Index]);
-        }
-
-        // The last entry is only complete once the chunk that follows it has been read.
-        return (entries, window[matches[^1].Index..]);
+        return (entries, window[boundary..]);
     }
+
+    /// <summary>
+    /// Whether one object is a card override rather than the bundle that carries them. Both hold a
+    /// <c>source_path</c> once the array is complete, so the framing key is what separates them.
+    /// </summary>
+    private static bool IsEntryObject(ReadOnlySpan<char> candidate) =>
+        candidate.Contains("\"source_path\"", StringComparison.Ordinal) &&
+        !candidate.Contains("\"overrides\"", StringComparison.Ordinal);
 
     private static string? Value(Regex regex, string entry) =>
         regex.Match(entry) is { Success: true } match ? match.Groups["v"].Value : null;
