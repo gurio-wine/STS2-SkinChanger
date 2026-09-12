@@ -4894,7 +4894,10 @@ internal sealed partial class SkinCatalog : IDisposable
                     path => path,
                     path => index.Assets[path],
                     StringComparer.OrdinalIgnoreCase),
-                IsBaselinePartOverride: true));
+                IsBaselinePartOverride: true)
+            {
+                ProviderRootPath = index.Mod.RootPath
+            });
         }
     }
 
@@ -7919,6 +7922,12 @@ internal sealed record SkinOption(
     public ManualCharacterVariant? ManualCharacterVariant { get; init; }
 
     public bool IsComposition => CompositionSourceOptionIds.Count > 0;
+
+    /// <summary>
+    /// The package folder an option's provider ships in. A part takeover needs it at runtime to
+    /// recognize the package's own art and its own patches for that group.
+    /// </summary>
+    public string? ProviderRootPath { get; init; }
 }
 
 internal sealed record RuntimeMonsterVisualMode(

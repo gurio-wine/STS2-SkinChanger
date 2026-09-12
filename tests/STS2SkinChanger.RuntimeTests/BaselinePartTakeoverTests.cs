@@ -69,6 +69,8 @@ internal static class BaselinePartTakeoverTests
             var part = merchant.Options.Single(option => option.Id == "StyleLikeOverhaul");
             Require(part.IsBaselinePartOverride && part.Assets.Keys.SequenceEqual([HandPath]),
                 "部件选项只能包含该包覆盖、且本体同路径存在的那些外观资源。");
+            Require(part.ProviderRootPath == root.FullName,
+                "部件选项必须带上该包的目录：在线识别作者自带的商店画面与它自己的补丁时需要它。");
             Require(SkinCatalog.ResolvePartTakeoverDefault(merchant.Options) == "StyleLikeOverhaul",
                 "部件接管原本就由作者的包生效，必须成为该分组的默认选择，识别它不能反过来关掉玩家看到的效果。");
             var shadow = catalog.BuildOverlay(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

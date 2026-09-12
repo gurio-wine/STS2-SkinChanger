@@ -132,6 +132,12 @@ internal static partial class SkinService
         CharacterPreviewSelections.GetValueOrDefault(groupId) ??
         Config.GetSelection(groupId);
 
+    /// <summary>
+    /// The selection the game is currently showing for a group, including multiplayer scope and
+    /// previews. Used where a provider's own presentation has to follow the visible choice.
+    /// </summary>
+    internal static string GetDisplayedSelection(string groupId) => GetVisualSelection(groupId);
+
     private static IReadOnlyDictionary<string, string> GetVisualSelections()
     {
         return VisualSelectionOverlayPolicy.Merge(

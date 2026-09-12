@@ -1794,6 +1794,48 @@ Require(
     BaselinePartTakeoverPolicy.ResolveAdoptedDefault(["b.mod", "a.mod"]) == "a.mod",
     "部件接管必须按稳定顺序取得分组默认选择，没有部件时不能伪造默认值。");
 
+// A style/UI package draws the rest of the group it overrides from its own images and its own
+// patches. Those two have to be recognized as belonging to the part, and only for that group.
+var partOwners = PartTakeoverPolicy.ResolveOwners(
+[
+    ("merchant", "CznStyleUI", @"C:\mods\3771060891", true),
+    ("merchant", "Merchant2CuteII", @"C:\mods\3748331824", false),
+    ("", "Nameless", @"C:\mods\1", true)
+]);
+Require(
+    partOwners.Count == 1 &&
+    partOwners[0].GroupId == "merchant" &&
+    partOwners[0].OptionId == "CznStyleUI",
+    "只有真正被按部件接管的选项才算部件归属；普通皮肤和缺少分组的信息不能进来自带呈现的接管范围。");
+var partOwner = partOwners[0] with
+{
+    ResourceNamespaces = PartTakeoverPolicy.ResolveResourceNamespaces(
+        partOwners[0].OptionId,
+        [@"C:\mods\3771060891\CznStyleUI.dll", @"C:\mods\3771060891\CznCore.dll"])
+};
+Require(
+    partOwner.OwnsResourcePath("res://CznStyleUI/images/merchant/merchant_room_background.png") &&
+    partOwner.OwnsResourcePath("res://czncore/animations/merchant/safety_merchant_dellang.skel") &&
+    !partOwner.OwnsResourcePath("res://animations/backgrounds/merchant_room/hand/merchanthand.png") &&
+    !partOwner.OwnsResourcePath("res://Merchant2CuteII/images/merchant.png") &&
+    !partOwner.OwnsResourcePath("") &&
+    !partOwner.OwnsResourcePath(null),
+    "作者自带的商店画面必须按其清单 ID 与程序集名归属；部件自身的本体路径、别的 Mod 的画面和空路径都不能被算成它的私有画面。");
+Require(
+    PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(MerchantRoomFixture)) &&
+    PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(MerchantInventoryFixture)) &&
+    !PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(SfxCmdFixture)) &&
+    !PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(FoulPotionFixture)) &&
+    !PartTakeoverPolicy.TargetsGroupPresentation(partOwner, null),
+    "只有该分组自己的场景类型受选择控制；音效命令、药水反应等非画面入口必须继续按作者原意运行。");
+Require(
+    ReferenceEquals(
+        PartTakeoverPolicy.ResolveOwner(
+            "res://CznStyleUI/images/merchant/merchant_idle.png",
+            [partOwner]),
+        partOwner),
+    "按选择对齐商店画面时，只有该部件自带的私有路径能被认出来并还原。");
+
 WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
@@ -1837,3 +1879,11 @@ internal sealed class CachedResourceFixture(bool IsValid, string Name)
     internal bool IsValid { get; set; } = IsValid;
     internal string Name { get; } = Name;
 }
+
+internal sealed class MerchantRoomFixture;
+
+internal sealed class MerchantInventoryFixture;
+
+internal sealed class SfxCmdFixture;
+
+internal sealed class FoulPotionFixture;

@@ -329,6 +329,17 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
+    /// <summary>
+    /// A style/UI package that overrides a part of this group also draws the rest of the room from
+    /// its own images. Record the room exactly as the game built it — before any package writes —
+    /// and make the package's own patches for this group follow this group's selection.
+    /// </summary>
+    internal static void ScopePartTakeover(Node room)
+    {
+        PartTakeoverScope.EnsureInstalled();
+        PartTakeoverVisualScope.Capture(room, GroupId);
+    }
+
     internal static void PrepareMerchantSelectionChange()
     {
         var room = NMerchantRoom.Instance;
@@ -799,6 +810,11 @@ internal static class MerchantRuntimeAppearance
             newHandContainer = null;
             buttonSwapped = false;
             handSwapped = false;
+
+            // A hot selection change also has to move a style/UI package's own room art: the part
+            // resources were swapped above, and its patches follow the same selection.
+            PartTakeoverScope.EnsureInstalled();
+            PartTakeoverVisualScope.Reconcile(room, GroupId);
 
             return true;
         }
@@ -1466,6 +1482,7 @@ internal static class MerchantRoomCreateAppearancePatch
             currentRoom == null)
         {
             ModLog.Warn("保留游戏预加载的商店房间：" + error);
+            MerchantRuntimeAppearance.ScopePartTakeover(__result);
             return;
         }
 
@@ -1473,6 +1490,7 @@ internal static class MerchantRoomCreateAppearancePatch
         __result = currentRoom;
         RoomRuntimeScopeOwnership.Record(currentRoom, __state);
         preloadCreatedRoom.Free();
+        MerchantRuntimeAppearance.ScopePartTakeover(currentRoom);
         ModLog.Info(
             "商店房间已绕过启动预加载缓存并按当前选择创建：" +
             SkinService.Config.GetSelection(MerchantRuntimeAppearance.GroupId));
@@ -1527,6 +1545,10 @@ internal static class MerchantRoomPlayerAppearancePatch
                 group.Id);
         }
 
+        // Runs after other packages' own room callbacks: a style/UI package that overrides a part
+        // of the merchant group may already have drawn its shop background and merchant. Bring the
+        // room in line with the selection instead of leaving that art behind.
+        PartTakeoverVisualScope.Reconcile(__instance, MerchantRuntimeAppearance.GroupId);
     }
 }
 
