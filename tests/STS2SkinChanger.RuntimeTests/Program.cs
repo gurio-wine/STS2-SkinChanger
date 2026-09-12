@@ -391,6 +391,7 @@ if (args.Length == 3 && args[0] == "--audit-part-takeover")
 }
 
 BaselinePartTakeoverTests.Run();
+MerchantFigureScopeTests.Run();
 StorageLifecycleTests.Run();
 await StorageLifecycleTests.TestQuitAndLockedFiles();
 CreatureVisualParentTests.Run();

@@ -57,6 +57,7 @@ internal static class PartTakeoverVisualScope
             state.GroupId = groupId;
             var counters = new ReconcileCounters();
             Walk(root, node => ReconcileNode(state, node, parts, counters));
+            ReconcileMerchantFigure(state, parts, counters);
             ReconcileMerchantFeedback(state, root, parts, counters);
             if (counters.Any)
             {
@@ -64,6 +65,8 @@ internal static class PartTakeoverVisualScope
                     $"商人外观已按当前 {groupId} 选择对齐：还原 {counters.Restored} 处原版画面、" +
                     $"隐藏 {counters.Hidden} 处部件自带画面、恢复 {counters.Reapplied} 处部件画面" +
                     $"（其中重新挂载部件自己的商人呈现 {counters.Reattached} 次）、" +
+                    $"原版商人画面显示 {counters.FiguresShown} 处/隐藏 {counters.FiguresHidden} 处、" +
+                    $"还原作者位置 {counters.LayoutRestored} 处、" +
                     $"停用部件语音 {counters.Silenced} 处；商店房间与商店界面保持作者原样。");
             }
         }
@@ -95,6 +98,153 @@ internal static class PartTakeoverVisualScope
 
         ManagedSkinModLoader.SuspendPartTakeoverMerchantFeedback();
         counters.Silenced += SilencePackageVoice(state, root);
+    }
+
+    /// <summary>
+    /// Records the merchant's own figure and the layout the game gave its button, right after the
+    /// game finished building the button and before any package's room callback runs.
+    ///
+    /// A package that draws the merchant from its own image hides exactly that figure and moves that
+    /// button to its own rectangle. Both have to come back for any other selection, or choosing a
+    /// different merchant skin leaves the shop with no merchant on screen.
+    /// </summary>
+    public static void RememberMerchantFigure(Node merchantButton)
+    {
+        try
+        {
+            var root = ResolveRoomRoot(merchantButton);
+            if (root == null)
+            {
+                return;
+            }
+
+            var state = Rooms.GetOrCreateValue(root);
+            var id = merchantButton.GetInstanceId();
+            if (!state.Figures.TryGetValue(id, out var figure) ||
+                (figure.Button.TryGetTarget(out var tracked) && !GodotObject.IsInstanceValid(tracked)))
+            {
+                figure = new MerchantFigureState(new WeakReference<Node>(merchantButton));
+                state.Figures[id] = figure;
+            }
+
+            if (merchantButton.GetNodeOrNull("%MerchantVisual") is CanvasItem visual)
+            {
+                figure.Figure = new WeakReference<Node>(visual);
+                figure.FigureVisibleAtRest = visual.Visible;
+            }
+
+            if (merchantButton is Control control)
+            {
+                figure.Layout = ControlLayout.Of(control);
+                figure.HasLayout = true;
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("记录商人本体画面失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    /// <summary>
+    /// Keeps the merchant's figure and the button's layout on the selection's side of the handover.
+    /// </summary>
+    private static void ReconcileMerchantFigure(
+        RoomVisualState state,
+        IReadOnlyList<OwnedPart> parts,
+        ReconcileCounters counters)
+    {
+        if (state.Figures.Count == 0)
+        {
+            return;
+        }
+
+        var partSelected = parts.Any(part => IsPartSelected(state.GroupId, part));
+        foreach (var (id, figure) in state.Figures.ToArray())
+        {
+            if (!figure.Button.TryGetTarget(out var button) || !GodotObject.IsInstanceValid(button))
+            {
+                state.Figures.Remove(id);
+                continue;
+            }
+
+            var gameFigure = figure.Figure?.TryGetTarget(out var tracked) == true &&
+                             GodotObject.IsInstanceValid(tracked)
+                ? tracked as CanvasItem
+                : null;
+            switch (MerchantFigureScopePolicy.ResolveFigure(
+                        partSelected,
+                        IsPackageFigureVisible(state, button),
+                        figure.FigureVisibleAtRest,
+                        gameFigure?.Visible ?? false))
+            {
+                case MerchantFigureScopePolicy.FigureAction.ShowGameFigure:
+                    gameFigure!.Visible = true;
+                    counters.FiguresShown++;
+                    break;
+                case MerchantFigureScopePolicy.FigureAction.HideGameFigure:
+                    gameFigure!.Visible = false;
+                    counters.FiguresHidden++;
+                    break;
+            }
+
+            if (button is Control control && figure.HasLayout &&
+                MerchantFigureScopePolicy.ShouldRestoreLayout(
+                    partSelected,
+                    !figure.Layout.Matches(control)))
+            {
+                figure.Layout.ApplyTo(control);
+                counters.LayoutRestored++;
+            }
+        }
+    }
+
+    /// <summary>Whether the package is showing a merchant figure of its own inside this button.</summary>
+    private static bool IsPackageFigureVisible(RoomVisualState state, Node button)
+    {
+        foreach (var entry in state.PackageNodes.Values)
+        {
+            if (!entry.Node.TryGetTarget(out var node) ||
+                !GodotObject.IsInstanceValid(node) ||
+                node is not CanvasItem { Visible: true } ||
+                !IsPartSelected(state.GroupId, entry.Owner) ||
+                !IsDescendantOf(node, button))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsDescendantOf(Node node, Node ancestor)
+    {
+        for (var current = node.GetParent(); current != null; current = current.GetParent())
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The shop room a merchant button belongs to, live or previewed.</summary>
+    private static Node? ResolveRoomRoot(Node node)
+    {
+        for (var current = node.GetParent(); current != null; current = current.GetParent())
+        {
+            var typeName = current.GetType().Name;
+            if (typeName.Contains("MerchantRoom", StringComparison.Ordinal) ||
+                typeName.Contains("FakeMerchant", StringComparison.Ordinal))
+            {
+                return current;
+            }
+        }
+
+        return null;
     }
 
     private static int SilencePackageVoice(RoomVisualState state, Node root)
@@ -446,11 +596,42 @@ internal static class PartTakeoverVisualScope
         public Dictionary<ulong, NodeVisualState> Nodes { get; } = [];
         public Dictionary<ulong, PackageNodeState> PackageNodes { get; } = [];
 
+        /// <summary>The merchant's own figure and button layout, per merchant button on screen.</summary>
+        public Dictionary<ulong, MerchantFigureState> Figures { get; } = [];
+
         /// <summary>Audio nodes the room already had when the package's presentation was recorded.</summary>
         public HashSet<ulong> RoomVoiceNodes { get; } = [];
 
         /// <summary>Audio nodes that appeared with the package and belong to its merchant voice.</summary>
         public HashSet<ulong> PackageVoiceNodes { get; } = [];
+    }
+
+    /// <summary>The game's merchant figure and the layout the game gave the merchant's button.</summary>
+    private sealed class MerchantFigureState(WeakReference<Node> button)
+    {
+        public WeakReference<Node> Button { get; } = button;
+        public WeakReference<Node>? Figure { get; set; }
+        public bool FigureVisibleAtRest { get; set; } = true;
+        public bool HasLayout { get; set; }
+        public ControlLayout Layout { get; set; }
+    }
+
+    private readonly record struct ControlLayout(Vector2 Position, Vector2 Size, Vector2 PivotOffset)
+    {
+        public static ControlLayout Of(Control control) =>
+            new(control.Position, control.Size, control.PivotOffset);
+
+        public bool Matches(Control control) =>
+            Position == control.Position &&
+            Size == control.Size &&
+            PivotOffset == control.PivotOffset;
+
+        public void ApplyTo(Control control)
+        {
+            control.Position = Position;
+            control.Size = Size;
+            control.PivotOffset = PivotOffset;
+        }
     }
 
     private sealed class NodeVisualState(WeakReference<Node> node)
@@ -478,8 +659,12 @@ internal static class PartTakeoverVisualScope
         public int Reapplied { get; set; }
         public int Reattached { get; set; }
         public int Silenced { get; set; }
+        public int FiguresShown { get; set; }
+        public int FiguresHidden { get; set; }
+        public int LayoutRestored { get; set; }
         public bool Any =>
-            Restored > 0 || Hidden > 0 || Reapplied > 0 || Reattached > 0 || Silenced > 0;
+            Restored > 0 || Hidden > 0 || Reapplied > 0 || Reattached > 0 || Silenced > 0 ||
+            FiguresShown > 0 || FiguresHidden > 0 || LayoutRestored > 0;
     }
 
     private readonly record struct TextureSlot(PropertyInfo Property)
