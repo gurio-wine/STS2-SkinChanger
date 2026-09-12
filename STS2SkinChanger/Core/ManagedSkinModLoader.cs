@@ -50,6 +50,8 @@ internal static class ManagedSkinModLoader
     private static readonly HashSet<string> ArtPackProviderIds =
         new(StringComparer.OrdinalIgnoreCase);
     // A part takeover is announced once per session, not once per loader pass.
+    private static readonly List<ProviderPatch> SuspendedPartTakeoverFeedback = [];
+    private static bool _partTakeoverFeedbackSuspended;
     private static readonly HashSet<string> PartTakeoverLogged =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderIdentities =
@@ -2179,6 +2181,185 @@ internal static class ManagedSkinModLoader
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Re-runs the room presentation a style/UI package installed for the merchant it draws.
+    ///
+    /// A hot merchant swap rebuilds the merchant's button and hand from the newly selected skin,
+    /// which drops the nodes the package had attached to the previous ones; the author's merchant
+    /// figure therefore disappeared while its hand (served from its own resource path) stayed. The
+    /// package's own room callback already knows how to attach that presentation, so it is invoked
+    /// again on the nodes that are actually on screen. Only the selected part is re-run, so a package
+    /// never draws its merchant over another skin.
+    /// </summary>
+    public static int ReplayPartTakeoverRoomPresentation(Node room)
+    {
+        if (!GodotObject.IsInstanceValid(room) || PartTakeoverRoots.Count == 0)
+        {
+            return 0;
+        }
+
+        var replayed = 0;
+        foreach (var target in Harmony.GetAllPatchedMethods()
+                     .Where(IsNodeReadyPresentationTarget)
+                     .ToArray())
+        {
+            if (target.DeclaringType?.IsInstanceOfType(room) != true)
+            {
+                continue;
+            }
+
+            var patchInfo = Harmony.GetPatchInfo(target);
+            if (patchInfo == null)
+            {
+                continue;
+            }
+
+            foreach (var patch in patchInfo.Postfixes)
+            {
+                if (!IsFromPartTakeoverRoot(patch.PatchMethod.Module.Assembly) ||
+                    !TryBuildNodeReadyArguments(patch.PatchMethod, target, room, out var arguments))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    patch.PatchMethod.Invoke(null, arguments);
+                    replayed++;
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        "重放部件接管包的商店呈现 " +
+                        $"{patch.PatchMethod.DeclaringType?.FullName}.{patch.PatchMethod.Name} 失败：" +
+                        exception.GetBaseException().Message);
+                }
+            }
+        }
+
+        return replayed;
+    }
+
+    /// <summary>
+    /// Stops the merchant reactions a style/UI package installed — its own voice cues and its gate
+    /// on the game's native merchant lines. They belong to the merchant this group selects, so while
+    /// another option is selected the game's own merchant speaks instead. Nothing the package draws
+    /// is touched.
+    /// </summary>
+    public static int SuspendPartTakeoverMerchantFeedback()
+    {
+        if (_partTakeoverFeedbackSuspended)
+        {
+            return 0;
+        }
+
+        var patches = ResolvePartTakeoverMerchantFeedback();
+        if (patches.Count == 0)
+        {
+            return 0;
+        }
+
+        UnpatchProviderCallbacks(patches);
+        SuspendedPartTakeoverFeedback.Clear();
+        SuspendedPartTakeoverFeedback.AddRange(patches);
+        _partTakeoverFeedbackSuspended = true;
+        ModLog.Info(
+            $"已停用部件接管包的 {patches.Count} 个商人语音反馈：当前选的不是它的商人部件，" +
+            "由游戏原版商人发声。");
+        return patches.Count;
+    }
+
+    /// <summary>
+    /// Hands the package's merchant reactions back to its own code once its part is selected again.
+    /// </summary>
+    public static int RestorePartTakeoverMerchantFeedback()
+    {
+        if (!_partTakeoverFeedbackSuspended)
+        {
+            return 0;
+        }
+
+        var patches = SuspendedPartTakeoverFeedback.ToArray();
+        SuspendedPartTakeoverFeedback.Clear();
+        _partTakeoverFeedbackSuspended = false;
+        if (patches.Length == 0)
+        {
+            return 0;
+        }
+
+        PatchProviderCallbacks(patches);
+        ModLog.Info(
+            $"已恢复部件接管包的 {patches.Length} 个商人语音反馈：选中的是它的商人部件，" +
+            "按作者原样发声。");
+        return patches.Length;
+    }
+
+    /// <summary>
+    /// The reaction callbacks the takeover packages installed around the shop, matched by what they
+    /// react to rather than by which package shipped them.
+    /// </summary>
+    private static IReadOnlyList<ProviderPatch> ResolvePartTakeoverMerchantFeedback()
+    {
+        if (PartTakeoverRoots.Count == 0)
+        {
+            return [];
+        }
+
+        var patches = new List<ProviderPatch>();
+        foreach (var target in Harmony.GetAllPatchedMethods().ToArray())
+        {
+            var patchInfo = Harmony.GetPatchInfo(target);
+            if (patchInfo == null)
+            {
+                continue;
+            }
+
+            var entries = patchInfo.Prefixes
+                .Select(patch => (Patch: patch, Kind: ProviderPatchKind.Prefix))
+                .Concat(patchInfo.Postfixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Postfix)))
+                .Concat(patchInfo.Transpilers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Transpiler)))
+                .Concat(patchInfo.Finalizers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Finalizer)));
+            foreach (var entry in entries)
+            {
+                if (!IsFromPartTakeoverRoot(entry.Patch.PatchMethod.Module.Assembly) ||
+                    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                        target.DeclaringType?.Name,
+                        target.Name,
+                        entry.Patch.PatchMethod.DeclaringType?.FullName))
+                {
+                    continue;
+                }
+
+                patches.Add(new ProviderPatch(
+                    target,
+                    entry.Patch.PatchMethod,
+                    entry.Kind,
+                    entry.Patch.priority,
+                    entry.Patch.before,
+                    entry.Patch.after,
+                    entry.Patch.debug));
+            }
+        }
+
+        return patches
+            .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
+            .ToArray();
+    }
+
+    private static bool IsFromPartTakeoverRoot(Assembly assembly)
+    {
+        var location = assembly.Location;
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            return false;
+        }
+
+        var assemblyPath = NormalizePath(location);
+        return PartTakeoverRoots.Any(root => assemblyPath.StartsWith(
+            root + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

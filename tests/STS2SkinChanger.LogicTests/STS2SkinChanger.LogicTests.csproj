@@ -32,6 +32,8 @@
              Link="BaselinePartTakeoverPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/MerchantAppearanceScopePolicy.cs"
              Link="MerchantAppearanceScopePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/PartTakeoverFeedbackScopePolicy.cs"
+             Link="PartTakeoverFeedbackScopePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs"
              Link="DirectCharacterRuntimeTargetPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/BoundedLruCache.cs"

@@ -1829,6 +1829,48 @@ Require(
     !MerchantAppearanceScopePolicy.IsMerchantAppearance([]),
     "商店房间与商店界面永远不进入接管范围：它们始终按作者的原样显示，切换商人皮肤不能改动它们。");
 
+// What the package's merchant says follows the same selection as its figure and hand: its own voice
+// cues and its gate on the game's native merchant lines are reactions of the merchant the player
+// picked. Everything it draws — its room _Ready, its shop interface, its refreshed slots — loads,
+// attaches or refreshes something and must stay installed, so those callbacks never enter this scope.
+foreach (var (typeName, methodName, patchTypeName, isFeedback) in
+         new (string, string, string, bool)[]
+         {
+             ("NMerchantInventory", "Open", "MerchantVisualPatches", true),
+             ("NMerchantInventory", "Close", "MerchantVisualPatches", true),
+             ("NMerchantInventory", "OnPurchaseCompleted", "MerchantVisualPatches", true),
+             ("NMerchantSlot", "OnPurchaseFailed", "MerchantVisualPatches", true),
+             ("NMerchantButton", "OnRelease", "MerchantVisualPatches", true),
+             ("NMerchantRoom", "FoulPotionThrown", "MerchantVisualPatches", true),
+             ("NMerchantInventory", "PlayVoice", "MerchantVisualPatches", true),
+             ("SfxCmd", "Play", "CznStyleUI.Merchant.MerchantVisualPatches", true),
+             ("NMerchantRoom", "_Ready", "MerchantVisualPatches", false),
+             ("NMerchantButton", "_Ready", "MerchantVisualPatches", false),
+             ("NMerchantCharacter", "_Ready", "MerchantCharacterReadyPatch", false),
+             ("NMerchantCard", "UpdateVisual", "MerchantVisualPatches", false),
+             ("NMerchantRelic", "UpdateVisual", "MerchantVisualPatches", false),
+             ("NFakeMerchant", "AfterRoomIsLoaded", "FakeMerchantRoomLoadedPatch", false),
+             ("NMerchantInventory", "MerchantShopSceneLoaded", "MerchantVisualPatches", false),
+             ("SfxCmd", "Play", "UiSounds.Patch", false),
+             ("NRestSiteCharacter", "FlipX", "SkinTransportPatches", false),
+             ("Hook", "AfterRestSiteHeal", "SkinTransportPatches", false),
+             ("CharacterModel", "CreateVisuals", "SkinTransportPatches", false)
+         })
+{
+    Require(
+        PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(typeName, methodName, patchTypeName) ==
+        isFeedback,
+        $"部件接管包对 {typeName}.{methodName}（补丁类 {patchTypeName}）的接管判定错误：" +
+        "商店语音与原生商人语音的门控跟随商人选择；房间 _Ready、商店界面、作者自带的假商人呈现、" +
+        "刷新过的商品槽以及与该商人无关的界面音效都必须留在作者包里。");
+}
+Require(
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(null, null, null) &&
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("NMerchantRoom", null, null) &&
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("NRestSiteCharacter", "FlipX", "MerchantVisualPatches") &&
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("NMerchantRoom", "_Ready", "UiSounds.Patch"),
+    "商店语音接管既要该包商人模块的证据、又要回调本身是交互或音频：没有名字的回调、挂在别处的补丁和纯粹的呈现回调都不能被接管。");
+
 WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 

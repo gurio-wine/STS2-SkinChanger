@@ -32,6 +32,9 @@ internal static class PartTakeoverVisualScope
         {
             var state = Rooms.GetOrCreateValue(root);
             state.GroupId = groupId;
+            // Keep the room's own audio nodes apart from the ones the package brings with it, so
+            // only the package's merchant voice is ever silenced.
+            state.RoomVoiceNodes.UnionWith(AudioPlayerIds(root));
             Walk(root, node => Remember(state, node));
         }
         catch (Exception exception)
@@ -54,12 +57,14 @@ internal static class PartTakeoverVisualScope
             state.GroupId = groupId;
             var counters = new ReconcileCounters();
             Walk(root, node => ReconcileNode(state, node, parts, counters));
+            ReconcileMerchantFeedback(state, root, parts, counters);
             if (counters.Any)
             {
                 ModLog.Info(
                     $"商人外观已按当前 {groupId} 选择对齐：还原 {counters.Restored} 处原版画面、" +
-                    $"隐藏 {counters.Hidden} 处部件自带画面、恢复 {counters.Reapplied} 处部件画面；" +
-                    "商店房间与商店界面保持作者原样。");
+                    $"隐藏 {counters.Hidden} 处部件自带画面、恢复 {counters.Reapplied} 处部件画面" +
+                    $"（其中重新挂载部件自己的商人呈现 {counters.Reattached} 次）、" +
+                    $"停用部件语音 {counters.Silenced} 处；商店房间与商店界面保持作者原样。");
             }
         }
         catch (Exception exception)
@@ -67,6 +72,84 @@ internal static class PartTakeoverVisualScope
             ModLog.Warn("按选择对齐商人外观失败，保留作者画面：" + exception.GetBaseException().Message);
         }
     }
+
+    /// <summary>
+    /// The merchant selection also owns what its merchant says. While the package's part is selected
+    /// its own voice cues and its gate on the game's native merchant lines run exactly as the author
+    /// shipped them, and its merchant presentation is re-attached to whatever nodes are on screen
+    /// (a hot swap rebuilt them). While another option is selected the game's merchant speaks
+    /// instead, so those reactions stop and the package's own voice nodes leave the room.
+    /// </summary>
+    private static void ReconcileMerchantFeedback(
+        RoomVisualState state,
+        Node root,
+        IReadOnlyList<OwnedPart> parts,
+        ReconcileCounters counters)
+    {
+        if (parts.Any(part => IsPartSelected(state.GroupId, part)))
+        {
+            ManagedSkinModLoader.RestorePartTakeoverMerchantFeedback();
+            counters.Reattached += ManagedSkinModLoader.ReplayPartTakeoverRoomPresentation(root);
+            return;
+        }
+
+        ManagedSkinModLoader.SuspendPartTakeoverMerchantFeedback();
+        counters.Silenced += SilencePackageVoice(state, root);
+    }
+
+    private static int SilencePackageVoice(RoomVisualState state, Node root)
+    {
+        var silenced = 0;
+        Walk(root, node =>
+        {
+            if (!IsAudioPlayer(node))
+            {
+                return;
+            }
+
+            var id = node.GetInstanceId();
+            if (state.RoomVoiceNodes.Contains(id) || !state.PackageVoiceNodes.Add(id))
+            {
+                // Either the room's own player (captured with it) or one already handled here.
+                return;
+            }
+
+            try
+            {
+                if (node is AudioStreamPlayer player)
+                {
+                    player.Stop();
+                }
+
+                node.QueueFree();
+                silenced++;
+            }
+            catch (Exception exception)
+            {
+                ModLog.Warn("停用部件自带商人语音失败：" + exception.GetBaseException().Message);
+            }
+        });
+
+        return silenced;
+    }
+
+    private static IEnumerable<ulong> AudioPlayerIds(Node root)
+    {
+        var ids = new List<ulong>();
+        Walk(root, node =>
+        {
+            if (IsAudioPlayer(node))
+            {
+                ids.Add(node.GetInstanceId());
+            }
+        });
+        return ids;
+    }
+
+    private static bool IsAudioPlayer(Node node) =>
+        node.GetClass()
+            .ToString()
+            .StartsWith("AudioStreamPlayer", StringComparison.Ordinal);
 
     /// <summary>The selectable parts of this group and the resource namespaces their own art uses.</summary>
     private static IReadOnlyList<OwnedPart> ResolveParts(string groupId)
@@ -362,6 +445,12 @@ internal static class PartTakeoverVisualScope
         public string GroupId { get; set; } = string.Empty;
         public Dictionary<ulong, NodeVisualState> Nodes { get; } = [];
         public Dictionary<ulong, PackageNodeState> PackageNodes { get; } = [];
+
+        /// <summary>Audio nodes the room already had when the package's presentation was recorded.</summary>
+        public HashSet<ulong> RoomVoiceNodes { get; } = [];
+
+        /// <summary>Audio nodes that appeared with the package and belong to its merchant voice.</summary>
+        public HashSet<ulong> PackageVoiceNodes { get; } = [];
     }
 
     private sealed class NodeVisualState(WeakReference<Node> node)
@@ -387,7 +476,10 @@ internal static class PartTakeoverVisualScope
         public int Restored { get; set; }
         public int Hidden { get; set; }
         public int Reapplied { get; set; }
-        public bool Any => Restored > 0 || Hidden > 0 || Reapplied > 0;
+        public int Reattached { get; set; }
+        public int Silenced { get; set; }
+        public bool Any =>
+            Restored > 0 || Hidden > 0 || Reapplied > 0 || Reattached > 0 || Silenced > 0;
     }
 
     private readonly record struct TextureSlot(PropertyInfo Property)

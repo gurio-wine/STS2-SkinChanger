@@ -1,4 +1,5 @@
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Core;
 using STS2SkinChanger.Pck;
 
 internal static class BaselinePartTakeoverTests
@@ -67,7 +68,8 @@ internal static class BaselinePartTakeoverTests
             // The package keeps drawing its own shop scene, merchant model and shop interface. None
             // of that may be held back, handed back, repeated or removed by this Mod: doing so used
             // to turn the author's own merchant model and shop interface back into the game
-            // original the moment the player selected that part.
+            // original the moment the player selected that part. The selection owns exactly the
+            // merchant's figure, its hand and what its merchant says.
             var modAssembly = typeof(STS2SkinChanger.Entry).Assembly;
             Require(
                 modAssembly.GetType("STS2SkinChanger.Core.PartTakeoverScope") == null &&
@@ -78,7 +80,38 @@ internal static class BaselinePartTakeoverTests
                         System.Reflection.BindingFlags.Public |
                         System.Reflection.BindingFlags.NonPublic |
                         System.Reflection.BindingFlags.Static) == null,
-                "部件接管只接管该包覆盖、且本体同路径存在的外观资源；作者自己画的商店场景与商店界面必须原样保留，不能被门控、交回、重放或删除。");
+                "部件接管只接管该包覆盖、且本体同路径存在的外观资源；作者自己画的商店场景与商店界面必须原样保留，不能被门控、交回或删除。");
+
+            // The merchant selection also owns what its merchant says. The package's reactions are
+            // matched on the game's own shop callbacks, while its room presentation and its shop
+            // interface keep running for every selection.
+            Require(
+                !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                    typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom).Name,
+                    "_Ready",
+                    "MerchantVisualPatches") &&
+                !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                    typeof(MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCard).Name,
+                    "UpdateVisual",
+                    "MerchantVisualPatches") &&
+                !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                    typeof(MegaCrit.Sts2.Core.Nodes.Events.Custom.NFakeMerchant).Name,
+                    "AfterRoomIsLoaded",
+                    "FakeMerchantRoomLoadedPatch") &&
+                PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                    typeof(MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantInventory).Name,
+                    "Open",
+                    "MerchantVisualPatches") &&
+                PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                    typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NMerchantRoom).Name,
+                    "FoulPotionThrown",
+                    "MerchantVisualPatches") &&
+                PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                    "SfxCmd",
+                    "Play",
+                    "CznStyleUI.Merchant.MerchantVisualPatches") &&
+                !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("SfxCmd", "Play", "UiSounds.Patch"),
+                "商人语音接管必须只认该包商人模块里的商店交互回调与音频门控：房间呈现、商店界面、商品槽刷新、作者自带的假商人呈现以及与该商人无关的界面音效都要留在作者包里。");
 
             using var catalog = SkinCatalog.Build(game, [descriptors[0]]);
             var merchant = catalog.Groups.Single(group => group.Id == "merchant");
