@@ -15,11 +15,19 @@ namespace STS2SkinChanger.Core;
 /// selection: they run while the part is selected and stay out of the way otherwise, exactly like
 /// the part resources themselves. Patches that do not target the group's own presentation (menus,
 /// cards, combat, audio commands) are never touched.
+///
+/// The gate is a prefix on the package's own callback, and a callback that takes injected arguments
+/// is called by the game method through a call that does not reliably reach a later patch on that
+/// callback. Each gated callback is therefore reinstalled on its game method once, so the call the
+/// game method makes is generated from the gated callback. Transpilers are left exactly as the
+/// package installed them: their order among other packages' transpilers decides the rewritten
+/// method, which a gate must not disturb.
 /// </summary>
 internal static class PartTakeoverScope
 {
     private static readonly Harmony Gate = new(Entry.ModId + ".part-takeover");
     private static readonly ConcurrentDictionary<MethodBase, PartTakeoverOwner> GatedPatchMethods = new();
+    private static readonly ConcurrentDictionary<MethodInfo, PartTakeoverPatch> GatedCallbacks = new();
     private static readonly HashSet<string> RegisteredGates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> LoggedGates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object Sync = new();
@@ -179,10 +187,10 @@ internal static class PartTakeoverScope
             }
 
             foreach (var callback in EnumerateCallbacks(patches)
-                         .Where(callback => assemblies.Contains(callback.Module.Assembly))
+                         .Where(callback => assemblies.Contains(callback.Callback.Module.Assembly))
                          .Distinct())
             {
-                if (!GatedPatchMethods.TryAdd(callback, owner))
+                if (!GatedPatchMethods.TryAdd(callback.Callback, owner))
                 {
                     continue;
                 }
@@ -190,19 +198,22 @@ internal static class PartTakeoverScope
                 try
                 {
                     Gate.Patch(
-                        callback,
+                        callback.Callback,
                         prefix: new HarmonyMethod(typeof(PartTakeoverScope), nameof(GatePrefix))
                         {
                             priority = Priority.First
                         });
+                    ReinstallForGate(target, callback);
+                    GatedCallbacks[callback.Callback] =
+                        new PartTakeoverPatch(target, callback.Callback, callback.Kind, owner);
                     installed++;
                 }
                 catch (Exception exception)
                 {
-                    GatedPatchMethods.TryRemove(callback, out _);
+                    GatedPatchMethods.TryRemove(callback.Callback, out _);
                     ModLog.Warn(
                         $"无法接管部件 {owner.OptionId} 的补丁 " +
-                        $"{callback.DeclaringType?.Name}.{callback.Name}：" +
+                        $"{callback.Callback.DeclaringType?.Name}.{callback.Callback.Name}：" +
                         exception.GetBaseException().Message);
                 }
             }
@@ -211,11 +222,91 @@ internal static class PartTakeoverScope
         return installed;
     }
 
-    private static IEnumerable<MethodInfo> EnumerateCallbacks(Patches patches) =>
-        patches.Prefixes.Select(patch => patch.PatchMethod)
-            .Concat(patches.Postfixes.Select(patch => patch.PatchMethod))
-            .Concat(patches.Transpilers.Select(patch => patch.PatchMethod))
-            .Concat(patches.Finalizers.Select(patch => patch.PatchMethod));
+    /// <summary>
+    /// Puts the package's own patch back on its game method with the same owner, priority and
+    /// order it had. The call the game method makes is only generated from the gated callback when
+    /// the patch is installed after the gate exists; an argument-taking callback that was installed
+    /// first keeps running through the call that was generated for it, gate or no gate.
+    /// </summary>
+    private static void ReinstallForGate(MethodBase target, (MethodInfo Callback, PartTakeoverPatchKind Kind) callback)
+    {
+        if (callback.Kind == PartTakeoverPatchKind.Transpiler)
+        {
+            return;
+        }
+
+        var patches = HarmonyLib.Harmony.GetPatchInfo(target);
+        var existing = patches == null
+            ? null
+            : EnumeratePatchEntries(patches, callback.Kind)
+                .FirstOrDefault(patch => patch.PatchMethod == callback.Callback);
+        if (existing == null)
+        {
+            return;
+        }
+
+        var owner = new Harmony(string.IsNullOrEmpty(existing.owner) ? Gate.Id : existing.owner);
+        owner.Unpatch(target, callback.Callback);
+        var method = new HarmonyMethod(callback.Callback)
+        {
+            priority = existing.priority,
+            before = existing.before,
+            after = existing.after
+        };
+        switch (callback.Kind)
+        {
+            case PartTakeoverPatchKind.Prefix:
+                owner.Patch(target, prefix: method);
+                break;
+            case PartTakeoverPatchKind.Postfix:
+                owner.Patch(target, postfix: method);
+                break;
+            case PartTakeoverPatchKind.Finalizer:
+                owner.Patch(target, finalizer: method);
+                break;
+        }
+    }
+
+    private static IEnumerable<Patch> EnumeratePatchEntries(Patches patches, PartTakeoverPatchKind kind) =>
+        kind switch
+        {
+            PartTakeoverPatchKind.Prefix => patches.Prefixes,
+            PartTakeoverPatchKind.Postfix => patches.Postfixes,
+            PartTakeoverPatchKind.Finalizer => patches.Finalizers,
+            _ => patches.Transpilers
+        };
+
+    private static IEnumerable<(MethodInfo Callback, PartTakeoverPatchKind Kind)> EnumerateCallbacks(
+        Patches patches) =>
+        patches.Prefixes.Select(patch => (patch.PatchMethod, PartTakeoverPatchKind.Prefix))
+            .Concat(patches.Postfixes.Select(patch => (patch.PatchMethod, PartTakeoverPatchKind.Postfix)))
+            .Concat(patches.Transpilers.Select(patch => (patch.PatchMethod, PartTakeoverPatchKind.Transpiler)))
+            .Concat(patches.Finalizers.Select(patch => (patch.PatchMethod, PartTakeoverPatchKind.Finalizer)));
+
+    /// <summary>The part of this group the player is looking at right now, if any.</summary>
+    internal static PartTakeoverOwner? ResolveSelectedOwner(string groupId)
+    {
+        try
+        {
+            return ResolveCatalogOwners().FirstOrDefault(owner =>
+                owner.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase) &&
+                IsOptionSelected(owner.GroupId, owner.OptionId));
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("判断当前部件接管选择失败，保留作者画面：" + exception.GetBaseException().Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The callbacks that draw this part's presentation on a scene of the given type. Empty while
+    /// the package is not loaded, not yet patched, or draws this scene from somewhere else.
+    /// </summary>
+    internal static IReadOnlyList<PartTakeoverPatch> ResolveScenePresentation(
+        PartTakeoverOwner owner,
+        Type sceneType) =>
+        PartTakeoverPolicy.ResolveReplayablePresentation(GatedCallbacks.Values, owner, sceneType);
 
     private static bool GatePrefix(MethodBase __originalMethod)
     {

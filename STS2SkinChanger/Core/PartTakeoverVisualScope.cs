@@ -65,6 +65,73 @@ internal static class PartTakeoverVisualScope
         }
     }
 
+    /// <summary>
+    /// Hands back everything the package drew in this scene: the values it overwrote return to the
+    /// game's own value and the nodes it added are removed. Used before its presentation is drawn
+    /// again for the current selection, so a repeated draw cannot stack onto the previous one.
+    /// </summary>
+    public static void ReleaseOwner(Node root, PartTakeoverOwner owner)
+    {
+        try
+        {
+            if (!Rooms.TryGetValue(root, out var state))
+            {
+                return;
+            }
+
+            var released = 0;
+            foreach (var entry in state.Nodes.Values.ToArray())
+            {
+                if (!entry.Node.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node))
+                {
+                    continue;
+                }
+
+                foreach (var slot in ResolveTextureSlots(node))
+                {
+                    if (!entry.AppliedOwners.TryGetValue(slot.Name, out var appliedOwner) ||
+                        !PartTakeoverPolicy.SameOption(appliedOwner, owner))
+                    {
+                        continue;
+                    }
+
+                    if (ReferenceEquals(slot.GetValue(node), entry.Applied.GetValueOrDefault(slot.Name)))
+                    {
+                        slot.SetValue(node, entry.Baselines.GetValueOrDefault(slot.Name));
+                        released++;
+                    }
+
+                    entry.AppliedOwners.Remove(slot.Name);
+                    entry.Applied.Remove(slot.Name);
+                }
+            }
+
+            foreach (var package in state.PackageNodes
+                         .Where(pair => PartTakeoverPolicy.SameOption(pair.Value.Owner, owner))
+                         .ToArray())
+            {
+                state.PackageNodes.Remove(package.Key);
+                if (!package.Value.Node.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node))
+                {
+                    continue;
+                }
+
+                node.GetParent()?.RemoveChild(node);
+                node.QueueFree();
+                released++;
+            }
+
+            if (released > 0)
+            {
+                ModLog.Info($"已交回部件 {owner.OptionId} 的 {released} 处商店画面，准备按当前选择重画。");
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("交回部件画面失败，保留作者画面：" + exception.GetBaseException().Message);
+        }
+    }
+
     private static void ReconcileNode(
         RoomVisualState state,
         Node node,

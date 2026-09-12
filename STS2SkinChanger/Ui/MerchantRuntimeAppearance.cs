@@ -812,8 +812,11 @@ internal static class MerchantRuntimeAppearance
             handSwapped = false;
 
             // A hot selection change also has to move a style/UI package's own room art: the part
-            // resources were swapped above, and its patches follow the same selection.
+            // resources were swapped above, and its patches follow the same selection. The package
+            // itself draws this shop once, while the room is being built, so its own drawing is
+            // repeated here on the live room before the room is aligned with the new selection.
             PartTakeoverScope.EnsureInstalled();
+            PartTakeoverPresentation.ReapplySelectedOwner(room, GroupId);
             PartTakeoverVisualScope.Reconcile(room, GroupId);
 
             return true;
