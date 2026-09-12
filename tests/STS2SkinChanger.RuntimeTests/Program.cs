@@ -384,6 +384,7 @@ if (args.Length == 3 && args[0] == "--audit-provider-details")
     return;
 }
 
+BaselinePartTakeoverTests.Run();
 StorageLifecycleTests.Run();
 await StorageLifecycleTests.TestQuitAndLockedFiles();
 CreatureVisualParentTests.Run();

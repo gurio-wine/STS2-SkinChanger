@@ -114,7 +114,8 @@ internal static class ProviderLookupTests
                 .Where(probe => Value(probe, "VisualGroupCount") > 0 ||
                                 Value(probe, "CardAssetCount") > 0 ||
                                 Value(probe, "CardPresentationCount") > 0 ||
-                                Value(probe, "RuntimeImageCount") > 0)
+                                Value(probe, "RuntimeImageCount") > 0 ||
+                                Value(probe, "BaselinePartGroupCount") > 0)
                 .ToArray();
             Console.WriteLine($"packages={manifests.Length} cosmetic={cosmetic.Length} managed={probes.Length}");
             foreach (var probe in cosmetic
@@ -125,8 +126,11 @@ internal static class ProviderLookupTests
                 var ratio = pack == 0 ? 1d : (double)served / pack;
                 Console.WriteLine(
                     $"pack={pack,5} served={served,5} {ratio,6:P1} " +
-                    $"groups={Value(probe, "VisualGroupCount"),3} cards={Value(probe, "CardAssetCount"),4} " +
-                    $"presentations={Value(probe, "CardPresentationCount"),4} images={Value(probe, "RuntimeImageCount"),3} " +
+                    $"groups={Value(probe, "VisualGroupCount"),3} " +
+                    $"parts={Value(probe, "BaselinePartGroupCount"),2} " +
+                    $"cards={Value(probe, "CardAssetCount"),4} " +
+                    $"presentations={Value(probe, "CardPresentationCount"),4} " +
+                    $"images={Value(probe, "RuntimeImageCount"),3} " +
                     $"{Id(probe)}");
             }
         }
@@ -215,8 +219,18 @@ internal static class ProviderLookupTests
                     .GetProperty("ServedGroupIds")!.GetValue(probe)!)
                 .Cast<string>()
                 .ToArray();
+            var partGroups = (probe.GetType()
+                    .GetProperty("BaselinePartGroupIds")?
+                    .GetValue(probe) as System.Collections.IEnumerable)
+                ?.Cast<string>()
+                .ToArray() ?? [];
             Console.WriteLine(
-                $"{manifest.Id}: pack={pack} served={served} groups=[{string.Join(", ", groups)}]");
+                $"{manifest.Id}: pack={pack} served={served} groups=[{string.Join(", ", groups)}]" +
+                (partGroups.Length > 0
+                    ? $" 部件接管=" +
+                      $"{probe.GetType().GetProperty("IsBaselinePartTakeover")?.GetValue(probe) is true} " +
+                      $"部件分组=[{string.Join(", ", partGroups)}]"
+                    : string.Empty));
             foreach (var path in servedPaths.Take(limit))
             {
                 Console.WriteLine("  served   " + path);

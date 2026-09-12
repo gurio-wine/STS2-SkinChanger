@@ -85,6 +85,12 @@ internal sealed class SkinConfig
 
     public int VisualSelectionDefaultsVersion { get; set; }
 
+    /// <summary>
+    /// One-time migration that lets a style/UI package's overridden parts stay the default of their
+    /// group, so recognising them does not switch off what the player already sees.
+    /// </summary>
+    public int BaselinePartTakeoverVersion { get; set; }
+
     public Dictionary<string, List<CardSkinPriorityEntry>> CardSkinPriorities { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 

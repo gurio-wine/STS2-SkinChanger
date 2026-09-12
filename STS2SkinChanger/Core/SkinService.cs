@@ -6715,13 +6715,42 @@ internal static partial class SkinService
             Config.VisualSelectionDefaultsVersion = 1;
         }
 
+        // A recognized part takeover is already drawn by the author's own mounted package, so it
+        // becomes the group's default. Recognising it must never switch off what the player is
+        // looking at; turning it off stays an explicit choice in the skin list.
+        var adoptPartTakeovers = Config.BaselinePartTakeoverVersion < 1;
         foreach (var group in Catalog!.Groups)
         {
-            if (!Config.Selections.ContainsKey(group.Id))
+            var partDefault = SkinCatalog.ResolvePartTakeoverDefault(group.Options);
+            if (partDefault == null)
             {
-                Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
+                if (!Config.Selections.ContainsKey(group.Id))
+                {
+                    Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
+                }
+
+                continue;
+            }
+
+            if (!Config.Selections.TryGetValue(group.Id, out var storedSelection))
+            {
+                Config.Selections[group.Id] = partDefault;
+                continue;
+            }
+
+            // Earlier versions wrote the game original for every untouched group, which is
+            // indistinguishable from a deliberate choice. Adopt the part once, then respect it.
+            if (adoptPartTakeovers &&
+                storedSelection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                Config.Selections[group.Id] = partDefault;
+                ModLog.Info(
+                    $"已将 {group.Id} 的默认外观保留给部件接管 {partDefault}；" +
+                    "该部件原本就由作者自己的 Mod 生效，如需关闭请在皮肤列表中选择游戏原版。");
             }
         }
+
+        Config.BaselinePartTakeoverVersion = 1;
 
         SanitizeMonsterSkinPriorities();
 

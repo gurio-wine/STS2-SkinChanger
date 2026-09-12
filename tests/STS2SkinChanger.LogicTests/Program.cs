@@ -1773,6 +1773,27 @@ Require(
     cleanupFailures[0].Exception.Message == "fixture failure",
     "分阶段清理必须保留准确的失败阶段与异常，供日志定位而不能吞掉原因。");
 
+var servablePartPaths = BaselinePartTakeoverPolicy.ResolveServablePartPaths(
+    [
+        "res://animations/backgrounds/merchant_room/hand/merchanthand.png",
+        "res://animations/backgrounds/merchant_room/top/shop_merchant_top.png",
+        "res://CznStyleUI/animations/merchant/hand.png",
+        "res://animations/backgrounds/merchant_room/hand/absent_from_baseline.png"
+    ],
+    belongsToKnownGroup: path => path.StartsWith(
+        "res://animations/backgrounds/merchant_room/",
+        StringComparison.OrdinalIgnoreCase),
+    isGroupAnchor: path => path.Contains("/top/", StringComparison.OrdinalIgnoreCase),
+    existsInBaseline: path => !path.Contains("absent_from_baseline", StringComparison.OrdinalIgnoreCase));
+Require(
+    servablePartPaths.SequenceEqual(["res://animations/backgrounds/merchant_room/hand/merchanthand.png"]),
+    "部件接管只能接管「属于已知分组、不是该分组主体、且本体同路径存在」的资源；" +
+    "分组主体、作者自己新增的私有路径和本体没有的资源都不能变成部件。");
+Require(
+    BaselinePartTakeoverPolicy.ResolveAdoptedDefault([]) == null &&
+    BaselinePartTakeoverPolicy.ResolveAdoptedDefault(["b.mod", "a.mod"]) == "a.mod",
+    "部件接管必须按稳定顺序取得分组默认选择，没有部件时不能伪造默认值。");
+
 WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 

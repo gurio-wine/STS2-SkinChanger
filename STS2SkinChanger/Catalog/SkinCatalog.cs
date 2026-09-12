@@ -933,6 +933,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 var packResourceCount = 0;
                 var servedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var servedGroupIds = new List<string>();
+                var partGroupIds = new List<string>();
                 if (mod.PckPath != null && File.Exists(mod.PckPath))
                 {
                     PckArchive? archive = null;
@@ -951,9 +952,11 @@ internal sealed partial class SkinCatalog : IDisposable
                         hasInteractiveScenes = managedScriptCount > 0 && ContainsInteractiveScene(archive);
                         packResourceCount = index.Assets.Count;
                         var probeGroups = CountProbeVisualGroups(index, baselineIndexes);
-                        visualGroups = probeGroups.GroupCount;
+                        visualGroups = probeGroups.AnchoredGroupCount;
+                        partGroupIds.AddRange(probeGroups.PartGroupIds);
                         servedSources.UnionWith(probeGroups.ServedSources);
-                        servedGroupIds.AddRange(probeGroups.GroupIds);
+                        servedGroupIds.AddRange(probeGroups.AnchoredGroupIds);
+                        servedGroupIds.AddRange(probeGroups.PartGroupIds);
 
                         var frameworkContracts = FrameworkSkinContractScanner.Scan(
                                 mod.RootPath,
@@ -1010,7 +1013,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 var runtimeImages = 0;
-                var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0;
+                var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 ||
+                                                 partGroupIds.Count > 0;
                 var unservablePackWithVisualPatches = false;
                 if (mod.RootPath != null)
                 {
@@ -1036,7 +1040,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
 
                 var servedResourceCount = servedSources.Count + cardAssets + cardPresentations;
-                if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0)
+                if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0 ||
+                    partGroupIds.Count > 0)
                 {
                     providers.Add(new SkinProviderProbe(
                         mod.Id,
@@ -1052,7 +1057,9 @@ internal sealed partial class SkinCatalog : IDisposable
                         PackResourceCount: packResourceCount,
                         ServedResourceCount: servedResourceCount,
                         ServedGroupIds: [.. servedGroupIds.Distinct(StringComparer.OrdinalIgnoreCase)],
-                        ServedSourcePaths: [.. servedSources.Order(StringComparer.OrdinalIgnoreCase).Take(64)]));
+                        ServedSourcePaths: [.. servedSources.Order(StringComparer.OrdinalIgnoreCase).Take(64)],
+                        BaselinePartGroupCount: partGroupIds.Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                        BaselinePartGroupIds: [.. partGroupIds.Distinct(StringComparer.OrdinalIgnoreCase)]));
                 }
                 else if (unservablePackWithVisualPatches)
                 {
@@ -1128,7 +1135,8 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
-    private static (int GroupCount, IReadOnlyList<string> GroupIds, HashSet<string> ServedSources)
+    private static (int AnchoredGroupCount, IReadOnlyList<string> AnchoredGroupIds, int PartGroupCount,
+        IReadOnlyList<string> PartGroupIds, HashSet<string> ServedSources)
         CountProbeVisualGroups(
             PckResourceIndex index,
             IReadOnlyCollection<PckResourceIndex> baselineIndexes)
@@ -1140,7 +1148,20 @@ internal sealed partial class SkinCatalog : IDisposable
                 .Where(group => group.Options.Count > 0)
                 .ToArray();
             AddGroupSources(groups, servedSources);
-            return (groups.Length, [.. groups.Select(group => group.Id)], servedSources);
+            // A group this package only serves through a baseline part override is not an
+            // appearance of its own: it must not make the package look like a skin provider.
+            var anchored = groups
+                .Where(group => group.Options.Any(option => !option.IsBaselinePartOverride))
+                .ToArray();
+            var parts = groups
+                .Where(group => group.Options.All(option => option.IsBaselinePartOverride))
+                .ToArray();
+            return (
+                anchored.Length,
+                [.. anchored.Select(group => group.Id)],
+                parts.Length,
+                [.. parts.Select(group => group.Id)],
+                servedSources);
         }
 
         // Without the game baseline there is nothing to compare against, so only the paths the
@@ -1165,7 +1186,7 @@ internal sealed partial class SkinCatalog : IDisposable
             groupIds.Add(group.Id);
         }
 
-        return (groupIds.Count, [.. groupIds], servedSources);
+        return (groupIds.Count, [.. groupIds], 0, [], servedSources);
 
         static void AddGroupSources(
             IEnumerable<SkinGroup> groups,
@@ -4756,6 +4777,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             if (primaryGroups.Length == 0)
             {
+                AddBaselinePartOptions(index, baselines, groups, knownGroupIds);
                 continue;
             }
 
@@ -4837,6 +4859,53 @@ internal sealed partial class SkinCatalog : IDisposable
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
     }
+
+    /// <summary>
+    /// Registers the parts a non-skin package overrides as selectable options. The package itself
+    /// keeps loading through the game's own loader; only paths the game baseline can hand back are
+    /// taken over, so selecting another option — or the game's original — restores the shipped
+    /// presentation instead of leaving the author's art behind.
+    /// </summary>
+    private static void AddBaselinePartOptions(
+        PckResourceIndex index,
+        IReadOnlyCollection<PckResourceIndex> baselines,
+        IDictionary<string, SkinGroup> groups,
+        IReadOnlySet<string> knownGroupIds)
+    {
+        var partPaths = BaselinePartTakeoverPolicy.ResolveServablePartPaths(
+            index.Assets.Keys,
+            path => TryGetPrimaryGroup(path) is { } owner && knownGroupIds.Contains(owner.Id),
+            path => TryGetPrimaryGroup(path) is not { } owner || IsGroupAnchorResource(path, owner),
+            path => baselines.Any(baseline => ResourceExists(baseline, path)));
+        foreach (var partGroup in partPaths
+                     .GroupBy(path => TryGetPrimaryGroup(path)!.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            var identity = TryGetPrimaryGroup(partGroup.First())!;
+            if (!groups.TryGetValue(identity.Id, out var group))
+            {
+                group = new SkinGroup(identity.Id, identity.DisplayName);
+                groups.Add(identity.Id, group);
+            }
+
+            group.Options.Add(new SkinOption(
+                index.Mod.Id,
+                index.Mod.Name,
+                partGroup.ToDictionary(
+                    path => path,
+                    path => index.Assets[path],
+                    StringComparer.OrdinalIgnoreCase),
+                IsBaselinePartOverride: true));
+        }
+    }
+
+    /// <summary>
+    /// The selection a group starts with when the player never chose one. A part takeover is
+    /// already rendered by the author's own mounted package, so it stays the default until the
+    /// player selects something else for that group.
+    /// </summary>
+    internal static string? ResolvePartTakeoverDefault(IEnumerable<SkinOption> options) =>
+        BaselinePartTakeoverPolicy.ResolveAdoptedDefault(
+            [.. options.Where(option => option.IsBaselinePartOverride).Select(option => option.Id)]);
 
     private static void AddDirectCharacterRuntimeProviderOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
@@ -7781,9 +7850,18 @@ internal sealed record SkinProviderProbe(
     int PackResourceCount = 0,
     int ServedResourceCount = 0,
     IReadOnlyList<string>? ServedGroupIds = null,
-    IReadOnlyList<string>? ServedSourcePaths = null)
+    IReadOnlyList<string>? ServedSourcePaths = null,
+    int BaselinePartGroupCount = 0,
+    IReadOnlyList<string>? BaselinePartGroupIds = null)
 {
     public string ResourceNamespaceId => ManifestId ?? Id;
+
+    /// <summary>
+    /// The package presents no group of its own but overrides parts of groups the game already
+    /// ships. It is a style/UI package rather than a skin: it keeps loading through the game's own
+    /// loader, and only those parts are selectable here.
+    /// </summary>
+    public bool IsBaselinePartTakeover => VisualGroupCount == 0 && BaselinePartGroupCount > 0;
 }
 
 internal sealed record AncientLayeredImagePaths(
@@ -7826,7 +7904,8 @@ internal sealed record SkinOption(
     string? ProviderId = null,
     bool IsManagedMonsterRuntimeProfile = false,
     FrameworkCharacterSkinContract? FrameworkContract = null,
-    bool IsCharacterIconOnly = false)
+    bool IsCharacterIconOnly = false,
+    bool IsBaselinePartOverride = false)
 {
     public string EffectiveProviderId =>
         ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;

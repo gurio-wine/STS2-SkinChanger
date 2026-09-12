@@ -28,6 +28,8 @@
              Link="ExternalCardProviderIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterGroupEvidencePolicy.cs"
              Link="CharacterGroupEvidencePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/BaselinePartTakeoverPolicy.cs"
+             Link="BaselinePartTakeoverPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs"
              Link="DirectCharacterRuntimeTargetPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/BoundedLruCache.cs"

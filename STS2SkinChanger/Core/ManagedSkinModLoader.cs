@@ -49,6 +49,9 @@ internal static class ManagedSkinModLoader
     // marks them like any other taken-over provider.
     private static readonly HashSet<string> ArtPackProviderIds =
         new(StringComparer.OrdinalIgnoreCase);
+    // A part takeover is announced once per session, not once per loader pass.
+    private static readonly HashSet<string> PartTakeoverLogged =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderIdentities =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, bool> SelectableCosmeticProbeResults =
@@ -651,11 +654,11 @@ internal static class ManagedSkinModLoader
             .Where(mod => IsManagedProvider(mod, out _))
             .ToArray();
         SkinProvidersBeforeSelf = selfIndex < 0
-            ? SkinProvidersInLoadOrder
+            ? SkinProvidersInLoadOrder.Where(IsIsolatedProvider).ToArray()
             : mods.Take(selfIndex)
                 .Where(IsProviderLoadCandidate)
                 .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
-                .Where(mod => IsManagedProvider(mod, out _))
+                .Where(IsIsolatedProvider)
                 .ToArray();
         IsBeforeAllSkinProviders = selfIndex >= 0 && SkinProvidersBeforeSelf.Count == 0;
         if (SkinProvidersBeforeSelf.Count > 0)
@@ -675,6 +678,14 @@ internal static class ManagedSkinModLoader
             "DLL 行为补丁仅在选中期间启用。");
     }
 
+    /// <summary>
+    /// Whether this provider has to be isolated by this mod, which is what makes the skin
+    /// switcher's own load position matter. A part takeover keeps loading through the game's own
+    /// loader, so it is never a load-order problem.
+    /// </summary>
+    private static bool IsIsolatedProvider(Mod mod) =>
+        IsManagedProvider(mod, out var provider) && !provider.IsBaselinePartTakeover;
+
     public static bool TryManage(Mod mod)
     {
         if (!_reflectionTargetsReady ||
@@ -682,6 +693,16 @@ internal static class ManagedSkinModLoader
             !IsProviderLoadCandidate(mod) ||
             !IsManagedProvider(mod, out var provider))
         {
+            return false;
+        }
+
+        if (provider.IsBaselinePartTakeover)
+        {
+            // The package is not a skin: it ships a whole style/UI experience and only overrides
+            // parts of presentations the game already draws. Isolating it would drop everything
+            // the author shipped, so it keeps loading through the game's own loader (its DLL and
+            // PCK behave exactly as the author intended) and only those parts are selectable here.
+            RememberPartTakeover(provider, mod.manifest?.name ?? provider.ResourceNamespaceId);
             return false;
         }
 
@@ -3658,6 +3679,25 @@ internal static class ManagedSkinModLoader
         ProviderRootPaths.Add(NormalizePath(provider.RootPath));
         ProviderManifestIds.Add(provider.ResourceNamespaceId);
         NegativeProviderIdentities.Remove(identity);
+    }
+
+    /// <summary>
+    /// Records that a package keeps loading through the game's own loader while the parts it
+    /// overrides become selectable here. Logged once per package.
+    /// </summary>
+    private static void RememberPartTakeover(SkinProviderProbe provider, string displayName)
+    {
+        if (!PartTakeoverLogged.Add(provider.ResourceNamespaceId))
+        {
+            return;
+        }
+
+        ModLog.Info(
+            $"按部件接管 {displayName}：覆盖 {provider.BaselinePartGroupCount} 个外观分组的部件" +
+            (provider.BaselinePartGroupIds is { Count: > 0 } groups
+                ? $"（{string.Join("、", groups)}）"
+                : string.Empty) +
+            "；原 PCK 与 DLL 由游戏按作者原意完整加载，仅这些部件可在此选择。");
     }
 
     private static SkinModDescriptor ToDescriptor(Mod mod)
