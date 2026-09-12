@@ -109,7 +109,7 @@ internal static class PartTakeoverScope
                         ModLog.Info(
                             $"已按 {owner.GroupId} 分组的选择接管部件 {owner.OptionId} 的自身呈现补丁：" +
                             $"选中该部件时按作者原意运行，选择其它皮肤或游戏原版时停用，" +
-                            $"当前共 {installed} 个入口。");
+                            $"当前共 {installed} 个入口：{DescribeGatedEntries(owner)}。");
                     }
                 }
             }
@@ -307,6 +307,40 @@ internal static class PartTakeoverScope
         PartTakeoverOwner owner,
         Type sceneType) =>
         PartTakeoverPolicy.ResolveReplayablePresentation(GatedCallbacks.Values, owner, sceneType);
+
+    /// <summary>
+    /// How many entry points this owner has gated in total, and how many of them belong to the given
+    /// scene's own initialization. Naming them explains a redraw that found nothing to repeat.
+    /// </summary>
+    internal static (int Total, int OnScene) CountGatedPatches(PartTakeoverOwner owner, Type sceneType)
+    {
+        var mine = GatedCallbacks.Values
+            .Where(patch => PartTakeoverPolicy.SameOption(patch.Owner, owner))
+            .ToArray();
+        return (mine.Length, mine.Count(patch =>
+            patch.Target.DeclaringType?.IsAssignableFrom(sceneType) == true &&
+            PartTakeoverPolicy.IsPresentationInitializer(patch.Target)));
+    }
+
+    /// <summary>
+    /// The gated entry points of this owner, written as "game method ← author callback". A package's
+    /// own drawing has to be traceable in the log, otherwise a shop that does not look the way the
+    /// player expects cannot be told apart from one the package never draws.
+    /// </summary>
+    private static string DescribeGatedEntries(PartTakeoverOwner owner)
+    {
+        var names = GatedCallbacks.Values
+            .Where(patch => PartTakeoverPolicy.SameOption(patch.Owner, owner))
+            .Select(patch =>
+                $"{patch.Target.DeclaringType?.Name}.{patch.Target.Name}" +
+                $" ← {patch.Callback.DeclaringType?.Name}.{patch.Callback.Name}")
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        const int Shown = 6;
+        return names.Length <= Shown
+            ? string.Join("、", names)
+            : string.Join("、", names.Take(Shown)) + $" 等 {names.Length} 个";
+    }
 
     private static bool GatePrefix(MethodBase __originalMethod)
     {

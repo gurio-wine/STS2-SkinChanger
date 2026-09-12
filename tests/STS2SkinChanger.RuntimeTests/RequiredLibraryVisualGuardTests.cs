@@ -4,6 +4,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Models;
 using STS2SkinChanger;
+using STS2SkinChanger.Catalog;
 
 internal static class RequiredLibraryVisualGuardTests
 {
@@ -132,6 +133,35 @@ internal static class RequiredLibraryVisualGuardTests
                 is not string cosmeticOwner || cosmeticOwner != libraryRoot)
             {
                 throw new InvalidOperationException("普通、非保护皮肤仍应能按自己的程序集路径接管。");
+            }
+
+            // A package whose parts are taken over is not a skin: it keeps its own callbacks, which
+            // follow the group's selection. Stripping them would leave the part with no drawing of
+            // its own even while the player has it selected and is standing in that group's scene.
+            // The resolver above already proves this root is an eligible provider root on its own;
+            // here the live cleanup has to leave the same callback installed once its package is
+            // known to have a part taken over.
+            loader.GetMethod("RememberProviderProbe", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null,
+                [
+                    new SkinProviderProbe(
+                        libraryId, libraryRoot, 0, 0, 0, 0, 0, false,
+                        BaselinePartGroupCount: 1, BaselinePartGroupIds: ["merchant"])
+                ]);
+            var protectedByPart = guard.GetMethod(
+                    "ResolveProtectedRoots",
+                    BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [Array.Empty<string>()]) as IReadOnlySet<string>;
+            if (protectedByPart?.Contains(libraryRoot, StringComparer.OrdinalIgnoreCase) != true)
+            {
+                throw new InvalidOperationException("按部件接管的包没有被纳入画面补丁保护范围。");
+            }
+
+            guard.GetMethod("RemoveProviderVisualPatches")!
+                .Invoke(null, [new[] { libraryRoot }, Array.Empty<string>()]);
+            if (Harmony.GetPatchInfo(target)?.Prefixes.Any(entry => entry.PatchMethod == callback) != true)
+            {
+                throw new InvalidOperationException("按部件接管的包被当成未选中的皮肤，作者自己的画面补丁被卸载，该部件永远画不出自己的分组。");
             }
         }
         finally

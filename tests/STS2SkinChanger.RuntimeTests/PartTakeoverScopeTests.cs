@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using HarmonyLib;
+using STS2SkinChanger.Catalog;
 using STS2SkinChanger.Core;
 
 /// <summary>
@@ -123,6 +124,32 @@ internal static class PartTakeoverScopeTests
                     PartTakeoverScopeProbe.MerchantReadyHits == 2 &&
                     ReferenceEquals(PartTakeoverScopeProbe.MerchantReadyScene, scene),
                 "选中该部件时，已经建好的商店要能用同一个场景实例重画作者的画面。");
+
+            // The cleanup that strips an unselected skin's visual callbacks has to leave such a
+            // package alone: its own drawing only comes from those callbacks, so stripping them
+            // leaves the part with the game's own art even while the player has it selected.
+            var packageRoot = Directory.CreateTempSubdirectory("sc-part-takeover-root-");
+            try
+            {
+                typeof(ManagedSkinModLoader)
+                    .GetMethod("RememberProviderProbe", BindingFlags.Static | BindingFlags.NonPublic)!
+                    .Invoke(null,
+                    [
+                        new SkinProviderProbe(
+                            "StyleLikeOverhaul", packageRoot.FullName, 0, 0, 0, 0, 0, false,
+                            BaselinePartGroupCount: 1, BaselinePartGroupIds: ["merchant"])
+                    ]);
+                var protectedRoots = VisualPatchGuard.ResolveProtectedRoots([]);
+                Require(
+                    protectedRoots.Contains(packageRoot.FullName, StringComparer.OrdinalIgnoreCase) &&
+                    !protectedRoots.Contains(Path.GetTempPath(), StringComparer.OrdinalIgnoreCase),
+                    "按部件接管的包不能被当成未选中的皮肤清理掉自己的画面补丁；" +
+                    "只有它的目录受保护，别的目录不能跟着一起被保护。");
+            }
+            finally
+            {
+                packageRoot.Delete(true);
+            }
         }
         finally
         {

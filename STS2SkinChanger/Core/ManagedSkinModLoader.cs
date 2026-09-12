@@ -119,6 +119,19 @@ internal static class ManagedSkinModLoader
     public static IReadOnlyList<Mod> SkinProvidersInLoadOrder { get; private set; } = [];
     public static IReadOnlyCollection<string> ProviderRoots => ProviderRootPaths;
 
+    /// <summary>
+    /// Roots of the style/UI packages whose parts this Mod takes over. Such a package is not a skin:
+    /// it keeps loading through the game's own loader and keeps its own callbacks, which follow the
+    /// group's selection instead of being uninstalled like an unselected skin's
+    /// (see <see cref="PartTakeoverScope"/>).
+    /// </summary>
+    public static IReadOnlyCollection<string> PartTakeoverRoots =>
+        [.. ProvidersByIdentity.Values
+            .Where(provider => provider.IsBaselinePartTakeover &&
+                               !string.IsNullOrWhiteSpace(provider.RootPath))
+            .Select(provider => NormalizePath(provider.RootPath!))
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
+
     public static IReadOnlyCollection<string> GetPreservedRuntimeRoots(IEnumerable<Mod> sourceMods)
     {
         var mods = sourceMods.ToArray();

@@ -37,11 +37,7 @@ internal static class VisualPatchGuard
         {
             return 0;
         }
-        var preservedRoots = (preservedRuntimeRoots ?? [])
-            .Select(NormalizeRoot)
-            .Where(root => root != null)
-            .Cast<string>()
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var preservedRoots = ResolveProtectedRoots(preservedRuntimeRoots);
 
         var removed = 0;
         var affectedTargets = new HashSet<string>(StringComparer.Ordinal);
@@ -95,6 +91,22 @@ internal static class VisualPatchGuard
 
         return removed;
     }
+
+    /// <summary>
+    /// The roots whose callbacks this guard must never strip: gameplay frameworks, this Mod's own
+    /// files, and every package whose parts are taken over. Such a package is not a skin — it keeps
+    /// its own drawing for the group it overrides, bound to that group's selection by
+    /// <see cref="PartTakeoverScope"/>, so its callbacks have to survive for the player to see them
+    /// while the part is selected.
+    /// </summary>
+    internal static IReadOnlySet<string> ResolveProtectedRoots(IEnumerable<string>? preservedRuntimeRoots) =>
+        new HashSet<string>(
+            (preservedRuntimeRoots ?? [])
+                .Concat(ManagedSkinModLoader.PartTakeoverRoots)
+                .Select(NormalizeRoot)
+                .Where(root => root != null)
+                .Cast<string>(),
+            StringComparer.OrdinalIgnoreCase);
 
     private static IEnumerable<(HarmonyLib.Patch Patch, ProviderPatchKind Kind)> EnumeratePatches(
         HarmonyLib.Patches patches)
