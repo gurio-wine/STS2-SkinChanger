@@ -384,6 +384,12 @@ if (args.Length == 3 && args[0] == "--audit-provider-details")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--audit-part-takeover")
+{
+    PartTakeoverRecognitionAudit.Run(args[1], args[2]);
+    return;
+}
+
 BaselinePartTakeoverTests.Run();
 StorageLifecycleTests.Run();
 await StorageLifecycleTests.TestQuitAndLockedFiles();
