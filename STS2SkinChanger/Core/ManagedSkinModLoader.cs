@@ -44,6 +44,11 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ProviderManifestIds =
         new(StringComparer.OrdinalIgnoreCase);
+    // Pure asset card-art packs have no PCK and no DLL, so no probe ever sees them, yet the Mod
+    // they were installed with is content this mod took over. Keep their ids so the Mod list
+    // marks them like any other taken-over provider.
+    private static readonly HashSet<string> ArtPackProviderIds =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderIdentities =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, bool> SelectableCosmeticProbeResults =
@@ -135,12 +140,28 @@ internal static class ManagedSkinModLoader
         try
         {
             if (SkinWorkshopService.IsHotRegisteredResourceMod(mod)) return true;
-            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds,
-                FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id));
+            var isFunctionalHost = FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id);
+            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds, isFunctionalHost) ||
+                   ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ArtPackProviderIds, isFunctionalHost);
         }
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Remembers the pure asset card-art packs whose artwork this mod now serves, so their Mod
+    /// rows read as taken over. Called only for packs that actually registered cards.
+    /// </summary>
+    public static void RememberArtPackProviders(IEnumerable<string> packIds)
+    {
+        foreach (var packId in packIds)
+        {
+            if (!string.IsNullOrWhiteSpace(packId))
+            {
+                ArtPackProviderIds.Add(packId);
+            }
         }
     }
 

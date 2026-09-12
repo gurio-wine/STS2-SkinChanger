@@ -46,6 +46,18 @@ internal static class WorkshopSubmissionScanner
         return results.DistinctBy(m => (m.Id, m.RootPath)).ToArray();
     }
 
+    /// <summary>
+    /// Names a folder can be offered under. A pure asset card-art pack ships no cosmetic
+    /// manifest, so a folder that only carries a bundle must still be nameable and submittable.
+    /// </summary>
+    internal static string[] SubmittableNames(string directory)
+    {
+        var names = ReadDescriptors(directory).Select(mod => mod.Name).ToList();
+        names.AddRange(CardArtPackScanner.Describe(directory).Select(pack => pack.Name));
+        return names.Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     internal static WorkshopScanResult Scan(WorkshopLocalSubmission local, string gamePack, CardCatalogEntry[] cards,
         string? gameVersion, IReadOnlyDictionary<string, string> dependencies, SkinModDescriptor[]? baselines = null)
     {
@@ -53,9 +65,13 @@ internal static class WorkshopSubmissionScanner
         {
             var before = WorkshopPackagePolicy.Snapshot(local.Directory);
             var mods = ReadDescriptors(local.Directory);
-            if (mods.Length == 0) return new(null, local.Name, "No cosmetic manifest.");
+            // A pack is taken over straight from its bundle, exactly as at startup, so a folder
+            // without any cosmetic manifest must be scannable through its artwork alone.
+            var packs = CardArtPackScanner.Scan([local.Directory]).Packs;
+            if (mods.Length == 0 && packs.Count == 0) return new(null, local.Name, "No cosmetic manifest.");
             using var catalog = SkinCatalog.Build(gamePack, (baselines ?? []).Where(b => b.AffectsGameplay &&
                 !mods.Any(m => string.Equals(m.RootPath, b.RootPath, StringComparison.OrdinalIgnoreCase))).Concat(mods));
+            if (packs.Count > 0) catalog.AttachCardArtPacks(packs, cards);
             catalog.FinalizeCardGroups(cards);
             var exported = catalog.ExportWorkshopCatalog();
             // Compare the exact installed source, not manifest ID: same-ID submissions coexist.

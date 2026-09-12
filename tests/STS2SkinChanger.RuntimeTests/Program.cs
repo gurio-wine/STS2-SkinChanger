@@ -23,6 +23,12 @@ if (args.Length == 1 && args[0] == "--test-card-art-packs")
     return;
 }
 
+if (args.Length >= 3 && args[0] == "--audit-art-pack-recognition")
+{
+    CardArtPackRecognitionAudit.Run(args[1], args.Skip(2).ToArray());
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-workshop-reply-sort")
 {
     WorkshopReplySortTests.Run();

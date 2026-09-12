@@ -1,6 +1,9 @@
 using System.Buffers.Binary;
 using System.Text;
+using MegaCrit.Sts2.Core.Modding;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Core;
+using STS2SkinChanger.Pck;
 
 /// <summary>
 /// Verifies that a pure asset card-art pack is read as data, including against a real installed
@@ -13,10 +16,94 @@ internal static class CardArtPackTests
     public static void Run()
     {
         CheckFormatRules();
+        CheckWorkshopRecognition();
         CheckRealPacks();
         Console.WriteLine(
             "Card art pack contracts passed: bundle parsing, master-over-crop preference, " +
-            "malformed-entry rejection, canvas routing and real pack dimensions.");
+            "malformed-entry rejection, canvas routing, Workshop recognition and real pack dimensions.");
+    }
+
+    /// <summary>
+    /// A pure asset pack ships no cosmetic manifest, so it is recognised through its bundle alone.
+    /// The Workshop item it was installed from must still be offered for submission, exported as
+    /// a taken-over card provider, and marked in the Mod list like any other provider.
+    /// </summary>
+    private static void CheckWorkshopRecognition()
+    {
+        var root = Directory.CreateTempSubdirectory("sts2-card-art-recognition-");
+        try
+        {
+            var item = Path.Combine(root.FullName, "2868840", "424242");
+            Directory.CreateDirectory(item);
+            File.WriteAllText(
+                Path.Combine(item, "Sample_Pack.cardartpack.json"),
+                "{\"format\":\"card_art_bundle\",\"version\":1,\"count\":1,\"overrides\":[" +
+                Entry("res://images/packed/card_portraits/silent/abrasive.png", "full_art",
+                    MakePng(1000, 760, withAlpha: true), MakePng(1212, 1704, withAlpha: false)) + "]}",
+                new UTF8Encoding(false));
+            File.WriteAllText(
+                Path.Combine(item, "Sample_Pack.json.json"),
+                "{\"id\":\"Sample_Pack\",\"name\":\"Sample Pack\",\"version\":\"1.0.0\"}",
+                new UTF8Encoding(false));
+
+            var game = Path.Combine(root.FullName, "game.pck");
+            PckArchive.Write(game, new Dictionary<string, byte[]>());
+            var cards = new[]
+            {
+                new CardCatalogEntry("Abrasive", "res://images/packed/card_portraits/silent/abrasive.png",
+                    "silent", "silent", "silent")
+            };
+
+            // The companion descriptor carries none of the cosmetic manifest fields, so the
+            // folder must not be judged by that file alone.
+            Require(WorkshopSubmissionScanner.ReadDescriptors(item).Length == 0,
+                "a card-art pack folder must not be mistaken for a cosmetic manifest.");
+            Require(WorkshopSubmissionScanner.SubmittableNames(item).SequenceEqual(new[] { "Sample Pack" }),
+                "a pack-only folder must still be nameable for submission.");
+            var described = CardArtPackScanner.Describe(item).Single();
+            Require(described is { Id: "Sample_Pack", Name: "Sample Pack" },
+                $"the pack descriptor must come from the bundle's companion file, got {described}.");
+
+            // The export must not depend on the loader having registered a descriptor for the
+            // pack: the folder the bundle sits in is what ties it to its Workshop item.
+            using (var catalog = SkinCatalog.Build(game, []))
+            {
+                var (covered, used) = catalog.AttachCardArtPacks(
+                    CardArtPackScanner.Scan([item]).Packs, cards);
+                catalog.FinalizeCardGroups(cards);
+                Require(covered.Count == 1 && used.Count == 1 && used[0].Id == "Sample_Pack",
+                    "the pack must register the cards it covers.");
+                var exported = catalog.ExportWorkshopCatalog().SingleOrDefault(entry => entry.Id == 424242);
+                Require(exported != null && exported.Targets.Any(target => target.Kind == "cards"),
+                    "an attached pack must export its Workshop item as a taken-over card provider.");
+            }
+
+            var scan = WorkshopSubmissionScanner.Scan(
+                new(424242, "Sample Pack", item), game, cards, "0.111.0", new Dictionary<string, string>());
+            Require(scan.Item is { RestartRequired: true } &&
+                    scan.Item.Targets.Any(target => target.Kind == "cards"),
+                $"a downloaded pack must be submittable and must not promise hot loading: {scan.Error}");
+            Require(!string.Join("", WorkshopSubmissionCodec.Encode(scan.Item!, "1.0.7.1", "0.111.0"))
+                    .Contains(":\\", StringComparison.Ordinal),
+                "a submission must not encode the author's local paths.");
+
+            ManagedSkinModLoader.RememberArtPackProviders(["Sample_Pack"]);
+            Require(ManagedSkinModLoader.IsManagedProviderForDisplay(new Mod
+            {
+                path = item,
+                manifest = new ModManifest { id = "Sample_Pack", name = "Sample Pack" }
+            }), "a taken-over pack's Mod must be marked like any other provider.");
+            Require(!ManagedSkinModLoader.IsManagedProviderForDisplay(new Mod
+            {
+                path = item,
+                manifest = new ModManifest { id = "Unrelated_Pack", name = "Unrelated" }
+            }), "an unrelated Mod must not inherit the pack's marking.");
+        }
+        finally
+        {
+            try { Directory.Delete(root.FullName, recursive: true); }
+            catch (IOException) { }
+        }
     }
 
     private static void CheckFormatRules()

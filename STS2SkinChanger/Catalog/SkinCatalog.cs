@@ -3042,12 +3042,12 @@ internal sealed partial class SkinCatalog : IDisposable
     /// instead of through any provider namespace or folder convention.
     /// </summary>
     /// <returns>The card types covered by at least one pack, and the packs that were used.</returns>
-    public (IReadOnlySet<string> CardTypes, IReadOnlyList<string> PackNames) AttachCardArtPacks(
+    public (IReadOnlySet<string> CardTypes, IReadOnlyList<CardArtPack> UsedPacks) AttachCardArtPacks(
         IEnumerable<CardArtPack> packs,
         IEnumerable<CardCatalogEntry> cards)
     {
         var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var usedPacks = new List<string>();
+        var usedPacks = new List<CardArtPack>();
         // A catalog built without its constructor (test fixtures) has nowhere to store options.
         if (_artPackCardGroups == null)
         {
@@ -3107,7 +3107,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            usedPacks.Add(pack.Name);
+            usedPacks.Add(pack);
+            BindArtPackWorkshopSource(pack);
             foreach (var (groupId, bucket) in byGroup)
             {
                 // Registered as one group per library category, matching how a PCK provider's
@@ -3125,6 +3126,24 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         return (covered, usedPacks);
+    }
+
+    /// <summary>
+    /// A pack is published inside a Workshop item folder, so its artwork belongs to that item.
+    /// The item's own manifest is not required to declare the same id, and a pure data pack has
+    /// no PCK for the loader to register as a provider, so the export cannot rely on either:
+    /// binding the folder here keeps the active-item state and submission candidates in step
+    /// with the artwork that was actually taken over.
+    /// </summary>
+    private void BindArtPackWorkshopSource(CardArtPack pack)
+    {
+        var workshopId = WorkshopSourceId(pack.Root);
+        if (workshopId == 0 || _workshopSourceIds == null)
+        {
+            return;
+        }
+
+        _workshopSourceIds[pack.Id] = workshopId;
     }
 
     /// <summary>

@@ -1188,7 +1188,7 @@ internal static partial class SkinService
                 return;
             }
 
-            var (cardTypes, names) = catalog.AttachCardArtPacks(packs, cards);
+            var (cardTypes, usedPacks) = catalog.AttachCardArtPacks(packs, cards);
             if (cardTypes.Count == 0)
             {
                 return;
@@ -1196,9 +1196,10 @@ internal static partial class SkinService
 
             // Each card renders through the layout its artwork was composed for, so an
             // accompanying editor must yield those layers.
+            ManagedSkinModLoader.RememberArtPackProviders(usedPacks.Select(pack => pack.Id));
             ExternalCardVisualBridge.RegisterArtPackCoverage(cardTypes);
             ModLog.Info(
-                $"已接管 {names.Count} 个纯素材卡图包（{string.Join("、", names)}）；" +
+                $"已接管 {usedPacks.Count} 个纯素材卡图包（{string.Join("、", usedPacks.Select(pack => pack.Name))}）；" +
                 $"覆盖 {cardTypes.Count} 张卡牌，无需 Card Art Editor 即可选用。");
         }
         catch (Exception exception)

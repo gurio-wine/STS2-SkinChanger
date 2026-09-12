@@ -43,6 +43,48 @@ internal static class CardArtPackScanner
     }
 
     /// <summary>
+    /// The packs a Mod folder provides, read without decoding a single bundle. The submission
+    /// panel names candidates before the player starts a full scan, so this stays as cheap as a
+    /// directory listing plus the small companion descriptors beside each bundle.
+    /// </summary>
+    public static IReadOnlyList<(string Id, string Name)> Describe(string root)
+    {
+        var roots = NormalizeRoots([root]);
+        if (roots.Count == 0)
+        {
+            return [];
+        }
+
+        var found = new List<(string Id, string Name)>();
+        foreach (var packPath in EnumeratePackFiles(roots[0]))
+        {
+            try
+            {
+                if (!HasBundleHeader(packPath))
+                {
+                    continue;
+                }
+
+                var (declaredId, declaredName) = ReadMetadata(Path.GetDirectoryName(packPath)!);
+                var id = CardArtPackScanPolicy.NormalizePackId(declaredId, Path.GetFileName(packPath));
+                if (found.Any(pack => pack.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                found.Add((id, declaredName ?? id));
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or JsonException)
+            {
+                // A pack that cannot be described is reported when it is actually scanned.
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
     /// Collapses renditions of the same pack into one source. A pack is usually published as a
     /// full-size bundle plus a low-resolution sibling, and both cover the very same cards, so
     /// offering them separately would show one artwork twice under the same name.
