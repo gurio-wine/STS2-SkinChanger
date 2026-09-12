@@ -930,6 +930,9 @@ internal sealed partial class SkinCatalog : IDisposable
                 var cardPresentations = 0;
                 var managedScriptCount = 0;
                 var hasInteractiveScenes = false;
+                var packResourceCount = 0;
+                var servedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var servedGroupIds = new List<string>();
                 if (mod.PckPath != null && File.Exists(mod.PckPath))
                 {
                     PckArchive? archive = null;
@@ -946,7 +949,12 @@ internal sealed partial class SkinCatalog : IDisposable
                             ? CountManagedGodotScripts(archive)
                             : 0;
                         hasInteractiveScenes = managedScriptCount > 0 && ContainsInteractiveScene(archive);
-                        visualGroups = CountProbeVisualGroups(index, baselineIndexes);
+                        packResourceCount = index.Assets.Count;
+                        var probeGroups = CountProbeVisualGroups(index, baselineIndexes);
+                        visualGroups = probeGroups.GroupCount;
+                        servedSources.UnionWith(probeGroups.ServedSources);
+                        servedGroupIds.AddRange(probeGroups.GroupIds);
+
                         var frameworkContracts = FrameworkSkinContractScanner.Scan(
                                 mod.RootPath,
                                 mod.ResourceNamespaceId)
@@ -955,6 +963,15 @@ internal sealed partial class SkinCatalog : IDisposable
                                 baselineIndexes,
                                 contract))
                             .ToArray();
+                        foreach (var contract in frameworkContracts)
+                        {
+                            servedGroupIds.Add(contract.TargetGroupId);
+                            foreach (var path in contract.ResourcePaths)
+                            {
+                                servedSources.Add(NormalizeTakeoverPath(path));
+                            }
+                        }
+
                         visualGroups = Math.Max(
                             visualGroups,
                             frameworkContracts
@@ -994,6 +1011,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
                 var runtimeImages = 0;
                 var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0;
+                var unservablePackWithVisualPatches = false;
                 if (mod.RootPath != null)
                 {
                     runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
@@ -1003,11 +1021,21 @@ internal sealed partial class SkinCatalog : IDisposable
                         LooksLikeDllSkinProvider(mod))
                     {
                         // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
-                        // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。
-                        visualGroups = 1;
+                        // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。但整包皮肤
+                        // 之外的风格/UI 包也会补丁外观入口：它们的资源本 Mod 一项也呈现不了，
+                        // 隔离只会让作者的全部内容失效，必须交回游戏原加载器。
+                        if (packResourceCount >= SubstantialPackResourceCount)
+                        {
+                            unservablePackWithVisualPatches = true;
+                        }
+                        else
+                        {
+                            visualGroups = 1;
+                        }
                     }
                 }
 
+                var servedResourceCount = servedSources.Count + cardAssets + cardPresentations;
                 if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0)
                 {
                     providers.Add(new SkinProviderProbe(
@@ -1020,7 +1048,22 @@ internal sealed partial class SkinCatalog : IDisposable
                         managedScriptCount,
                         hasInteractiveScenes,
                         mod.ResourceNamespaceId,
-                        HasResourceBackedCosmetics: hasResourceBackedCosmetics));
+                        HasResourceBackedCosmetics: hasResourceBackedCosmetics,
+                        PackResourceCount: packResourceCount,
+                        ServedResourceCount: servedResourceCount,
+                        ServedGroupIds: [.. servedGroupIds.Distinct(StringComparer.OrdinalIgnoreCase)],
+                        ServedSourcePaths: [.. servedSources.Order(StringComparer.OrdinalIgnoreCase).Take(64)]));
+                }
+                else if (unservablePackWithVisualPatches)
+                {
+                    // A pack whose DLL patches presentation entry points but whose PCK has no
+                    // resource the catalog can present is not a skin. Isolating it would unmount
+                    // the whole package (UI, audio, fonts) and skip its initializer, so a style
+                    // overhaul would simply disappear from the game.
+                    ModLog.Info(
+                        $"未按皮肤接管 {mod.Name ?? mod.Id}：其 {packResourceCount} 项资源中没有可呈现的皮肤资源，" +
+                        "但 DLL 会补丁外观入口；按皮肤隔离会让整个包失效。" +
+                        "已交回游戏原加载器，其 DLL 与 PCK 按作者原意完整加载。");
                 }
             }
         }
@@ -1085,28 +1128,80 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
-    private static int CountProbeVisualGroups(
-        PckResourceIndex index,
-        IReadOnlyCollection<PckResourceIndex> baselineIndexes)
+    private static (int GroupCount, IReadOnlyList<string> GroupIds, HashSet<string> ServedSources)
+        CountProbeVisualGroups(
+            PckResourceIndex index,
+            IReadOnlyCollection<PckResourceIndex> baselineIndexes)
     {
+        var servedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (baselineIndexes.Count > 0)
         {
-            return BuildGroups([index], baselineIndexes)
-                .Count(group => group.Options.Count > 0);
+            var groups = BuildGroups([index], baselineIndexes)
+                .Where(group => group.Options.Count > 0)
+                .ToArray();
+            AddGroupSources(groups, servedSources);
+            return (groups.Length, [.. groups.Select(group => group.Id)], servedSources);
         }
 
-        var groupIds = index.Assets.Keys
-            .Select(TryGetPrimaryGroup)
-            .Where(group => group != null)
-            .Cast<GroupIdentity>()
-            .Select(group => group.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in BuildGroups([index]).Where(group => group.Options.Count > 0))
+        // Without the game baseline there is nothing to compare against, so only the paths the
+        // catalog itself recognizes as game presentation resources can be served.
+        var groupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in index.Assets.Keys)
+        {
+            var group = TryGetPrimaryGroup(path);
+            if (group == null || !IsGroupAnchorResource(path, group))
+            {
+                continue;
+            }
+
+            groupIds.Add(group.Id);
+            servedSources.Add(path);
+        }
+
+        var fallbackGroups = BuildGroups([index]).Where(group => group.Options.Count > 0).ToArray();
+        AddGroupSources(fallbackGroups, servedSources);
+        foreach (var group in fallbackGroups)
         {
             groupIds.Add(group.Id);
         }
 
-        return groupIds.Count;
+        return (groupIds.Count, [.. groupIds], servedSources);
+
+        static void AddGroupSources(
+            IEnumerable<SkinGroup> groups,
+            HashSet<string> sources)
+        {
+            foreach (var option in groups.SelectMany(group => group.Options))
+            {
+                foreach (var source in option.Assets.Keys)
+                {
+                    sources.Add(source);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// A package this size ships real content. When none of it is cosmetic the package is not a
+    /// skin, and the DLL-patch heuristic must not claim it: isolating it would drop everything.
+    /// </summary>
+    private const int SubstantialPackResourceCount = 24;
+
+    /// <summary>
+    /// Whether a resource is what the game presents a group with, rather than one part of it.
+    /// The merchant room is assembled from a body and a separate hand spine; a pack that only
+    /// replaces the hand is not a merchant appearance, and treating it as one would unmount the
+    /// rest of that pack (its UI, audio and fonts) from the game.
+    /// </summary>
+    private static bool IsGroupAnchorResource(string sourcePath, GroupIdentity group)
+    {
+        if (!group.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
+            !group.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return !MerchantHandPartPathRegex().IsMatch(NormalizeTakeoverPath(sourcePath));
     }
 
     private static int CountManagedGodotScripts(PckArchive archive)
@@ -4605,17 +4700,22 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in indexes)
         {
             var detectedPrimaryGroups = index.Assets.Keys
-                .Select(path => TryGetPrimaryGroup(path) ??
-                                managedMonsterAssetGroups.GetValueOrDefault(
-                                    NormalizeTakeoverPath(path)))
+                .Select(path => (Path: path, Group: TryGetPrimaryGroup(path) ??
+                                            managedMonsterAssetGroups.GetValueOrDefault(
+                                                NormalizeTakeoverPath(path))))
                 // A cosmetic provider may remap its private animation folders into ordinary
                 // looking character/monster paths. Those folders are dependencies of a real
                 // skin, not new game entities. Only IDs present in the game or a loaded gameplay
                 // Mod baseline may create selectable groups; otherwise one complex provider can
                 // leave phantom selections behind and keep its entire PCK active after switching
                 // away, contaminating unrelated character and monster skins.
-                .Where(group => group != null && knownGroupIds.Contains(group.Id))
-                .Cast<GroupIdentity>()
+                .Where(candidate => candidate.Group != null && knownGroupIds.Contains(candidate.Group.Id))
+                // A group also needs an anchor: the resource the game presents the group with.
+                // Files around that anchor are parts of it, and a pack that only replaces one
+                // part is not presenting the group (a style overhaul that happens to override
+                // the merchant room's hand animation must not become a selectable merchant skin).
+                .Where(candidate => IsGroupAnchorResource(candidate.Path, candidate.Group!))
+                .Select(candidate => candidate.Group!)
                 .DistinctBy(group => group.Id)
                 .ToArray();
             var anchoredCharacterGroupIds = index.Assets.Keys
@@ -6763,7 +6863,13 @@ internal sealed partial class SkinCatalog : IDisposable
                        TryGetCharacterMapMarkerGroup(canonicalPath) ??
                        TryGetCharacterIconSceneGroup(canonicalPath) ??
                        TryGetCharacterSupplementGroup(canonicalPath);
-        return identity == null ? null : new RuntimeProviderAsset(identity, canonicalPath);
+        // Every route into a group obeys the same anchor rule, including this runtime pass.
+        if (identity == null || !IsGroupAnchorResource(canonicalPath, identity))
+        {
+            return null;
+        }
+
+        return new RuntimeProviderAsset(identity, canonicalPath);
     }
 
     private static string CanonicalizeRuntimeProviderPath(string providerId, string sourcePath)
@@ -7504,6 +7610,12 @@ internal sealed partial class SkinCatalog : IDisposable
         RegexOptions.IgnoreCase)]
     private static partial Regex FakeMerchantAppearancePathRegex();
 
+    // The hand is one part of the merchant room, not the merchant appearance itself.
+    [GeneratedRegex(
+        "^res://animations/backgrounds/(?:fake_)?merchant_room/hand/",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex MerchantHandPartPathRegex();
+
     [GeneratedRegex("^res://scenes/creature_visuals/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CreatureVisualSceneRegex();
 
@@ -7646,7 +7758,11 @@ internal sealed record SkinProviderProbe(
     int ManagedScriptCount,
     bool HasInteractiveScenes,
     string? ManifestId = null,
-    bool HasResourceBackedCosmetics = false)
+    bool HasResourceBackedCosmetics = false,
+    int PackResourceCount = 0,
+    int ServedResourceCount = 0,
+    IReadOnlyList<string>? ServedGroupIds = null,
+    IReadOnlyList<string>? ServedSourcePaths = null)
 {
     public string ResourceNamespaceId => ManifestId ?? Id;
 }

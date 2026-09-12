@@ -366,6 +366,18 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
     return;
 }
 
+if (args.Length >= 3 && args[0] == "--audit-provider-serving")
+{
+    ProviderLookupTests.AuditServing(args[1], args.Skip(2).ToArray());
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--audit-provider-details")
+{
+    ProviderLookupTests.AuditDetails(args[1], args[2]);
+    return;
+}
+
 StorageLifecycleTests.Run();
 await StorageLifecycleTests.TestQuitAndLockedFiles();
 CreatureVisualParentTests.Run();
