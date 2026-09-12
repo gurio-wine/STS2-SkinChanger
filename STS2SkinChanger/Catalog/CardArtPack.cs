@@ -80,6 +80,22 @@ internal static partial class CardArtPackScanPolicy
         head.Contains("\"" + BundleFormat + "\"", StringComparison.Ordinal);
 
     /// <summary>
+    /// The presentation a bundle entry asks for. Card Art Editor's full-art mode paints the
+    /// artwork over the whole card instead of leaving it inside the framed art window, so an
+    /// entry exported that way renders through the game's own tall portrait canvas.
+    /// </summary>
+    /// <returns><c>null</c> when the entry keeps the game's framed layout.</returns>
+    public static CardPresentationDefinition? BuildCardPresentation(CardArtPackCard card) =>
+        card.IsFullArt
+            ? new CardPresentationDefinition(
+                UseExpandedPortraitLayout: true,
+                PortraitVisible: true,
+                PortraitBorderVisible: false,
+                BannerVisible: true,
+                TextBackgroundVisible: true)
+            : null;
+
+    /// <summary>
     /// Normalises a pack identifier into something usable as a persisted selection key.
     /// </summary>
     public static string NormalizePackId(string? declaredId, string fileName)

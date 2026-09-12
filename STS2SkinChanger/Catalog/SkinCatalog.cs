@@ -2965,9 +2965,6 @@ internal sealed partial class SkinCatalog : IDisposable
 
         foreach (var pack in packs)
         {
-            // Card-art bundles carry no per-card declarations beyond the artwork itself, but a
-            // bundle exported in full-art mode must reproduce the editor's frameless layout.
-            var fullArt = pack.Cards.Count(card => card.IsFullArt) * 2 >= pack.Cards.Count;
             var byGroup = new Dictionary<string, (Dictionary<string, ResourceAsset> Assets,
                 Dictionary<string, string> Portraits, Dictionary<string, CardPresentationDefinition> Presentations)>(
                 StringComparer.OrdinalIgnoreCase);
@@ -3000,10 +2997,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 asset.AddInlineFile(packCard.SourcePath, packCard.Bytes);
                 bucket.Assets[packCard.SourcePath] = asset;
                 bucket.Portraits[card.TypeName] = packCard.SourcePath;
-                if (fullArt)
+                // The bundle states the display mode per card, so an entry exported as plain art
+                // stays in the framed art window while a full-art entry takes the whole card.
+                if (CardArtPackScanPolicy.BuildCardPresentation(packCard) is { } presentation)
                 {
-                    bucket.Presentations[card.TypeName] = new CardPresentationDefinition(
-                        UseFullFrameArt: true);
+                    bucket.Presentations[card.TypeName] = presentation;
                 }
 
                 covered.Add(card.TypeName);

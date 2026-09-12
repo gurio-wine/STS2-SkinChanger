@@ -599,12 +599,19 @@ internal static class CardSkinControls
         {
             // Some providers use the game's AncientPortrait node as a convenient tall canvas
             // for ordinary alternate art. Keep that canvas and (when requested) its border, but
-            // leave all Ancient-only effects disabled: no candle, Ancient banner, glass overlay,
-            // or black Ancient description background.
+            // leave the Ancient-only effects disabled: no candle, Ancient banner or glass
+            // overlay, and the Ancient description background only on request.
             SetVisible(portrait, false);
             SetVisible(portraitBorder, false);
             SetVisible(frame, false);
             SetVisible(ancientPortrait, true);
+            // The tall canvas already shares the card's aspect, so portrait-aspect provider art
+            // fills it either way. Artwork exported at the art window's wider aspect (a full-art
+            // card-art pack) must cover that canvas instead of being squeezed into it.
+            if (ancientPortrait != null)
+            {
+                ancientPortrait.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
+            }
             SetVisible(ancientGlass, false);
             SetVisible(ancientBanner, false);
             SetVisible(ancientTextBg, false);
@@ -687,7 +694,17 @@ internal static class CardSkinControls
         }
         else if (useExpandedPortrait)
         {
-            SetVisible(ancientTextBg, false);
+            // Artwork that covers the whole card sits behind the description, so the Ancient
+            // type-coloured background is what keeps the text readable. Providers that merely
+            // borrow the tall canvas keep it off unless they ask for it.
+            var expandedTextBackground = presentation.TextBackgroundVisible ?? false;
+            SetVisible(ancientTextBg, expandedTextBackground);
+            if (expandedTextBackground && ancientTextBg is { Texture: null } backgroundWithoutTexture)
+            {
+                backgroundWithoutTexture.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    presentation.AncientTextBackground ?? DefaultAncientTextBackgroundPath(card.Model!));
+            }
             RemoveNormalTextBackground(card);
         }
         else

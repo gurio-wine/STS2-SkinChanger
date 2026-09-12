@@ -73,6 +73,15 @@ internal static class CardArtPackTests
                     abrasive.Bytes.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature),
                 "the card must keep its resource path and a decoded PNG payload.");
 
+            // The bundle's display mode decides the card layout: full art paints the artwork
+            // across the whole card, so it must not render inside the framed art window.
+            var fullArtPresentation = CardArtPackScanPolicy.BuildCardPresentation(abrasive);
+            Require(fullArtPresentation is
+                    { UseExpandedPortraitLayout: true, PortraitVisible: true, UseFullFrameArt: false },
+                "a full-art entry must render through the tall portrait canvas.");
+            Require(CardArtPackScanPolicy.BuildCardPresentation(abrasive with { DisplayMode = "default" }) == null,
+                "an entry that keeps the game's display mode must leave the framed layout alone.");
+
             // Entries without usable art must be dropped instead of registering a broken card.
             File.WriteAllText(
                 Path.Combine(root, "Broken_Pack.cardartpack.json"),
