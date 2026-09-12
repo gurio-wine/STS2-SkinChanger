@@ -15,8 +15,8 @@ internal static class CardArtPackTests
         CheckFormatRules();
         CheckRealPacks();
         Console.WriteLine(
-            "Card art pack contracts passed: bundle parsing, rendered-override preference, " +
-            "malformed-entry rejection and real pack dimensions.");
+            "Card art pack contracts passed: bundle parsing, master-over-crop preference, " +
+            "malformed-entry rejection, canvas routing and real pack dimensions.");
     }
 
     private static void CheckFormatRules()
@@ -30,7 +30,8 @@ internal static class CardArtPackTests
             var tiny = MakePng(600, 456, withAlpha: true);
 
             // Two override objects for the same card: the second must replace the first, and the
-            // cropped png_base64 must win over the uncropped edit source.
+            // uncropped master must win over the pre-rendered art window crop, which cannot fill
+            // a whole card.
             var first = Entry(
                 "res://images/packed/card_portraits/silent/abrasive.png", "full_art", tiny, null);
             var second = Entry(
@@ -72,15 +73,28 @@ internal static class CardArtPackTests
                     abrasive.Bytes.Length > 0 &&
                     abrasive.Bytes.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature),
                 "the card must keep its resource path and a decoded PNG payload.");
+            Require(abrasive.UsesEditSource && ReadPngSize(abrasive.Bytes) == (1212, 1704),
+                $"the uncropped master must be displayed, got {ReadPngSize(abrasive.Bytes)}.");
 
-            // The bundle's display mode decides the card layout: full art paints the artwork
-            // across the whole card, so it must not render inside the framed art window.
-            var fullArtPresentation = CardArtPackScanPolicy.BuildCardPresentation(abrasive);
-            Require(fullArtPresentation is
+            // A card-shaped image covers the whole card through the tall portrait canvas.
+            Require(CardArtPackScanPolicy.BuildCardPresentation(abrasive) is
                     { UseExpandedPortraitLayout: true, PortraitVisible: true, UseFullFrameArt: false },
-                "a full-art entry must render through the tall portrait canvas.");
-            Require(CardArtPackScanPolicy.BuildCardPresentation(abrasive with { DisplayMode = "default" }) == null,
-                "an entry that keeps the game's display mode must leave the framed layout alone.");
+                "a card-shaped image must render through the tall portrait canvas.");
+
+            // The art window's wide crop must never be stretched over a whole card: that is what
+            // magnified the artwork and cropped its sides.
+            var windowCrop = abrasive with
+            {
+                Bytes = rendered,
+                UsesEditSource = false,
+                DisplayMode = "full_art"
+            };
+            Require(!windowCrop.IsCardShaped,
+                "a 1000x760 art window crop must not count as card shaped.");
+            Require(CardArtPackScanPolicy.BuildCardPresentation(windowCrop) == null,
+                "an art window crop must stay in the game's framed art window.");
+            Require(ReadPngSize(windowCrop.Bytes) == (1000, 760),
+                "the framed layout fixture must stay at the art window's own size.");
 
             // Entries without usable art must be dropped instead of registering a broken card.
             File.WriteAllText(
@@ -163,7 +177,8 @@ internal static class CardArtPackTests
             Console.WriteLine(
                 $"  installed pack {pack.Id} ({pack.Name}): {pack.Cards.Count} cards, " +
                 $"full art={pack.Cards.Count(card => card.IsFullArt)}, " +
-                $"cropped={pack.Cards.Count(card => card.UsesRenderedImage)}");
+                $"card shaped={pack.Cards.Count(card => card.IsCardShaped)}, " +
+                $"from master={pack.Cards.Count(card => card.UsesEditSource)}");
         }
 
         var silent = packs.FirstOrDefault(pack => pack.Cards.Any(card => card.CardId == "abrasive"));
@@ -172,12 +187,19 @@ internal static class CardArtPackTests
             return;
         }
 
+        // The whole-card canvas and the artwork must agree on the card's own aspect, otherwise
+        // covering one with the other has to crop and magnify the picture.
+        const double cardAspect = 300.0 / 422.0;
         var sample = silent.Cards.Single(card => card.CardId == "abrasive");
-        Require(sample.UsesRenderedImage,
-            "an installed pack must expose the cropped png_base64 rendition.");
+        Require(sample.UsesEditSource,
+            "an installed pack must display the uncropped master instead of the art window crop.");
+        Require(sample.IsCardShaped,
+            "the displayed card art must be shaped like a card, not like the art window.");
         var (width, height) = ReadPngSize(sample.Bytes);
-        Require(width == 1000 && height == 760,
-            $"the cropped card image must be 1000x760 like the game's own card art, got {width}x{height}.");
+        var aspect = (double)width / height;
+        Require(Math.Abs(aspect - cardAspect) < 0.02,
+            $"the displayed card art must match the card's {cardAspect:F3} aspect, " +
+            $"got {width}x{height} ({aspect:F3}).");
         Require(sample.Bytes.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature),
             "the card image must be a PNG.");
 

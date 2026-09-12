@@ -1155,10 +1155,10 @@ internal static partial class SkinService
     }
 
     /// <summary>
-    /// Takes over pure asset card-art packs. Such a pack is a plain JSON bundle of framed card
-    /// images with no code, no PCK and no manifest, so the game's mod loader never registers it
-    /// and it would otherwise only appear through Card Art Editor's runtime manager. Reading the
-    /// bundle directly makes the artwork usable without requiring that accompanying mod.
+    /// Takes over pure asset card-art packs. Such a pack is a plain JSON bundle of card artwork
+    /// with no code, no PCK and no manifest, so the game's mod loader never registers it and it
+    /// would otherwise only appear through Card Art Editor's runtime manager. Reading the bundle
+    /// directly makes the artwork usable without requiring that accompanying mod.
     /// </summary>
     private static void RegisterCardArtPacks(IEnumerable<CardCatalogEntry> cards)
     {
@@ -1194,8 +1194,8 @@ internal static partial class SkinService
                 return;
             }
 
-            // A pack supplies the complete framed image, so its cards render through our own
-            // full-frame layout and an accompanying editor must yield those layers.
+            // Each card renders through the layout its artwork was composed for, so an
+            // accompanying editor must yield those layers.
             ExternalCardVisualBridge.RegisterArtPackCoverage(cardTypes);
             ModLog.Info(
                 $"已接管 {names.Count} 个纯素材卡图包（{string.Join("、", names)}）；" +

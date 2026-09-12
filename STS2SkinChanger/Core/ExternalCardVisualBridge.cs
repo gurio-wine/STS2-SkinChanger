@@ -53,9 +53,9 @@ internal static class ExternalCardVisualBridge
     public static void WarmUp() => EnumerateAdapters();
 
     /// <summary>
-    /// Records the card types now supplied by a pure asset card-art pack. Their full-frame
-    /// layout belongs to Skin Changer, so an accompanying editor must not also claim the frame
-    /// and text layers for them.
+    /// Records the card types now supplied by a pure asset card-art pack. Their card presentation
+    /// belongs to Skin Changer, so an accompanying editor must not also claim the frame and text
+    /// layers for them.
     /// </summary>
     public static void RegisterArtPackCoverage(IEnumerable<string> cardTypes)
     {

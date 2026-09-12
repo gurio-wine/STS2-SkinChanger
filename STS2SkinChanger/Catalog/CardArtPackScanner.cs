@@ -209,6 +209,17 @@ internal static class CardArtPackScanner
             return null;
         }
 
+        // A full-art entry whose only image is the art window's crop cannot cover a whole card.
+        // Reporting it keeps a pack that disagrees with itself visible instead of silently
+        // rendering the artwork on the smaller canvas.
+        var windowCrops = cards.Count(card => card.IsFullArt && !card.IsCardShaped);
+        if (windowCrops > 0)
+        {
+            warnings.Add(
+                $"卡图包 {packPath} 有 {windowCrops} 张声明全画幅的卡面实际是卡框裁切图，" +
+                "已按卡框尺寸呈现。");
+        }
+
         return new CardArtPack(packId, declaredName ?? packId, packPath, root, cards);
     }
 
@@ -283,7 +294,7 @@ internal static class CardArtPackScanner
             foreach (var card in parsed)
             {
                 if (!target.TryGetValue(card.SourcePath, out var existing) ||
-                    existing.Bytes.Length < card.Bytes.Length)
+                    CardArtPackScanPolicy.ReplacesExisting(existing, card))
                 {
                     target[card.SourcePath] = card with { PackId = owner };
                 }

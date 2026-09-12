@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -7,9 +8,8 @@ namespace STS2SkinChanger.Catalog;
 /// One installed pure asset card-art pack.
 ///
 /// A pack is a Card Art Editor bundle: no code, no PCK and no manifest, just a JSON object
-/// whose <c>overrides</c> array carries a framed PNG per card as base64. The editor already
-/// cropped each image into the card rectangle's aspect ratio, so displaying it needs no
-/// editor behaviour to be replayed.
+/// whose <c>overrides</c> array carries the card art per card as base64, plus the editor's own
+/// crop and adjustment metadata.
 /// </summary>
 internal sealed record CardArtPack(
     string Id,
@@ -31,12 +31,23 @@ internal sealed record CardArtPackCard(
     byte[] Bytes,
     string DisplayMode,
     string ArtType,
-    bool UsesRenderedImage)
+    bool UsesEditSource)
 {
     /// <summary>The pack this entry came from, filled in by the scanner.</summary>
     public string PackId { get; init; } = string.Empty;
 
     public bool IsFullArt => DisplayMode.Equals("full_art", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the artwork was composed for the whole card rather than for the framed art window.
+    ///
+    /// The bundle states a display mode, but the editor composes the image for that mode: full art
+    /// becomes a card-shaped canvas, everything else stays at the art window's wide aspect. The
+    /// image's own shape is therefore what decides where it can be shown without being cropped,
+    /// which keeps a bundle that only ships one rendition honest about the layout it gets.
+    /// </summary>
+    public bool IsCardShaped =>
+        CardArtPackScanPolicy.TryReadPngSize(Bytes, out var width, out var height) && height > width;
 }
 
 /// <summary>
@@ -64,9 +75,9 @@ internal static partial class CardArtPackScanPolicy
     [GeneratedRegex("\"type\"\\s*:\\s*\"(?<v>[^\"]*)\"")]
     private static partial Regex TypeRegex();
 
-    // The rendered override is the framed card image; the edit source is the uncropped master
-    // kept for further editing. Both are matched as a key plus an opening quote, so the shorter
-    // key cannot match inside the longer one.
+    // The pre-rendered card image and the uncropped master the editor keeps for further editing.
+    // Both are matched as a key plus an opening quote, so the shorter key cannot match inside the
+    // longer one.
     [GeneratedRegex("\"png_base64\"\\s*:\\s*\"(?<v>[A-Za-z0-9+/=]*)\"")]
     public static partial Regex RenderedRegex();
 
@@ -79,14 +90,30 @@ internal static partial class CardArtPackScanPolicy
     public static bool IsBundleHeader(ReadOnlySpan<char> head) =>
         head.Contains("\"" + BundleFormat + "\"", StringComparison.Ordinal);
 
+    /// <summary>Reads the pixel size a PNG declares in its IHDR chunk.</summary>
+    public static bool TryReadPngSize(byte[] png, out int width, out int height)
+    {
+        width = 0;
+        height = 0;
+        // 8 signature bytes, then the IHDR chunk length and type, then width and height.
+        if (png.Length < 24 || !png.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature))
+        {
+            return false;
+        }
+
+        width = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16, 4));
+        height = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20, 4));
+        return width > 0 && height > 0;
+    }
+
     /// <summary>
-    /// The presentation a bundle entry asks for. Card Art Editor's full-art mode paints the
-    /// artwork over the whole card instead of leaving it inside the framed art window, so an
-    /// entry exported that way renders through the game's own tall portrait canvas.
+    /// The presentation a bundle entry asks for. Card Art Editor's full-art mode composes the
+    /// artwork onto the whole card instead of into the framed art window, so a card-shaped image
+    /// renders through the game's own tall portrait canvas.
     /// </summary>
-    /// <returns><c>null</c> when the entry keeps the game's framed layout.</returns>
+    /// <returns><c>null</c> when the image keeps the game's framed layout.</returns>
     public static CardPresentationDefinition? BuildCardPresentation(CardArtPackCard card) =>
-        card.IsFullArt
+        card.IsCardShaped
             ? new CardPresentationDefinition(
                 UseExpandedPortraitLayout: true,
                 PortraitVisible: true,
@@ -151,9 +178,13 @@ internal static partial class CardArtPackScanPolicy
             return;
         }
 
-        // An empty value is not a payload: a bundle may declare png_base64 while shipping only
-        // the edit source, and the uncropped master is still better than showing no art at all.
-        var payload = NonEmpty(RenderedRegex(), entry) ?? NonEmpty(EditSourceRegex(), entry);
+        // A static override is displayed from the uncropped master: that is the rendition Card
+        // Art Editor itself imports, and the pre-rendered `png_base64` is only the art window's
+        // crop of it, which cannot fill a whole card. An entry that ships no master still gets
+        // the crop, which the image's own shape then routes into the framed art window.
+        var editSource = NonEmpty(EditSourceRegex(), entry);
+        var rendered = NonEmpty(RenderedRegex(), entry);
+        var payload = editSource ?? rendered;
         if (payload == null)
         {
             return;
@@ -165,20 +196,32 @@ internal static partial class CardArtPackScanPolicy
             return;
         }
 
-        // A bundle may repeat a card; keep the largest rendition available.
-        if (target.TryGetValue(sourcePath, out var existing) && existing.Bytes.Length >= bytes.Length)
-        {
-            return;
-        }
-
-        target[sourcePath] = new CardArtPackCard(
+        // A bundle may repeat a card across renditions, and the better one has to win.
+        var candidate = new CardArtPackCard(
             sourcePath,
             cardId,
             bytes,
             Value(DisplayModeRegex(), entry) ?? "original",
             Value(TypeRegex(), entry) ?? "static",
-            UsesRenderedImage: NonEmpty(RenderedRegex(), entry) != null);
+            UsesEditSource: editSource != null);
+        if (target.TryGetValue(sourcePath, out var existing) &&
+            !ReplacesExisting(existing, candidate))
+        {
+            return;
+        }
+
+        target[sourcePath] = candidate;
     }
+
+    /// <summary>
+    /// Whether a repeated card entry replaces the one already read. The uncropped master beats a
+    /// pre-rendered art window crop whatever their sizes are, and between two renditions of the
+    /// same kind the larger image wins, so a low-resolution sibling cannot downgrade a card.
+    /// </summary>
+    public static bool ReplacesExisting(CardArtPackCard existing, CardArtPackCard candidate) =>
+        candidate.UsesEditSource != existing.UsesEditSource
+            ? candidate.UsesEditSource
+            : candidate.Bytes.Length > existing.Bytes.Length;
 
     private static string? NonEmpty(Regex regex, string entry) =>
         regex.Match(entry) is { Success: true } match && match.Groups["v"].Value.Length > 0

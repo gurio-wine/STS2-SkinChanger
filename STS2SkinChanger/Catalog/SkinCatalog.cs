@@ -2997,8 +2997,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 asset.AddInlineFile(packCard.SourcePath, packCard.Bytes);
                 bucket.Assets[packCard.SourcePath] = asset;
                 bucket.Portraits[card.TypeName] = packCard.SourcePath;
-                // The bundle states the display mode per card, so an entry exported as plain art
-                // stays in the framed art window while a full-art entry takes the whole card.
+                // Each card takes the canvas its artwork was composed for: a card-shaped image
+                // covers the whole card, an art window crop keeps the game's framed layout.
                 if (CardArtPackScanPolicy.BuildCardPresentation(packCard) is { } presentation)
                 {
                     bucket.Presentations[card.TypeName] = presentation;
