@@ -1794,122 +1794,40 @@ Require(
     BaselinePartTakeoverPolicy.ResolveAdoptedDefault(["b.mod", "a.mod"]) == "a.mod",
     "部件接管必须按稳定顺序取得分组默认选择，没有部件时不能伪造默认值。");
 
-// A style/UI package draws the rest of the group it overrides from its own images and its own
-// patches. Those two have to be recognized as belonging to the part, and only for that group.
-var partOwners = PartTakeoverPolicy.ResolveOwners(
-[
-    ("merchant", "CznStyleUI", @"C:\mods\3771060891", true),
-    ("merchant", "Merchant2CuteII", @"C:\mods\3748331824", false),
-    ("", "Nameless", @"C:\mods\1", true)
-]);
+// The merchant selection owns the merchant's own figure and its hand. The room it stands in and the
+// shop interface it opens belong to the style/UI package that drew them and are never bound to a
+// merchant skin, so a shop overhaul keeps looking like itself whatever the player picked.
 Require(
-    partOwners.Count == 1 &&
-    partOwners[0].GroupId == "merchant" &&
-    partOwners[0].OptionId == "CznStyleUI",
-    "只有真正被按部件接管的选项才算部件归属；普通皮肤和缺少分组的信息不能进来自带呈现的接管范围。");
-var partOwner = partOwners[0] with
-{
-    ResourceNamespaces = PartTakeoverPolicy.ResolveResourceNamespaces(
-        partOwners[0].OptionId,
-        [@"C:\mods\3771060891\CznStyleUI.dll", @"C:\mods\3771060891\CznCore.dll"])
-};
+    MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("NMerchantButton", "MerchantButton"),
+        ("Control", "SceneContainer"),
+        ("NMerchantRoom", "MerchantRoom")
+    ]) &&
+    MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("Sprite2D", "HandVisual"),
+        ("NMerchantHand", "MerchantHand"),
+        ("Node2D", "MerchantHandContainer"),
+        ("NMerchantInventory", "MerchantInventory")
+    ]),
+    "商人模型与商人的手属于接管范围：选中该部件时显示作者画的它们，换别的皮肤时交回本体画面。");
 Require(
-    partOwner.OwnsResourcePath("res://CznStyleUI/images/merchant/merchant_room_background.png") &&
-    partOwner.OwnsResourcePath("res://czncore/animations/merchant/safety_merchant_dellang.skel") &&
-    !partOwner.OwnsResourcePath("res://animations/backgrounds/merchant_room/hand/merchanthand.png") &&
-    !partOwner.OwnsResourcePath("res://Merchant2CuteII/images/merchant.png") &&
-    !partOwner.OwnsResourcePath("") &&
-    !partOwner.OwnsResourcePath(null),
-    "作者自带的商店画面必须按其清单 ID 与程序集名归属；部件自身的本体路径、别的 Mod 的画面和空路径都不能被算成它的私有画面。");
-Require(
-    PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(MerchantRoomFixture)) &&
-    PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(MerchantInventoryFixture)) &&
-    !PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(SfxCmdFixture)) &&
-    !PartTakeoverPolicy.TargetsGroupPresentation(partOwner, typeof(FoulPotionFixture)) &&
-    !PartTakeoverPolicy.TargetsGroupPresentation(partOwner, null),
-    "只有该分组自己的场景类型受选择控制；音效命令、药水反应等非画面入口必须继续按作者原意运行。");
-Require(
-    ReferenceEquals(
-        PartTakeoverPolicy.ResolveOwner(
-            "res://CznStyleUI/images/merchant/merchant_idle.png",
-            [partOwner]),
-        partOwner),
-    "按选择对齐商店画面时，只有该部件自带的私有路径能被认出来并还原。");
-
-// A package draws its version of a group while the game builds that group's scene, so a scene that
-// is already standing can only receive that drawing by repeating the very callback that made it.
-var sceneReady = typeof(PartTakeoverSceneFixture).GetMethod(
-    nameof(PartTakeoverSceneFixture._Ready),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-var sceneReadyWithArgument = typeof(PartTakeoverSceneFixture).GetMethod(
-    nameof(PartTakeoverSceneFixture._ReadyWithArgument),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-var siblingReady = typeof(PartTakeoverSiblingSceneFixture).GetMethod(
-    nameof(PartTakeoverSiblingSceneFixture._Ready),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-var refreshTarget = typeof(PartTakeoverNonSceneFixture).GetMethod(
-    nameof(PartTakeoverNonSceneFixture.Refresh),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-var drawScene = typeof(PartTakeoverCallbackFixture).GetMethod(
-    nameof(PartTakeoverCallbackFixture.DrawScene),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-var drawSceneWithState = typeof(PartTakeoverCallbackFixture).GetMethod(
-    nameof(PartTakeoverCallbackFixture.DrawSceneWithState),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-var drawSceneWithUnknownArgument = typeof(PartTakeoverCallbackFixture).GetMethod(
-    nameof(PartTakeoverCallbackFixture.DrawSceneWithUnknownArgument),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-var drawSceneAsInstance = typeof(PartTakeoverCallbackFixture).GetMethod(
-    nameof(PartTakeoverCallbackFixture.DrawSceneAsInstance),
-    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
-Require(
-    PartTakeoverPolicy.IsPresentationInitializer(sceneReady) &&
-    !PartTakeoverPolicy.IsPresentationInitializer(sceneReadyWithArgument) &&
-    !PartTakeoverPolicy.IsPresentationInitializer(drawScene),
-    "只有场景自己、且不接受参数的外观初始化才算「场景第一次呈现自己的地方」；带参数的重载和别的方法都不能被当成画面重建入口。");
-Require(
-    PartTakeoverPolicy.SameOption(partOwner, partOwner with { RootPath = @"C:\mods\other" }) &&
-    !PartTakeoverPolicy.SameOption(partOwner, partOwner with { OptionId = "OtherOverhaul" }) &&
-    !PartTakeoverPolicy.SameOption(partOwner, partOwner with { GroupId = "card" }),
-    "判断是否是同一个部件时，只能按分组和部件选项比较；同一个包的其它信息变化不能算成别的部件。");
-var replayCandidates = new PartTakeoverPatch[]
-{
-    new(sceneReady, drawScene, PartTakeoverPatchKind.Postfix, partOwner),
-    new(sceneReady, drawScene, PartTakeoverPatchKind.Prefix, partOwner),
-    new(siblingReady, drawScene, PartTakeoverPatchKind.Postfix, partOwner),
-    new(sceneReady, drawScene, PartTakeoverPatchKind.Postfix, partOwner with { OptionId = "OtherOverhaul" }),
-    new(refreshTarget, drawScene, PartTakeoverPatchKind.Postfix, partOwner)
-};
-var replayable = PartTakeoverPolicy.ResolveReplayablePresentation(
-    replayCandidates,
-    partOwner,
-    typeof(PartTakeoverSceneFixture));
-Require(
-    replayable.Count == 1 && ReferenceEquals(replayable[0].Callback, drawScene),
-    "重建画面时只能重放「该部件在该分组场景自己的初始化上的后置步骤」：前置步骤、别的场景、别的部件和别的方法都必须排除。");
-var replayScene = new PartTakeoverSceneFixture();
-Require(
-    PartTakeoverPolicy.TryBuildPresentationArguments(drawScene, sceneReady, replayScene, out var sceneArguments) &&
-    sceneArguments.Length == 1 &&
-    ReferenceEquals(sceneArguments[0], replayScene),
-    "重放时作者的回调必须收到正在使用的那个场景实例，而不是新建一个。");
-Require(
-    PartTakeoverPolicy.TryBuildPresentationArguments(
-        drawSceneWithState,
-        sceneReady,
-        replayScene,
-        out var stateArguments) &&
-    stateArguments.Length == 2 &&
-    stateArguments[1] == null,
-    "和前置步骤配对的回调要按中性状态重放，只重复作者自己的画面动作。");
-Require(
-    !PartTakeoverPolicy.TryBuildPresentationArguments(
-        drawSceneWithUnknownArgument,
-        sceneReady,
-        replayScene,
-        out _) &&
-    !PartTakeoverPolicy.TryBuildPresentationArguments(drawSceneAsInstance, sceneReady, replayScene, out _),
-    "读不到游戏参数或不是静态方法的回调不能被猜着重放，只能放弃并保留原样。");
+    !MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("SpineSprite", "SpineSprite"),
+        ("Control", "BgContainer"),
+        ("Control", "SceneContainer"),
+        ("NMerchantRoom", "MerchantRoom")
+    ]) &&
+    !MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("Control", "ShopPanel"),
+        ("NMerchantInventory", "MerchantInventory"),
+        ("NMerchantRoom", "MerchantRoom")
+    ]) &&
+    !MerchantAppearanceScopePolicy.IsMerchantAppearance([]),
+    "商店房间与商店界面永远不进入接管范围：它们始终按作者的原样显示，切换商人皮肤不能改动它们。");
 
 WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
@@ -1955,53 +1873,3 @@ internal sealed class CachedResourceFixture(bool IsValid, string Name)
     internal string Name { get; } = Name;
 }
 
-internal sealed class MerchantRoomFixture;
-
-internal sealed class MerchantInventoryFixture;
-
-internal sealed class SfxCmdFixture;
-
-internal sealed class FoulPotionFixture;
-
-internal sealed class PartTakeoverSceneFixture
-{
-    internal void _Ready()
-    {
-    }
-
-    internal void _ReadyWithArgument(bool flag)
-    {
-        _ = flag;
-    }
-}
-
-internal sealed class PartTakeoverSiblingSceneFixture
-{
-    internal void _Ready()
-    {
-    }
-}
-
-internal sealed class PartTakeoverNonSceneFixture
-{
-    internal void Refresh()
-    {
-    }
-}
-
-internal sealed class PartTakeoverCallbackFixture
-{
-    internal static void DrawScene(PartTakeoverSceneFixture __instance) => _ = __instance;
-
-    internal static void DrawSceneWithState(
-        PartTakeoverSceneFixture __instance,
-        PartTakeoverReplayState? __state) => _ = (__instance, __state);
-
-    internal static void DrawSceneWithUnknownArgument(
-        PartTakeoverSceneFixture __instance,
-        Guid unknown) => _ = (__instance, unknown);
-
-    internal void DrawSceneAsInstance(PartTakeoverSceneFixture __instance) => _ = __instance;
-}
-
-internal sealed class PartTakeoverReplayState;

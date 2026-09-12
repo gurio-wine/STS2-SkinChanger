@@ -64,6 +64,22 @@ internal static class BaselinePartTakeoverTests
             Require(!anchoredProbe.IsBaselinePartTakeover && anchoredProbe.VisualGroupCount == 1,
                 "覆盖商人外观主体的包仍然是被隔离的皮肤提供者，不能降级成部件接管。");
 
+            // The package keeps drawing its own shop scene, merchant model and shop interface. None
+            // of that may be held back, handed back, repeated or removed by this Mod: doing so used
+            // to turn the author's own merchant model and shop interface back into the game
+            // original the moment the player selected that part.
+            var modAssembly = typeof(STS2SkinChanger.Entry).Assembly;
+            Require(
+                modAssembly.GetType("STS2SkinChanger.Core.PartTakeoverScope") == null &&
+                modAssembly.GetType("STS2SkinChanger.Core.PartTakeoverPresentation") == null &&
+                modAssembly.GetType("STS2SkinChanger.Core.PartTakeoverVisualScope")
+                    ?.GetMethod(
+                        "ReleaseOwner",
+                        System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Static) == null,
+                "部件接管只接管该包覆盖、且本体同路径存在的外观资源；作者自己画的商店场景与商店界面必须原样保留，不能被门控、交回、重放或删除。");
+
             using var catalog = SkinCatalog.Build(game, [descriptors[0]]);
             var merchant = catalog.Groups.Single(group => group.Id == "merchant");
             var part = merchant.Options.Single(option => option.Id == "StyleLikeOverhaul");

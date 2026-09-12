@@ -121,9 +121,9 @@ internal static class ManagedSkinModLoader
 
     /// <summary>
     /// Roots of the style/UI packages whose parts this Mod takes over. Such a package is not a skin:
-    /// it keeps loading through the game's own loader and keeps its own callbacks, which follow the
-    /// group's selection instead of being uninstalled like an unselected skin's
-    /// (see <see cref="PartTakeoverScope"/>).
+    /// it keeps loading through the game's own loader and keeps drawing its own shop scene, merchant
+    /// model and shop interface, while only the appearance resources it overrides at a path the game
+    /// also ships become selectable here.
     /// </summary>
     public static IReadOnlyCollection<string> PartTakeoverRoots =>
         [.. ProvidersByIdentity.Values

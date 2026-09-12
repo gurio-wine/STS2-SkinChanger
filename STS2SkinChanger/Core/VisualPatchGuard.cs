@@ -95,9 +95,8 @@ internal static class VisualPatchGuard
     /// <summary>
     /// The roots whose callbacks this guard must never strip: gameplay frameworks, this Mod's own
     /// files, and every package whose parts are taken over. Such a package is not a skin — it keeps
-    /// its own drawing for the group it overrides, bound to that group's selection by
-    /// <see cref="PartTakeoverScope"/>, so its callbacks have to survive for the player to see them
-    /// while the part is selected.
+    /// drawing its own shop scene, merchant model and shop interface, so its callbacks have to
+    /// survive for the player to see them at all.
     /// </summary>
     internal static IReadOnlySet<string> ResolveProtectedRoots(IEnumerable<string>? preservedRuntimeRoots) =>
         new HashSet<string>(

@@ -2,19 +2,23 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Godot;
+using STS2SkinChanger.Catalog;
 
 namespace STS2SkinChanger.Core;
 
 /// <summary>
-/// A style/UI package that overrides parts of a group draws the rest of that group's presentation
-/// from its own images, on nodes the game created. Its group patches are gated on the selection
-/// (see <see cref="PartTakeoverScope"/>), which covers every shop the player enters afterwards.
+/// Keeps the merchant's own figure and hand in line with the merchant selection while a style/UI
+/// package draws them from its own images.
 ///
-/// A shop the player is standing in when the selection changes is already styled, so the art that
-/// package wrote has to be handed back: the game's own value is captured when the room is built,
-/// before any package writes, and the room is reconciled with the selection afterwards. Whatever
-/// the package drew is remembered, so selecting its part again restores its look instead of
-/// requiring another shop visit.
+/// Such a package is not a skin: the game loads it itself, its own code keeps running and it keeps
+/// drawing its own shop. Only the merchant's figure and hand belong to the group the player picks
+/// (see <see cref="MerchantAppearanceScopePolicy"/>); the room and the shop interface are left
+/// untouched, so a style overhaul always looks like itself.
+///
+/// While the package's part is in effect nothing changes — its art is what the player should see.
+/// Choosing another merchant skin or the game original hands the merchant's figure and hand back to
+/// the game's own value, and the package's art returns as soon as its part is selected again.
+/// Nothing the package drew is ever removed or freed.
 /// </summary>
 internal static class PartTakeoverVisualScope
 {
@@ -32,7 +36,7 @@ internal static class PartTakeoverVisualScope
         }
         catch (Exception exception)
         {
-            ModLog.Warn("记录商店房间的原始画面失败：" + exception.GetBaseException().Message);
+            ModLog.Warn("记录商人外观的原始画面失败：" + exception.GetBaseException().Message);
         }
     }
 
@@ -40,10 +44,8 @@ internal static class PartTakeoverVisualScope
     {
         try
         {
-            var owners = PartTakeoverScope.ResolveCatalogOwners()
-                .Where(owner => owner.GroupId.Equals(groupId, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            if (owners.Length == 0)
+            var parts = ResolveParts(groupId);
+            if (parts.Count == 0)
             {
                 return;
             }
@@ -51,100 +53,99 @@ internal static class PartTakeoverVisualScope
             var state = Rooms.GetOrCreateValue(root);
             state.GroupId = groupId;
             var counters = new ReconcileCounters();
-            Walk(root, node => ReconcileNode(state, node, owners, counters));
+            Walk(root, node => ReconcileNode(state, node, parts, counters));
             if (counters.Any)
             {
                 ModLog.Info(
-                    $"商店房间已按当前 {groupId} 选择对齐：还原 {counters.Restored} 处原版画面、" +
-                    $"隐藏 {counters.Hidden} 处部件自带画面、恢复 {counters.Reapplied} 处部件画面。");
+                    $"商人外观已按当前 {groupId} 选择对齐：还原 {counters.Restored} 处原版画面、" +
+                    $"隐藏 {counters.Hidden} 处部件自带画面、恢复 {counters.Reapplied} 处部件画面；" +
+                    "商店房间与商店界面保持作者原样。");
             }
         }
         catch (Exception exception)
         {
-            ModLog.Warn("按选择对齐商店房间画面失败，保留作者画面：" + exception.GetBaseException().Message);
+            ModLog.Warn("按选择对齐商人外观失败，保留作者画面：" + exception.GetBaseException().Message);
         }
     }
 
-    /// <summary>
-    /// Hands back everything the package drew in this scene: the values it overwrote return to the
-    /// game's own value and the nodes it added are removed. Used before its presentation is drawn
-    /// again for the current selection, so a repeated draw cannot stack onto the previous one.
-    /// </summary>
-    public static void ReleaseOwner(Node root, PartTakeoverOwner owner)
+    /// <summary>The selectable parts of this group and the resource namespaces their own art uses.</summary>
+    private static IReadOnlyList<OwnedPart> ResolveParts(string groupId)
     {
+        var catalog = SkinService.Catalog;
+        if (catalog == null)
+        {
+            return [];
+        }
+
+        var parts = new List<OwnedPart>();
+        foreach (var group in catalog.Groups)
+        {
+            if (!group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var option in group.Options.Where(option => option.IsBaselinePartOverride))
+            {
+                parts.Add(new OwnedPart(option.Id, ResolveNamespaces(option)));
+            }
+        }
+
+        return parts;
+    }
+
+    /// <summary>
+    /// The namespaces a package's own art appears under: the manifest ID it published with and the
+    /// file names of the assemblies it ships. Both are read from disk, never assumed to be equal.
+    /// </summary>
+    private static IReadOnlySet<string> ResolveNamespaces(SkinOption option)
+    {
+        var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { option.Id };
+        if (option.ProviderRootPath == null)
+        {
+            return namespaces;
+        }
+
         try
         {
-            if (!Rooms.TryGetValue(root, out var state))
+            foreach (var assembly in Directory.EnumerateFiles(
+                         option.ProviderRootPath,
+                         "*.dll",
+                         SearchOption.TopDirectoryOnly))
             {
-                return;
-            }
-
-            var released = 0;
-            foreach (var entry in state.Nodes.Values.ToArray())
-            {
-                if (!entry.Node.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node))
+                var name = Path.GetFileNameWithoutExtension(assembly);
+                if (!string.IsNullOrWhiteSpace(name))
                 {
-                    continue;
+                    namespaces.Add(name);
                 }
-
-                foreach (var slot in ResolveTextureSlots(node))
-                {
-                    if (!entry.AppliedOwners.TryGetValue(slot.Name, out var appliedOwner) ||
-                        !PartTakeoverPolicy.SameOption(appliedOwner, owner))
-                    {
-                        continue;
-                    }
-
-                    if (ReferenceEquals(slot.GetValue(node), entry.Applied.GetValueOrDefault(slot.Name)))
-                    {
-                        slot.SetValue(node, entry.Baselines.GetValueOrDefault(slot.Name));
-                        released++;
-                    }
-
-                    entry.AppliedOwners.Remove(slot.Name);
-                    entry.Applied.Remove(slot.Name);
-                }
-            }
-
-            foreach (var package in state.PackageNodes
-                         .Where(pair => PartTakeoverPolicy.SameOption(pair.Value.Owner, owner))
-                         .ToArray())
-            {
-                state.PackageNodes.Remove(package.Key);
-                if (!package.Value.Node.TryGetTarget(out var node) || !GodotObject.IsInstanceValid(node))
-                {
-                    continue;
-                }
-
-                node.GetParent()?.RemoveChild(node);
-                node.QueueFree();
-                released++;
-            }
-
-            if (released > 0)
-            {
-                ModLog.Info($"已交回部件 {owner.OptionId} 的 {released} 处商店画面，准备按当前选择重画。");
             }
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            ModLog.Warn("交回部件画面失败，保留作者画面：" + exception.GetBaseException().Message);
+            ModLog.Warn($"读取部件接管包 {option.Id} 的程序集名失败，仅使用清单 ID：" + exception.Message);
         }
+
+        return namespaces;
     }
 
     private static void ReconcileNode(
         RoomVisualState state,
         Node node,
-        IReadOnlyList<PartTakeoverOwner> owners,
+        IReadOnlyList<OwnedPart> parts,
         ReconcileCounters counters)
     {
+        if (!IsInScope(node))
+        {
+            // The room and the shop interface belong to the package, not to this group's selection.
+            return;
+        }
+
         if (!state.Nodes.TryGetValue(node.GetInstanceId(), out var entry))
         {
-            if (ResolveNodeOwner(node, owners) is { } addedBy)
+            if (ResolveNodeOwner(node, parts) is { } addedBy)
             {
-                // The package added this while its part was in effect. Its own art has no original
-                // to hand back, so it is shown with its own part and hidden with any other choice,
-                // exactly like the part resources themselves.
+                // The package added this while drawing the merchant. It has no game original to
+                // hand back, so it is shown with its own part and hidden with any other choice.
                 ApplyAddedNode(state, node, addedBy, counters);
                 return;
             }
@@ -168,11 +169,11 @@ internal static class PartTakeoverVisualScope
             var applied = entry.Applied.GetValueOrDefault(slot.Name);
             if (!ReferenceEquals(current, baseline))
             {
-                if (baseline != null && PartTakeoverPolicy.ResolveOwner(current?.ResourcePath, owners) is { } writer)
+                if (baseline != null && ResolveOwner(current?.ResourcePath, parts) is { } writer)
                 {
                     entry.AppliedOwners[slot.Name] = writer;
                     entry.Applied[slot.Name] = current;
-                    if (!PartTakeoverScope.IsOptionSelected(writer.GroupId, writer.OptionId))
+                    if (!IsPartSelected(state.GroupId, writer))
                     {
                         slot.SetValue(node, baseline);
                         counters.Restored++;
@@ -193,7 +194,7 @@ internal static class PartTakeoverVisualScope
 
             if (appliedOwner != null && applied != null &&
                 !ReferenceEquals(applied, baseline) &&
-                PartTakeoverScope.IsOptionSelected(appliedOwner.GroupId, appliedOwner.OptionId))
+                IsPartSelected(state.GroupId, appliedOwner))
             {
                 slot.SetValue(node, applied);
                 counters.Reapplied++;
@@ -204,7 +205,7 @@ internal static class PartTakeoverVisualScope
     private static void ApplyAddedNode(
         RoomVisualState state,
         Node node,
-        PartTakeoverOwner owner,
+        OwnedPart owner,
         ReconcileCounters counters)
     {
         var id = node.GetInstanceId();
@@ -223,7 +224,7 @@ internal static class PartTakeoverVisualScope
             return;
         }
 
-        var selected = PartTakeoverScope.IsOptionSelected(entry.Owner.GroupId, entry.Owner.OptionId);
+        var selected = IsPartSelected(state.GroupId, entry.Owner);
         var visible = selected && entry.OriginalVisible;
         if (item.Visible == visible)
         {
@@ -241,8 +242,16 @@ internal static class PartTakeoverVisualScope
         }
     }
 
+    private static bool IsPartSelected(string groupId, OwnedPart part) =>
+        SkinService.GetDisplayedSelection(groupId).Equals(part.OptionId, StringComparison.OrdinalIgnoreCase);
+
     private static void Remember(RoomVisualState state, Node node)
     {
+        if (!IsInScope(node))
+        {
+            return;
+        }
+
         var id = node.GetInstanceId();
         if (state.Nodes.ContainsKey(id))
         {
@@ -258,16 +267,27 @@ internal static class PartTakeoverVisualScope
         state.Nodes[id] = entry;
     }
 
+    /// <summary>Whether this node's own art belongs to the merchant's figure or its hand.</summary>
+    private static bool IsInScope(Node node) =>
+        MerchantAppearanceScopePolicy.IsMerchantAppearance(DescribeAncestry(node));
+
+    private static IEnumerable<(string TypeName, string NodeName)> DescribeAncestry(Node node)
+    {
+        for (var current = node; current != null; current = current.GetParent())
+        {
+            yield return (current.GetType().Name, current.Name.ToString());
+        }
+    }
+
     /// <summary>
     /// The part owner a node's art belongs to: its own texture, its own instanced scene, or the
     /// nearest ancestor that was instanced from the package's own scene file.
     /// </summary>
-    internal static PartTakeoverOwner? ResolveNodeOwner(Node node, IReadOnlyList<PartTakeoverOwner> owners)
+    private static OwnedPart? ResolveNodeOwner(Node node, IReadOnlyList<OwnedPart> parts)
     {
         foreach (var slot in ResolveTextureSlots(node))
         {
-            if (PartTakeoverPolicy.ResolveOwner((slot.GetValue(node) as Texture2D)?.ResourcePath, owners)
-                is { } fromTexture)
+            if (ResolveOwner((slot.GetValue(node) as Texture2D)?.ResourcePath, parts) is { } fromTexture)
             {
                 return fromTexture;
             }
@@ -275,13 +295,31 @@ internal static class PartTakeoverVisualScope
 
         for (var current = node; current != null; current = current.GetParent())
         {
-            if (PartTakeoverPolicy.ResolveOwner(current.SceneFilePath, owners) is { } fromScene)
+            if (ResolveOwner(current.SceneFilePath, parts) is { } fromScene)
             {
                 return fromScene;
             }
         }
 
         return null;
+    }
+
+    private static OwnedPart? ResolveOwner(string? resourcePath, IReadOnlyList<OwnedPart> parts)
+    {
+        if (string.IsNullOrWhiteSpace(resourcePath))
+        {
+            return null;
+        }
+
+        const string Prefix = "res://";
+        var path = resourcePath.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase)
+            ? resourcePath[Prefix.Length..]
+            : resourcePath;
+        var separator = path.IndexOf('/');
+        var head = separator < 0 ? path : path[..separator];
+        return head.Length == 0
+            ? null
+            : parts.FirstOrDefault(part => part.Namespaces.Contains(head));
     }
 
     private static IReadOnlyList<TextureSlot> ResolveTextureSlots(Node node)
@@ -316,28 +354,31 @@ internal static class PartTakeoverVisualScope
         }
     }
 
-    internal sealed class RoomVisualState
+    /// <summary>One selectable part of the group and the namespaces its own art appears under.</summary>
+    private sealed record OwnedPart(string OptionId, IReadOnlySet<string> Namespaces);
+
+    private sealed class RoomVisualState
     {
         public string GroupId { get; set; } = string.Empty;
         public Dictionary<ulong, NodeVisualState> Nodes { get; } = [];
         public Dictionary<ulong, PackageNodeState> PackageNodes { get; } = [];
     }
 
-    internal sealed class NodeVisualState(WeakReference<Node> node)
+    private sealed class NodeVisualState(WeakReference<Node> node)
     {
         public WeakReference<Node> Node { get; } = node;
         public Dictionary<string, Texture2D?> Baselines { get; } = new(StringComparer.Ordinal);
-        public Dictionary<string, PartTakeoverOwner> AppliedOwners { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, OwnedPart> AppliedOwners { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, Texture2D?> Applied { get; } = new(StringComparer.Ordinal);
     }
 
-    internal sealed class PackageNodeState(
+    private sealed class PackageNodeState(
         WeakReference<Node> node,
-        PartTakeoverOwner owner,
+        OwnedPart owner,
         bool originalVisible)
     {
         public WeakReference<Node> Node { get; } = node;
-        public PartTakeoverOwner Owner { get; } = owner;
+        public OwnedPart Owner { get; } = owner;
         public bool OriginalVisible { get; } = originalVisible;
     }
 
