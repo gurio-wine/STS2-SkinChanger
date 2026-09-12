@@ -39,6 +39,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<CardSkinGroup> _configuredCardGroups;
     private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
+    // Card-art packs are discovered after the models exist, so their options arrive later than
+    // the PCK-derived ones and are merged into the same final group list.
+    private readonly Dictionary<string, CardSkinGroup> _artPackCardGroups =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationPaths;
@@ -2339,7 +2343,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var directFile = baseline == null ? null : FindDirectFile(baseline, normalizedPath);
         if (directFile != null)
         {
-            var text = Encoding.UTF8.GetString(directFile.Archive.ReadFile(directFile.Path));
+            var text = Encoding.UTF8.GetString(directFile.Read());
             var atlasPath = EmbeddedResourcePathRegex()
                 .Matches(text)
                 .Select(match => match.Value)
@@ -2765,7 +2769,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var text = Encoding.UTF8.GetString(pending.File.Archive.ReadFile(pending.File.Path));
+            var text = Encoding.UTF8.GetString(pending.File.Read());
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
                 var sourcePath = match.Value;
@@ -2937,9 +2941,144 @@ internal sealed partial class SkinCatalog : IDisposable
     private static string NormalizeResourceToken(string value) =>
         new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
-    public void FinalizeCardGroups(IEnumerable<CardCatalogEntry> cards)
+    /// <summary>
+    /// Registers pure asset card-art packs as first-class card options. A pack lists artwork
+    /// per vanilla portrait path, so each card is matched through the game's own catalog entry
+    /// instead of through any provider namespace or folder convention.
+    /// </summary>
+    /// <returns>The card types covered by at least one pack, and the packs that were used.</returns>
+    public (IReadOnlySet<string> CardTypes, IReadOnlyList<string> PackNames) AttachCardArtPacks(
+        IEnumerable<CardArtPack> packs,
+        IEnumerable<CardCatalogEntry> cards)
     {
+        var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedPacks = new List<string>();
+        // A catalog built without its constructor (test fixtures) has nowhere to store options.
+        if (_artPackCardGroups == null)
+        {
+            return (covered, usedPacks);
+        }
+
         var cardEntries = cards
+            .Where(card => !string.IsNullOrWhiteSpace(card.PortraitPath))
+            .ToArray();
+
+        foreach (var pack in packs)
+        {
+            // Card-art bundles carry no per-card declarations beyond the artwork itself, but a
+            // bundle exported in full-art mode must reproduce the editor's frameless layout.
+            var fullArt = pack.Cards.Count(card => card.IsFullArt) * 2 >= pack.Cards.Count;
+            var byGroup = new Dictionary<string, (Dictionary<string, ResourceAsset> Assets,
+                Dictionary<string, string> Portraits, Dictionary<string, CardPresentationDefinition> Presentations)>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var packCard in pack.Cards)
+            {
+                var card = FindCardForPackEntry(packCard, cardEntries);
+                if (card == null ||
+                    !packCard.SourcePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var groupId = card.CatalogGroupId;
+                if (string.IsNullOrWhiteSpace(groupId))
+                {
+                    continue;
+                }
+
+                // Create the option lazily so a pack that matches nothing registers nothing.
+                if (!byGroup.TryGetValue(groupId, out var bucket))
+                {
+                    bucket = (new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                        new Dictionary<string, CardPresentationDefinition>(StringComparer.OrdinalIgnoreCase));
+                    byGroup.Add(groupId, bucket);
+                }
+
+                var asset = new ResourceAsset(packCard.SourcePath);
+                asset.AddInlineFile(packCard.SourcePath, packCard.Bytes);
+                bucket.Assets[packCard.SourcePath] = asset;
+                bucket.Portraits[card.TypeName] = packCard.SourcePath;
+                if (fullArt)
+                {
+                    bucket.Presentations[card.TypeName] = new CardPresentationDefinition(
+                        UseFullFrameArt: true);
+                }
+
+                covered.Add(card.TypeName);
+            }
+
+            if (byGroup.Count == 0)
+            {
+                continue;
+            }
+
+            usedPacks.Add(pack.Name);
+            foreach (var (groupId, bucket) in byGroup)
+            {
+                // Registered as one group per library category, matching how a PCK provider's
+                // card option is scoped, so the pack appears on the same rows the player expects.
+                AddCardOption(_artPackCardGroups, groupId, new CardSkinOption(
+                    pack.Id,
+                    pack.Name,
+                    bucket.Portraits,
+                    new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
+                    PckAssets: bucket.Assets,
+                    ProviderRootPath: pack.Root,
+                    ProviderId: pack.Id,
+                    Presentations: bucket.Presentations));
+            }
+        }
+
+        return (covered, usedPacks);
+    }
+
+    /// <summary>
+    /// Card types a pack supplies. A pack addresses cards by artwork path, so a covered card
+    /// whose pool lives in another library category must still be listed there.
+    /// </summary>
+    public IReadOnlySet<string> GetArtPackCardTypes() =>
+        (_artPackCardGroups?.Values ?? Enumerable.Empty<CardSkinGroup>())
+            .SelectMany(group => group.Options)
+            .SelectMany(option => option.NormalPortraits.Keys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static CardCatalogEntry? FindCardForPackEntry(
+        CardArtPackCard packCard,
+        IReadOnlyList<CardCatalogEntry> cards)
+    {
+        var token = NormalizeCardToken(packCard.CardId);
+        if (token.Length == 0)
+        {
+            return null;
+        }
+
+        CardCatalogEntry? match = null;
+        foreach (var card in cards)
+        {
+            var portrait = TryGetCardArtIdentity(card.PortraitPath);
+            var matches = portrait != null && CardStemsMatch(token, portrait.Stem) ||
+                          CardStemsMatch(token, NormalizeCardToken(card.TypeName));
+            if (!matches)
+            {
+                continue;
+            }
+
+            // An ambiguous stem must not be routed to an arbitrary card.
+            if (match != null)
+            {
+                return null;
+            }
+
+            match = card;
+        }
+
+        return match;
+    }
+
+    public void FinalizeCardGroups(IEnumerable<CardCatalogEntry> cards)
+    {        var cardEntries = cards
             .Where(card => !string.IsNullOrWhiteSpace(card.PortraitPath) &&
                            !string.IsNullOrWhiteSpace(card.CatalogGroupId) &&
                            !string.IsNullOrWhiteSpace(card.FilterGroupId))
@@ -3176,6 +3315,63 @@ internal sealed partial class SkinCatalog : IDisposable
                 };
                 AddCardOption(groups, card.PoolGroupId, scoped);
                 AddCardOption(groups, "ancients", scoped);
+            }
+        }
+
+        // Card-art packs are merged last so a PCK provider that declares the same id keeps its
+        // own definition, and a pack-only card still reaches the library listing below.
+        // A catalog built without its constructor (test fixtures) simply has no packs.
+        foreach (var artPackGroup in _artPackCardGroups?.Values ?? Enumerable.Empty<CardSkinGroup>())
+        {
+            foreach (var option in artPackGroup.Options)
+            {
+                AddCardOption(groups, artPackGroup.Id, option);
+            }
+        }
+
+        // Every card a pack addresses is listed under its own library filters, including cards
+        // whose baseline portrait lives in another category (a token inside a character pack).
+        foreach (var coveredType in GetArtPackCardTypes())
+        {
+            if (!cardsByType.TryGetValue(coveredType, out var coveredCard))
+            {
+                continue;
+            }
+
+            foreach (var groupId in new[] { coveredCard.CatalogGroupId, coveredCard.FilterGroupId }
+                         .Where(id => !string.IsNullOrWhiteSpace(id))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!groups.TryGetValue(groupId, out var coveredGroup))
+                {
+                    continue;
+                }
+
+                foreach (var option in coveredGroup.Options.ToArray())
+                {
+                    if (!option.NormalPortraits.ContainsKey(coveredType) &&
+                        !option.CardPresentations.ContainsKey(coveredType))
+                    {
+                        continue;
+                    }
+
+                    AddCardOption(groups, groupId, option with
+                    {
+                        NormalPortraits = option.NormalPortraits
+                            .Where(pair => pair.Key.Equals(coveredType, StringComparison.OrdinalIgnoreCase))
+                            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase),
+                        AncientPortraits = new Dictionary<string, AncientCardPortrait>(
+                            StringComparer.OrdinalIgnoreCase),
+                        CardPresentations = option.CardPresentations
+                            .Where(pair => pair.Key.Equals(coveredType, StringComparison.OrdinalIgnoreCase))
+                            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase),
+                        Assets = option.Assets
+                            .Where(pair => pair.Key.Equals(
+                                option.NormalPortraits.GetValueOrDefault(coveredType),
+                                StringComparison.OrdinalIgnoreCase))
+                            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+                    });
+                }
             }
         }
 
@@ -3819,7 +4015,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return [];
         }
 
-        var text = Encoding.UTF8.GetString(file.Archive.ReadFile(file.Path));
+        var text = Encoding.UTF8.GetString(file.Read());
         return EmbeddedResourcePathRegex()
             .Matches(text)
             .Select(match => match.Value)
@@ -3880,7 +4076,7 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             // 扫描始终用原始文本（提供者索引按原始路径登记），写入时才做别名重写。
-            var bytes = pending.File.Archive.ReadFile(pending.File.Path);
+            var bytes = pending.File.Read();
             var text = Encoding.UTF8.GetString(bytes);
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
@@ -3931,7 +4127,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 // (.scn/.res) 内部无法重写，其回退引用会落到这些原始路径副本，
                 // 重写后整条链都指向别名空间的新鲜副本，避免命中游戏缓存的
                 // 原版贴图导致预览图混用资源。
-                var dependencyBytes = file.Archive.ReadFile(file.Path);
+                var dependencyBytes = file.Read();
                 if (IsRewritableTextResource(file.Path))
                 {
                     dependencyBytes = RewriteTextResource(
@@ -3953,7 +4149,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         void Enqueue(PckResourceIndex? index, ResourceFile file)
         {
-            var key = (index?.Mod.Id ?? file.Archive.Path) + "\n" + file.Path;
+            var key = (index?.Mod.Id ?? file.ArchivePath) + "\n" + file.Path;
             if (queued.Add(key))
             {
                 queue.Enqueue((index, file));
@@ -4037,7 +4233,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return false;
         }
 
-        bytes = directFile.Archive.ReadFile(directFile.Path);
+        bytes = directFile.Read();
         return bytes.Length > 0;
     }
 
@@ -4175,7 +4371,7 @@ internal sealed partial class SkinCatalog : IDisposable
                         .Cast<ResourceFile>()
                         .Concat(resource.PayloadFiles))
                     .DistinctBy(
-                        file => file.Archive.Path + "\n" + file.Path,
+                        file => file.ArchivePath + "\n" + file.Path,
                         StringComparer.OrdinalIgnoreCase)
                     .Select(file => new AliasedDependencyReference(
                         IsRewritableTextResource(file.Path),
@@ -4188,7 +4384,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             if (resource.DirectFile != null)
             {
-                var bytes = resource.DirectFile.Archive.ReadFile(resource.DirectFile.Path);
+                var bytes = resource.DirectFile.Read();
                 files[sourceAliases[resource.SourcePath]] = RewriteAliasedResourceBytes(
                     resource.DirectFile.Path,
                     bytes,
@@ -4212,7 +4408,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var payloadFile in resource.PayloadFiles)
             {
-                var bytes = payloadFile.Archive.ReadFile(payloadFile.Path);
+                var bytes = payloadFile.Read();
                 files[payloadAliases[payloadFile.Path]] = RewriteAliasedResourceBytes(
                     payloadFile.Path,
                     bytes,
@@ -4227,7 +4423,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var remapText = Encoding.UTF8.GetString(resource.RemapFile.Archive.ReadFile(resource.RemapFile.Path));
+            var remapText = Encoding.UTF8.GetString(resource.RemapFile.Read());
             var replacements = new Dictionary<string, string>(sourceAliases, StringComparer.OrdinalIgnoreCase);
             foreach (Match match in ResourcePathRegex().Matches(remapText))
             {
@@ -5787,10 +5983,11 @@ internal sealed partial class SkinCatalog : IDisposable
             var path = NormalizeTakeoverPath(file.Path);
             var baselineFile = baseline.Files.FirstOrDefault(candidate =>
                 NormalizeTakeoverPath(candidate.Path).Equals(path, StringComparison.OrdinalIgnoreCase));
+            // A card-art pack can supply exactly the bytes a mounted PCK already exposes.
+            // Compare payloads so the identical portrait is not registered twice.
             if (baselineFile == null ||
-                file.Archive.GetFileSize(file.Path) != baselineFile.Archive.GetFileSize(baselineFile.Path) ||
-                !file.Archive.GetFileMd5(file.Path)
-                    .SequenceEqual(baselineFile.Archive.GetFileMd5(baselineFile.Path)))
+                file.IsInline != baselineFile.IsInline ||
+                !file.HasSameContentAs(baselineFile))
             {
                 return true;
             }
@@ -6310,7 +6507,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var file in asset.Files.Where(file => MayContainResourceReferences(file.Path)))
             {
-                var text = Encoding.UTF8.GetString(file.Archive.ReadFile(file.Path));
+                var text = Encoding.UTF8.GetString(file.Read());
                 foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
                 {
                     Include(index.Assets.GetValueOrDefault(match.Value) ??
@@ -7782,9 +7979,92 @@ internal sealed class ResourceAsset(string sourcePath)
             Files.Add(new ResourceFile(archive, path));
         }
     }
+
+    // Card-art packs are plain JSON bundles rather than PCK archives, so their decoded
+    // images have no archive behind them. They join the same asset chain as an already
+    // materialised payload so every downstream consumer keeps working unchanged.
+    public void AddInlineFile(string path, byte[] bytes)
+    {
+        if (Files.All(file => !file.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+        {
+            Files.Add(new ResourceFile(path, bytes));
+        }
+    }
 }
 
-internal sealed record ResourceFile(PckArchive Archive, string Path);
+internal sealed record ResourceFile
+{
+    private readonly PckArchive? _archive;
+
+    public ResourceFile(PckArchive archive, string path)
+    {
+        _archive = archive;
+        Path = path;
+    }
+
+    public ResourceFile(string path, byte[] inlineBytes)
+    {
+        Path = path;
+        InlineBytes = inlineBytes;
+    }
+
+    public string Path { get; }
+
+    /// <summary>
+    /// Bytes carried outside any archive. Only set for inline pack payloads.
+    /// </summary>
+    public byte[]? InlineBytes { get; }
+
+    /// <summary>
+    /// The owning archive. Inline payloads have none, so callers that group files by
+    /// archive must filter on <see cref="IsInline"/> first instead of relying on null.
+    /// </summary>
+    public PckArchive Archive => _archive ??
+        throw new InvalidOperationException(
+            $"资源 {Path} 由卡图包内联提供，没有对应的 PCK 归档。");
+
+    public bool IsInline => InlineBytes != null;
+
+    public byte[] Read() => InlineBytes ?? Archive.ReadFile(Path);
+
+    /// <summary>
+    /// Content comparison across both storage kinds. A card-art pack can supply the exact
+    /// same bytes that a mounted provider PCK already exposes, so de-duplication must compare
+    /// payloads rather than storage origins.
+    /// </summary>
+    public bool HasSameContentAs(ResourceFile other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+        if (!SkinCatalog.NormalizeTakeoverPath(other.Path).Equals(
+                SkinCatalog.NormalizeTakeoverPath(Path),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (IsInline && other.IsInline)
+        {
+            return InlineBytes!.AsSpan().SequenceEqual(other.InlineBytes!);
+        }
+
+        var mine = Read();
+        var theirs = other.Read();
+        return mine.Length == theirs.Length &&
+               System.Security.Cryptography.SHA256.HashData(mine).AsSpan()
+                   .SequenceEqual(System.Security.Cryptography.SHA256.HashData(theirs));
+    }
+
+    /// <summary>
+    /// Archive identity used for de-duplication and file-size comparison. Inline pack
+    /// payloads share one synthetic identity because their bytes are held in memory.
+    /// </summary>
+    public string ArchivePath => IsInline ? InlineArchiveToken : Archive.Path;
+
+    private const string InlineArchiveToken = "<inline-card-art-pack>";
+}
 
 internal sealed partial class PckResourceIndex : IDisposable
 {

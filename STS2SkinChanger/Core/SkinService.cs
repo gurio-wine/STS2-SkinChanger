@@ -1127,6 +1127,7 @@ internal static partial class SkinService
                 InitializeMonsterSkinCategoriesAfterModels();
                 InitializeEventSkinCategoriesAfterModels();
                 var entries = BuildCardCatalogEntries(ModelDb.AllCards);
+                RegisterCardArtPacks(entries);
 
                 Catalog.FinalizeCardGroups(entries);
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
@@ -1151,6 +1152,79 @@ internal static partial class SkinService
                 ModLog.Error("按卡牌总览分类卡牌皮肤失败：" + exception);
             }
         }
+    }
+
+    /// <summary>
+    /// Takes over pure asset card-art packs. Such a pack is a plain JSON bundle of framed card
+    /// images with no code, no PCK and no manifest, so the game's mod loader never registers it
+    /// and it would otherwise only appear through Card Art Editor's runtime manager. Reading the
+    /// bundle directly makes the artwork usable without requiring that accompanying mod.
+    /// </summary>
+    private static void RegisterCardArtPacks(IEnumerable<CardCatalogEntry> cards)
+    {
+        var catalog = Catalog;
+        if (catalog == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var roots = CardArtPackScanRoots();
+            if (roots.Count == 0)
+            {
+                return;
+            }
+
+            var scan = CardArtPackScanner.Scan(roots);
+            foreach (var warning in scan.Warnings)
+            {
+                ModLog.Warn(warning);
+            }
+
+            var packs = scan.Packs;
+            if (packs.Count == 0)
+            {
+                return;
+            }
+
+            var (cardTypes, names) = catalog.AttachCardArtPacks(packs, cards);
+            if (cardTypes.Count == 0)
+            {
+                return;
+            }
+
+            // A pack supplies the complete framed image, so its cards render through our own
+            // full-frame layout and an accompanying editor must yield those layers.
+            ExternalCardVisualBridge.RegisterArtPackCoverage(cardTypes);
+            ModLog.Info(
+                $"已接管 {names.Count} 个纯素材卡图包（{string.Join("、", names)}）；" +
+                $"覆盖 {cardTypes.Count} 张卡牌，无需 Card Art Editor 即可选用。");
+        }
+        catch (Exception exception)
+        {
+            // An unreadable pack must never block the normal catalog from finishing.
+            ModLog.Warn("接管纯素材卡图包失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    /// <summary>
+    /// The Workshop content folder that holds installed mods. A card-art pack has no manifest,
+    /// so it is not visible through the game's mod list and must be discovered on disk.
+    /// </summary>
+    private static IReadOnlyList<string> CardArtPackScanRoots()
+    {
+        var roots = new List<string>();
+        foreach (var mod in ManagedSkinModLoader.GetCatalogMods())
+        {
+            var directory = Path.GetDirectoryName(mod.path);
+            if (!string.IsNullOrWhiteSpace(directory) && !roots.Contains(directory, StringComparer.OrdinalIgnoreCase))
+            {
+                roots.Add(directory);
+            }
+        }
+
+        return roots;
     }
 
     private static CardCatalogEntry[] BuildCardCatalogEntries(IEnumerable<CardModel> cards)
@@ -5442,7 +5516,7 @@ internal static partial class SkinService
         // the selected overlay. Other files from a multi-group PCK must stay on the baseline.
         var selectedProviderOverlayPaths = selectedOverlay
             .Where(pair =>
-                largeProviderMountPlan.PromotedPackPaths.Contains(pair.Value.Archive.Path))
+                largeProviderMountPlan.PromotedPackPaths.Contains(pair.Value.ArchivePath))
             .Select(pair => pair.Key);
         foreach (var ownedPath in
                  PromotedPackOverlayPolicy.FindBaselinePathsShadowingSelectedRemaps(
@@ -5454,7 +5528,7 @@ internal static partial class SkinService
 
         foreach (var selectedFile in selectedOverlay)
         {
-            if (largeProviderMountPlan.PromotedPackPaths.Contains(selectedFile.Value.Archive.Path) &&
+            if (largeProviderMountPlan.PromotedPackPaths.Contains(selectedFile.Value.ArchivePath) &&
                 selectedFile.Key.Equals(
                     selectedFile.Value.Path,
                     StringComparison.OrdinalIgnoreCase) &&
@@ -6021,7 +6095,7 @@ internal static partial class SkinService
         foreach (var pair in files.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
         {
             AppendSignaturePart(hash, pair.Key);
-            AppendSignaturePart(hash, pair.Value.Archive.Path);
+            AppendSignaturePart(hash, pair.Value.ArchivePath);
             AppendSignaturePart(hash, pair.Value.Path);
         }
 
