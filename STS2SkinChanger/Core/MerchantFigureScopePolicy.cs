@@ -55,4 +55,14 @@ internal static class MerchantFigureScopePolicy
     /// </summary>
     internal static bool ShouldRestoreLayout(bool partSelected, bool layoutDiffersFromRest) =>
         !partSelected && layoutDiffersFromRest;
+
+    /// <summary>
+    /// Whether a catalogue preview may switch the game's own merchant figure back on. The preview
+    /// clears a provider's transparent presentation state for every entry, which is what a provider
+    /// whose merchant button ships transparent needs. The package switched that very node off for
+    /// the figure it draws itself, though, and switching it back on draws the game's merchant over
+    /// the author's.
+    /// </summary>
+    internal static bool ShouldRevealGameFigure(bool selectedPartDrawsFigure) =>
+        !selectedPartDrawsFigure;
 }

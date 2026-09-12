@@ -218,6 +218,41 @@ internal static class PartTakeoverVisualScope
         return false;
     }
 
+    /// <summary>
+    /// Whether the part selected for this room is drawing the merchant's figure with its own art right
+    /// now, which is also the state in which the author switched the game's own figure off.
+    ///
+    /// The catalogue preview clears a provider's transparent presentation state by switching the
+    /// game's named figure nodes back on. Where the selection draws that figure itself, switching the
+    /// game's node on again would draw the game's merchant over the author's.
+    /// </summary>
+    public static bool SelectedPartDrawsFigure(Node root)
+    {
+        try
+        {
+            if (!Rooms.TryGetValue(root, out var state))
+            {
+                return false;
+            }
+
+            foreach (var figure in state.Figures.Values)
+            {
+                if (figure.Button.TryGetTarget(out var button) &&
+                    GodotObject.IsInstanceValid(button) &&
+                    IsPackageFigureVisible(state, button))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("检查部件是否自己画了商人失败：" + exception.GetBaseException().Message);
+        }
+
+        return false;
+    }
+
     private static bool IsDescendantOf(Node node, Node ancestor)
     {
         for (var current = node.GetParent(); current != null; current = current.GetParent())

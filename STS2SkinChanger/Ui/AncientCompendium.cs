@@ -2241,11 +2241,21 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         Reveal(root);
+        // A style/UI package replaces the merchant's figure with its own image and switches the
+        // game's figure off for exactly that. Clearing the transparent presentation state must not
+        // switch it back on, or the game's merchant is drawn over the author's.
+        var revealFigure = MerchantFigureScopePolicy.ShouldRevealGameFigure(
+            PartTakeoverVisualScope.SelectedPartDrawsFigure(root));
         // Do not reveal every child: MerchantSelectionReticle, HotkeyIcon, and provider helper
         // nodes are intentionally hidden until their own interaction state enables them. Only
         // the actual rendered model needs its inherited transparent state cleared.
         foreach (var name in new[] { "MerchantVisual", "Visuals", "SpineSprite" })
         {
+            if (name.Equals("MerchantVisual", StringComparison.Ordinal) && !revealFigure)
+            {
+                continue;
+            }
+
             var visual = root.FindChild(name, recursive: true, owned: false);
             if (visual != null)
             {

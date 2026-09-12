@@ -42,6 +42,16 @@ internal static class MerchantFigureScopeTests
             !MerchantFigureScopePolicy.ShouldRestoreLayout(true, true),
             "作者给商人按钮的位置只在别的选择生效时还原；选中它自己时保持作者排版。");
 
+        // The catalogue clears a provider's transparent presentation state for every entry. The
+        // package switched the game's own merchant figure off for the figure it draws itself, so
+        // clearing that state must not switch the game's figure back on: the game's merchant was
+        // drawn over the author's, right where the author had switched it off.
+        Require(
+            !MerchantFigureScopePolicy.ShouldRevealGameFigure(selectedPartDrawsFigure: true) &&
+            MerchantFigureScopePolicy.ShouldRevealGameFigure(selectedPartDrawsFigure: false),
+            "作者自己画了商人时，图鉴的清除透明步骤不得把游戏原版商人重新打开；" +
+            "其余情况仍要打开，否则透明商人按钮的皮肤在图鉴里没有商人。");
+
         // The room background and the shop interface stay with the package for every selection; only
         // the merchant's own figure and hand follow the merchant group.
         Require(
