@@ -236,6 +236,11 @@ internal static class ProviderLookupTests
                 Console.WriteLine("  served   " + path);
             }
 
+            if (manifest.PckPath == null)
+            {
+                return;
+            }
+
             var archive = assembly.GetType("STS2SkinChanger.Pck.PckArchive", true)!
                 .GetMethod("Open", Static)!
                 .Invoke(null, [manifest.PckPath, 2_000_000u])!;

@@ -75,3 +75,11 @@
 - 投稿扫描与卡面接管共用同一条识别：提供者把自己的卡面当普通图片放在私有目录时，整目录判定成立（至少 20 张、八成以上能对上卡牌）即读成卡面包，这类物品不再以 `No recognized skin resources.` 被拒绝投稿。实包 `3797161358`（KeiRegentCards，`portraits` 下 96 张 PNG）扫描出 `cards:regent|cards:status|cards:token`。
 - 新增回归：卡面包必须能生成投稿码，只含图标的目录不得被判成卡面包。`--audit-loose-card-pack` 报告同一目录的投稿扫描结果，`--audit-art-pack-recognition` 继续覆盖投稿落点。
 - Release 正式版与 ReleaseBeta 测试版构建零警告零错误，LogicTests、两版 RuntimeTests（含 `--test-card-art-packs`）通过；游戏未运行时部署 `1.0.8.3` 到 `workshop/content`、测试版工坊目录和正式版快照缓存，三处主 DLL SHA-256 均为 `EA57A53407B7362E882D0C1E8AEA4E7EFF3CCD19238AEEAD25C158DB8BA30AEE`。未上传工坊。
+
+## 附加视觉 Mod 被误判为皮肤（1.0.8.4）
+
+- `Sts2SkinSquad`（工坊 `3774905195`）不是皮肤 Mod：它在角色与房间入口旁摆自己的外观同伴，补丁目标是 `NCreature.SetAnimationTrigger`、`NRestSiteCharacter._Ready`、`NMerchantRoom.AfterRoomIsLoaded` 与 `NCharacterSelectScreen._Ready`，包内只有两个 DLL 和一个清单。旧识别把「角色生命周期补丁 + 房间入口补丁」当成皮肤证据，于是把它按皮肤隔离（按住 DLL、不挂载包），它的同伴与 Squad 按钮全部消失，Mod 列表还标了 `[SC]`。
+- 补丁证据按入口收紧：只有替换角色自己的外观创建入口（`CharacterModel.CreateVisuals` 等，即 `ReplacesCharacterVisualsAtRuntime`），或角色生命周期补丁与选角展示补丁（`NCharacterSelectScreen.SelectCharacter`/`NCharacterSelectButton.Init`）配对时才算皮肤；房间入口本身不再是皮肤证据。判定收敛到 `SkinProviderPatchEvidencePolicy.IsSkinEvidence`。
+- 追加资源门槛：能通过补丁证据但一项自己的外观资源都没有（包资源为 0、无运行时图片、目录内无图片/场景/骨骼/音频，且不替换角色本体）的包永不按皮肤隔离（`SkinProviderPatchEvidencePolicy.BringsOwnAppearance` 与 `AppearanceResourceFilePolicy`），交回游戏原加载器并在日志里写明理由。
+- 实包复核：104 个已装工坊目录（107 个包）识别结果改前改后逐条对比，只有 `Sts2SkinSquad` 从「外观提供者 `groups=1`」变为不再被识别为提供者（`cosmetic` 75 → 74），其余 74 个提供者逐字节一致（含自有的 `Gurio.SkinChanger`）。`--audit-provider-details` 对没有 PCK 的包不再抛异常。
+- LogicTests 新增两条纯策略回归（附加视觉补丁不得成为皮肤证据、无自有外观资源不得被隔离、外观文件判定认图片/骨骼/场景/音频而不认程序集与清单）。Release 正式版与 ReleaseBeta 测试版构建零警告零错误；LogicTests 与两版 RuntimeTests 退出码 0。游戏未运行时部署 `1.0.8.4` 到 `workshop/content`、测试版工坊目录和正式版快照缓存，三处 5 个文件（DLL、清单、兼容层 DLL、清理进程、README）SHA-256 分别一致，主 DLL `EF24BEB98FF9CA4B284D815FAE40333853C04302791FC6FDC81D2182A13DE79A`。未上传工坊。

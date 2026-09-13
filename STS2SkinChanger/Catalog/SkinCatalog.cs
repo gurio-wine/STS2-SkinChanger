@@ -1027,13 +1027,32 @@ internal sealed partial class SkinCatalog : IDisposable
                     if (mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
                         LooksLikeDllSkinProvider(mod))
                     {
-                        // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
-                        // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。但整包皮肤
-                        // 之外的风格/UI 包也会补丁外观入口：它们的资源本 Mod 一项也呈现不了，
-                        // 隔离只会让作者的全部内容失效，必须交回游戏原加载器。
+                        // 只读取 PE 字符串，不把程序集载入运行时。补丁外观入口但没有资源可呈现
+                        // 的包必须交回游戏原加载器：隔离它会让作者的全部内容失效。整包皮肤之外
+                        // 的风格/UI 包是这种情况，完全不带自己外观资源的附加视觉包（同伴、特效）
+                        // 也是——它只能添加由本体或别的 Mod 资源拼出来的东西，本 Mod 一项也呈现
+                        // 不了，隔离它同样只会让它停止工作。
+                        var bringsOwnAppearance = SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+                            packResourceCount,
+                            runtimeImages,
+                            ReplacesCharacterVisualsAtRuntime(mod),
+                            HasLooseAppearanceResource(mod.RootPath));
                         if (packResourceCount >= SubstantialPackResourceCount)
                         {
                             unservablePackWithVisualPatches = true;
+                            ModLog.Info(
+                                $"未按皮肤接管 {mod.Name ?? mod.Id}：其 {packResourceCount} 项资源中没有可呈现的皮肤资源，" +
+                                "但 DLL 会补丁外观入口；按皮肤隔离会让整个包失效。" +
+                                "已交回游戏原加载器，其 DLL 与 PCK 按作者原意完整加载。");
+                        }
+                        else if (!bringsOwnAppearance)
+                        {
+                            unservablePackWithVisualPatches = true;
+                            ModLog.Info(
+                                $"未按皮肤接管 {mod.Name ?? mod.Id}：它不带任何自己的外观资源" +
+                                $"（包资源 {packResourceCount} 项、运行时图片 {runtimeImages} 张、目录内无外观文件），" +
+                                "也没有替换角色自己的外观创建入口；它只能添加由本体或别的 Mod 资源拼出来的东西，" +
+                                "按皮肤隔离只会让它停止工作。已交回游戏原加载器，其 DLL 按作者原意完整加载。");
                         }
                         else
                         {
@@ -1066,14 +1085,8 @@ internal sealed partial class SkinCatalog : IDisposable
                 }
                 else if (unservablePackWithVisualPatches)
                 {
-                    // A pack whose DLL patches presentation entry points but whose PCK has no
-                    // resource the catalog can present is not a skin. Isolating it would unmount
-                    // the whole package (UI, audio, fonts) and skip its initializer, so a style
-                    // overhaul would simply disappear from the game.
-                    ModLog.Info(
-                        $"未按皮肤接管 {mod.Name ?? mod.Id}：其 {packResourceCount} 项资源中没有可呈现的皮肤资源，" +
-                        "但 DLL 会补丁外观入口；按皮肤隔离会让整个包失效。" +
-                        "已交回游戏原加载器，其 DLL 与 PCK 按作者原意完整加载。");
+                    // Not a skin: the reason and the log line are emitted where the DLL heuristic
+                    // is rejected, so that a package is never retried for a second explanation.
                 }
             }
         }
@@ -1307,6 +1320,36 @@ internal sealed partial class SkinCatalog : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Whether the package folder holds a file the game could draw with. Read lazily: the first
+    /// appearance file is enough, so a large pack is not enumerated to the end.
+    /// </summary>
+    private static bool HasLooseAppearanceResource(string? rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories))
+            {
+                if (AppearanceResourceFilePolicy.IsAppearanceResourceFile(path))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            return false;
+        }
+
+        return false;
+    }
+
     private static bool LooksLikeDllSkinProvider(SkinModDescriptor mod)
     {
         if (mod.RootPath == null)
@@ -1496,10 +1539,9 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var reader = peReader.GetMetadataReader();
+        var hasDirectVisualTarget = false;
         var hasCreatureLifecyclePatch = false;
         var hasCharacterSelectPatch = false;
-        var hasRestSiteCharacterPatch = false;
-        var hasMerchantRoomPatch = false;
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
@@ -1519,29 +1561,21 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var value = patchMetadata.ToString();
-            if (HasDirectVisualPatchTargetMetadata(value))
-            {
-                return true;
-            }
-
-            // A creature lifecycle patch by itself is not skin evidence: additive combat VFX
-            // mods also attach effect nodes from NCreature._Ready and may load canonical creature
-            // scenes to place those effects. Private full-character packs pair that hook with a
-            // character-select presentation patch. Requiring an actual second patch target keeps
-            // additive visual mods in the game's normal loading flow without a provider allow-list.
+            hasDirectVisualTarget |= HasDirectVisualPatchTargetMetadata(value);
+            // Creatures and rooms are where every additive visual Mod attaches its own actors, so
+            // room hooks are not skin evidence: see SkinProviderPatchEvidencePolicy for the entry
+            // point that separates a pickable character from an added companion or effect.
             hasCreatureLifecyclePatch |=
                 HasPatchTarget(value, "NCreature", "_Ready", "SetAnimationTrigger");
             hasCharacterSelectPatch |=
                 HasPatchTarget(value, "NCharacterSelectScreen", "SelectCharacter") ||
                 HasPatchTarget(value, "NCharacterSelectButton", "Init");
-            hasRestSiteCharacterPatch |=
-                HasPatchTarget(value, "NRestSiteCharacter", "_Ready");
-            hasMerchantRoomPatch |=
-                HasPatchTarget(value, "NMerchantRoom", "AfterRoomIsLoaded");
         }
 
-        if (hasCreatureLifecyclePatch &&
-            (hasCharacterSelectPatch || hasRestSiteCharacterPatch || hasMerchantRoomPatch))
+        if (SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+                hasDirectVisualTarget,
+                hasCreatureLifecyclePatch,
+                hasCharacterSelectPatch))
         {
             return true;
         }

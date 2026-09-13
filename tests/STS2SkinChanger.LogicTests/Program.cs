@@ -344,6 +344,67 @@ Require(
     "自带角色本体的提供者即使已经带模型资源，也不能被降级成头像包。");
 
 Require(
+    !SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+        replacesCharacterVisualCreation: false,
+        hooksCreatureLifecycle: true,
+        patchesCharacterSelectPresentation: false),
+    "只补丁角色生命周期与房间入口的附加视觉 Mod（同伴、特效）不是皮肤：" +
+    "把它按皮肤隔离会让它整体停止工作。");
+Require(
+    SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+        replacesCharacterVisualCreation: false,
+        hooksCreatureLifecycle: true,
+        patchesCharacterSelectPresentation: true),
+    "角色生命周期入口与选角展示一起补丁的私有整角包仍然必须是皮肤提供者。");
+Require(
+    SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+        replacesCharacterVisualCreation: true,
+        hooksCreatureLifecycle: false,
+        patchesCharacterSelectPresentation: false),
+    "替换角色自己的外观创建入口的包无论还补丁了什么，都必须按完整皮肤处理。");
+
+Require(
+    !SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: false),
+    "不带任何自己外观资源的纯附加视觉包不能被当成皮肤提供者。");
+Require(
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 1,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: false) &&
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: true,
+        hasAppearanceFile: false) &&
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 2,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: false) &&
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: true),
+    "只要包里有一项自己的外观资源，或它重画角色本体，就不能因此被排除在皮肤之外。");
+
+Require(
+    AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\char_select.png") &&
+    AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\hero.atlas") &&
+    AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\voice.ogg"),
+    "外观资源判定必须认图片、骨骼图集、场景与音频，否则会把只带散装素材的皮肤当成没有资源。");
+Require(
+    !AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\Companion.dll") &&
+    !AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\Companion.json") &&
+    !AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\README.md"),
+    "程序集、清单与说明文件不是外观资源：只带它们的包不能因为文件数被当成皮肤。");
+
+Require(
     LooseCardPortraitPackPolicy.IsPack(imageCount: 96, matchedCards: 96),
     "把卡面当作独立图片存放的提供者必须能按卡面接管：整包都是卡面时没有任何理由拒绝。");
 Require(
