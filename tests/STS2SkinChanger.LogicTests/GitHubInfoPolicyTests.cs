@@ -41,6 +41,17 @@ internal static class GitHubInfoPolicyTests
         Require(split.Length > 1 && GitHubInfoPolicy.Read(string.Join("\n", split), id).Item is { Targets.Length: 300 },
             "分段的信息码必须按组拼回，长目标列表不能只读回一段。");
 
+        // 作者指南承诺的排版规则：一行一段最省事，同一行用空格连着写也认，但一段码不许断开、
+        // 不许漏段，也不许整段括进双引号（那是 HTML/JSON 里“引用一段码”的写法，按引用忽略）。
+        Require(GitHubInfoPolicy.Read(string.Join("\n", split), id).Item is { Targets.Length: 300 } &&
+            GitHubInfoPolicy.Read(string.Join(" ", split), id).Item is { Targets.Length: 300 },
+            "多段信息码按行排、或同一行用空格连着写，都必须拼回同一个包。");
+        var torn = split[0][..(split[0].Length / 2)] + "\n" + split[0][(split[0].Length / 2)..];
+        Require(GitHubInfoPolicy.Read(string.Join("\n", split[1..].Prepend(torn)), id).Item is null,
+            "被换行截断的信息码必须拒绝，断成两行的分片不能凑数。");
+        Require(GitHubInfoPolicy.Read(string.Join("\n", split.Select(code => "\"" + code + "\"")), id).Item is null,
+            "括在双引号里的信息码属于引用文本，不能当成作者发布的码。");
+
         Require(GitHubInfoPolicy.Read(new string('x', GitHubInfoPolicy.MaxBytes + 1), id) is { Item: null, Error: "too-large" },
             "超过上限的 sc.info 必须直接拒绝，不能把它读进内存再解析。");
         Console.WriteLine("GitHub info policy passed: sc.info codes read back, missing/mismatch/broken rejected.");
