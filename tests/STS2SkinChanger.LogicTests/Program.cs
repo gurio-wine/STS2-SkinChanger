@@ -1979,6 +1979,7 @@ GitHubSourceIdentityTests.Run();
 GitHubSkinPolicyTests.Run();
 GitHubInstallPolicyTests.Run();
 GitHubSkinCatalogTests.Run();
+GitHubSkinClientTests.Run();
 WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
