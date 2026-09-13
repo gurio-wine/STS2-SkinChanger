@@ -12,6 +12,8 @@
     <Compile Include="../../STS2SkinChanger/Core/GitHubSkinPolicy.cs" Link="GitHubSkinPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubZipPolicy.cs" Link="GitHubZipPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubInstallPolicy.cs" Link="GitHubInstallPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopCatalogPolicy.cs" Link="WorkshopCatalogPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinCatalog.cs" Link="GitHubSkinCatalog.cs" />
     <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj"
                       ReferenceOutputAssembly="false" />
     <Compile Include="../../STS2SkinChanger/Core/PromotedPackOverlayPolicy.cs"

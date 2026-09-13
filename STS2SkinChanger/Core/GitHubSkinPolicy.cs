@@ -47,6 +47,8 @@ internal static class GitHubSkinPolicy
     }
 
     private static bool SafeName(string value) => value.Length is > 0 and <= 100 &&
+        // Every segment must carry at least one real character: "." and ".." are path tricks, not names.
+        value.Any(c => c != '.') &&
         value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
     public static bool Eligible(GitHubRepoRef repo, bool fork) =>

@@ -35,6 +35,9 @@ internal static class GitHubSkinPolicyTests
             "接口、资产重定向与封面的主机必须在白名单内。");
         Require(!GitHubSkinPolicy.IsAllowedHost("evil.example.com") && !GitHubSkinPolicy.IsAllowedHost("github.com.evil.example.com"),
             "非白名单主机，包括后缀伪装的域名，必须被拒绝。");
+        Require(!GitHubSkinPolicy.TryParseFullName("owner/..", out _), "只有点号的仓库名不是合法仓库，必须被拒绝。");
+        Require(!GitHubSkinPolicy.TryParseFullName("../evil", out _) && !GitHubSkinPolicy.TryParseFullName("a/b/c", out _),
+            "缓存里的仓库名同样按不可信输入校验：路径段与多余分隔符都不能通过。");
 
         var release = GitHubSkinPolicy.ParseRelease(Release)!;
         Require(release.Tag == "v0.1.4" && release.Assets.Length == 2, "Release tag 与资产清单必须完整解析。");
