@@ -25,32 +25,35 @@ internal partial class SkinWorkshopPanel
             if (state?.Busy == true) return;
             var primary = WorkshopItemActions.Primary(SkinWorkshopService.IsSubscribed(id), SkinWorkshopService.IsActive(id),
                 SkinWorkshopService.IsInstalled(id), SkinWorkshopService.Catalog.First(i => i.Id == id).RestartRequired, state?.State, false);
-            if (primary == WorkshopTextKey.Restart)
-            {
-                _restartPending = true; Poll();
-                // Same cross-platform normal shutdown path as the load-order dialog.
-                // Never invoke this just because a download or query completed.
-                Callable.From(() =>
-                {
-                    try
-                    {
-                        var game = NGame.Instance;
-                        if (!GodotObject.IsInstanceValid(game)) throw new InvalidOperationException("Game is no longer available.");
-                        OS.SetRestartOnExit(true);
-                        ModLog.Info($"玩家点击工坊皮肤 {id} 的“需要重启”，按游戏正常退出流程重启。");
-                        game!.Quit();
-                    }
-                    catch (Exception ex)
-                    {
-                        OS.SetRestartOnExit(false);
-                        _restartPending = false;
-                        ShowActionError(id, ex);
-                    }
-                }).CallDeferred();
-            }
+            if (primary == WorkshopTextKey.Restart) RestartGame(id, "工坊皮肤");
             else if (primary != null) _ = Subscribe(id);
         }
         catch (Exception ex) { ShowActionError(id, ex); }
+    }
+
+    // Same cross-platform normal shutdown path for both sources. Never invoke this just because
+    // a download or query completed.
+    private void RestartGame(ulong id, string what)
+    {
+        if (_restartPending) return;
+        _restartPending = true; Poll();
+        Callable.From(() =>
+        {
+            try
+            {
+                var game = NGame.Instance;
+                if (!GodotObject.IsInstanceValid(game)) throw new InvalidOperationException("Game is no longer available.");
+                OS.SetRestartOnExit(true);
+                ModLog.Info($"玩家点击{what} {id} 的“需要重启”，按游戏正常退出流程重启。");
+                game!.Quit();
+            }
+            catch (Exception ex)
+            {
+                OS.SetRestartOnExit(false);
+                _restartPending = false;
+                ShowActionError(id, ex);
+            }
+        }).CallDeferred();
     }
     private void OpenItem(ulong id)
     {
@@ -75,15 +78,22 @@ internal partial class SkinWorkshopPanel
         catch (Exception ex) { ShowActionError(id, ex); }
     }
 
-    // One button, three meanings: an installed skin is removed, a waiting update is installed,
-    // an installable skin is installed, and a repository without a code is scanned instead -
-    // that scan is what produces the code its author publishes as sc.info.
+    // One button, five meanings: a repository without a code is scanned to produce that code, an
+    // installable one is installed, a waiting update is installed, an installed skin whose folder
+    // the running game has not loaded yet asks for the restart, and a skin that is in use is
+    // removed again.
+    private static GitHubItemAction PrimaryAction(ulong id) => GitHubItemActions.Primary(
+        GitHubSkinService.IsRecognized(id), GitHubSkinService.InstallState(id), GitHubSkinService.IsPendingRestart(id));
+
     private void PerformGitHub(ulong id)
     {
-        var state = GitHubSkinService.InstallState(id);
-        if (state == GitHubInstallState.Installed) { _ = UninstallGitHub(id); return; }
-        if (state == GitHubInstallState.Updatable || GitHubSkinService.IsRecognized(id)) { _ = InstallGitHub(id); return; }
-        _ = ScanGitHub(id);
+        switch (PrimaryAction(id))
+        {
+            case GitHubItemAction.Install or GitHubItemAction.Update: _ = InstallGitHub(id); break;
+            case GitHubItemAction.Restart: RestartGame(id, "GitHub 皮肤"); break;
+            case GitHubItemAction.Uninstall: _ = UninstallGitHub(id); break;
+            default: _ = ScanGitHub(id); break;
+        }
     }
 
     private async Task ScanGitHub(ulong id)
@@ -131,9 +141,8 @@ internal partial class SkinWorkshopPanel
             var details = result.Item is { } item
                 ? string.Join(" · ", item.Targets.Select(target => _names.Name(target.Kind, target.Target)).Distinct())
                 : "";
-            // The same handle the card wears, so the window and the row it came from read alike.
-            _scan = GitHubScanPanel.Show(this, entry is null ? "" : GitHubSkinPolicy.Handle(entry.FullName),
-                details, result, () => { _scan = null; if (!_closed) Poll(); });
+            // The same name the card wears, so the window and the row it came from read alike.
+            _scan = GitHubScanPanel.Show(this, entry?.Name ?? "", details, result, () => { _scan = null; if (!_closed) Poll(); });
             UpdateVisibleActions();
         }
         catch (Exception ex) { ShowActionError(id, ex); }
@@ -142,9 +151,9 @@ internal partial class SkinWorkshopPanel
     private void PerformGitHubSecondary(ulong id)
     {
         if (_closed || _restartPending || GitHubSkinService.IsInstalling(id)) return;
-        // The button is only shown while an update is waiting; that is when removing the
-        // installed copy is the alternative the player might actually want.
-        if (GitHubSkinService.InstallState(id) != GitHubInstallState.Updatable) return;
+        // The second button exists only while the primary button carries the other half of the
+        // action: a waiting update, or the restart that loads the copy just written to disk.
+        if (!GitHubItemActions.ShowsUninstall(PrimaryAction(id))) return;
         _actionErrors.Remove(id);
         _ = UninstallGitHub(id);
     }

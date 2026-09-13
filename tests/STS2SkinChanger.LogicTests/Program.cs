@@ -1988,6 +1988,7 @@ GitHubReadmePolicyTests.Run();
 GitHubInfoPolicyTests.Run();
 GitHubInstallLedgerTests.Run();
 GitHubSkinFilterTests.Run();
+GitHubItemActionsTests.Run();
 SkinSourceTests.Run();
 GitHubInstallPolicyTests.Run();
 GitHubSkinCatalogTests.Run();

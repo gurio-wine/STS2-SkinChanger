@@ -5,8 +5,13 @@ internal static class GitHubInstallLedgerTests
     public static void Run()
     {
         void Require(bool condition, string reason) { if (!condition) throw new InvalidOperationException(reason); }
-        var install = new GitHubInstall("KaguyaSilentRavenSkin", "KaguyaSilentRavenSkin", "Silent", "0.1.4");
+        var install = new GitHubInstall("KaguyaSilentRavenSkin", "KaguyaSilentRavenSkin", "0.1.4");
         var ledger = new GitHubInstallLedger();
+        // The card is named by the repository in every state, so the ledger must not keep the
+        // name the package declares: a stored name is what used to rename the card on install.
+        Require(typeof(GitHubInstall).GetProperties().Select(property => property.Name).OrderBy(name => name)
+                .SequenceEqual(["Folder", "PackageId", "Version"]),
+            "台账只留定位目录所需的字段，不保存任何显示名。");
         Require(ledger.Record("qbyoffice/SilentSkinMod", install) && ledger.Count == 1,
             "安装成功必须记下仓库与目录的对应关系，卸载只认这条记录。");
         Require(ledger.Find("qbyoffice/silentskinmod") is { Folder: "KaguyaSilentRavenSkin", Version: "0.1.4" },
@@ -17,7 +22,7 @@ internal static class GitHubInstallLedgerTests
             !ledger.Record("qbyoffice/SilentSkinMod", install with { PackageId = "a/b" }) &&
             !ledger.Record("qbyoffice/SilentSkinMod", install with { Version = new string('9', 65) }),
             "台账里的目录名与清单 ID 都会变成路径片段，非法值必须拒绝写入。");
-        Require(ledger.Record("qbyoffice/SilentSkinMod", install with { PackageId = "", PackageName = "CardArt" }),
+        Require(ledger.Record("qbyoffice/SilentSkinMod", install with { PackageId = "" }),
             "没有清单的纯素材包也要能记录归属，否则它永远卸载不掉。");
         Require(ledger.Count == 1, "拒绝的记录不能留下半个条目。");
 

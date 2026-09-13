@@ -74,14 +74,8 @@ internal static class GitHubSkinPolicyTests
         Require(!GitHubSkinPolicy.KeepWithoutTargets(recognized, 2, "") && !GitHubSkinPolicy.KeepWithoutTargets(3787302680UL, 0, ""),
             "已识别条目与 Steam 条目不受这条规则影响。");
 
-        // 没有信息码的仓库没有皮肤名可显示：卡片戴仓库句柄，免得两个仓库的同名文件夹看起来一样。
-        Require(GitHubSkinPolicy.CardName("qbyoffice/SilentSkinMod", false, "SilentSkinMod") == "@qbyoffice/SilentSkinMod",
-            "未识别的仓库名字必须是 @owner/repo，而不是光秃秃的仓库名。");
-        Require(GitHubSkinPolicy.CardName("qbyoffice/SilentSkinMod", true, "Kaguya Silent Raven") == "Kaguya Silent Raven",
-            "已识别的仓库照旧显示识别出来的皮肤名。");
-        Require(GitHubSkinPolicy.CardName("qbyoffice/SilentSkinMod", false, "") == "@qbyoffice/SilentSkinMod" &&
-            GitHubSkinPolicy.Handle("qbyoffice/SilentSkinMod") == "@qbyoffice/SilentSkinMod",
-            "未识别时即使手上没有名字也要给出仓库句柄，扫描窗口的标题用的是同一个写法。");
-        Console.WriteLine("GitHub skin policy passed: search filter, host allowlist, release assets, cover, card name.");
+        // 卡片名字一律用仓库名：安装前后不变，也不戴 @作者 前缀（作者名不进皮肤列表）。
+        // “认没认出来都显示仓库名”这条在 GitHubSkinCatalogTests 里按名称排序的指标列核对。
+        Console.WriteLine("GitHub skin policy passed: search filter, host allowlist, release assets, cover.");
     }
 }

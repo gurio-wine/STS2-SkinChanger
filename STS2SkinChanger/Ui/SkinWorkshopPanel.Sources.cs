@@ -72,10 +72,13 @@ internal partial class SkinWorkshopPanel
 
     private string GitHubMetric(ulong id) => GitHubSortPolicy.Metric(GitHubSkinService.Entry(id), _githubSort);
 
-    private static string GitHubStatus(GitHubSkinEntry? entry, GitHubInstallState state) => entry is null ? "" :
+    private static string GitHubStatus(GitHubSkinEntry? entry, GitHubInstallState state, bool pendingRestart) => entry is null ? "" :
         entry.Recognition switch
         {
             GitHubRecognition.Pending => GitHubText(GitHubSkinTextKey.Refreshing),
+            // A waiting restart is carried by the action button, exactly like on the Steam side,
+            // so the status line does not repeat it.
+            GitHubRecognition.Recognized when pendingRestart => "",
             GitHubRecognition.Recognized => GitHubText(state switch
             {
                 GitHubInstallState.Updatable => GitHubSkinTextKey.Updatable,

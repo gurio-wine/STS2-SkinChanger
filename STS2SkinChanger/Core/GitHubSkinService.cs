@@ -27,6 +27,10 @@ internal static class GitHubSkinService
     private static readonly GitHubInstallLedger Ledger = new();
     private static readonly HashSet<ulong> Installing = [];
     private static readonly HashSet<ulong> Scanning = [];
+    // A package this mod writes is only loaded by the game's own start-up scan, so until the
+    // game is restarted the folder on disk is not part of the running game. The set lives in
+    // this session only: a new session means the game scanned the mods folder again.
+    private static readonly HashSet<string> RestartPending = new(StringComparer.OrdinalIgnoreCase);
     private static GitHubSkinClient? _client;
     private static WorkshopCatalogItem[] _items = [];
     private static IReadOnlyDictionary<ulong, GitHubSkinEntry> _entriesById = new Dictionary<ulong, GitHubSkinEntry>();
@@ -41,11 +45,11 @@ internal static class GitHubSkinService
     public static IReadOnlyDictionary<ulong, GitHubSkinEntry> EntriesById => _entriesById;
 
     public static GitHubSkinEntry? Entry(ulong id) => _entriesById.GetValueOrDefault(id);
-    // A repository the browser could not recognize has no skin name, so its card wears the
-    // repository handle; a recognized one shows the name the package itself declares.
-    public static string Title(ulong id) => Entry(id) is not { } entry ? "" : GitHubSkinPolicy.CardName(
-        entry.FullName, entry.Recognition == GitHubRecognition.Recognized,
-        _installsById.TryGetValue(id, out var install) && install.PackageName.Length > 0 ? install.PackageName : entry.Name);
+    // A card wears the repository name in every state: recognized or not, installed or not. The
+    // name a package declares for itself is only readable once it is installed, so showing it
+    // would rename the card at that moment, and the repository handle would put the owner in a
+    // list of skins.
+    public static string Title(ulong id) => Entry(id)?.Name ?? "";
     public static string CoverUrl(ulong id) => Entry(id)?.CoverUrl ?? "";
     public static string RepoUrl(ulong id) => Entry(id)?.Repo.Url ?? "";
     public static string Description(ulong id) => Entry(id)?.Description ?? "";
@@ -53,6 +57,10 @@ internal static class GitHubSkinService
     public static bool IsInstalling(ulong id) => Installing.Contains(id);
     public static bool IsScanning(ulong id) => Scanning.Contains(id);
     public static bool IsRecognized(ulong id) => Entry(id) is { Recognition: GitHubRecognition.Recognized };
+    // The folder is on disk, but the game that is running now has not loaded it: the card offers
+    // the restart instead of pretending the skin is already in use.
+    public static bool IsPendingRestart(ulong id) => Entry(id) is { } entry && InstallState(id) != GitHubInstallState.NotInstalled &&
+        RestartPending.Contains(entry.FullName);
     public static GitHubInstallState InstallState(ulong id) => _installsById.TryGetValue(id, out var install)
         ? GitHubInstallPolicy.Classify(install.Version, Entry(id)?.ReleaseTag)
         : GitHubInstallState.NotInstalled;
@@ -343,7 +351,10 @@ internal static class GitHubSkinService
                 throw;
             }
             finally { TryDelete(installing); }
-            Ledger.Record(entry.FullName, new(folder, packageId, descriptor?.Name ?? "", version ?? ""));
+            Ledger.Record(entry.FullName, new(folder, packageId, version ?? ""));
+            // The game that is running has never seen this folder: the card now offers the
+            // restart, and keeps offering it until the game is started again.
+            RestartPending.Add(entry.FullName);
             SaveLedger();
             RefreshInstalls();
             PublishItems();
@@ -367,6 +378,7 @@ internal static class GitHubSkinService
             ?? throw new InvalidOperationException("Skin is not installed.");
         await Task.Run(() => Directory.Delete(target, recursive: true));
         Ledger.Remove(entry.FullName);
+        RestartPending.Remove(entry.FullName);
         SaveLedger();
         RefreshInstalls();
         PublishItems();
@@ -389,6 +401,8 @@ internal static class GitHubSkinService
             if (version != null && version != install.Version) { Ledger.Record(fullName, install with { Version = version }); changed = true; }
         }
         if (changed) SaveLedger();
+        // A folder the player removed by hand is no longer waiting for a restart either.
+        RestartPending.RemoveWhere(name => Ledger.Find(name) == null);
         var installs = new Dictionary<ulong, GitHubInstall>();
         foreach (var entry in Catalog.Entries)
             if (Ledger.Find(entry.FullName) is { } install) installs[entry.Id] = install;

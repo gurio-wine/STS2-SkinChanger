@@ -241,42 +241,48 @@ internal partial class SkinWorkshopPanel : Control
                     var installing = GitHubSkinService.IsInstalling(id);
                     var scanning = GitHubSkinService.IsScanning(id);
                     var recognized = GitHubSkinService.IsRecognized(id);
-                    // A repository without a published sc.info code cannot be installed, but its
-                    // release can still be scanned to produce the code its author has to publish.
-                    var actionKey = installState switch
-                    {
-                        GitHubInstallState.Updatable => GitHubSkinTextKey.Update,
-                        // An up-to-date install has nothing left to install; the one action
-                        // that still means something is removing it again.
-                        GitHubInstallState.Installed => GitHubSkinTextKey.Uninstall,
-                        _ => recognized ? GitHubSkinTextKey.Install : GitHubSkinTextKey.Scan
-                    };
+                    // One button, five meanings: a repository without a published sc.info code is
+                    // scanned to produce that code, an installable one is installed, an installed
+                    // one either waits for its restart, updates, or is removed.
+                    var itemAction = GitHubItemActions.Primary(recognized, installState, GitHubSkinService.IsPendingRestart(id));
+                    var awaitingRestart = itemAction == GitHubItemAction.Restart;
                     action.Visible = true;
                     action.Disabled = installing || scanning || _restartPending;
-                    action.Text = GitHubText(scanning ? GitHubSkinTextKey.Scanning : installing ? GitHubSkinTextKey.Installing : actionKey);
+                    action.Text = scanning ? GitHubText(GitHubSkinTextKey.Scanning)
+                        : installing ? GitHubText(GitHubSkinTextKey.Installing)
+                        // The waiting restart wears the very word the Steam side uses for it.
+                        : awaitingRestart ? WorkshopText.Get(WorkshopTextKey.Restart)
+                        : GitHubText(itemAction switch
+                        {
+                            GitHubItemAction.Install => GitHubSkinTextKey.Install,
+                            GitHubItemAction.Update => GitHubSkinTextKey.Update,
+                            GitHubItemAction.Scan => GitHubSkinTextKey.Scan,
+                            _ => GitHubSkinTextKey.Uninstall
+                        });
                     action.TooltipText = scanning || installing ? action.Text
-                        : actionKey == GitHubSkinTextKey.Scan ? GitHubText(GitHubSkinTextKey.ScanHint)
+                        : itemAction == GitHubItemAction.Scan ? GitHubText(GitHubSkinTextKey.ScanHint)
+                        : awaitingRestart ? WorkshopNoticeText.Get(WorkshopNoticeKey.KnownRestart)
                         : entry?.Error ?? "";
-                    // The card itself opens the repository, so the second button only ever
-                    // carries the other half of the action: removing a skin that has an
-                    // update waiting, while the primary button installs that update.
-                    cancel.Visible = installState == GitHubInstallState.Updatable;
+                    // The card itself opens the repository, so the second button only ever carries
+                    // the other half of the action: removing a skin whose primary button installs
+                    // an update or asks for the restart that loads it.
+                    cancel.Visible = GitHubItemActions.ShowsUninstall(itemAction);
                     cancel.Disabled = installing || _restartPending;
                     cancel.Text = GitHubText(GitHubSkinTextKey.Uninstall);
                     cancel.TooltipText = cancel.Text;
                     label.Text = scanning ? GitHubText(GitHubSkinTextKey.Scanning)
                         : installing ? GitHubText(GitHubSkinTextKey.Installing)
-                        : GitHubStatus(entry, installState);
+                        : GitHubStatus(entry, installState, awaitingRestart);
                     label.TooltipText = entry is { Error.Length: > 0 } ? entry.Error : label.Text;
                     if (_actionErrors.TryGetValue(id, out var installError))
                     {
                         label.Text = GitHubText(recognized ? GitHubSkinTextKey.InstallFailed : GitHubSkinTextKey.ScanFailed);
                         label.TooltipText = installError;
                     }
-                    if (action.HasMeta("sc_restart_accent") && action.GetMeta("sc_restart_accent").AsBool())
+                    if (!action.HasMeta("sc_restart_accent") || action.GetMeta("sc_restart_accent").AsBool() != awaitingRestart)
                     {
-                        ModThemeRuntime.TextControl(action, 20);
-                        action.SetMeta("sc_restart_accent", false);
+                        ModThemeRuntime.TextControl(action, 20, awaitingRestart);
+                        action.SetMeta("sc_restart_accent", awaitingRestart);
                     }
                     continue;
                 }

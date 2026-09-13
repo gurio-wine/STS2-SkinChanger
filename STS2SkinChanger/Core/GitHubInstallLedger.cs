@@ -2,7 +2,9 @@ using System.Text.Json;
 
 namespace STS2SkinChanger.Core;
 
-internal sealed record GitHubInstall(string Folder, string PackageId, string PackageName, string Version);
+// Only what is needed to find and remove the folder again: the card is named by the repository
+// in every state, so the name the package declared itself is not kept here.
+internal sealed record GitHubInstall(string Folder, string PackageId, string Version);
 
 // Which folder was written for which repository is the one thing that cannot be derived
 // again: the catalog cache is dropped whenever its format changes, and a repository says
@@ -63,11 +65,10 @@ internal sealed class GitHubInstallLedger
     // Every field becomes a path segment or a manifest file name on disk, so the same token
     // rules as the install folder apply here. An empty package id means the package shipped no
     // manifest at all (a bundle-only card art pack); the ledger entry is then the only proof.
-    private static bool Valid(GitHubInstall? install) => install is { Folder: not null, PackageId: not null, PackageName: not null, Version: not null } &&
+    private static bool Valid(GitHubInstall? install) => install is { Folder: not null, PackageId: not null, Version: not null } &&
         GitHubInstallPolicy.IsSafeToken(install.Folder) &&
         (install.PackageId.Length == 0 || GitHubInstallPolicy.IsSafeToken(install.PackageId)) &&
-        install.PackageName.Length <= 256 && install.Version.Length <= 64 &&
-        !install.PackageName.Any(char.IsControl) && !install.Version.Any(char.IsControl);
+        install.Version.Length <= 64 && !install.Version.Any(char.IsControl);
 }
 
 internal sealed record GitHubInstallLedgerState(int Format, Dictionary<string, GitHubInstall> Installs);
