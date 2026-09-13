@@ -106,6 +106,9 @@ if (args.Length == 1 && args[0] == "--test-storage")
 if (args.Length == 1 && args[0] == "--test-provider-compatibility")
 {
     ProviderCompatibilityTests.Run();
+    ProviderRuntimeAuditTests.Run();
+    ProviderMinimumVersionPolicyTests.Run();
+    ProviderVersionTakeoverTests.Run();
     return;
 }
 if (args.Length == 1 && args[0] == "--test-workshop-submissions")
@@ -448,6 +451,9 @@ ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
 ProviderCompatibilityTests.Run();
+ProviderRuntimeAuditTests.Run();
+ProviderMinimumVersionPolicyTests.Run();
+ProviderVersionTakeoverTests.Run();
 PackageCompatibilityTests.Run();
 await WorkshopSubmissionIntegrityTests.Run();
 await WorkshopSubmissionTests.Run();

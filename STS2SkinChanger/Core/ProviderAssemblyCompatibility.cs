@@ -15,6 +15,8 @@ internal static partial class ProviderAssemblyCompatibility
         "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaAnimationState";
     private const string SpineAnimationAccessTypeName =
         "MegaCrit.Sts2.Core.Bindings.MegaSpine.SpineAnimationAccess";
+    private const string MegaSpineBindingTypeName =
+        "MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaSpineBinding";
     private static readonly IReadOnlyDictionary<string, string> MegaAnimationMethodAliases =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -387,30 +389,46 @@ internal static partial class ProviderAssemblyCompatibility
             return false; // A constrained receiver can be a managed pointer, not a wrapper.
         }
 
-        if (sourceIndex < 0)
-        {
-            return false;
-        }
-
-        var receiverReference = TryGetLoadedValueType(method, body, instructions[sourceIndex]);
-        if (receiverReference == null || !IsGameTypeReference(receiverReference))
-        {
-            return false;
-        }
-
-        var runtimeType = GameAssembly.GetType(GetTypeFullName(receiverReference));
-        var bindingType = GameAssembly.GetType("MegaCrit.Sts2.Core.Bindings.MegaSpine.MegaSpineBinding");
         var declaringReference = GetRequiredProperty(methodReference, "DeclaringType");
         var declaringName = GetTypeFullName(declaringReference);
-        var scopeName = (string)GetRequiredProperty(GetRequiredProperty(declaringReference, "Scope"), "Name");
-        var knownDispose = (declaringName == typeof(IDisposable).FullName &&
-                            scopeName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib" or "netstandard") ||
-            (IsGameTypeReference(declaringReference) && GameAssembly.GetType(declaringName) is { } declaringType &&
-             bindingType?.IsAssignableFrom(declaringType) == true);
-        if (!knownDispose || runtimeType == null || bindingType?.IsAssignableFrom(runtimeType) != true ||
-            typeof(IDisposable).IsAssignableFrom(runtimeType))
+        var bindingType = GameAssembly.GetType(MegaSpineBindingTypeName);
+        if (bindingType == null)
         {
             return false;
+        }
+
+        var runtimeType = sourceIndex < 0
+            ? null
+            : ResolveLoadedGameType(method, body, instructions[sourceIndex]);
+        if (runtimeType == null)
+        {
+            // `_spineMega?.Dispose()` keeps its receiver behind dup/branch instructions, and a
+            // non-virtual call to a member the current game no longer declares cannot be matched by
+            // name either. For a non-virtual call the reference's own declaring type is exactly the
+            // implementation the newer snapshot would have executed, so it is the honest fallback.
+            var declaringGameType = IsGameTypeReference(declaringReference)
+                ? GameAssembly.GetType(declaringName)
+                : null;
+            if (GetInstructionOpCodeName(instructions[instructionIndex]) != "call" ||
+                declaringGameType == null ||
+                !bindingType.IsAssignableFrom(declaringGameType) ||
+                HasInstanceDispose(declaringGameType))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            var scopeName = (string)GetRequiredProperty(GetRequiredProperty(declaringReference, "Scope"), "Name");
+            var knownDispose = (declaringName == typeof(IDisposable).FullName &&
+                                scopeName is "System.Private.CoreLib" or "System.Runtime" or "mscorlib" or "netstandard") ||
+                (IsGameTypeReference(declaringReference) && GameAssembly.GetType(declaringName) is { } declaringType &&
+                 bindingType.IsAssignableFrom(declaringType));
+            if (!knownDispose || !bindingType.IsAssignableFrom(runtimeType) ||
+                typeof(IDisposable).IsAssignableFrom(runtimeType))
+            {
+                return false;
+            }
         }
 
         // v0.111's binding Dispose releases BoundObject on the calling thread. v0.107
@@ -429,6 +447,18 @@ internal static partial class ProviderAssemblyCompatibility
 
         return true;
     }
+
+    private static Type? ResolveLoadedGameType(object method, object body, object instruction)
+    {
+        var reference = TryGetLoadedValueType(method, body, instruction);
+        return reference != null && IsGameTypeReference(reference)
+            ? GameAssembly.GetType(GetTypeFullName(reference))
+            : null;
+    }
+
+    private static bool HasInstanceDispose(Type type) =>
+        type.GetMethod("Dispose", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, types: Type.EmptyTypes, modifiers: null) != null;
 
     private static object? TryGetLoadedValueType(object method, object body, object instruction)
     {

@@ -237,8 +237,12 @@ internal static partial class SkinWorkshopService
             var alreadyActive = IsActive(id);
             status.Reason = alreadyActive ? WorkshopLoadReason.None : await SkinService.TryRegisterWorkshopResources(directory);
             status.HotLoadVerified = !alreadyActive && status.Reason == WorkshopLoadReason.None;
+            // A package that declares a newer game version is no longer a dead end: at the next
+            // start Skin Changer verifies its code against the running game and bridges it, and only
+            // an unverifiable package keeps failing. The label therefore asks for the restart that
+            // decides it instead of telling the user to pick another skin.
             status.State = status.Reason == WorkshopLoadReason.None ? WorkshopTextKey.Ready :
-                status.Reason is WorkshopLoadReason.Version or WorkshopLoadReason.InvalidPackage ? WorkshopTextKey.Failed : WorkshopTextKey.Restart;
+                status.Reason is WorkshopLoadReason.InvalidPackage ? WorkshopTextKey.Failed : WorkshopTextKey.Restart;
             ModLog.Info($"工坊皮肤 {id}：{status.State}，原因={status.Reason}；安装目录 {directory}");
         }
         catch (Exception ex)

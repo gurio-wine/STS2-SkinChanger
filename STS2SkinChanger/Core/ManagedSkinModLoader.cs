@@ -3211,6 +3211,7 @@ internal static class ManagedSkinModLoader
                 try
                 {
                     return !candidate.IsDynamic &&
+                           !string.IsNullOrEmpty(candidate.Location) &&
                            Path.GetFullPath(candidate.Location)
                                .Equals(provider.AssemblyPath, StringComparison.OrdinalIgnoreCase);
                 }
@@ -3234,6 +3235,9 @@ internal static class ManagedSkinModLoader
             assembly = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(candidate =>
                     !candidate.IsDynamic &&
+                    // An assembly loaded from a stream (the cross-version audit's throwaway copy)
+                    // has no location and is never the copy the game loaded from the mod folder.
+                    !string.IsNullOrEmpty(candidate.Location) &&
                     string.Equals(
                         candidate.FullName,
                         assemblyIdentity,
@@ -3756,18 +3760,62 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
-        if (manifest.minGameVersion == null)
+        // The game refuses a Mod whose declared minimum game version is newer than the running game
+        // (ModManager.TryLoadMod). A cosmetic provider's declaration describes the snapshot its
+        // author built against, so it is verified instead of trusted: the DLL is compiled against
+        // the running game, and only then is the package taken over with the cross-version bridge.
+        var declaredMinimum = manifest.minGameVersion;
+        if (declaredMinimum == null)
         {
             return true;
         }
 
-        if (!SemanticVersion.TryFromString(manifest.minGameVersion, out var minimum))
+        ProviderRuntimeAudit? runtimeAudit = null;
+        bool RunsOnCurrentGame()
         {
-            return false;
+            runtimeAudit = AuditProviderAssembly(mod, declaredMinimum);
+            return runtimeAudit.CanRun;
         }
 
-        var gameVersion = GameVersionField!.GetValue(null) as SemanticVersion;
-        return gameVersion == null || gameVersion.CompareTo(minimum) >= 0;
+        var gameVersion = (GameVersionField!.GetValue(null) as SemanticVersion)?.ToString();
+        var name = manifest.name ?? manifest.id;
+        switch (ProviderMinimumVersionPolicy.Decide(declaredMinimum, gameVersion, manifest.hasDll, RunsOnCurrentGame))
+        {
+            case ProviderMinimumVersionOutcome.VerifiedTakeOver:
+                ModLog.Info(
+                    $"{name} 声明的游戏版本 {declaredMinimum} 高于当前 {gameVersion}；" +
+                    $"已按当前版本核验其皮肤资源与代码（{runtimeAudit?.Describe()}），" +
+                    "本次由本 Mod 接管并桥接跨版本接口，原清单未修改。");
+                return true;
+            case ProviderMinimumVersionOutcome.UnreadableRule:
+                ModLog.Warn(
+                    $"{name} 声明了无法解析的最低游戏版本“{declaredMinimum}”；" +
+                    "不猜测该约束，保持游戏原加载器的处理。");
+                return false;
+            case ProviderMinimumVersionOutcome.Unsupported:
+                ModLog.Warn(
+                    $"{name} 声明的最低游戏版本 {declaredMinimum} 高于当前 {gameVersion}，" +
+                    $"且其代码无法在当前版本运行（{runtimeAudit?.Describe()}）；" +
+                    "保持游戏原加载器的处理，该皮肤本次不可用。");
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    /// <summary>
+    /// Compiles the shipped provider DLL against the running game without executing it. This is the
+    /// evidence that a package may be used although its manifest declares a newer game version.
+    /// </summary>
+    private static ProviderRuntimeAudit AuditProviderAssembly(Mod mod, string declaredMinimum)
+    {
+        var manifest = mod.manifest!;
+        var path = SkinPackagePaths.Resolve(mod.path, manifest.id!, ".dll");
+        var audit = ProviderAssemblyCompatibility.AuditForCurrentGame(path);
+        ModLog.Info(
+            $"{manifest.name ?? manifest.id} 的跨版本运行时核验（清单声明最低游戏版本 {declaredMinimum}）：" +
+            audit.Describe() + "。");
+        return audit;
     }
 
     private static bool DependencyIsSatisfied(

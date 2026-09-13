@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
@@ -15,10 +16,121 @@ internal static class ProviderCompatibilityTests
         Require(Runtime.GetMethod("PrepareForCurrentGame") != null,
             "缺少统一的跨版本准备结果：不能区分已转换和仍然缺失的接口。");
         CheckFixture();
+        CheckBindingDisposeCall();
         CheckReturnedTrackAdapters();
         CheckDisposeAndOwnership();
         CheckExhaustTaskReturn();
         Console.WriteLine("Provider compatibility passed: type relocation, value-type animation calls, unresolved references and source preservation.");
+    }
+
+    // A provider built against the newer snapshot writes `spine?.Dispose()`. The compiler emits a
+    // non-virtual call to the binding base method, and the conditional access hides the receiver
+    // behind dup/branch instructions. v0.107 has no such member at all, so the whole skin fails to
+    // JIT unless that call is translated to the same BoundObject release.
+    private static void CheckBindingDisposeCall()
+    {
+        var binding = typeof(MegaSpineBinding);
+        var derived = typeof(MegaSprite);
+        Require(binding.IsAssignableFrom(derived),
+            "MegaSprite 必须派生自 MegaSpineBinding，否则皮肤包里的 _spineMega?.Dispose() 不成立。");
+        var hasRealDispose = binding.GetMethod("Dispose", BindingFlags.Instance | BindingFlags.Public |
+            BindingFlags.NonPublic, null, Type.EmptyTypes, null) != null;
+
+        var definition = CreateAssembly();
+        var module = Property(definition, "MainModule")!;
+        var owner = Items(Property(module, "Types")!).First();
+        var instructionType = Cecil.GetType("Mono.Cecil.Cil.Instruction")!;
+        var opCodes = Cecil.GetType("Mono.Cecil.Cil.OpCodes")!;
+        var ret = InvokeStatic(instructionType, "Create", opCodes.GetField("Ret")!.GetValue(null)!);
+        var names = new List<string>();
+        foreach (var (name, receiver) in new[] { ("BindingCleanup", binding), ("DerivedBindingCleanup", derived) })
+        {
+            var method = Method(owner, module, name, typeof(void));
+            Invoke(Property(method, "Parameters")!, "Add",
+                Activator.CreateInstance(Cecil.GetType("Mono.Cecil.ParameterDefinition")!, Import(module, receiver))!);
+            var reference = Activator.CreateInstance(Cecil.GetType("Mono.Cecil.MethodReference")!, "Dispose",
+                Import(module, typeof(void)), Import(module, binding))!;
+            Set(reference, "HasThis", true);
+            var call = InvokeStatic(instructionType, "Create", opCodes.GetField("Call")!.GetValue(null)!, reference);
+            Emit(method, "Nop");
+            Emit(method, "Ldarg_0");
+            Emit(method, "Dup");
+            Emit(method, "Brtrue_S", call);
+            Emit(method, "Pop");
+            Emit(method, "Br_S", ret);
+            Invoke(Invoke(Property(method, "Body")!, "GetILProcessor"), "Append", call);
+            Invoke(Invoke(Property(method, "Body")!, "GetILProcessor"), "Append", ret);
+            names.Add(name);
+        }
+
+        var path = Path.Combine(Path.GetTempPath(), "sc-binding-dispose-" + Guid.NewGuid().ToString("N") + ".dll");
+        try
+        {
+            using (var bytes = new MemoryStream())
+            {
+                Invoke(definition, "Write", bytes);
+                File.WriteAllBytes(path, bytes.ToArray());
+            }
+            var original = File.ReadAllBytes(path);
+            var result = Runtime.GetMethod("PrepareForCurrentGame")!.Invoke(null, [path])!;
+            var report = Property(result, "Report")!;
+            Require(Property(report, "Failure") == null, "绑定释放桥接不能整体失败：" + report);
+            Require(File.ReadAllBytes(path).SequenceEqual(original), "不能改写订阅的原始 DLL。");
+            using var stream = (MemoryStream?)Property(result, "Assembly");
+            Require(stream != null || hasRealDispose,
+                "当前游戏没有 MegaSpineBinding.Dispose()，必须生成隔离的兼容程序集。");
+            if (stream != null)
+            {
+                stream.Position = 0;
+                var prepared = InvokeStatic(Cecil.GetType("Mono.Cecil.AssemblyDefinition")!, "ReadAssembly", stream);
+                try
+                {
+                    var methods = Items(Property(Items(Property(Property(prepared, "MainModule")!, "Types")!).First(), "Methods")!)
+                        .ToArray();
+                    foreach (var name in names)
+                    {
+                        var body = Property(methods.Single(m => (string)Property(m, "Name")! == name), "Body")!;
+                        var calls = Items(Property(body, "Instructions")!).Select(i => Property(i, "Operand")?.ToString()).ToArray();
+                        Require(calls.Any(x => x?.Contains("__SkinChanger_DisposeSpine") == true),
+                            $"{name} 的绑定释放必须改走等价清理，而不是留下不存在的游戏方法：" + string.Join(" | ", calls));
+                    }
+                    var adapters = methods
+                        .Where(m => ((string)Property(m, "Name")!).StartsWith("__SkinChanger_DisposeSpine"))
+                        .ToArray();
+                    Require(adapters.Length > 0, "缺少绑定释放的等价清理适配器。");
+                    foreach (var adapter in adapters)
+                    {
+                        var adapterCalls = Items(Property(Property(adapter, "Body")!, "Instructions")!)
+                            .Select(i => Property(i, "Operand")?.ToString()).ToArray();
+                        Require(adapterCalls.Any(x => x?.Contains("::get_BoundObject") == true) &&
+                                adapterCalls.Any(x => x?.Contains("Godot.GodotObject::Dispose") == true),
+                            "兼容清理必须保留原生包装器释放，不能变成空操作。");
+                    }
+                }
+                finally { ((IDisposable)prepared).Dispose(); }
+                stream.Position = 0;
+            }
+
+            using var loaded = stream ?? new MemoryStream(original);
+            var context = new AssemblyLoadContext("provider-binding-dispose", isCollectible: true);
+            try
+            {
+                var assembly = context.LoadFromStream(loaded);
+                foreach (var name in names)
+                {
+                    var method = assembly.ManifestModule.GetMethods(BindingFlags.Static | BindingFlags.Public)
+                        .Single(m => m.Name == name);
+                    try { RuntimeHelpers.PrepareMethod(method.MethodHandle); }
+                    catch (Exception exception)
+                    {
+                        throw new InvalidOperationException(
+                            $"{name} 无法在当前游戏版本上 JIT：{exception.GetBaseException().Message}", exception);
+                    }
+                }
+            }
+            finally { context.Unload(); }
+        }
+        finally { ((IDisposable)definition).Dispose(); File.Delete(path); }
     }
 
     private static object? _exhaustTask;
