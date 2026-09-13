@@ -934,6 +934,32 @@ Require(
         "CznStyleUI",
         managedCharacterAssetProviders),
     "普通 UI 或玩法 Mod 的 RitsuLib 注册不能被皮肤接管策略误拦截。");
+Require(
+    FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+        hasDeclarativeCharacterAssetReplacement: true,
+        isNativeFrameworkProvider: false),
+    "框架式角色资源包的作者初始化器必须照常执行：它同时注册作者自己的设置页、持久数据与资源预载，" +
+    "整段跳过会让默认关闭的功能（例如需要手动开启的出击立绘）永远没有入口；" +
+    "会产生全局强制替换的那一次注册由拦截策略单独处理。");
+Require(
+    !FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+        hasDeclarativeCharacterAssetReplacement: true,
+        isNativeFrameworkProvider: true),
+    "由原皮肤管理器掌管生命周期的皮肤不能再执行一次初始化器，否则订阅与补丁会装两遍。");
+Require(
+    FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+        hasDeclarativeCharacterAssetReplacement: false,
+        isNativeFrameworkProvider: false),
+    "普通托管皮肤的原初始化器行为保持不变。");
+Require(
+    FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
+        hasDeclarativeCharacterAssetReplacement: true),
+    "框架式角色资源包的资源与场景创建已由本 Mod 接管，作者初始化器失败只能损失它附带的功能，" +
+    "不能让整场视觉会话回滚成没有模型的资源皮肤。");
+Require(
+    !FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
+        hasDeclarativeCharacterAssetReplacement: false),
+    "普通托管皮肤的初始化器失败仍按原样回滚，避免留下半初始化的行为补丁。");
 
 Require(
     CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(

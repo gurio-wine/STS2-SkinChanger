@@ -1027,27 +1027,31 @@ internal static class ManagedSkinModLoader
             EnsureProviderNodeMonitor();
             RestoreProviderNodes(assembly);
 
-            var initializerTypes = provider.HasDeclarativeCharacterAssetReplacement &&
-                                   !FrameworkRegistryCooperation.IsNativeProvider(providerId)
-                ? []
-                : GetLoadableTypes(assembly)
+            var runsAuthorInitializer = FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+                provider.HasDeclarativeCharacterAssetReplacement,
+                FrameworkRegistryCooperation.IsNativeProvider(providerId));
+            var initializerTypes = runsAuthorInitializer
+                ? GetLoadableTypes(assembly)
                     .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
                     .Where(pair => pair.Attribute != null)
-                    .ToArray();
+                    .ToArray()
+                : [];
             var skippedInitializer = false;
+            var initializerFailed = false;
+            var patchesBeforeInitializer = -1;
             if (initializerTypes.Length == 0)
             {
                 // There is no original initializer left to register managed Godot scripts (this
-                // is also the intentional path for declarative providers), so do it immediately
+                // is also the intentional path for native-managed providers), so do it immediately
                 // before PatchAll/scene use.
                 EnsureProviderGodotScripts(providerId);
                 new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
                     .PatchAll(assembly);
-                if (provider.HasDeclarativeCharacterAssetReplacement)
+                if (provider.HasDeclarativeCharacterAssetReplacement && !runsAuthorInitializer)
                 {
                     ModLog.Info(
-                        $"{provider.Name} 使用框架式角色资源注册；已由皮肤切换器直接路由资源，" +
-                        "因此未执行会产生全局强制替换的原初始化器。");
+                        $"{provider.Name} 使用框架式角色资源注册；资源已由皮肤切换器直接路由，" +
+                        "其原初始化器由原皮肤管理器执行，本 Mod 不重复执行。");
                 }
             }
             else
@@ -1077,8 +1081,31 @@ internal static class ManagedSkinModLoader
                         continue;
                     }
 
-                    method.Invoke(null, null);
-                    InvokedProviderInitializers.Add(initializerKey);
+                    patchesBeforeInitializer = CaptureProviderPatches(assembly).Count;
+                    try
+                    {
+                        method.Invoke(null, null);
+                        InvokedProviderInitializers.Add(initializerKey);
+                    }
+                    catch (Exception exception) when (
+                        FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
+                            provider.HasDeclarativeCharacterAssetReplacement))
+                    {
+                        initializerFailed = true;
+                        InvokedProviderInitializers.Add(initializerKey);
+                        ModLog.Warn(
+                            $"执行 {provider.Name} 的原初始化器失败；其资源与场景创建已由本 Mod 接管，" +
+                            "因此保留本次视觉会话并改用等价步骤：" +
+                            exception.GetBaseException().Message);
+                        break;
+                    }
+
+                    if (provider.HasDeclarativeCharacterAssetReplacement)
+                    {
+                        ModLog.Info(
+                            $"{provider.Name} 的原初始化器已执行：作者的补丁、场景脚本类型、" +
+                            "自带设置页与资源预载按原样生效；框架注册写入已由本 Mod 拦截。");
+                    }
                 }
 
                 // The first run may install Harmony patches from inside a custom initializer.
@@ -1087,7 +1114,26 @@ internal static class ManagedSkinModLoader
                 // for a second time. Restore the exact callbacks that the provider actually chose
                 // on its first activation: some providers deliberately exclude optional profiling
                 // or compatibility patch classes, which a blanket PatchAll would incorrectly enable.
-                if (skippedInitializer)
+                if (initializerFailed)
+                {
+                    // The pack's own initializer is the author's setup; its resources and scene
+                    // creation are already ours, so a failure there costs only what the initializer
+                    // would have added and must never take the skin down with it. Install what the
+                    // skip path installs, unless the initializer had already patched the assembly
+                    // before it failed - a second PatchAll would run those callbacks twice.
+                    EnsureProviderGodotScripts(providerId);
+                    if (CaptureProviderPatches(assembly).Count == patchesBeforeInitializer)
+                    {
+                        new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                            .PatchAll(assembly);
+                    }
+                    else
+                    {
+                        ModLog.Info(
+                            $"{provider.Name} 的原初始化器在失败前已装入作者补丁，不再重复应用。");
+                    }
+                }
+                else if (skippedInitializer)
                 {
                     if (ProviderRuntimeBlueprints.TryGetValue(providerId, out var blueprint))
                     {
