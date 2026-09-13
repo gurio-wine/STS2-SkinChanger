@@ -21,7 +21,8 @@ internal static class GitHubSkinService
     // from the raw host, so they cost no API budget.
     private const int MaxInfoChecksPerRefresh = 60;
     // Only an installed repository needs its release: that is what "update available" compares
-    // against. A repository nobody installed costs no API request at all.
+    // against, and it is the only question a release read answers. A repository nobody installed
+    // costs no API request at all.
     private const int MaxReleaseChecksPerRefresh = 10;
     private static readonly GitHubSkinCatalog Catalog = new();
     private static readonly GitHubInstallLedger Ledger = new();
@@ -104,6 +105,11 @@ internal static class GitHubSkinService
             var token = timeout.Token;
             var repos = await FetchReposAsync(token);
             Catalog.Merge(repos.Select(GitHubSkinCatalog.FromRepo));
+            // The repositories this round discovers are the ones the release check below has to walk,
+            // and an install recorded in an earlier session is only visible to it once the ledger has
+            // been matched against them - otherwise the first refresh after a dropped cache would
+            // report every installed skin as "not installed" and check no release at all.
+            RefreshInstalls();
             PublishItems();
             SaveCatalog();
             await CheckInfoAsync(token);
@@ -171,12 +177,14 @@ internal static class GitHubSkinService
             : entry with { Recognition = GitHubRecognition.Unrecognized, Error = result.Error, Targets = [], RestartRequired = true };
     }
 
-    // A release is only fetched for a repository that is installed here, because that is the
-    // only case where the version in the release changes what the panel shows.
+    // Every installed repository is re-read on every refresh, however complete the cache looks: the
+    // digest of the package the release publishes now is the only thing that can say whether the
+    // installed copy is still the current one, and nothing in the search result changes when an
+    // author replaces that file under an existing tag.
     private static async Task CheckReleasesAsync(CancellationToken token)
     {
-        var wanted = Catalog.Entries.Where(entry => _installsById.ContainsKey(entry.Id) && entry.ReleaseTag.Length == 0)
-            .OrderByDescending(entry => entry.PushedAt).Take(MaxReleaseChecksPerRefresh).ToArray();
+        var wanted = GitHubReleasePolicy.ReleaseChecks(Catalog.Entries, id => _installsById.ContainsKey(id),
+            MaxReleaseChecksPerRefresh);
         for (var index = 0; index < wanted.Length; index++)
         {
             token.ThrowIfCancellationRequested();
@@ -190,13 +198,11 @@ internal static class GitHubSkinService
         }
     }
 
-    private static async Task<GitHubSkinEntry> WithReleaseAsync(GitHubSkinEntry entry, CancellationToken token, bool packageRequested = false)
+    // The live release, always: the refresh asks whether the published package is still the
+    // installed one, and a scan or an install asks where that package is - neither question can be
+    // answered by what an earlier read happened to see. See GitHubReleasePolicy.
+    private static async Task<GitHubSkinEntry> WithReleaseAsync(GitHubSkinEntry entry, CancellationToken token)
     {
-        // Only the refresh may reuse a cached read, and only because it asks whether a newer
-        // package exists. A scan or an install asks where the package is, which the cache cannot
-        // answer: an author can attach the zip to an already published release, or replace the
-        // file under the same tag. See GitHubReleasePolicy.
-        if (GitHubReleasePolicy.ReuseCachedRead(entry.ReleaseTag, packageRequested)) return entry;
         var json = await Client().LatestReleaseAsync(entry.Repo, token);
         return GitHubReleasePolicy.WithRelease(entry, json);
     }
@@ -212,9 +218,9 @@ internal static class GitHubSkinService
 
     private static async Task<StagedPackage> StageAsync(GitHubSkinEntry entry, CancellationToken token)
     {
-        // An explicit scan or install always reads the live release: this call is the player
-        // asking for the package itself, not for a version number.
-        var release = await WithReleaseAsync(entry, token, packageRequested: true);
+        // An explicit scan or install reads the live release too: this call is the player asking
+        // for the package itself, not for a version number.
+        var release = await WithReleaseAsync(entry, token);
         // Reading the release is what makes the version column and the update check work, so the
         // freshly read tag is published even when the download below fails.
         Catalog.Publish(release);
