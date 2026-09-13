@@ -1,0 +1,17 @@
+# 创意工坊新增 GitHub 来源
+
+已由用户在会话中确认：在现有皮肤创意工坊面板增加“来源”筛选，Steam 为默认，新增 GitHub；GitHub 列表来自 `https://github.com/topics/sts2-sc-mod`；排除本 Mod 仓库 `gurio-wine/STS2-SkinChanger`。作者不需要做任何事：不上传 sc.info、不填表、不改仓库结构。原先准备的 `docs/sc.info` 模板作废并删除。
+
+- 列表来自 GitHub 搜索接口 `GET /search/repositories?q=topic:sts2-sc-mod`，排除本仓库与 fork；身份用 `owner/repo`，显示名优先取包内清单，其次 Release 标题，最后仓库名。
+- 单一身份键空间保持不变：条目的 `Id` 仍是 `ulong`。GitHub 条目使用合成 ID `SHA-256("owner/repo")` 取低 62 位后置最高位，确定性、无需分配表；真实工坊 ID 远小于该范围，不会碰撞。`Id → 来源` 由来源注册表解析，仓库名从 GitHub 缓存反查。
+- 来源注册表是唯一的来源分派点：元数据、封面地址、安装状态、行内标签、主操作与打开链接都按来源分派。Steam 专用路径（订阅状态、订阅/退订、Steam 详情查询、投稿、多人与热注册）遇到合成 ID 直接跳过，不误当作 Steam 物品。
+- 请求预算与缓存：目录缓存在 `user://Gurio.SkinChanger/github/catalog.json`，含每个仓库的搜索字段、Release 信息、识别结果和时间戳。刷新只发一次搜索请求；`pushed_at` 与缓存一致且已有识别结果的仓库不发后续请求；`pushed_at` 变化才查 `GET /repos/{o}/{r}/releases/latest`，tag 一致则复用已识别的包。未认证限额（core 60 次/小时、搜索 10 次/分钟）用尽或返回 403/429 时保留缓存并提示“接口受限，稍后重试”，不清空列表。
+- 出网请求沿用现有 HttpClient 约定：`AllowAutoRedirect=false`、超时、响应体上限、主机白名单（`api.github.com`、`github.com`、`objects.githubusercontent.com`）、必带 `User-Agent` 与 `Accept: application/vnd.github+json`；Release 资产下载的重定向逐跳校验主机。
+- 元数据来自包本身：`<id>.json` 清单（`name`/`author`/`version`/`has_pck`/`has_dll`/`affects_gameplay`），与游戏加载本地 mod 用的是同一份文件；缺失时用 Release 标题→仓库名、作者用 owner。
+- 封面用 `https://opengraph.githubassets.com/1/{owner}/{repo}`，无接口限额；封面主机白名单相应扩展，取不到时沿用现有占位图。
+- 识别在安装前完成：Release 资产解压到 `user://Gurio.SkinChanger/github/staging/<合成ID>/`，复用投稿扫描的离线识别路径（读取清单、卡面与卡图包扫描、`SkinCatalog.Build` + `ExportWorkshopCatalog`），结果按 Release tag 缓存。为此给 `SkinCatalog.Build` 增加“调用方指定 provider→合成 ID”的入口：当前 `_workshopSourceIds` 只从工坊目录路径解析，GitHub 包不在该布局下。
+- 识别成功后按现有清单体系显示类型/目标标签与“需要重启 / 可免重启”，评估仍由 `WorkshopPackagePolicy` 完成；识别失败（无包、无资源、超出文件数上限、清单损坏）仍列出该仓库，标“未识别”，安装不可用并保留仓库链接。
+- 安装：解压到 `<游戏目录>/mods/<包 ID 或仓库名>/`，与本地 mod 布局一致，游戏下次启动加载。目标已存在时按版本判定“已安装 / 可更新”，可更新时提供重新安装。写入走临时目录再改名，失败不留下半个包，不删除既有目录。安装完成后提示需要重启，不提供免重启标记。
+- UI：筛选行新增“来源”（Steam / GitHub）。GitHub 模式把订阅筛选换成“全部 / 未安装 / 已安装 / 可更新”，类型、地区、目标、重启标签筛选沿用；排序在 GitHub 模式提供“最近更新 / 星标 / 名称”，Steam 专用排序（订阅数、评论数）在该模式隐藏。筛选、行、封面、翻页与悬停沿用现有实现。
+- 15 种语言，兼容正式版与测试版，不主动启动游戏，离线时用缓存列表；不新增登录或 OAuth，不支持自动更新已安装 Mod（只提示可更新）。
+- 测试：合成 ID 的确定性与不碰撞、来源解析、搜索与 Release 响应解析、`pushed_at` 未变时不发请求、限流降级、资产解压的路径逃逸防护、安装/更新/已安装判定、未识别分支、两种来源下的筛选与排序成员。网络部分用注入的假 HTTP 客户端；另用真实资产包（SilentSkinMod v0.1.4：`KaguyaSilentRavenSkin.json/dll/pck`）离线跑识别，断言得到 silent 分组。
