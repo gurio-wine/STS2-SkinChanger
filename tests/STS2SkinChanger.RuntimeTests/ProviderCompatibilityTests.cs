@@ -20,7 +20,70 @@ internal static class ProviderCompatibilityTests
         CheckReturnedTrackAdapters();
         CheckDisposeAndOwnership();
         CheckExhaustTaskReturn();
+        CheckPrivateDependencyResolution();
         Console.WriteLine("Provider compatibility passed: type relocation, value-type animation calls, unresolved references and source preservation.");
+    }
+
+    // A package may ship private managed dependencies next to its own DLL. The game's loader
+    // resolves them from the package folder, so the audit must do the same instead of reporting the
+    // package as unusable because the dependency is not in the game's own directory.
+    private static void CheckPrivateDependencyResolution()
+    {
+        var directory = Directory.CreateTempSubdirectory("sc-provider-dependency-");
+        var providerPath = Path.Combine(directory.FullName, "PrivateDependencyProvider.dll");
+        object? sibling = null;
+        object? provider = null;
+        try
+        {
+            sibling = CreateAssembly();
+            var siblingModule = Property(sibling, "MainModule")!;
+            var siblingPath = Path.Combine(directory.FullName,
+                (string)Property(Property(sibling, "Name")!, "Name")! + ".dll");
+            var type = Activator.CreateInstance(Cecil.GetType("Mono.Cecil.TypeDefinition")!,
+                "Fixture", "Marker",
+                Enum.Parse(Cecil.GetType("Mono.Cecil.TypeAttributes")!, "Public, Class"),
+                Import(siblingModule, typeof(object)))!;
+            Invoke(Property(siblingModule, "Types")!, "Add", type);
+            var marker = Method(type, siblingModule, "Touch", typeof(void));
+            Emit(marker, "Ret");
+            Invoke(sibling, "Write", siblingPath);
+
+            provider = CreateAssembly();
+            var providerModule = Property(provider, "MainModule")!;
+            var owner = Items(Property(providerModule, "Types")!).First();
+            var run = Method(owner, providerModule, "Run", typeof(void));
+            using (var written = (IDisposable)InvokeStatic(Cecil.GetType("Mono.Cecil.AssemblyDefinition")!,
+                       "ReadAssembly", siblingPath))
+            {
+                var writtenSiblingModule = Property(written, "MainModule")!;
+                var siblingType = Invoke(writtenSiblingModule, "GetType", "Fixture", "Marker");
+                var touch = Items(Property(siblingType, "Methods")!)
+                    .First(candidate => (string)Property(candidate, "Name")! == "Touch");
+                var reference = Import(providerModule, touch);
+                Emit(run, "Call", reference);
+                Emit(run, "Ret");
+                Invoke(provider, "Write", providerPath);
+            }
+
+            var audit = InvokeStatic(Runtime, "AuditForCurrentGame", providerPath)!;
+            Require((bool)Property(audit, "CanRun")!,
+                "随包自带的私有托管依赖没有被核验解析：" + Property(audit, "Failure"));
+        }
+        finally
+        {
+            (provider as IDisposable)?.Dispose();
+            (sibling as IDisposable)?.Dispose();
+            // The audit maps the fixture files, so removing them is best effort.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            try
+            {
+                directory.Delete(true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     // A provider built against the newer snapshot writes `spine?.Dispose()`. The compiler emits a

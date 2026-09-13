@@ -40,6 +40,16 @@ internal static partial class ProviderAssemblyCompatibility
             }
 
             var context = new AssemblyLoadContext("sc-provider-audit", isCollectible: true);
+            // A package may ship private managed dependencies next to its own DLL (video, JSON or
+            // helper libraries). The game's loader resolves those from the package folder, so the
+            // audit has to resolve them the same way - otherwise a package is reported as unable to
+            // run here only because the audit could not see a file that ships with it.
+            var providerDirectory = Path.GetDirectoryName(Path.GetFullPath(assemblyPath));
+            if (!string.IsNullOrWhiteSpace(providerDirectory))
+            {
+                context.Resolving += (_, name) => ResolvePrivateDependency(context, providerDirectory, name);
+            }
+
             try
             {
                 Assembly assembly;
@@ -109,6 +119,37 @@ internal static partial class ProviderAssemblyCompatibility
         catch (Exception exception)
         {
             return new(false, 0, exception.GetBaseException().Message);
+        }
+    }
+
+    /// <summary>
+    /// Resolves a provider's own private dependency from the package folder. Only a file that is
+    /// actually shipped there is used, and a dependency that cannot be loaded stays unresolved so
+    /// the audit keeps reporting it instead of silently accepting the package.
+    /// </summary>
+    private static Assembly? ResolvePrivateDependency(
+        AssemblyLoadContext context,
+        string providerDirectory,
+        AssemblyName name)
+    {
+        if (string.IsNullOrWhiteSpace(name.Name))
+        {
+            return null;
+        }
+
+        var candidate = Path.Combine(providerDirectory, name.Name + ".dll");
+        if (!File.Exists(candidate))
+        {
+            return null;
+        }
+
+        try
+        {
+            return context.LoadFromAssemblyPath(candidate);
+        }
+        catch (Exception exception) when (exception is BadImageFormatException or FileLoadException)
+        {
+            return null;
         }
     }
 }
