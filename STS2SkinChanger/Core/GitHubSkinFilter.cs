@@ -17,16 +17,22 @@ internal static class GitHubSkinFilter
     // is "not installed" rather than the whole topic.
     public const string DefaultFilter = Missing;
 
-    // A repository without a recognized code cannot be installed, but it is still not
-    // installed, so it stays visible in the default view - that is where its scan button is.
+    // A repository without a code has no skin to install, so it lives in its own bucket and is
+    // never listed as installed or not installed: those two views only hold repositories the
+    // browser can actually install.
     public static bool Matches(string filter, bool recognized, GitHubInstallState state) => filter switch
     {
-        Missing => state == GitHubInstallState.NotInstalled,
-        Installed => state != GitHubInstallState.NotInstalled,
-        Updatable => state == GitHubInstallState.Updatable,
+        Missing => recognized && state == GitHubInstallState.NotInstalled,
+        Installed => recognized && state != GitHubInstallState.NotInstalled,
+        Updatable => recognized && state == GitHubInstallState.Updatable,
         Unrecognized => !recognized,
         _ => true
     };
+
+    // The unrecognized view lists repositories that carry no kind at all, so a kind or target
+    // left over from the Steam source must not empty it: an unrecognized repository can never
+    // match one, and this is the only view where its scan action lives.
+    public static bool IgnoresKindFilter(string filter) => filter == Unrecognized;
 
     public static bool IsOption(string? filter) => filter != null && Options.Contains(filter);
 }

@@ -33,8 +33,9 @@ internal partial class SkinWorkshopPanel
     {
         // An unrecognized GitHub repository is still listed so the player can open it; the kind
         // filter cannot keep it (it claims no type), so it is added back explicitly.
+        var unknownKind = GitHubMode && GitHubSkinFilter.IgnoresKindFilter(_installFilter) ? "" : _kind;
         var listed = SkinWorkshopService.Catalog.Where(item =>
-            item.Targets.Length > 0 || GitHubSkinPolicy.KeepWithoutTargets(item.Id, item.Targets.Length, _kind)).ToArray();
+            item.Targets.Length > 0 || GitHubSkinPolicy.KeepWithoutTargets(item.Id, item.Targets.Length, unknownKind)).ToArray();
         var items = SourceFiltered(WorkshopBrowserPolicy.Filter(listed, _kind, _target, RegionMembers)
             .Concat(listed.Where(item => item.Targets.Length == 0))
             .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item))));
@@ -58,7 +59,7 @@ internal partial class SkinWorkshopPanel
         ContextualSkinControls.ApplyGameTheme(direction);
         direction.AddItem(WorkshopDetailsText.Get(WorkshopDetailsTextKey.Forward), 0);
         direction.AddItem(WorkshopDetailsText.Get(WorkshopDetailsTextKey.Reverse), 1);
-        direction.Select(_reverseSort ? 1 : 0);
+        SelectByItemId(direction, _reverseSort ? 1 : 0);
         direction.ItemSelected += index =>
         { _reverseSort = direction.GetItemId((int)index) == 1; _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
         heading.AddChild(direction);
@@ -69,7 +70,7 @@ internal partial class SkinWorkshopPanel
         ContextualSkinControls.ApplyGameTheme(picker);
         foreach (var sort in Enum.GetValues<WorkshopSort>()) picker.AddItem(WorkshopDetailsText.Get(
             sort == WorkshopSort.LatestReply ? WorkshopDetailsTextKey.LatestReply : (WorkshopDetailsTextKey)sort), (int)sort);
-        picker.Select((int)_sort);
+        SelectByItemId(picker, (int)_sort);
         picker.ItemSelected += index => { _sort = (WorkshopSort)picker.GetItemId((int)index); _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
         heading.AddChild(picker);
         KeepHoverBelow(picker);
@@ -81,13 +82,24 @@ internal partial class SkinWorkshopPanel
         githubSort.AddItem(GitHubText(GitHubSkinTextKey.Stars), (int)GitHubSort.Stars);
         githubSort.AddItem(GitHubText(GitHubSkinTextKey.Updated), (int)GitHubSort.Updated);
         githubSort.AddItem(GitHubText(GitHubSkinTextKey.Name), (int)GitHubSort.Name);
-        githubSort.Select((int)_githubSort);
+        // The three entries are added stars-first while the enum starts at "updated", so the
+        // selection has to follow the item id - selecting by index showed the wrong order.
+        SelectByItemId(githubSort, (int)_githubSort);
         githubSort.ItemSelected += index =>
         { _githubSort = (GitHubSort)githubSort.GetItemId((int)index); _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
         heading.AddChild(githubSort);
         KeepHoverBelow(githubSort);
     }
     private IReadOnlySet<string>? RegionMembers => _region.Length == 0 ? null : _names.Regions(_kind).GetValueOrDefault(_region) ?? new HashSet<string>();
+    // The pickers carry the value in the item id; here the id is turned back into the index the
+    // control wants, so an entry list whose order differs from the enum still shows the right label.
+    private static void SelectByItemId(OptionButton picker, int id)
+    {
+        var ids = new int[picker.ItemCount];
+        for (var index = 0; index < ids.Length; index++) ids[index] = picker.GetItemId(index);
+        var selected = WorkshopOptionSelectionPolicy.IndexOfId(ids, id);
+        if (selected >= 0) picker.Select(selected);
+    }
     private void BuildFilters(VBoxContainer content)
     {
         if (_kind == "companion" && _target == "osty") { _kind = "character"; _target = "necrobinder"; }
@@ -131,7 +143,7 @@ internal partial class SkinWorkshopPanel
     {
         _subscriptionPicker.SetOptions(WorkshopSubscriptionFilter.Options, _subscriptions.Value);
         _sourcePicker.Visible = !CodeErrors;
-        _sourcePicker.Select(SkinSources.IndexOf(_source));
+        SelectByItemId(_sourcePicker, SkinSources.IndexOf(_source));
         _sourcePicker.TooltipText = GitHubText(GitHubSkinTextKey.Source);
         _installPicker.SetOptions(GitHubSkinFilter.Options, _installFilter);
         _installPicker.Picker.Visible = !CodeErrors && GitHubMode;

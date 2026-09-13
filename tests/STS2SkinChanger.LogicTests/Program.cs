@@ -1994,6 +1994,7 @@ GitHubSkinCatalogTests.Run();
 GitHubSkinClientTests.Run();
 GitHubSourceRoutingTests.Run();
 GitHubSkinTextTests.Run();
+WorkshopOptionSelectionPolicyTests.Run();
 WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 

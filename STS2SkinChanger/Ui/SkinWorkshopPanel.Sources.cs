@@ -42,7 +42,7 @@ internal partial class SkinWorkshopPanel
         ContextualSkinControls.ApplyGameTheme(_sourcePicker);
         for (var index = 0; index < SkinSources.Options.Length; index++)
             _sourcePicker.AddItem(SkinSources.Name(ModLocalization.CurrentLanguage, SkinSources.Options[index]), index);
-        _sourcePicker.Select(SkinSources.IndexOf(_source));
+        SelectByItemId(_sourcePicker, SkinSources.IndexOf(_source));
         _sourcePicker.ItemSelected += index => SelectSource(SkinSources.OptionAt((int)index));
         filters.AddChild(_sourcePicker); KeepHoverBelow(_sourcePicker);
         // Steam's own filter follows the source picker; GitHub swaps it for its install filter.

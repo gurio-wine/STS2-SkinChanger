@@ -132,6 +132,8 @@
              Link="CardPresentationLayoutPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/ReloadingReferenceCache.cs"
              Link="ReloadingReferenceCache.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/WorkshopOptionSelectionPolicy.cs"
+             Link="WorkshopOptionSelectionPolicy.cs" />
   </ItemGroup>
 
   <Target Name="CopyFrameworkCompatibilityFixture" AfterTargets="Build">

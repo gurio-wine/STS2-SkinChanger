@@ -131,7 +131,9 @@ internal partial class SkinWorkshopPanel
             var details = result.Item is { } item
                 ? string.Join(" · ", item.Targets.Select(target => _names.Name(target.Kind, target.Target)).Distinct())
                 : "";
-            _scan = GitHubScanPanel.Show(this, entry?.FullName ?? "", details, result, () => { _scan = null; if (!_closed) Poll(); });
+            // The same handle the card wears, so the window and the row it came from read alike.
+            _scan = GitHubScanPanel.Show(this, entry is null ? "" : GitHubSkinPolicy.Handle(entry.FullName),
+                details, result, () => { _scan = null; if (!_closed) Poll(); });
             UpdateVisibleActions();
         }
         catch (Exception ex) { ShowActionError(id, ex); }

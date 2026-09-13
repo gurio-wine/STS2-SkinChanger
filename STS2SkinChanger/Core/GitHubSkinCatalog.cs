@@ -154,6 +154,8 @@ internal static class GitHubSortPolicy
         // Pure numbers only: the column shows values, labels come from the panel's language table.
         GitHubSort.Stars => entry.Stars.ToString("N0", CultureInfo.CurrentCulture),
         GitHubSort.Updated => entry.PushedAt.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        _ => entry.Name
+        // The name column repeats what the card wears, so an unrecognized repository reads as its
+        // handle here too instead of a bare folder name that says nothing about whose it is.
+        _ => GitHubSkinPolicy.CardName(entry.FullName, entry.Recognition == GitHubRecognition.Recognized, entry.Name)
     };
 }

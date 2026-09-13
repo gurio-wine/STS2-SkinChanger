@@ -41,8 +41,11 @@ internal static class GitHubSkinService
     public static IReadOnlyDictionary<ulong, GitHubSkinEntry> EntriesById => _entriesById;
 
     public static GitHubSkinEntry? Entry(ulong id) => _entriesById.GetValueOrDefault(id);
-    public static string Title(ulong id) => _installsById.TryGetValue(id, out var install) && install.PackageName.Length > 0
-        ? install.PackageName : Entry(id)?.Name ?? "";
+    // A repository the browser could not recognize has no skin name, so its card wears the
+    // repository handle; a recognized one shows the name the package itself declares.
+    public static string Title(ulong id) => Entry(id) is not { } entry ? "" : GitHubSkinPolicy.CardName(
+        entry.FullName, entry.Recognition == GitHubRecognition.Recognized,
+        _installsById.TryGetValue(id, out var install) && install.PackageName.Length > 0 ? install.PackageName : entry.Name);
     public static string CoverUrl(ulong id) => Entry(id)?.CoverUrl ?? "";
     public static string RepoUrl(ulong id) => Entry(id)?.Repo.Url ?? "";
     public static string Description(ulong id) => Entry(id)?.Description ?? "";

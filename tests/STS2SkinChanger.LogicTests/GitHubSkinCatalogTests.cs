@@ -82,8 +82,10 @@ internal static class GitHubSkinCatalogTests
             "按名称排序及其反向必须真的反过来，且不依赖字典顺序。");
         Require(GitHubSortPolicy.Metric(recognized, GitHubSort.Stars).Contains("12") &&
             GitHubSortPolicy.Metric(recognized, GitHubSort.Name) == recognized.Name &&
+            GitHubSortPolicy.Metric(recognized with { Recognition = GitHubRecognition.Unrecognized, Targets = [] },
+                GitHubSort.Name) == "@qbyoffice/SilentSkinMod" &&
             GitHubSortPolicy.Metric(null, GitHubSort.Stars) == "—",
-            "指标文本要跟着排序键走：星标显示星数，名称排序显示仓库名。");
+            "指标文本要跟着排序键走：星标显示星数，名称排序显示卡片上的名字（未识别时就是仓库句柄）。");
         Console.WriteLine("GitHub skin catalog passed: merge keeps recognition, cache round-trip, sorting.");
     }
 

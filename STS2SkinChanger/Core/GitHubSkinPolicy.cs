@@ -131,6 +131,14 @@ internal static class GitHubSkinPolicy
             ?? zips.OrderByDescending(asset => asset.Size).FirstOrDefault();
     }
 
+    // The handle form used wherever a repository the browser cannot name has to be shown.
+    public static string Handle(string fullName) => "@" + fullName;
+
+    // A repository that published no code has no skin title to show, so its card wears the
+    // repository handle: a bare folder name would not even say whose repository it is.
+    public static string CardName(string fullName, bool recognized, string title) =>
+        recognized ? title : Handle(fullName);
+
     // A repository that was never recognized still belongs in the unfiltered list,
     // but it must not pretend to be a character, card or monster skin.
     public static bool KeepWithoutTargets(ulong id, int targetCount, string kind) =>
