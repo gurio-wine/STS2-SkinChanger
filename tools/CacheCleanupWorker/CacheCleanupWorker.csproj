@@ -7,6 +7,29 @@
     <PlatformTarget>AnyCPU</PlatformTarget>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+
+    <!-- This is the file antivirus engines see as "a small unsigned program that another program
+         starts, that waits for it to exit and then touches files in the game's mods folder". The
+         shape is honest and unavoidable, so the bytes have to at least stay the same: a new
+         SHA-256 on every release throws away both the vendor whitelist and the cloud reputation
+         the file earned, and the false-positive report comes straight back.
+         Therefore the version resource is pinned to the helper's own number instead of the mod's,
+         it carries no commit hash, and the debug directory is dropped so no absolute PDB path of
+         the build machine ends up inside the file. Bump HelperVersion only when this program
+         really changes - and expect one new false-positive round, because that is a new file for
+         every engine again. -->
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <DebugType>none</DebugType>
+    <Deterministic>true</Deterministic>
+
+    <!-- Readable, truthful metadata: an empty version resource is itself a heuristic signal. -->
+    <Company>Gurio</Company>
+    <Product>Skin Changer</Product>
+    <AssemblyTitle>Skin Changer exit helper</AssemblyTitle>
+    <Description>Completes the file operations a running Slay the Spire 2 cannot: removes or replaces a skin folder after the game exits. No network, no shell, no elevation, no scheduled tasks.</Description>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System.Runtime.Serialization" />

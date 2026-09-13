@@ -86,8 +86,9 @@ internal static class DeferredCacheCleanup
         }));
         var start = new ProcessStartInfo
         {
-            FileName = worker,
-            UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden
+            // No shell and no window hint: the helper is a GUI subsystem program that never shows
+            // one, and "started hidden" is the kind of detail heuristics count against a file.
+            FileName = worker, UseShellExecute = false, CreateNoWindow = true
         };
         start.ArgumentList.Add(manifest);
         return Process.Start(start);
