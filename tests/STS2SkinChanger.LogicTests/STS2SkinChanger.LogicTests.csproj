@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="../../STS2SkinChanger/Core/WorkshopPagePool.cs" Link="WorkshopPagePool.cs" />
     <Compile Include="../../STS2SkinChanger/Core/SkinSourceIdentity.cs" Link="SkinSourceIdentity.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinPolicy.cs" Link="GitHubSkinPolicy.cs" />
     <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj"
                       ReferenceOutputAssembly="false" />
     <Compile Include="../../STS2SkinChanger/Core/PromotedPackOverlayPolicy.cs"
