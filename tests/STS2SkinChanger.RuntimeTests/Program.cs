@@ -29,6 +29,12 @@ if (args.Length >= 3 && args[0] == "--audit-art-pack-recognition")
     return;
 }
 
+if (args.Length == 5 && args[0] == "--audit-github-recognition")
+{
+    GitHubRecognitionAudit.Run(args[1], args[2], args[3], args[4]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-workshop-reply-sort")
 {
     WorkshopReplySortTests.Run();

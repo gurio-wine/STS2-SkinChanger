@@ -4,7 +4,8 @@ using STS2SkinChanger.Catalog;
 namespace STS2SkinChanger.Core;
 
 internal sealed record WorkshopLocalSubmission(ulong Id, string Name, string Directory);
-internal sealed record WorkshopScanResult(WorkshopCatalogItem? Item, string Name, string Error);
+internal sealed record WorkshopScanResult(WorkshopCatalogItem? Item, string Name, string Error,
+    string ProviderId = "", string ProviderName = "");
 internal static class WorkshopSubmissionScanner
 {
     internal static SkinModDescriptor[] ReadDescriptors(string directory)
@@ -88,7 +89,9 @@ internal static class WorkshopSubmissionScanner
             var assessment = WorkshopPackagePolicy.Assess(local.Directory, gameVersion, dependencies);
             var hot = assessment.CanInspectResources && assessment.Mods.All(m => catalog.HasCompleteWorkshopResourceCoverage(m.Id));
             if (!WorkshopPackagePolicy.Unchanged(local.Directory, before)) return new(null, local.Name, "Files changed during scanning.");
-            return new(own with { RestartRequired = !hot }, local.Name, "");
+            var providerId = catalog.ProviderForSourceId(local.Id) ?? "";
+            return new(own with { RestartRequired = !hot }, local.Name, "", providerId,
+                mods.FirstOrDefault(mod => mod.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase))?.Name ?? local.Name);
         }
         catch (Exception ex) { return new(null, local.Name, ex.GetBaseException().Message); }
     }

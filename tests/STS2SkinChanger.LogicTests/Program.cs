@@ -1171,6 +1171,13 @@ Require(
     "原提供者以非公开属性保存 Target/MonsterId 时，预编译路由也必须保持兼容。");
 _ = monsterIdAccessor(scopedMonsterProfile);
 _ = isScopedMonsterSelected("CznEnemySkin", "SEWER_CLAM");
+// Warm up outside the measurement: the first executions after a fresh build still run tier-0 code
+// and promoting them to tier-1 allocates, which is not what this budget is about.
+for (var index = 0; index < 50_000; index++)
+{
+    _ = monsterIdAccessor(scopedMonsterProfile);
+    _ = isScopedMonsterSelected("CznEnemySkin", "SEWER_CLAM");
+}
 var scopedRouteAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
 for (var index = 0; index < 50_000; index++)
 {
