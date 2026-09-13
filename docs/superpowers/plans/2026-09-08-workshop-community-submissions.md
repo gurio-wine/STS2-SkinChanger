@@ -69,3 +69,9 @@
 - 错误物品资料按 ID 只读查询，封面和名称共用常规加载路径；未知 ID 使用占位，不把内部槽号当作工坊 ID。不将错误 ID 加回订阅清单或放宽订阅/加载权限；错误专属 ID 仅按当前页增量读取。来回切换清理标签、按钮动作、重启高亮并更新绑定代次，拒绝旧页异步回调和旧点击。
 - 回归测试覆盖发布有效码→删末位/缺片/全删→修复、重复独立有效码、内置条目、错误缓存恢复、资料 ID 边界、网络失败保留缓存及全部 15 种错误界面文案；不启动游戏，视觉/交互仍由用户实测。
 - Release 正式版与 ReleaseBeta 测试版全套 RuntimeTests、LogicTests、Test-BuildEnvironment 通过。已停机部署 `1.0.3.7` 到暂存内容、测试版工坊和正式版快照缓存，四个文件分别核对 SHA-256 一致；主 DLL `3AF49E3B12E35AECE1BA0D84E11695AD4FBF9C2E222A9E87C8C445B9E0E23FA5`。未上传工坊。
+
+## 卡面以普通图片存放的提供者投稿扫描（1.0.8.3）
+
+- 投稿扫描与卡面接管共用同一条识别：提供者把自己的卡面当普通图片放在私有目录时，整目录判定成立（至少 20 张、八成以上能对上卡牌）即读成卡面包，这类物品不再以 `No recognized skin resources.` 被拒绝投稿。实包 `3797161358`（KeiRegentCards，`portraits` 下 96 张 PNG）扫描出 `cards:regent|cards:status|cards:token`。
+- 新增回归：卡面包必须能生成投稿码，只含图标的目录不得被判成卡面包。`--audit-loose-card-pack` 报告同一目录的投稿扫描结果，`--audit-art-pack-recognition` 继续覆盖投稿落点。
+- Release 正式版与 ReleaseBeta 测试版构建零警告零错误，LogicTests、两版 RuntimeTests（含 `--test-card-art-packs`）通过；游戏未运行时部署 `1.0.8.3` 到 `workshop/content`、测试版工坊目录和正式版快照缓存，三处主 DLL SHA-256 均为 `EA57A53407B7362E882D0C1E8AEA4E7EFF3CCD19238AEEAD25C158DB8BA30AEE`。未上传工坊。
