@@ -9,12 +9,70 @@ namespace STS2SkinChanger.Catalog;
 
 /// <summary>
 /// Reads declarative character asset replacements from framework-based skin providers
-/// without loading or executing their assembly. In particular, this recognizes the
-/// common CharacterAssetReplacement(characterId, profile) pattern and turns the
-/// profile's private resource paths into ordinary Skin Changer overlay entries.
+/// without loading or executing their assembly. Two declaration shapes are recognized: the
+/// CharacterAssetReplacement(characterId, profile) pattern, and a framework content registry's
+/// RegisterCharacterAssetReplacement(characterId, profile). Either one turns the profile's
+/// private resource paths into ordinary Skin Changer overlay entries.
 /// </summary>
 internal static class ManagedCharacterAssetReplacementScanner
 {
+    /// <summary>
+    /// Asset sets of a framework profile are constructed with positional path arguments. The
+    /// parameter order below is the framework's own public contract and uses exactly the property
+    /// names the canonical-path table already understands. An argument window of a different shape
+    /// (other arity, a non-literal argument such as an enum) never matches, so a framework change
+    /// or an unfamiliar profile cannot silently re-map a resource onto a character.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string[]> FrameworkAssetSetParameters =
+        new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["CharacterSceneAssetSet"] =
+            [
+                "VisualsPath",
+                "EnergyCounterPath",
+                "MerchantAnimPath",
+                "RestSiteAnimPath"
+            ],
+            ["CharacterUiAssetSet"] =
+            [
+                "IconTexturePath",
+                "IconOutlineTexturePath",
+                "IconPath",
+                "CharacterSelectBgPath",
+                "CharacterSelectIconPath",
+                "CharacterSelectLockedIconPath",
+                "CharacterSelectTransitionPath",
+                "MapMarkerPath"
+            ],
+            ["CharacterSpineAssetSet"] = ["CombatSkeletonDataPath"],
+            ["CharacterAudioAssetSet"] =
+            [
+                "CharacterSelectSfx",
+                "CharacterTransitionSfx",
+                "AttackSfx",
+                "CastSfx",
+                "DeathSfx"
+            ],
+            ["CharacterMultiplayerAssetSet"] =
+            [
+                "ArmPointingTexturePath",
+                "ArmRockTexturePath",
+                "ArmPaperTexturePath",
+                "ArmScissorsTexturePath"
+            ]
+        };
+
+    /// <summary>
+    /// Registrations that name the target character. The framework's global variant deliberately
+    /// carries no character, so it is never read as one: an unreadable target must stay unreadable
+    /// instead of being taken from whatever string happens to precede the call.
+    /// </summary>
+    private static readonly string[] CharacterRegistrationMethods =
+    [
+        "CharacterAssetReplacement",
+        "RegisterCharacterAssetReplacement"
+    ];
+
     private static readonly object CacheSync = new();
     private static readonly Dictionary<string, ScannerCacheEntry> Cache =
         new(StringComparer.OrdinalIgnoreCase);
@@ -248,6 +306,10 @@ internal static class ManagedCharacterAssetReplacementScanner
     {
         string? lastString = null;
         string? lastResourcePath = null;
+        // Positional arguments of a framework asset set are pushed immediately before its
+        // constructor call. The window is dropped as soon as any other instruction appears, so an
+        // argument list that needs real data-flow analysis yields nothing instead of a wrong path.
+        var pushedArguments = new List<string?>();
         var offset = 0;
         while (offset < il.Length)
         {
@@ -282,7 +344,22 @@ internal static class ManagedCharacterAssetReplacementScanner
                     exception is BadImageFormatException or ArgumentException)
                 {
                     // Ignore malformed metadata in third-party providers.
+                    lastString = null;
+                    lastResourcePath = null;
                 }
+
+                pushedArguments.Add(lastString);
+            }
+            else if (opCode.Equals(OpCodes.Ldnull))
+            {
+                pushedArguments.Add(null);
+            }
+            else if (opCode.Equals(OpCodes.Newobj) &&
+                     opCode.OperandType == OperandType.InlineMethod && operandSize == 4)
+            {
+                var token = BinaryPrimitives.ReadInt32LittleEndian(il.AsSpan(operandOffset, 4));
+                ReadFrameworkAssetSet(reader, MetadataTokens.EntityHandle(token), pushedArguments, providerPathsByProperty);
+                pushedArguments.Clear();
             }
             else if ((opCode.Equals(OpCodes.Call) || opCode.Equals(OpCodes.Callvirt)) &&
                      opCode.OperandType == OperandType.InlineMethod && operandSize == 4)
@@ -307,15 +384,50 @@ internal static class ManagedCharacterAssetReplacementScanner
                         providerPathsByProperty[methodName[4..]] = lastResourcePath;
                         lastResourcePath = null;
                     }
-                    else if (methodName.Equals("CharacterAssetReplacement", StringComparison.Ordinal) &&
+                    else if (CharacterRegistrationMethods.Contains(methodName, StringComparer.Ordinal) &&
                              IsPlausibleCharacterEntry(lastString))
                     {
                         characterEntries.Add(lastString!);
                     }
                 }
+
+                pushedArguments.Clear();
+            }
+            else
+            {
+                pushedArguments.Clear();
             }
 
             offset += operandSize;
+        }
+    }
+
+    /// <summary>
+    /// Maps the positional arguments of one framework asset set onto the property names this
+    /// scanner's canonical-path table uses. A window whose length or literals do not match the
+    /// declared shape contributes nothing.
+    /// </summary>
+    private static void ReadFrameworkAssetSet(
+        MetadataReader reader,
+        EntityHandle constructorHandle,
+        IReadOnlyList<string?> pushedArguments,
+        IDictionary<string, string> providerPathsByProperty)
+    {
+        if (pushedArguments.Count == 0 ||
+            ResolveDeclaringTypeName(reader, constructorHandle) is not { } typeName ||
+            !FrameworkAssetSetParameters.TryGetValue(typeName, out var parameters) ||
+            parameters.Length != pushedArguments.Count)
+        {
+            return;
+        }
+
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            if (pushedArguments[index] is { } path &&
+                path.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+            {
+                providerPathsByProperty[parameters[index]] = NormalizeResourcePath(path);
+            }
         }
     }
 
@@ -381,6 +493,31 @@ internal static class ManagedCharacterAssetReplacementScanner
                 reader.GetMethodSpecification((MethodSpecificationHandle)handle).Method),
             _ => null
         };
+
+    private static string? ResolveDeclaringTypeName(MetadataReader reader, EntityHandle handle)
+    {
+        if (handle.Kind == HandleKind.MethodSpecification)
+        {
+            handle = reader.GetMethodSpecification((MethodSpecificationHandle)handle).Method;
+        }
+
+        var parent = handle.Kind switch
+        {
+            HandleKind.MethodDefinition => reader.GetMethodDefinition(
+                (MethodDefinitionHandle)handle).GetDeclaringType(),
+            HandleKind.MemberReference => reader.GetMemberReference(
+                (MemberReferenceHandle)handle).Parent,
+            _ => default
+        };
+        return parent.Kind switch
+        {
+            HandleKind.TypeDefinition => reader.GetString(
+                reader.GetTypeDefinition((TypeDefinitionHandle)parent).Name),
+            HandleKind.TypeReference => reader.GetString(
+                reader.GetTypeReference((TypeReferenceHandle)parent).Name),
+            _ => null
+        };
+    }
 
     private static bool IsPlausibleCharacterEntry(string? value) =>
         !string.IsNullOrWhiteSpace(value) &&

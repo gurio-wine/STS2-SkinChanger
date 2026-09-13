@@ -1015,6 +1015,30 @@ internal sealed partial class SkinCatalog : IDisposable
                     }
                 }
 
+                // A framework content registry can declare a character's appearance even when every
+                // resource lives in the provider's own namespace and no path can be anchored to the
+                // game. That declaration is evidence, but only for a character this build actually
+                // ships: an unknown or misspelled target is never promoted into a skin.
+                if (mod.HasDll && mod.RootPath != null)
+                {
+                    var registeredReplacements = ManagedCharacterAssetReplacementScanner
+                        .Scan(mod.RootPath, mod.ResourceNamespaceId)
+                        .Where(replacement => IsGameCharacterGroup(replacement.TargetGroupId, baselineIndexes))
+                        .ToArray();
+                    foreach (var replacement in registeredReplacements)
+                    {
+                        servedGroupIds.Add(replacement.TargetGroupId);
+                        servedSources.UnionWith(replacement.CanonicalPathsByProviderPath.Values);
+                    }
+
+                    visualGroups = Math.Max(
+                        visualGroups,
+                        registeredReplacements
+                            .Select(replacement => replacement.TargetGroupId)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count());
+                }
+
                 var runtimeImages = 0;
                 var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 ||
                                                  partGroupIds.Count > 0;
@@ -6815,6 +6839,22 @@ internal sealed partial class SkinCatalog : IDisposable
         index.Archive.Paths.Contains(path, StringComparer.OrdinalIgnoreCase) ||
         index.Archive.Paths.Contains(path + ".remap", StringComparer.OrdinalIgnoreCase) ||
         index.Archive.Paths.Contains(path + ".import", StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a character declared by a provider's own registration names a character of the
+    /// running game. The evidence is the game's baseline resources, so a declaration can never
+    /// invent a character group, and the check follows the same path conventions every other
+    /// character asset uses.
+    /// </summary>
+    private static bool IsGameCharacterGroup(
+        string groupId,
+        IReadOnlyCollection<PckResourceIndex> baselineIndexes) =>
+        !string.IsNullOrWhiteSpace(groupId) &&
+        baselineIndexes.Count > 0 &&
+        new[] { "CombatVisual", "CharacterSelectPortrait", "CharacterIcon" }
+            .Select(propertyName => GetFrameworkCharacterCanonicalPath(propertyName, groupId))
+            .OfType<string>()
+            .Any(path => baselineIndexes.Any(baseline => ResourceExists(baseline, path)));
 
     internal static string? GetFrameworkCharacterCanonicalPath(
         string propertyName,

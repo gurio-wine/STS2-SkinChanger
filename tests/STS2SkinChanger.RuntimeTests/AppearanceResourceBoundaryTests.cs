@@ -15,9 +15,44 @@ internal static class AppearanceResourceBoundaryTests
     public static void Run()
     {
         CheckButtonIcon();
+        CheckFrameworkRegistryDialect();
         CheckCardReentry();
         CheckRelicTextureOwnership();
         Console.WriteLine("Appearance boundaries passed: cold button icons, model-scoped card tree reentry and standalone relic ownership.");
+    }
+
+    // A framework can register a character's appearance through its own content registry instead of
+    // a descriptor type. That declaration is the only evidence for a package whose resources all
+    // live in the provider's private namespace, so the scanner must read it without executing the
+    // provider and must attribute the resources to the character the declaration names.
+    private static void CheckFrameworkRegistryDialect()
+    {
+        var scanner = Mod.GetType("STS2SkinChanger.Catalog.ManagedCharacterAssetReplacementScanner", true)!;
+        var scan = AccessTools.Method(scanner, "ScanAssembly");
+        Require(scan != null, "框架内容注册声明的静态扫描入口缺失。");
+        var result = scan!.Invoke(null, [typeof(AppearanceResourceBoundaryTests).Assembly.Location]);
+        Require(result != null, "注册角色资源替换的皮肤包没有被识别为外观提供者。");
+        Require((string)result!.GetType().GetProperty("TargetGroupId")!.GetValue(result)! == "ironclad",
+            "注册目标必须取自声明里的角色，不能从资源文件名猜测。");
+        var paths = (IReadOnlyDictionary<string, string>)result.GetType()
+            .GetProperty("CanonicalPathsByProviderPath")!.GetValue(result)!;
+        Require(paths.TryGetValue("res://fixture/registry/icon.png", out var icon) &&
+                icon == "res://images/ui/top_panel/character_icon_ironclad.png",
+            "注册资源集合里的头像纹理必须映射到该角色的原版头像入口。");
+        Require(paths.TryGetValue("res://fixture/registry/character.tscn", out var combat) &&
+                combat == "res://scenes/creature_visuals/ironclad.tscn",
+            "注册资源集合里的战斗场景必须映射到该角色的原版外观入口。");
+        Require(paths.TryGetValue("res://fixture/registry/select.png", out var select) &&
+                select == "res://images/packed/character_select/char_select_ironclad.png",
+            "注册资源集合里的选角立绘必须映射到该角色的原版选角入口。");
+        Require(paths.Keys.All(path => path.StartsWith("res://fixture/registry/", StringComparison.Ordinal)) &&
+                paths.Values.All(path => path.StartsWith("res://", StringComparison.Ordinal)) &&
+                paths.Values.All(path => !path.Contains("unknown", StringComparison.OrdinalIgnoreCase)),
+            "未声明的资源不得进入映射。");
+        // The global registration in this assembly carries no character. Were its namespace string
+        // read as one, the scan would see two targets and fall back to the button-icon heuristic,
+        // which is why the assertions above are the proof that the global variant stays unread.
+        Require(!BoundaryContentRegistry.Initialized, "静态扫描不得执行提供者的注册代码。");
     }
 
     private static void CheckRelicTextureOwnership()
@@ -193,3 +228,107 @@ internal static class BoundaryButtonIconPatch
         __instance.GetNode<TextureRect>("%Icon").Texture = image;
     }
 }
+
+// Stand-in for a third-party framework's content registry. Only the declaration shape matters:
+// a registration call that names the character, and asset sets constructed from resource paths.
+// The scanner must read this from metadata and must never run this code.
+internal sealed class CharacterSceneAssetSet(
+    string? visualsPath,
+    string? energyCounterPath,
+    string? merchantAnimPath,
+    string? restSiteAnimPath)
+{
+    public string?[] Paths { get; } = [visualsPath, energyCounterPath, merchantAnimPath, restSiteAnimPath];
+}
+
+internal sealed class CharacterUiAssetSet(
+    string? iconTexturePath,
+    string? iconOutlineTexturePath,
+    string? iconPath,
+    string? characterSelectBgPath,
+    string? characterSelectIconPath,
+    string? characterSelectLockedIconPath,
+    string? characterSelectTransitionPath,
+    string? mapMarkerPath)
+{
+    public string?[] Paths { get; } =
+    [
+        iconTexturePath,
+        iconOutlineTexturePath,
+        iconPath,
+        characterSelectBgPath,
+        characterSelectIconPath,
+        characterSelectLockedIconPath,
+        characterSelectTransitionPath,
+        mapMarkerPath
+    ];
+}
+
+internal sealed class CharacterAssetProfile(
+    object? scenes,
+    object? ui,
+    object? vfx,
+    object? spine,
+    object? audio,
+    object? multiplayer,
+    object? visualCues,
+    object? worldProceduralVisuals)
+{
+    public object?[] Sets { get; } =
+        [scenes, ui, vfx, spine, audio, multiplayer, visualCues, worldProceduralVisuals];
+}
+
+internal sealed class BoundaryContentRegistry
+{
+    public static bool Initialized;
+
+    public static BoundaryContentRegistry For(string modId) => new();
+
+    public void RegisterCharacterAssetReplacement(string characterId, CharacterAssetProfile profile) =>
+        Initialized = true;
+
+    public void RegisterGlobalCharacterAssetReplacement(CharacterAssetProfile profile) =>
+        Initialized = true;
+}
+
+internal static class BoundaryRegistryFixture
+{
+    public static CharacterAssetProfile BuildProfile() => new(
+        new CharacterSceneAssetSet("res://fixture/registry/character.tscn", null, "res://fixture/registry/merchant.tscn", null),
+        new CharacterUiAssetSet(
+            "res://fixture/registry/icon.png",
+            null,
+            null,
+            null,
+            "res://fixture/registry/select.png",
+            null,
+            null,
+            "res://fixture/registry/marker.png"),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+
+    public static void Register()
+    {
+        var registry = BoundaryContentRegistry.For("arabella");
+        registry.RegisterCharacterAssetReplacement("IRONCLAD", BuildProfile());
+    }
+}
+
+// The framework's global registration names no character; it exists here so the scan has to ignore
+// it. Nothing runs this fixture, and the scanner must never execute provider code anyway.
+internal static class BoundaryGlobalRegistryFixture
+{
+    public static bool Registered;
+
+    public static void Register()
+    {
+        var registry = BoundaryContentRegistry.For("arabella");
+        registry.RegisterGlobalCharacterAssetReplacement(BoundaryRegistryFixture.BuildProfile());
+        Registered = true;
+    }
+}
+
