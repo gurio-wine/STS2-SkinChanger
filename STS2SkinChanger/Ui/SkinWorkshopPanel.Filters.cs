@@ -26,9 +26,9 @@ internal partial class SkinWorkshopPanel
     private OptionButton _sortDirectionPicker = null!;
     // The code-error browser is a Steam subscription view; GitHub rows never enter it.
     private bool CodeErrors => !GitHubMode && _subscriptions.Value=="code_errors";
-    private void RefreshSubscriptions() => _subscriptions.Refresh(
-        SkinWorkshopService.Catalog.Where(item => SkinSourceRoutingPolicy.IsSteamItem(item.Id)).Select(item => item.Id),
-        SkinWorkshopService.IsSubscribed);
+    // Subscription state only exists for Workshop items; synthetic GitHub ids are never queried.
+    private IEnumerable<ulong> SteamCatalogIds => SkinWorkshopService.Catalog
+        .Where(item => SkinSourceRoutingPolicy.IsSteamItem(item.Id)).Select(item => item.Id);
     private WorkshopCatalogItem[] FilteredItems()
     {
         // An unrecognized GitHub repository is still listed so the player can open it; the kind
@@ -201,7 +201,7 @@ internal partial class SkinWorkshopPanel
     private void PollFilters()
     {
         if(CodeErrors)return;
-        RefreshSubscriptions();
+        _subscriptions.Refresh(SteamCatalogIds, SkinWorkshopService.IsSubscribed);
         foreach (var item in SkinWorkshopService.Catalog)
             if (_loadTags.TryGetValue(item.Id, out var button)) UpdateLoadTag(item, button);
         if (GodotObject.IsInstanceValid(_emptyLabel)) _emptyLabel!.Text = EmptyText;

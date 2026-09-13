@@ -130,7 +130,7 @@ internal partial class SkinWorkshopPanel : Control
         var generation = ++_generation;
         if (_emptyLabel == null) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
         if(CodeErrors) { RebuildCodeErrors(generation, token); UpdateVisibleActions(); RecordPageBuild(started); return; }
-        RefreshSubscriptions();
+        _subscriptions.Refresh(SteamCatalogIds, SkinWorkshopService.IsSubscribed);
         var filtered = FilteredItems();
         _filteredIds = filtered.Select(item => item.Id).ToArray();
         var pages = Math.Max(1, (filtered.Length + PageSize - 1) / PageSize);
@@ -150,9 +150,16 @@ internal partial class SkinWorkshopPanel : Control
     {
         try
         {
-            var details = await SkinWorkshopService.Query(ids, token);
-            if (token.IsCancellationRequested || generation != _generation || !GodotObject.IsInstanceValid(this)) return;
+            // GitHub rows carry their own title and metric, so only the repository preview is
+            // fetched (opengraph, no API budget); Steam metadata is never queried for them.
             var covers = new List<Task>();
+            foreach (var id in ids.Where(SkinSourceIdentity.IsGitHub))
+                if (rows.TryGetValue(id, out var githubRow))
+                    covers.Add(LoadCover(GitHubSkinService.CoverUrl(id), githubRow, generation, token));
+            var steamIds = ids.Where(SkinSourceRoutingPolicy.IsSteamItem).ToArray();
+            if (steamIds.Length == 0) { await Task.WhenAll(covers); return; }
+            var details = await SkinWorkshopService.Query(steamIds, token);
+            if (token.IsCancellationRequested || generation != _generation || !GodotObject.IsInstanceValid(this)) return;
             foreach (var (id, detail) in details)
             {
                 if (!rows.TryGetValue(id, out var row) || !row.Binding.Matches(row.Ticket)) continue;
