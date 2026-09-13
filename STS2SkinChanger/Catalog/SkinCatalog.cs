@@ -3291,9 +3291,19 @@ internal sealed partial class SkinCatalog : IDisposable
 
     private static CardCatalogEntry? FindCardForPackEntry(
         CardArtPackCard packCard,
+        IReadOnlyList<CardCatalogEntry> cards) =>
+        ResolveCardForPortraitStem(packCard.CardId, cards);
+
+    /// <summary>
+    /// Resolves the card a portrait file is named after. A bundle entry and a provider's own image
+    /// file both identify their card by name, so both go through this single rule. An ambiguous
+    /// name resolves to nothing: one name must never be routed to an arbitrary card.
+    /// </summary>
+    internal static CardCatalogEntry? ResolveCardForPortraitStem(
+        string stem,
         IReadOnlyList<CardCatalogEntry> cards)
     {
-        var token = NormalizeCardToken(packCard.CardId);
+        var token = NormalizeCardToken(stem);
         if (token.Length == 0)
         {
             return null;

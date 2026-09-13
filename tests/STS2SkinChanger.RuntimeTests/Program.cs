@@ -198,6 +198,18 @@ if (args.Length == 3 && args[0] == "--audit-runtime-visual-owner")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--audit-loose-card-pack")
+{
+    CardArtPackRecognitionAudit.RunLoose(args[1], args[2], args[3]);
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--audit-loose-card-packs")
+{
+    CardArtPackRecognitionAudit.RunLooseSweep(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-appearance-revival-random-exclusion")
 {
     AppearanceRevivalTests.Run();

@@ -344,6 +344,27 @@ Require(
     "自带角色本体的提供者即使已经带模型资源，也不能被降级成头像包。");
 
 Require(
+    LooseCardPortraitPackPolicy.IsPack(imageCount: 96, matchedCards: 96),
+    "把卡面当作独立图片存放的提供者必须能按卡面接管：整包都是卡面时没有任何理由拒绝。");
+Require(
+    LooseCardPortraitPackPolicy.IsPack(imageCount: 100, matchedCards: 85),
+    "偶尔夹带一两张非卡面图片的卡面包仍然是卡面包。");
+Require(
+    !LooseCardPortraitPackPolicy.IsPack(imageCount: 24, matchedCards: 19),
+    "匹配到的卡面太少时不能当成卡面包，否则零散素材会被误当成整套卡面。");
+Require(
+    !LooseCardPortraitPackPolicy.IsPack(imageCount: 60, matchedCards: 30),
+    "大多数图片都不是卡面时，这个目录属于作者自己的素材，不能按卡面接管。");
+Require(
+    !LooseCardPortraitPackPolicy.IsPack(imageCount: 0, matchedCards: 0),
+    "空目录不能成为卡面包。");
+Require(
+    LooseCardPortraitPackPolicy.SanitizePathToken("Aeonglass Feminization") ==
+    "Aeonglass_Feminization" &&
+    LooseCardPortraitPackPolicy.SanitizePathToken("3797161358") == "_3797161358",
+    "资源路径里的提供者标记必须是安全字符；Mod ID 本身保持原样，模组列表才能照常显示已接管。");
+
+Require(
     DirectCharacterRuntimeTargetPolicy.ResolveTargets(
             [("TargetCharacterId", "REGENT")],
             ["ironclad", "silent", "regent", "defect"])

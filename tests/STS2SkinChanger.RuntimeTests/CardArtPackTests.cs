@@ -17,10 +17,157 @@ internal static class CardArtPackTests
     {
         CheckFormatRules();
         CheckWorkshopRecognition();
+        CheckLooseProviderFolder();
         CheckRealPacks();
         Console.WriteLine(
             "Card art pack contracts passed: bundle parsing, master-over-crop preference, " +
-            "malformed-entry rejection, canvas routing, Workshop recognition and real pack dimensions.");
+            "malformed-entry rejection, canvas routing, Workshop recognition, loose provider " +
+            "folders and real pack dimensions.");
+    }
+
+    /// <summary>
+    /// A provider that keeps its card art as ordinary image files must become selectable card art,
+    /// while a folder that holds something else must not. Everything here runs on synthetic files:
+    /// no game, no provider code, no initializer.
+    /// </summary>
+    private static void CheckLooseProviderFolder()
+    {
+        var root = Directory.CreateTempSubdirectory("sts2-loose-card-art-");
+        try
+        {
+            var provider = Path.Combine(root.FullName, "LooseCards");
+            var portraits = Path.Combine(provider, "portraits");
+            Directory.CreateDirectory(portraits);
+            var cards = new List<CardCatalogEntry>();
+            for (var index = 0; index < 24; index++)
+            {
+                var name = $"loose_card_{index:00}";
+                cards.Add(new CardCatalogEntry(
+                    $"LooseCard{index:00}",
+                    $"res://images/packed/card_portraits/silent/{name}.png",
+                    "silent",
+                    "silent",
+                    "silent"));
+                // The picture's own file name is what identifies its card, in the same upper-case
+                // form the game's card IDs use.
+                File.WriteAllBytes(
+                    Path.Combine(portraits, name.ToUpperInvariant() + ".png"),
+                    MakePng(608, 416, withAlpha: false));
+            }
+
+            // A picture that is not a card and a name that two cards share: neither may be offered,
+            // and neither may stop the folder from being read.
+            File.WriteAllBytes(Path.Combine(portraits, "reference_frame.png"), MakePng(320, 180, false));
+            File.WriteAllBytes(Path.Combine(portraits, "SHARED_NAME.png"), MakePng(608, 416, false));
+            File.WriteAllBytes(Path.Combine(portraits, ".hidden_card.png"), MakePng(608, 416, false));
+            var ambiguousCards = cards
+                .Append(new CardCatalogEntry(
+                    "SharedName", "res://images/packed/card_portraits/silent/shared_name.png",
+                    "silent", "silent", "silent"))
+                .Append(new CardCatalogEntry(
+                    "SharedName", "res://images/packed/card_portraits/defect/shared_name.png",
+                    "defect", "defect", "defect"))
+                .ToArray();
+
+            var packs = LooseCardPortraitPackScanner.Scan(
+                [new LooseCardPortraitProvider("LooseCards", "Loose Cards", provider)],
+                ambiguousCards);
+            Require(packs.Count == 1,
+                $"a provider folder of card portraits must be read as one card pack, got {packs.Count}.");
+            Require(packs[0].Id == "LooseCards" && packs[0].Name == "Loose Cards",
+                "a loose pack must keep the provider's own id and name.");
+            Require(packs[0].Cards.Count == 24,
+                $"only the pictures that name one card may be offered, got {packs[0].Cards.Count}.");
+            Require(packs[0].Cards.All(card =>
+                    card.SourcePath.StartsWith("res://LooseCards/portraits/", StringComparison.Ordinal)),
+                "a loose pack's pictures must stay identified by the provider's own folder.");
+            Require(packs[0].Cards.All(card => !card.SourcePath.Contains(
+                    "SHARED_NAME", StringComparison.OrdinalIgnoreCase)),
+                "a picture whose name two cards share must not be routed to an arbitrary card.");
+
+            var game = Path.Combine(root.FullName, "game.pck");
+            PckArchive.Write(game, new Dictionary<string, byte[]>());
+            using (var catalog = SkinCatalog.Build(game, []))
+            {
+                var (covered, used) = catalog.AttachCardArtPacks(packs, ambiguousCards);
+                catalog.FinalizeCardGroups(ambiguousCards);
+                Require(covered.Count == 24 && used.Count == 1,
+                    $"a loose pack must register every card it covers, got {covered.Count}.");
+                var option = catalog.CardGroups
+                    .SelectMany(group => group.Options)
+                    .Single(candidate => candidate.Id == "LooseCards");
+                Require(option.NormalPortraits.Count == 24 && option.Assets.Count == 24,
+                    "a loose pack's cards must reach the card rows with their own images mounted.");
+                Require(option.ProviderRootPath == provider,
+                    "a loose pack must carry its folder so the Workshop item it came from is known.");
+            }
+
+            // A folder whose pictures are not cards, or whose matches are too few to be card art,
+            // stays the author's own material.
+            var icons = Path.Combine(root.FullName, "IconProvider", "images");
+            Directory.CreateDirectory(icons);
+            for (var index = 0; index < 24; index++)
+            {
+                File.WriteAllBytes(
+                    Path.Combine(icons, $"icon_{index:00}.png"),
+                    MakePng(64, 64, withAlpha: true));
+            }
+
+            var fewMatches = Path.Combine(root.FullName, "FewCards", "portraits");
+            Directory.CreateDirectory(fewMatches);
+            for (var index = 0; index < 10; index++)
+            {
+                File.WriteAllBytes(
+                    Path.Combine(fewMatches, $"LOOSE_CARD_{index:00}.png"),
+                    MakePng(608, 416, withAlpha: false));
+            }
+
+            var packaged = Path.Combine(root.FullName, "PackagedProvider");
+            Directory.CreateDirectory(packaged);
+            File.WriteAllBytes(Path.Combine(packaged, "PackagedProvider.pck"), [1, 2, 3]);
+            var packagedPortraits = Path.Combine(packaged, "portraits");
+            Directory.CreateDirectory(packagedPortraits);
+            foreach (var card in packs[0].Cards)
+            {
+                File.WriteAllBytes(
+                    Path.Combine(packagedPortraits, Path.GetFileName(card.SourcePath)),
+                    MakePng(608, 416, withAlpha: false));
+            }
+
+            var bundled = Path.Combine(root.FullName, "BundledProvider");
+            var bundledPortraits = Path.Combine(bundled, "portraits");
+            Directory.CreateDirectory(bundledPortraits);
+            foreach (var card in packs[0].Cards)
+            {
+                File.WriteAllBytes(
+                    Path.Combine(bundledPortraits, Path.GetFileName(card.SourcePath)),
+                    MakePng(608, 416, withAlpha: false));
+            }
+
+            File.WriteAllText(
+                Path.Combine(bundled, "BundledProvider.cardartpack.json"),
+                "{\"format\":\"card_art_bundle\",\"version\":1,\"count\":0,\"overrides\":[]}",
+                new UTF8Encoding(false));
+
+            var rejected = LooseCardPortraitPackScanner.Scan(
+                [
+                    new LooseCardPortraitProvider("IconProvider", "Icon Provider",
+                        Path.GetDirectoryName(icons)!),
+                    new LooseCardPortraitProvider("FewCards", "Few Cards",
+                        Path.GetDirectoryName(fewMatches)!),
+                    new LooseCardPortraitProvider("PackagedProvider", "Packaged Provider", packaged),
+                    new LooseCardPortraitProvider("BundledProvider", "Bundled Provider", bundled)
+                ],
+                ambiguousCards);
+            Require(rejected.Count == 0,
+                "only a folder that covers cards in bulk may become a pack, got " +
+                string.Join("、", rejected.Select(pack => pack.Id)));
+        }
+        finally
+        {
+            try { Directory.Delete(root.FullName, recursive: true); }
+            catch (IOException) { }
+        }
     }
 
     /// <summary>

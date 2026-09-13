@@ -78,6 +78,8 @@
              Link="ProviderInstanceIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/CardSkinOptionNamingPolicy.cs"
              Link="CardSkinOptionNamingPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/LooseCardPortraitPackPolicy.cs"
+             Link="LooseCardPortraitPackPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/MultiplayerSkinSyncParticipationPolicy.cs"
              Link="MultiplayerSkinSyncParticipationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/MonsterSkinPresetPolicy.cs"

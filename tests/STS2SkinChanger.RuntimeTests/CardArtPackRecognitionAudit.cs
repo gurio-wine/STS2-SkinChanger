@@ -90,8 +90,79 @@ internal static class CardArtPackRecognitionAudit
         }
     }
 
-    private static CardCatalogEntry[] CardEntries(string gamePck)
+    /// <summary>
+    /// Read-only check of a provider that keeps its card art as ordinary image files: which cards
+    /// its folder covers, and whether the resulting option reaches the same card rows and Workshop
+    /// export as a bundle. Only file names and image bytes are read; the provider's own DLL is
+    /// neither loaded nor executed, and no game process is started. This cannot replace an in-game
+    /// check of what the player sees.
+    /// </summary>
+    internal static void RunLoose(string gamePck, string providerRoot, string providerId)
     {
+        var cards = CardEntries(gamePck);
+        Console.WriteLine($"cards={cards.Length}");
+        var packs = LooseCardPortraitPackScanner.Scan(
+            [new LooseCardPortraitProvider(providerId, providerId, providerRoot)],
+            cards);
+        Console.WriteLine($"packs={packs.Count}");
+        foreach (var pack in packs)
+        {
+            Console.WriteLine(
+                $"  pack {pack.Id} ({pack.Name}) cards={pack.Cards.Count} " +
+                $"folder={pack.Path} root={pack.Root}");
+        }
+
+        if (packs.Count == 0)
+        {
+            return;
+        }
+
+        using var catalog = SkinCatalog.Build(gamePck, []);
+        var (covered, usedPacks) = catalog.AttachCardArtPacks(packs, cards);
+        catalog.FinalizeCardGroups(cards);
+        Console.WriteLine(
+            $"covered={covered.Count} packs={string.Join('、', usedPacks.Select(pack => pack.Name))}");
+        foreach (var group in catalog.CardGroups)
+        {
+            foreach (var option in group.Options.Where(option =>
+                         usedPacks.Any(pack => pack.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase))))
+            {
+                Console.WriteLine(
+                    $"  option {group.Id}/{option.Id}: {option.NormalPortraits.Count} portraits, " +
+                    $"{option.CardPresentations.Count} presentations, " +
+                    $"{option.Assets.Count} assets");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sweeps every provider folder below a Workshop content root and lists the ones whose images
+    /// read as a card pack. This is how the recognition rule is checked against everything that is
+    /// actually installed: a provider that only holds icons, scenes or its own project files must
+    /// not become a card pack. Read-only, no DLL is loaded and no game process is started.
+    /// </summary>
+    internal static void RunLooseSweep(string gamePck, string workshopRoot)
+    {
+        var cards = CardEntries(gamePck);
+        Console.WriteLine($"cards={cards.Length}");
+        var providers = Directory.EnumerateDirectories(workshopRoot)
+            .Where(folder => !Path.GetFileName(folder).StartsWith('.'))
+            .Select(folder => new LooseCardPortraitProvider(
+                Path.GetFileName(folder),
+                Path.GetFileName(folder),
+                folder))
+            .ToArray();
+        Console.WriteLine($"providers={providers.Length}");
+        var packs = LooseCardPortraitPackScanner.Scan(providers, cards);
+        Console.WriteLine($"packs={packs.Count}");
+        foreach (var pack in packs)
+        {
+            Console.WriteLine(
+                $"  pack {pack.Id} cards={pack.Cards.Count} folder={pack.Path}");
+        }
+    }
+
+    internal static CardCatalogEntry[] CardEntries(string gamePck)    {
         var cards = new List<(CardCatalogEntry Entry, bool IsPortrait)>();
         using var archive = PckArchive.Open(gamePck);
         foreach (var path in archive.Paths)

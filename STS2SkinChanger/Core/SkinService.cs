@@ -1165,6 +1165,10 @@ internal static partial class SkinService
     /// with no code, no PCK and no manifest, so the game's mod loader never registers it and it
     /// would otherwise only appear through Card Art Editor's runtime manager. Reading the bundle
     /// directly makes the artwork usable without requiring that accompanying mod.
+    ///
+    /// A provider can also keep its card art as ordinary image files beside its code. That code is
+    /// held back until the player selects it, which would leave the artwork permanently invisible,
+    /// so those folders are read here as well and offered on the same rows as a bundle.
     /// </summary>
     private static void RegisterCardArtPacks(IEnumerable<CardCatalogEntry> cards)
     {
@@ -1176,19 +1180,21 @@ internal static partial class SkinService
 
         try
         {
+            var cardEntries = cards as IReadOnlyList<CardCatalogEntry> ?? cards.ToArray();
+            var packs = new List<CardArtPack>();
             var roots = CardArtPackScanRoots();
-            if (roots.Count == 0)
+            if (roots.Count > 0)
             {
-                return;
+                var scan = CardArtPackScanner.Scan(roots);
+                foreach (var warning in scan.Warnings)
+                {
+                    ModLog.Warn(warning);
+                }
+
+                packs.AddRange(scan.Packs);
             }
 
-            var scan = CardArtPackScanner.Scan(roots);
-            foreach (var warning in scan.Warnings)
-            {
-                ModLog.Warn(warning);
-            }
-
-            var packs = scan.Packs;
+            packs.AddRange(LooseCardPortraitPackScanner.Scan(LooseCardPortraitProviders(), cardEntries));
             if (packs.Count == 0)
             {
                 return;
@@ -1232,6 +1238,30 @@ internal static partial class SkinService
         }
 
         return roots;
+    }
+
+    /// <summary>
+    /// The installed providers that may keep card art beside their code. Each provider folder is
+    /// offered on its own: the scanner skips the ones that mount a package or ship a bundle, and
+    /// this Mod's own folder is never a source of card art.
+    /// </summary>
+    private static IReadOnlyList<LooseCardPortraitProvider> LooseCardPortraitProviders()
+    {
+        var providers = new List<LooseCardPortraitProvider>();
+        foreach (var mod in ManagedSkinModLoader.GetCatalogMods())
+        {
+            var id = mod.manifest?.id;
+            if (string.IsNullOrWhiteSpace(id) ||
+                string.IsNullOrWhiteSpace(mod.path) ||
+                Entry.IsSelfModId(id))
+            {
+                continue;
+            }
+
+            providers.Add(new LooseCardPortraitProvider(id, mod.manifest?.name ?? id, mod.path));
+        }
+
+        return providers;
     }
 
     private static CardCatalogEntry[] BuildCardCatalogEntries(IEnumerable<CardModel> cards)
