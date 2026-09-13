@@ -31,7 +31,20 @@ internal static partial class SkinWorkshopService
         using var reader = new StreamReader(stream);
         return WorkshopCatalogPolicy.Parse(reader.ReadToEnd());
     });
-    public static IReadOnlyList<WorkshopCatalogItem> Catalog => _combinedItems ?? Items.Value;
+    private static WorkshopCatalogItem[]? _unionItems;
+    private static (int Community, int GitHub) _unionRevision = (-1, -1);
+    public static IReadOnlyList<WorkshopCatalogItem> Catalog
+    {
+        get
+        {
+            // Both sources rebuild on their own schedule; the union is cached against both revisions.
+            var revision = (CommunityRevision, GitHubSkinService.Revision);
+            if (_unionItems != null && _unionRevision == revision) return _unionItems;
+            _unionRevision = revision;
+            _unionItems = SkinSourceRoutingPolicy.CatalogUnion(_combinedItems ?? Items.Value, GitHubSkinService.Items);
+            return _unionItems;
+        }
+    }
     private static readonly Dictionary<ulong, WorkshopDownload> Downloads = [];
     private static readonly Dictionary<ulong, TaskCompletionSource<EResult>> Waiters = [];
     private static readonly WorkshopCatalogSession<WorkshopDetails> SessionDetails = new();
@@ -42,7 +55,7 @@ internal static partial class SkinWorkshopService
     private static string CacheRoot => SkinChangerPaths.WorkshopCacheDirectory;
     public static WorkshopDetails? CachedDetails(ulong id) => CachedMetadata.GetValueOrDefault(id);
     public static IReadOnlyDictionary<ulong, WorkshopDetails> CachedMetadata => SessionDetails.Cached(WorkshopText.SteamLanguage);
-    internal static bool CanReadMetadata(ulong id) => id > 0 &&
+    internal static bool CanReadMetadata(ulong id) => SkinSourceRoutingPolicy.IsSteamItem(id) &&
         (Catalog.Any(item => item.Id == id) || CommunityIssues.Any(issue => issue.Id == id));
 
     public static async Task<Dictionary<ulong, WorkshopDetails>> Query(IReadOnlyList<ulong> ids, CancellationToken token)
@@ -122,7 +135,8 @@ internal static partial class SkinWorkshopService
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
             !(uri.Host.EndsWith(".steamstatic.com", StringComparison.OrdinalIgnoreCase) ||
               uri.Host.EndsWith(".steamusercontent.com", StringComparison.OrdinalIgnoreCase) ||
-              uri.Host.EndsWith(".akamaihd.net", StringComparison.OrdinalIgnoreCase))) return null;
+              uri.Host.EndsWith(".akamaihd.net", StringComparison.OrdinalIgnoreCase) ||
+              uri.Host.Equals("opengraph.githubassets.com", StringComparison.OrdinalIgnoreCase))) return null;
         await ImageGate.WaitAsync(token);
         try
         {
@@ -170,19 +184,30 @@ internal static partial class SkinWorkshopService
         Downloads.GetValueOrDefault(SkinCatalog.WorkshopSourceId(mod.path))?.State == WorkshopTextKey.Ready;
     public static string LoadTag(WorkshopCatalogItem item)
     {
+        // A GitHub package is only ever loaded by the game's start-up mod scan, so installing
+        // or updating one always needs a restart; there is no hot-register path for it.
+        if (!SkinSourceRoutingPolicy.IsSteamItem(item.Id)) return WorkshopLoadTags.Classify(knownRestart: true, null, WorkshopLoadReason.None);
         var state = DownloadState(item.Id);
         // Ready also covers mods loaded at startup. Only a completed hot-register
         // check proves that future subscriptions can work without restarting.
         var checkedState = state is { State: WorkshopTextKey.Ready, HotLoadVerified: false } ? null : state?.State;
         return WorkshopLoadTags.Classify(item.RestartRequired, checkedState, state?.Reason ?? WorkshopLoadReason.None);
     }
-    public static bool IsSubscribed(ulong id) => ((EItemState)SteamUGC.GetItemState(new(id)) & EItemState.k_EItemStateSubscribed) != 0;
-    public static bool IsInstalled(ulong id) => TryInstalled(id, out _);
-    public static double? Progress(ulong id) => SteamUGC.GetItemDownloadInfo(new(id), out var bytes, out var total) && total > 0
+    public static bool IsSubscribed(ulong id) => SkinSourceRoutingPolicy.IsSteamItem(id) &&
+        ((EItemState)SteamUGC.GetItemState(new(id)) & EItemState.k_EItemStateSubscribed) != 0;
+    // A GitHub package is only ever loaded by the game's own start-up scan, so it is either
+    // present in the mods folder or not installed at all.
+    public static bool IsInstalled(ulong id) => SkinSourceRoutingPolicy.IsSteamItem(id)
+        ? TryInstalled(id, out _)
+        : GitHubSkinService.InstallState(id) != GitHubInstallState.NotInstalled;
+    public static double? Progress(ulong id) => SkinSourceRoutingPolicy.IsSteamItem(id) &&
+        SteamUGC.GetItemDownloadInfo(new(id), out var bytes, out var total) && total > 0
         ? Math.Clamp(100d * bytes / total, 0, 100) : null;
 
     public static async Task Subscribe(ulong id)
     {
+        // GitHub rows install through their own path; Steam must never be asked about them.
+        if (!SkinSourceRoutingPolicy.IsSteamItem(id)) return;
         if (!Catalog.Any(item => item.Id == id) || Downloads.GetValueOrDefault(id)?.Busy == true) return;
         var status = new WorkshopDownload { Busy = true, BrowserSubscription = true };
         Downloads[id] = status;
@@ -233,6 +258,7 @@ internal static partial class SkinWorkshopService
 
     public static async Task Unsubscribe(ulong id)
     {
+        if (!SkinSourceRoutingPolicy.IsSteamItem(id)) return;
         if (!Catalog.Any(item => item.Id == id) || Downloads.GetValueOrDefault(id)?.Busy == true) return;
         var status = Downloads.GetValueOrDefault(id) ?? new WorkshopDownload();
         Downloads[id] = status;
