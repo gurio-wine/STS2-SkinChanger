@@ -200,7 +200,9 @@ internal partial class SkinWorkshopPanel
     }
     private void ShowActionError(ulong id, Exception ex)
     {
-        ModLog.Warn($"工坊皮肤 {id} 操作失败：{ex.GetBaseException().Message}");
+        // A bare synthetic id names no repository when the log is read back later.
+        var who = SkinSourceIdentity.IsGitHub(id) && GitHubSkinService.Entry(id) is { } entry ? entry.FullName : id.ToString();
+        ModLog.Warn($"工坊皮肤 {who} 操作失败：{ex.GetBaseException().Message}");
         if (_closed || !GodotObject.IsInstanceValid(this)) return;
         _actionErrors[id] = ex.GetBaseException().Message;
         var row = _actions.FirstOrDefault(item => item.Id == id);

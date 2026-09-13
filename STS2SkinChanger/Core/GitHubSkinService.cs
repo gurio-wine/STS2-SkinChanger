@@ -190,17 +190,15 @@ internal static class GitHubSkinService
         }
     }
 
-    private static async Task<GitHubSkinEntry> WithReleaseAsync(GitHubSkinEntry entry, CancellationToken token)
+    private static async Task<GitHubSkinEntry> WithReleaseAsync(GitHubSkinEntry entry, CancellationToken token, bool packageRequested = false)
     {
-        if (entry.ReleaseTag.Length > 0) return entry;
+        // Only the refresh may reuse a cached read, and only because it asks whether a newer
+        // package exists. A scan or an install asks where the package is, which the cache cannot
+        // answer: an author can attach the zip to an already published release, or replace the
+        // file under the same tag. See GitHubReleasePolicy.
+        if (GitHubReleasePolicy.ReuseCachedRead(entry.ReleaseTag, packageRequested)) return entry;
         var json = await Client().LatestReleaseAsync(entry.Repo, token);
-        var release = json == null ? null : GitHubSkinPolicy.ParseRelease(json);
-        if (release == null) return entry;
-        var asset = GitHubSkinPolicy.SelectAsset(release, entry.RepoName);
-        return entry with
-        {
-            ReleaseTag = release.Tag, AssetUrl = asset?.Url ?? "", AssetSize = asset?.Size ?? 0, AssetDigest = asset?.Digest ?? ""
-        };
+        return GitHubReleasePolicy.WithRelease(entry, json);
     }
 
     private sealed record StagedPackage(string Directory, SkinModDescriptor[] Descriptors, string Digest)
@@ -214,7 +212,9 @@ internal static class GitHubSkinService
 
     private static async Task<StagedPackage> StageAsync(GitHubSkinEntry entry, CancellationToken token)
     {
-        var release = await WithReleaseAsync(entry, token);
+        // An explicit scan or install always reads the live release: this call is the player
+        // asking for the package itself, not for a version number.
+        var release = await WithReleaseAsync(entry, token, packageRequested: true);
         // Reading the release is what makes the version column and the update check work, so the
         // freshly read tag is published even when the download below fails.
         Catalog.Publish(release);
@@ -316,8 +316,16 @@ internal static class GitHubSkinService
             // A bundle-only card art pack ships no cosmetic manifest, but the scanner can still
             // recognize it from its artwork alone, so the missing descriptor is not an error here.
             var scan = await SkinService.RunWorkshopScan(() => Scan(entry, staged.Directory, descriptor), token);
-            if (scan.Item == null) return new(null, [], scan.Error.Length > 0 ? scan.Error : "unrecognized");
+            if (scan.Item == null)
+            {
+                // The panel only shows this in a tooltip, so the log has to carry it: a scan that
+                // recognizes nothing is otherwise indistinguishable from one that never started.
+                var error = scan.Error.Length > 0 ? scan.Error : "unrecognized";
+                ModLog.Warn($"GitHub 皮肤 {entry.FullName} 扫描未识别：{error}");
+                return new(null, [], error);
+            }
             var codes = WorkshopSubmissionCodec.Encode(scan.Item, STS2SkinChanger.Entry.InternalTestVersion, GameVersion());
+            ModLog.Info($"GitHub 皮肤 {entry.FullName} 扫描完成：识别到 {scan.Item.Targets.Length} 项，生成 {codes.Length} 段信息码。");
             return new(scan.Item, codes, "");
         }
         finally

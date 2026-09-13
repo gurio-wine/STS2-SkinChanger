@@ -16,6 +16,7 @@ internal static class GitHubInstallPolicyTests
                 $"正常条目 {name} 必须被接受，并给出用 / 分隔的相对路径 {expected}。");
         }
         Accept("SilentSkinMod-0.1.4/KaguyaSilentRavenSkin.json", "SilentSkinMod-0.1.4/KaguyaSilentRavenSkin.json");
+        Accept("观者娘化/WatcherShell.json", "观者娘化/WatcherShell.json");
         Accept("KaguyaSilentRavenSkin.pck", "KaguyaSilentRavenSkin.pck");
         Accept(@"sub\win\style.dll", "sub/win/style.dll");
         Require(GitHubZipPolicy.Classify("../evil.dll", 16, 0, 0, out _) == GitHubZipEntry.Reject &&

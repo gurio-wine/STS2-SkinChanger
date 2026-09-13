@@ -1984,6 +1984,7 @@ Require(
 
 GitHubSourceIdentityTests.Run();
 GitHubSkinPolicyTests.Run();
+GitHubReleasePolicyTests.Run();
 GitHubReadmePolicyTests.Run();
 GitHubInfoPolicyTests.Run();
 GitHubInstallLedgerTests.Run();

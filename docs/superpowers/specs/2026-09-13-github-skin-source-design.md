@@ -95,3 +95,13 @@
 - **补记**：目录缓存读回、Release 就位之后，对每条安装记录跑一次 `GitHubInstallPolicy.BackfillDigest`，能补的就补齐并立刻写回台账（`GitHubSkinService.BackfillDigests`，刷新开头与 `CheckReleasesAsync` 之后各一次；补记后 `RefreshInstalls` 重算状态并刷新界面）。判据是“版本号仍认为这条安装不比 Release 旧”（`CompareVersions(installedVersion, availableVersion) >= 0`）——这是旧记录仅剩的证据；若版本号说安装更旧，补记会把卡片上现成的“更新”抹掉，这类记录保持原样，等更新装完自然带上校验值。没有安装记录、已经记过校验值、发布方没有校验值（旧资产）时都不补。
 - **真实数据核对**：线上唯一那条记录是 `qbyoffice/SilentSkinMod` 的 `{"Folder":"KaguyaSilentRavenSkin","PackageId":"KaguyaSilentRavenSkin","Version":"v0.1.4"}`（没有 sha256），Release tag 是 `v0.1.4-beta`——按版本号比较相等，会被补记；三条已安装文件（dll 33,792、json 301、pck 20,968,192 字节）的 sha256 与 GitHub 公布的三个资产 digest 逐一相同，说明补记的确实就是这份内容。玩家本地目录缓存是格式 3，会整份丢弃重读，所以首次刷新就能拿到 digest 并完成补记。
 - **测试**：`BackfillDigest` 该补与不该补的分支（含真实那条 `v0.1.4` 对 `v0.1.4-beta`、带 `sha256:` 前缀、发布方无校验值、无安装记录、已记过校验值、版本号旧于发布），以及补记之后 `Classify` 必须在 tag 一个字都不改时把重发的包判为可更新。
+
+## 扫描永远报“没有 zip 包”（2026-09-14，玩家第 9 轮反馈）
+
+玩家复验：“zip 的还是扫描失败了，是不是只扫描了压缩包第一层？”日志给出的事实相反：四次尝试（同一合成 ID `16827245345540603577`）全部是 `This release has no downloadable zip package.`，包**一次也没有下载过**，压缩包内部结构根本没被读到（顺带核实：内部结构不是问题，见下）。
+
+- **根因：缓存过的 Release 读取被当成终局。** `WithReleaseAsync` 只要 `ReleaseTag` 非空就直接返回缓存，而 Release 不是不可变的：GitHub 给出的时间线是——Release 于 00:30 建立、00:35 发布（此时没有附件），作者在 **00:57:37** 才把 `default.zip` 传上去；模组在附件出现前就读过一次（缓存里 `ReleaseTag="无"`、`AssetUrl` 为空），此后每次扫描都复用这条没有包的记录。缓存条目同时说明了另一件事：刷新路径本来只读 `ReleaseTag` 为空的条目，所以它永远不会自我纠正。
+- **修法：只有刷新可以复用缓存，扫描/安装一律重读实时 Release。** 刷新问的是“有没有更新的包”，tag 就够；扫描/安装问的是“包现在在哪”，只有实时读取能答。`GitHubReleasePolicy.ReuseCachedRead(cachedTag, packageRequested)` 把这条规则独立成纯逻辑（显式操作每次多花一次 core 请求，刷新路径一次都没多加），`WithReleaseAsync` 据此决定是否发请求，`StageAsync` 传 `packageRequested: true`。顺带修掉同源的另一处陷阱：作者在同一个 tag 下换掉附件时，旧代码会拿**缓存的** digest 去校验新下载的文件，必然报“下载的文件与 GitHub 公布的校验值不一致”且重试无解。
+- **日志补齐**：扫描失败此前只进弹窗 tooltip，日志里看不到原因（这次靠的是下载前抛出的那句）；现在 `ScanAsync` 把失败原因与成功结果（识别 N 项、生成 M 段码）都写进日志，`ShowActionError` 对 GitHub 行记仓库全名而不是合成 ID。
+- **压缩包层级：不是原因，已实测排除。** 用真实附件 `default.zip`（7,909,196 字节，sha256 与 GitHub 公布值相同）做三种摆放——原样的 `观者娘化/` 单层、再多套一层、以及拍平到根——`--audit-github-recognition` 三次都得到 `targets=character:watcher provider=WatcherShell`；`ReadDescriptors` 本来就是全目录递归，选包 `GitHubPackageLayout` 只在“包里含多个清单”时才看文件夹名。首次审计三条全失败是因为该审计工具没有基线：只替换别的 Mod 美术的包必须对着那个 Mod 的资源包才能识别，游戏里扫描时把已加载 Mod 作为基线传入（`CaptureWorkshopScanContext`），审计工具现已支持附加基线目录（README 已更新）。
+- **测试**：`ReuseCachedRead` 的三种组合（刷新复用、扫描/安装不复用、没缓存过都去读）、只发 dll/pck 的 Release 不得凭空产生可下载包、同一 tag 下后补附件后重读必须给出 URL 与校验值、读不到或响应损坏时保持原样；`GitHubZipPolicy` 增补中文目录名条目（真实附件里的 `观者娘化/WatcherShell.json`）。

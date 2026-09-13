@@ -20,9 +20,11 @@ Misspell it or leave it out and the game never finds your repository; forks are 
 ## 2. Publish a Release with the zip
 
 - The zip is the skin package the game loads (`<id>.json` + `.pck` / `.dll`; a card-art-only pack works too).
-- Put its files either at the **root** of the zip, or inside a single folder **named after the repository**.
+- Put its files either at the **root** of the zip, or inside folders (any depth works; a folder named after the repository is only preferred when the zip holds several Mods).
+- Only `.zip` is read: `.rar`, `.7z` and `.tar.gz` count as no attachment at all, and the repository stays "Not recognized".
 - Attach it to your **latest** Release and **do not** mark it pre-release (the panel cannot read those). One attachment must stay under 128 MB.
 - One zip is the easiest. With several, the panel prefers the one named after the repository, otherwise the largest.
+- The zip may be **added after the Release was published**: Scan re-reads the live Release, so no new tag or re-submission is needed.
 
 ## 3. Save the code as sc.info
 

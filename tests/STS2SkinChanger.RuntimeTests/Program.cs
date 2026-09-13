@@ -29,9 +29,9 @@ if (args.Length >= 3 && args[0] == "--audit-art-pack-recognition")
     return;
 }
 
-if (args.Length == 5 && args[0] == "--audit-github-recognition")
+if (args.Length >= 5 && args[0] == "--audit-github-recognition")
 {
-    GitHubRecognitionAudit.Run(args[1], args[2], args[3], args[4]);
+    GitHubRecognitionAudit.Run(args[1], args[2], args[3], args[4], args.Skip(5).ToArray());
     return;
 }
 
