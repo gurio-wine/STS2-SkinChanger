@@ -2,6 +2,8 @@ using STS2SkinChanger.Core;
 
 internal static class GitHubInstallLedgerTests
 {
+    private const string DigestA = "206ffa80a0b9f747c8a8fc3b909563158f6f9645fa7b39f029cc30b76e6c8c54";
+
     public static void Run()
     {
         void Require(bool condition, string reason) { if (!condition) throw new InvalidOperationException(reason); }
@@ -10,8 +12,8 @@ internal static class GitHubInstallLedgerTests
         // The card is named by the repository in every state, so the ledger must not keep the
         // name the package declares: a stored name is what used to rename the card on install.
         Require(typeof(GitHubInstall).GetProperties().Select(property => property.Name).OrderBy(name => name)
-                .SequenceEqual(["Folder", "PackageId", "Version"]),
-            "台账只留定位目录所需的字段，不保存任何显示名。");
+                .SequenceEqual(["Digest", "Folder", "PackageId", "Version"]),
+            "台账只留定位目录与判断更新所需的字段，不保存任何显示名。");
         Require(ledger.Record("qbyoffice/SilentSkinMod", install) && ledger.Count == 1,
             "安装成功必须记下仓库与目录的对应关系，卸载只认这条记录。");
         Require(ledger.Find("qbyoffice/silentskinmod") is { Folder: "KaguyaSilentRavenSkin", Version: "0.1.4" },
@@ -25,6 +27,10 @@ internal static class GitHubInstallLedgerTests
         Require(ledger.Record("qbyoffice/SilentSkinMod", install with { PackageId = "" }),
             "没有清单的纯素材包也要能记录归属，否则它永远卸载不掉。");
         Require(ledger.Count == 1, "拒绝的记录不能留下半个条目。");
+        // 校验值只是判断更新的依据：它不合法时丢掉这个值，安装归属照旧记下来。
+        Require(ledger.Record("qbyoffice/SilentSkinMod", install with { PackageId = "", Digest = "md5:junk" }) &&
+            ledger.Find("qbyoffice/SilentSkinMod") is { PackageId: "", Digest: "" } && ledger.Count == 1,
+            "调用方给的校验值不合法时只丢这个值，不能连安装归属一起拒绝，否则装好了却记不下来。");
 
         var path = Path.Combine(Path.GetTempPath(), "sc-gh-ledger-" + Guid.NewGuid().ToString("N"), "github_installs.json");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -35,6 +41,11 @@ internal static class GitHubInstallLedgerTests
             restored.Restore(path);
             Require(restored.Find("qbyoffice/SilentSkinMod") is { Folder: "KaguyaSilentRavenSkin", PackageId: "" },
                 "安装归属必须跨会话恢复，缓存换格式也不能把已装的东西变成未安装。");
+            ledger.Record("qbyoffice/SilentSkinMod", install with { PackageId = "", Digest = DigestA });
+            ledger.Save(path, null);
+            restored.Restore(path);
+            Require(restored.Find("qbyoffice/SilentSkinMod") is { Digest: DigestA },
+                "安装时记下的包校验值必须跨会话读回，否则重启后没法判断远端有没有换包。");
 
             Require(!restored.Remove("someone/else") && restored.Remove("qbyoffice/SilentSkinMod") && restored.Count == 0,
                 "卸载只删除确实记录过的仓库。");
@@ -47,6 +58,15 @@ internal static class GitHubInstallLedgerTests
             File.WriteAllText(path, """{"Format":2,"Installs":{"o/r":{"Folder":"Mod","PackageId":"","PackageName":"","Version":"1.0"}}}""");
             restored.Restore(path);
             Require(restored.Find("o/r") is { Folder: "Mod" }, "合法的空清单条目必须能读回。");
+            // 升级前写下的台账没有校验值字段：它必须照旧读回，更新判断退回按版本号比较。
+            File.WriteAllText(path, """{"Format":2,"Installs":{"o/r":{"Folder":"Mod","PackageId":"","Version":"1.0"}}}""");
+            restored.Restore(path);
+            Require(restored.Find("o/r") is { Folder: "Mod", Version: "1.0", Digest: "" },
+                "旧版台账（没有校验值字段）必须原样读回，不能因为多了个字段就让已装的皮肤变成未安装。");
+            File.WriteAllText(path, """{"Format":2,"Installs":{"o/r":{"Folder":"Mod","PackageId":"","Version":"1.0","Digest":"junk"}}}""");
+            restored.Restore(path);
+            Require(restored.Find("o/r") is { Folder: "Mod", Version: "1.0", Digest: "" },
+                "文件里不认识的校验值只能丢掉这个值，不能连整份安装归属一起作废。");
             File.WriteAllText(path, "{");
             Require(Throws(() => restored.Restore(path)), "损坏的台账必须抛错，不能按半懂的数据继续跑。");
 

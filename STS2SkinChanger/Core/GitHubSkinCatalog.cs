@@ -12,7 +12,7 @@ internal enum GitHubRecognition { Pending, Recognized, Unrecognized, Failed }
 internal sealed record GitHubSkinEntry(
     string FullName, string Name, string Description, int Stars, DateTimeOffset PushedAt, string Readme,
     GitHubRecognition Recognition, string Error, WorkshopTarget[] Targets, bool RestartRequired,
-    string ReleaseTag, string AssetUrl, long AssetSize)
+    string ReleaseTag, string AssetUrl, long AssetSize, string AssetDigest = "")
 {
     [JsonIgnore] public ulong Id => SkinSourceIdentity.GitHubId(Owner, RepoName);
     [JsonIgnore] public string Owner => FullName.Split('/')[0];
@@ -32,7 +32,9 @@ internal sealed class GitHubSkinCatalog
 {
     // Format 3 replaced the downloaded-package recognition with the published sc.info code,
     // so a format-2 cache (which held package titles and versions) is dropped and refetched.
-    public const int Format = 3;
+    // Format 4 adds the digest of the release asset: a format-3 cache holds the release without
+    // it, and an entry that already has a tag is never read again, so it has to be dropped once.
+    public const int Format = 4;
     private const int MaxCacheBytes = 4 * 1024 * 1024;
     private const int MaxEntries = 1000;
 
@@ -40,7 +42,7 @@ internal sealed class GitHubSkinCatalog
     public GitHubSkinEntry[] Entries => State.Entries;
 
     public static GitHubSkinEntry FromRepo(GitHubRepoInfo info) => new(info.Repo.FullName, info.Repo.Name,
-        info.Description, info.Stars, info.PushedAt, "", GitHubRecognition.Pending, "", [], true, "", "", 0);
+        info.Description, info.Stars, info.PushedAt, "", GitHubRecognition.Pending, "", [], true, "", "", 0, "");
 
     public void Merge(IEnumerable<GitHubSkinEntry> entries)
     {
@@ -54,10 +56,11 @@ internal sealed class GitHubSkinCatalog
                 continue;
             }
             // A new commit invalidates everything that was read from the old revision: the code,
-            // the release it pointed at and the README text.
+            // the release it pointed at, the digest of that release's package and the README text.
             next[entry.FullName] = entry with
             {
-                Recognition = GitHubRecognition.Pending, Error = "", Targets = [], ReleaseTag = "", AssetUrl = "", AssetSize = 0, Readme = ""
+                Recognition = GitHubRecognition.Pending, Error = "", Targets = [], ReleaseTag = "", AssetUrl = "", AssetSize = 0,
+                AssetDigest = "", Readme = ""
             };
         }
         Publish(next.Values.OrderByDescending(entry => entry.PushedAt).ToArray());
@@ -88,7 +91,13 @@ internal sealed class GitHubSkinCatalog
             throw new InvalidDataException("Unreadable GitHub catalog cache.", ex);
         }
         Validate(state);
-        State = state!;
+        // A digest this browser cannot read is dropped rather than taken as a reason to discard the
+        // cache: the recognition result and the README cost a request each to read again, while a
+        // digest only decides whether the card offers an update.
+        State = state! with
+        {
+            Entries = state!.Entries.Select(entry => entry with { AssetDigest = GitHubSkinPolicy.NormalizeDigest(entry.AssetDigest) }).ToArray()
+        };
     }
 
     public void Save(string path, Action<string, Action>? cacheWriter)
@@ -114,6 +123,7 @@ internal sealed class GitHubSkinCatalog
                 entry.Name is not { Length: <= 128 } || entry.Description is not { Length: <= 1024 } ||
                 entry.Stars < 0 || entry.ReleaseTag is not { Length: <= 128 } ||
                 entry.Error is not { Length: <= 512 } || entry.AssetSize is < 0 or > GitHubSkinPolicy.MaxAssetBytes ||
+                entry.AssetDigest is not null and { Length: > 64 } ||
                 entry.Readme is not { Length: <= GitHubReadmePolicy.MaxExcerptChars } ||
                 entry.AssetUrl is not { Length: <= 4096 } ||
                 (entry.AssetUrl.Length > 0 && (!Uri.TryCreate(entry.AssetUrl, UriKind.Absolute, out var uri) ||

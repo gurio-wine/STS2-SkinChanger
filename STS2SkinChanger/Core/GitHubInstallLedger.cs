@@ -2,9 +2,10 @@ using System.Text.Json;
 
 namespace STS2SkinChanger.Core;
 
-// Only what is needed to find and remove the folder again: the card is named by the repository
-// in every state, so the name the package declared itself is not kept here.
-internal sealed record GitHubInstall(string Folder, string PackageId, string Version);
+// Only what is needed to find and remove the folder again, plus the digest of the package that
+// was written there: the card is named by the repository in every state, so the name the package
+// declared itself is not kept here.
+internal sealed record GitHubInstall(string Folder, string PackageId, string Version, string Digest = "");
 
 // A step that could not run while the game was up, keyed by the repository that asked for it:
 // Replace puts the staged package into the folder, Remove deletes the folder this mod wrote.
@@ -18,6 +19,9 @@ internal sealed record GitHubPendingOp(GitHubModsOperationKind Kind, string Fold
 // wrote itself - a folder the player created by hand is never touched.
 internal sealed class GitHubInstallLedger
 {
+    // Format 2 stays: the digest is the one optional field, so a file written before it existed
+    // still reads back whole - the installation survives and only the update check falls back to
+    // comparing the version numbers.
     public const int Format = 2;
     private const int MaxEntries = 512;
     private const int MaxPending = 64;
@@ -33,6 +37,7 @@ internal sealed class GitHubInstallLedger
 
     public bool Record(string fullName, GitHubInstall install)
     {
+        install = Normalized(install);
         if (!GitHubSkinPolicy.TryParseFullName(fullName, out _) || !Valid(install) || _installs.Count >= MaxEntries && !_installs.ContainsKey(fullName))
             return false;
         _installs[fullName] = install;
@@ -68,7 +73,9 @@ internal sealed class GitHubInstallLedger
             throw new InvalidDataException("Unverified or invalid GitHub install ledger.");
         _installs.Clear();
         foreach (var (fullName, install) in state.Installs)
-            if (GitHubSkinPolicy.TryParseFullName(fullName, out _) && Valid(install)) _installs[fullName] = install;
+            // Valid runs first so a null entry from a hand-edited file is dropped, not dereferenced;
+            // the digest is then normalized away if this browser cannot read it.
+            if (GitHubSkinPolicy.TryParseFullName(fullName, out _) && Valid(install)) _installs[fullName] = Normalized(install);
         _pending.Clear();
         foreach (var (fullName, operation) in state.Pending ?? [])
             // A replace step is only meaningful for the folder the same repository is recorded
@@ -100,7 +107,14 @@ internal sealed class GitHubInstallLedger
     private static bool Valid(GitHubInstall? install) => install is { Folder: not null, PackageId: not null, Version: not null } &&
         GitHubInstallPolicy.IsSafeToken(install.Folder) &&
         (install.PackageId.Length == 0 || GitHubInstallPolicy.IsSafeToken(install.PackageId)) &&
-        install.Version.Length <= 64 && !install.Version.Any(char.IsControl);
+        install.Version.Length <= 64 && !install.Version.Any(char.IsControl) &&
+        install.Digest is null or { Length: <= 64 };
+
+    // A digest this browser cannot read is dropped instead of being taken as a reason to forget
+    // the installation: the entry is what keeps the folder uninstallable, while the digest only
+    // decides whether the card offers an update.
+    private static GitHubInstall Normalized(GitHubInstall install) =>
+        install with { Digest = GitHubSkinPolicy.NormalizeDigest(install.Digest) };
 
     // The staged path becomes a folder the quit helper copies from, so it has to be an absolute,
     // placeholder-free path; a remove step carries none at all.

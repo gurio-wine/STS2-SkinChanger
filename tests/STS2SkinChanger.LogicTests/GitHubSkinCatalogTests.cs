@@ -14,7 +14,8 @@ internal static class GitHubSkinCatalogTests
         Require(pending.ReleaseTag.Length == 0, "尚未查询 Release 时不能伪造 tag，否则会跳过识别。");
 
         var recognized = pending with { ReleaseTag = "v0.1.4", AssetUrl = "https://github.com/qbyoffice/SilentSkinMod/releases/download/v0.1.4/SilentSkinMod.zip",
-            AssetSize = 16777216, Recognition = GitHubRecognition.Recognized, RestartRequired = true,
+            AssetSize = 16777216, AssetDigest = "206ffa80a0b9f747c8a8fc3b909563158f6f9645fa7b39f029cc30b76e6c8c54",
+            Recognition = GitHubRecognition.Recognized, RestartRequired = true,
             Targets = [new("character", "silent")] };
         var state = new GitHubSkinCatalog();
         state.Merge([pending]);
@@ -23,12 +24,13 @@ internal static class GitHubSkinCatalogTests
         Require(state.Entries[0].Stars == 20, "同一 pushed_at 的重复搜索必须就地更新星标，不重复建条目。");
         state.Publish(recognized);
         state.Merge([pending with { Stars = 21 }]);
-        Require(state.Entries[0].Targets.Length == 1 && state.Entries[0].ReleaseTag == "v0.1.4",
+        Require(state.Entries[0].Targets.Length == 1 && state.Entries[0].ReleaseTag == "v0.1.4" &&
+            state.Entries[0].AssetDigest.Length == 64,
             "pushed_at 未变时，重新搜索不能丢掉已识别的结果。");
         state.Merge([pending with { PushedAt = DateTimeOffset.Parse("2026-09-12T00:00:00Z") }]);
         Require(state.Entries[0].Recognition == GitHubRecognition.Pending && state.Entries[0].Targets.Length == 0 &&
-            state.Entries[0].AssetUrl.Length == 0,
-            "pushed_at 变化后必须重新读取 sc.info，旧的类型标签与旧 Release 都不能继续挂着。");
+            state.Entries[0].AssetUrl.Length == 0 && state.Entries[0].AssetDigest.Length == 0,
+            "pushed_at 变化后必须重新读取 sc.info，旧的类型标签与旧 Release（含校验值）都不能继续挂着。");
 
         var path = Path.Combine(Path.GetTempPath(), "sc-gh-catalog-" + Guid.NewGuid().ToString("N"), "github_skins.json");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -39,13 +41,25 @@ internal static class GitHubSkinCatalogTests
             var restored = new GitHubSkinCatalog();
             restored.Restore(path);
             Require(restored.Entries.Length == 1 && restored.Entries[0].AssetSize == 16777216 &&
+                restored.Entries[0].AssetDigest.Length == 64 &&
                 restored.Entries[0].Targets.Single().Target == "silent", "目录缓存必须能跨会话完整恢复。");
             File.WriteAllText(path, """{"Format":99,"Entries":[]}""");
             Require(Throws(() => restored.Restore(path)), "未知格式的缓存必须拒绝，不能按半懂的数据继续跑。");
             File.WriteAllText(path, """{"Format":2,"Entries":[]}""");
             Require(Throws(() => restored.Restore(path)), "旧格式缓存记录的是下载扫出来的结果，必须整份丢弃后重新读取 sc.info。");
-            File.WriteAllText(path, """{"Format":3,"Entries":[{"FullName":"../evil","Name":"x"}]}""");
+            File.WriteAllText(path, """{"Format":3,"Entries":[]}""");
+            Require(Throws(() => restored.Restore(path)),
+                "格式 3 缓存里的 Release 信息没有资产校验值，必须丢弃后重读，否则更新判断永远退回按 tag 比版本。");
+            File.WriteAllText(path, """{"Format":4,"Entries":[{"FullName":"../evil","Name":"x"}]}""");
             Require(Throws(() => restored.Restore(path)), "缓存里的仓库名同样要按不可信输入校验。");
+            File.WriteAllText(path, JsonSerializer.Serialize(new GitHubSkinState(GitHubSkinCatalog.Format,
+                [recognized with { AssetDigest = "md5:junk" }])));
+            restored.Restore(path);
+            Require(restored.Entries[0].AssetDigest.Length == 0 && restored.Entries[0].ReleaseTag == "v0.1.4",
+                "缓存里不认识的校验值只丢这个值，不能连整份目录（识别结果、Release 与简介）一起作废。");
+            File.WriteAllText(path, JsonSerializer.Serialize(new GitHubSkinState(GitHubSkinCatalog.Format,
+                [recognized with { AssetDigest = new string('a', 65) }])));
+            Require(Throws(() => restored.Restore(path)), "超出长度上限的校验值必须拒绝，缓存文件不能被撑大。");
             File.WriteAllText(path, "{");
             Require(Throws(() => restored.Restore(path)), "损坏缓存必须抛错，由调用方保留空目录并重新拉取。");
 
@@ -86,7 +100,7 @@ internal static class GitHubSkinCatalogTests
                 GitHubSort.Name) == recognized.Name &&
             GitHubSortPolicy.Metric(null, GitHubSort.Stars) == "—",
             "指标文本要跟着排序键走：星标显示星数，名称排序无论识别与否都显示仓库名（卡片装不装、认没认出来都不改名）。");
-        Console.WriteLine("GitHub skin catalog passed: merge keeps recognition, cache round-trip, sorting.");
+        Console.WriteLine("GitHub skin catalog passed: merge keeps recognition, release digest dropped with the release, cache round-trip, sorting.");
     }
 
     private static bool Throws(Action action)

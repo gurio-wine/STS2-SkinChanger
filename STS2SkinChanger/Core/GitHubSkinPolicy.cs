@@ -10,7 +10,7 @@ internal sealed record GitHubRepoRef(string Owner, string Name)
 
 internal sealed record GitHubRepoInfo(GitHubRepoRef Repo, string Description, int Stars, DateTimeOffset PushedAt);
 
-internal sealed record GitHubReleaseAsset(string Name, long Size, string Url);
+internal sealed record GitHubReleaseAsset(string Name, long Size, string Url, string Digest = "");
 
 internal sealed record GitHubReleaseInfo(string Tag, string Title, DateTimeOffset PublishedAt, GitHubReleaseAsset[] Assets);
 
@@ -46,6 +46,17 @@ internal static class GitHubSkinPolicy
     public static string CoverUrl(GitHubRepoRef repo) => $"https://opengraph.githubassets.com/1/{repo.FullName}";
 
     public static bool IsAllowedHost(string? host) => host != null && Hosts.Contains(host, StringComparer.OrdinalIgnoreCase);
+
+    // GitHub publishes "sha256:<64 hex>" next to every release asset. It describes the package
+    // itself, which is what tells a browser whether the file behind a release changed - the tag
+    // is named by the author and says nothing ("latest", a date, a beta suffix). Anything this
+    // cannot read is "no digest": never a mismatch, so an unreadable value cannot fake an update.
+    public static string NormalizeDigest(string? value)
+    {
+        var text = (value ?? "").Trim();
+        if (text.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) text = text["sha256:".Length..];
+        return text.Length == 64 && text.All(char.IsAsciiHexDigit) ? text.ToLowerInvariant() : "";
+    }
 
     public static bool TryParseFullName(string? fullName, out GitHubRepoRef repo)
     {
@@ -114,9 +125,11 @@ internal static class GitHubSkinPolicy
                     !asset.TryGetProperty("browser_download_url", out var url) || url.ValueKind != JsonValueKind.String) continue;
                 var name = assetName.GetString() ?? "";
                 var size = asset.TryGetProperty("size", out var bytes) && bytes.TryGetInt64(out var value) ? value : 0;
+                var digest = asset.TryGetProperty("digest", out var digestElement) && digestElement.ValueKind == JsonValueKind.String
+                    ? NormalizeDigest(digestElement.GetString()) : "";
                 if (name.Length is 0 or > 128 || !Uri.TryCreate(url.GetString(), UriKind.Absolute, out var uri) ||
                     uri.Scheme != Uri.UriSchemeHttps || !IsAllowedHost(uri.Host)) continue;
-                list.Add(new(name, size, uri.AbsoluteUri));
+                list.Add(new(name, size, uri.AbsoluteUri, digest));
             }
             return new(tag[..Math.Min(tag.Length, 128)], title[..Math.Min(title.Length, 256)], published, list.ToArray());
         }

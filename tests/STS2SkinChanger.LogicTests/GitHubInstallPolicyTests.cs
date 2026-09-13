@@ -1,7 +1,12 @@
+using System.Security.Cryptography;
+using System.Text;
 using STS2SkinChanger.Core;
 
 internal static class GitHubInstallPolicyTests
 {
+    private const string DigestA = "206ffa80a0b9f747c8a8fc3b909563158f6f9645fa7b39f029cc30b76e6c8c54";
+    private const string DigestB = "54492e1cb08df47c5b7b8bcbd27a04e4ab471c078c96d8a897cd093b0ead33ad";
+
     public static void Run()
     {
         void Require(bool condition, string reason) { if (!condition) throw new InvalidOperationException(reason); }
@@ -43,11 +48,40 @@ internal static class GitHubInstallPolicyTests
         Require(GitHubInstallPolicy.CompareVersions("0.1.10", "0.1.4") > 0 && GitHubInstallPolicy.CompareVersions("v0.1.4", "0.1.4") == 0 &&
             GitHubInstallPolicy.CompareVersions("1.0", "1.0.0") == 0 && GitHubInstallPolicy.CompareVersions("", "1.0") < 0,
             "版本比较按数字段，忽略前导 v，缺段按 0。");
-        Require(GitHubInstallPolicy.Classify(null, "0.1.4") == GitHubInstallState.NotInstalled &&
-            GitHubInstallPolicy.Classify("0.1.4", "0.1.4") == GitHubInstallState.Installed &&
-            GitHubInstallPolicy.Classify("0.1.4", "0.1.10") == GitHubInstallState.Updatable &&
-            GitHubInstallPolicy.Classify("0.1.4", null) == GitHubInstallState.Installed,
-            "安装状态只按已安装版本与可用版本判定；拿不到可用版本时不能谎报可更新。");
+        Require(GitHubInstallPolicy.Classify(null, null, "0.1.4", null) == GitHubInstallState.NotInstalled &&
+            GitHubInstallPolicy.Classify("0.1.4", "", "0.1.4", "") == GitHubInstallState.Installed &&
+            GitHubInstallPolicy.Classify("0.1.4", "", "0.1.10", "") == GitHubInstallState.Updatable &&
+            GitHubInstallPolicy.Classify("0.1.4", "", null, null) == GitHubInstallState.Installed,
+            "两边都没有校验值时按已安装版本与可用版本判定；拿不到可用版本时不能谎报可更新。");
+        // tag 由作者随便起（latest、2026-09-10、v2-final），只有包内容的校验值才说明"要不要更新"。
+        Require(GitHubInstallPolicy.Classify("latest", DigestA, "latest", DigestA) == GitHubInstallState.Installed &&
+            GitHubInstallPolicy.Classify("latest", DigestA, "latest", DigestB) == GitHubInstallState.Updatable &&
+            GitHubInstallPolicy.Classify("latest", DigestA, "latest", DigestA.ToUpperInvariant()) == GitHubInstallState.Installed,
+            "tag 不是版本号时只能按校验值判断：内容没变就是最新，变了才算更新，大小写不同不算变化。");
+        Require(GitHubInstallPolicy.Classify("v2-final", DigestA, "nightly", DigestB) == GitHubInstallState.Updatable,
+            "换了 tag 且包也换了时必须提示更新，哪怕两个 tag 都读不出数字。");
+        Require(GitHubInstallPolicy.Classify("0.1.4", DigestA, "0.1.5", DigestA) == GitHubInstallState.Installed,
+            "换了 tag 但包内容一模一样时不算更新：要装的还是同一份文件。");
+        Require(GitHubInstallPolicy.Classify("0.1.4", DigestA, "0.1.4", "") == GitHubInstallState.Installed &&
+            GitHubInstallPolicy.Classify("0.1.4", DigestA, "0.1.5", "") == GitHubInstallState.Updatable &&
+            GitHubInstallPolicy.Classify("0.1.4", "", "0.1.5", DigestB) == GitHubInstallState.Updatable,
+            "远端没有校验值（老资产缺这个字段）时退回按版本号比较，既不谎报也不漏报更新。");
+        Require(GitHubInstallPolicy.Classify("", DigestA, "", DigestB) == GitHubInstallState.Updatable &&
+            GitHubInstallPolicy.Classify("", DigestA, "", DigestA) == GitHubInstallState.Installed &&
+            GitHubInstallPolicy.Classify("", DigestA, "", "") == GitHubInstallState.Installed,
+            "没有版本号的包同样要能判断更新，而且拿不到远端校验值时不能凭空说可更新。");
+        Require(GitHubInstallPolicy.Classify(null, null, "0.1.4", DigestB) == GitHubInstallState.NotInstalled &&
+            GitHubInstallPolicy.Classify("", DigestA, "0.1.4", DigestB) != GitHubInstallState.NotInstalled,
+            "只有版本号和校验值都空才是未安装；有校验值但没有版本号的安装记录仍然是已安装。");
+        // 缓存里的包只有在"就是现在发布的那一份"时才能复用：大小一样也可能是被换过的文件。
+        Require(GitHubInstallPolicy.CanReusePackage(DigestA, 100, 100, DigestA) &&
+            !GitHubInstallPolicy.CanReusePackage(DigestA, 100, 100, DigestB) &&
+            !GitHubInstallPolicy.CanReusePackage(DigestA, 100, 99, DigestA) &&
+            !GitHubInstallPolicy.CanReusePackage(DigestA, 100, -1, ""),
+            "发布方给了校验值时，大小相同但内容不同的旧包必须重新下载，否则装上去的还是旧文件，而卡片会说它已是最新。");
+        Require(GitHubInstallPolicy.CanReusePackage("", 100, 100, DigestB) &&
+            !GitHubInstallPolicy.CanReusePackage("", 100, -1, ""),
+            "发布方没给校验值时只能按大小判断，与加校验值之前的缓存行为一致。");
 
         var root = Path.Combine(Path.GetTempPath(), "sc-gh-install-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -61,6 +95,14 @@ internal static class GitHubInstallPolicyTests
             Require(GitHubInstallPolicy.ReadManifestVersion(root, "broken") == null &&
                 GitHubInstallPolicy.ReadManifestVersion(root, "../escape") == null,
                 "损坏清单与非法 ID 都要返回 null，不能抛异常或读到目录外。");
+
+            var probe = Path.Combine(root, "package.zip");
+            File.WriteAllBytes(probe, [1, 2, 3, 4]);
+            Require(GitHubInstallPolicy.DigestOfFile(probe) ==
+                Convert.ToHexString(SHA256.HashData([1, 2, 3, 4])).ToLowerInvariant(),
+                "下载下来的包要能算出 sha256 小写十六进制值，安装时记录的就是它。");
+            Require(GitHubInstallPolicy.DigestOfFile(Path.Combine(root, "missing.zip")).Length == 0,
+                "读不到文件时校验值只能是空串，不能抛异常中断安装。");
 
             // 卸载只认自己写下的清单：同名的手工目录必须留下。
             var mods = Path.Combine(root, "mods");
@@ -91,6 +133,6 @@ internal static class GitHubInstallPolicyTests
                 "整包里挑哪一个是皮肤包必须确定：根清单优先，其次同名的子目录，空包返回 -1。");
         }
         finally { Directory.Delete(root, true); }
-        Console.WriteLine("GitHub install policy passed: zip guards, install path, version state, manifest version.");
+        Console.WriteLine("GitHub install policy passed: zip guards, install path, version and package digest state, manifest version.");
     }
 }

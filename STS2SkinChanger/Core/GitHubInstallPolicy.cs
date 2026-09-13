@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace STS2SkinChanger.Core;
@@ -48,10 +49,46 @@ internal static class GitHubInstallPolicy
         .Split('.', StringSplitOptions.RemoveEmptyEntries)
         .Select(part => int.TryParse(new string(part.TakeWhile(char.IsAsciiDigit).ToArray()), out var value) ? value : -1).ToArray();
 
-    public static GitHubInstallState Classify(string? installedVersion, string? availableVersion) =>
-        string.IsNullOrWhiteSpace(installedVersion) ? GitHubInstallState.NotInstalled :
-        !string.IsNullOrWhiteSpace(availableVersion) && CompareVersions(installedVersion, availableVersion) < 0
+    // The tag says nothing about which package is behind a release, so the choice between the two
+    // answers is made from the published digest of the package: the browser records the digest of
+    // the file it installed and compares it with the digest of the release it sees now. Only when
+    // neither side has one (an asset published before GitHub reported digests) does it fall back
+    // to reading the tag as a version number.
+    public static GitHubInstallState Classify(string? installedVersion, string? installedDigest, string? availableVersion, string? availableDigest)
+    {
+        if (string.IsNullOrWhiteSpace(installedVersion) && string.IsNullOrWhiteSpace(installedDigest))
+            return GitHubInstallState.NotInstalled;
+        var installed = GitHubSkinPolicy.NormalizeDigest(installedDigest);
+        var available = GitHubSkinPolicy.NormalizeDigest(availableDigest);
+        if (installed.Length > 0 && available.Length > 0)
+            return installed.Equals(available, StringComparison.OrdinalIgnoreCase)
+                ? GitHubInstallState.Installed : GitHubInstallState.Updatable;
+        return !string.IsNullOrWhiteSpace(availableVersion) && CompareVersions(installedVersion, availableVersion) < 0
             ? GitHubInstallState.Updatable : GitHubInstallState.Installed;
+    }
+
+    // A downloaded package may only be reused when it is the one the release publishes now. The
+    // size alone cannot say that - an author may replace the file with one of the same size - so
+    // the published digest decides whenever there is one. With no digest on the release there is
+    // nothing to compare, and the cache behaves as it did before digests existed.
+    public static bool CanReusePackage(string declaredDigest, long expectedSize, long cachedSize, string cachedDigest)
+    {
+        if (cachedSize < 0 || cachedSize != expectedSize) return false;
+        var declared = GitHubSkinPolicy.NormalizeDigest(declaredDigest);
+        return declared.Length == 0 || cachedDigest.Equals(declared, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // What is recorded at install time: the digest of the package file that was actually written.
+    // An unreadable file has no digest, which reads as "cannot tell" rather than as a change.
+    public static string DigestOfFile(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return ""; }
+    }
 
     // Only a folder that still holds the manifest this mod installed may be removed: a folder
     // the player made by hand must never be deleted just because it shares the name. A package

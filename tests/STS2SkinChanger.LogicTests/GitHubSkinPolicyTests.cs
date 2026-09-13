@@ -14,8 +14,8 @@ internal static class GitHubSkinPolicyTests
 
     private const string Release = """
     {"tag_name":"v0.1.4","name":"v0.1.4 Release","published_at":"2026-09-10T04:05:06Z","assets":[
-      {"name":"SilentSkinMod.zip","size":16777216,"browser_download_url":"https://github.com/qbyoffice/SilentSkinMod/releases/download/v0.1.4/SilentSkinMod.zip"},
-      {"name":"checksums.txt","size":128,"browser_download_url":"https://github.com/qbyoffice/SilentSkinMod/releases/download/v0.1.4/checksums.txt"}]}
+      {"name":"SilentSkinMod.zip","size":16777216,"digest":"sha256:206FFA80A0B9F747C8A8FC3B909563158F6F9645FA7B39F029CC30B76E6C8C54","browser_download_url":"https://github.com/qbyoffice/SilentSkinMod/releases/download/v0.1.4/SilentSkinMod.zip"},
+      {"name":"checksums.txt","size":128,"digest":"md5:0d1e2f","browser_download_url":"https://github.com/qbyoffice/SilentSkinMod/releases/download/v0.1.4/checksums.txt"}]}
     """;
 
     public static void Run()
@@ -57,6 +57,22 @@ internal static class GitHubSkinPolicyTests
             "超过体积上限的资产不能下载。");
         Require(GitHubSkinPolicy.SelectAsset(release, "SilentSkinMod")!.Url.StartsWith("https://github.com/"),
             "只接受 https 的资产地址。");
+        // 判断"要不要更新"只能看包内容的校验值：作者怎么起 tag 是他自己的事。
+        Require(asset.Digest == "206ffa80a0b9f747c8a8fc3b909563158f6f9645fa7b39f029cc30b76e6c8c54",
+            "资产自带的 sha256 校验值必须小写解析下来，安装与更新判断都靠它。");
+        Require(release.Assets.Single(item => item.Name == "checksums.txt").Digest.Length == 0,
+            "不是 sha256 的校验值必须当成没有，不能拿去比对。");
+        var odd = GitHubSkinPolicy.ParseRelease("""
+        {"tag_name":"x","assets":[
+          {"name":"a.zip","size":10,"digest":"sha256:nothex","browser_download_url":"https://github.com/o/r/releases/download/x/a.zip"},
+          {"name":"b.zip","size":10,"digest":"sha256:206ffa80a0b9f747c8a8fc3b909563158f6f9645fa7b39f029cc30b76e6c8c5","browser_download_url":"https://github.com/o/r/releases/download/x/b.zip"},
+          {"name":"c.zip","size":10,"digest":"206ffa80a0b9f747c8a8fc3b909563158f6f9645fa7b39f029cc30b76e6c8c54","browser_download_url":"https://github.com/o/r/releases/download/x/c.zip"},
+          {"name":"d.zip","size":10,"browser_download_url":"https://github.com/o/r/releases/download/x/d.zip"}]}
+        """)!;
+        Require(odd.Assets[0].Digest.Length == 0 && odd.Assets[1].Digest.Length == 0 &&
+            odd.Assets[2].Digest == "206ffa80a0b9f747c8a8fc3b909563158f6f9645fa7b39f029cc30b76e6c8c54" &&
+            odd.Assets[3].Digest.Length == 0,
+            "非十六进制、长度不对的校验值都要丢掉，缺字段按空处理；没有前缀的 64 位十六进制仍然可用。");
 
         Require(GitHubSkinPolicy.CoverUrl(repos[0].Repo) == "https://opengraph.githubassets.com/1/qbyoffice/SilentSkinMod",
             "封面地址必须走无接口限额的 opengraph 主机。");

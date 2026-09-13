@@ -62,7 +62,7 @@ internal static class GitHubSkinService
     public static bool IsPendingRestart(ulong id) => Entry(id) is { } entry && InstallState(id) != GitHubInstallState.NotInstalled &&
         RestartPending.Contains(entry.FullName);
     public static GitHubInstallState InstallState(ulong id) => _installsById.TryGetValue(id, out var install)
-        ? GitHubInstallPolicy.Classify(install.Version, Entry(id)?.ReleaseTag)
+        ? GitHubInstallPolicy.Classify(install.Version, install.Digest, Entry(id)?.ReleaseTag, Entry(id)?.AssetDigest)
         : GitHubInstallState.NotInstalled;
 
     // One client for the whole session: the README of a hovered card may be fetched before
@@ -195,10 +195,13 @@ internal static class GitHubSkinService
         var release = json == null ? null : GitHubSkinPolicy.ParseRelease(json);
         if (release == null) return entry;
         var asset = GitHubSkinPolicy.SelectAsset(release, entry.RepoName);
-        return entry with { ReleaseTag = release.Tag, AssetUrl = asset?.Url ?? "", AssetSize = asset?.Size ?? 0 };
+        return entry with
+        {
+            ReleaseTag = release.Tag, AssetUrl = asset?.Url ?? "", AssetSize = asset?.Size ?? 0, AssetDigest = asset?.Digest ?? ""
+        };
     }
 
-    private sealed record StagedPackage(string Directory, SkinModDescriptor[] Descriptors)
+    private sealed record StagedPackage(string Directory, SkinModDescriptor[] Descriptors, string Digest)
     {
         public SkinModDescriptor? Select(string repoName)
         {
@@ -227,10 +230,27 @@ internal static class GitHubSkinService
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { throw new InvalidOperationException("The download folder is unavailable: " + ex.Message, ex); }
         var zip = Path.Combine(root, "package.zip");
-        if (!File.Exists(zip) || new FileInfo(zip).Length != release.AssetSize)
+        // The published digest says what the current package is, so a cached copy is only reused
+        // when it really is that file: a replacement of the same size would otherwise be installed
+        // out of the stale download, and the card would then call that old package "up to date".
+        var declared = GitHubSkinPolicy.NormalizeDigest(release.AssetDigest);
+        var cachedSize = File.Exists(zip) ? new FileInfo(zip).Length : -1;
+        var cachedDigest = cachedSize == release.AssetSize ? GitHubInstallPolicy.DigestOfFile(zip) : "";
+        var digest = GitHubInstallPolicy.CanReusePackage(declared, release.AssetSize, cachedSize, cachedDigest) ? cachedDigest : "";
+        if (digest.Length == 0)
+        {
             await Client().DownloadAsync(new Uri(release.AssetUrl), zip, token);
+            digest = GitHubInstallPolicy.DigestOfFile(zip);
+        }
+        if (declared.Length > 0 && !digest.Equals(declared, StringComparison.OrdinalIgnoreCase))
+        {
+            // Nothing is written from bytes GitHub does not recognize: the ledger would otherwise
+            // record an installation that never matched the release it claims to come from.
+            TryDeleteFile(zip);
+            throw new InvalidDataException("下载的文件与 GitHub 公布的校验值不一致，请稍后重试。");
+        }
         Extract(zip, package);
-        return new(package, WorkshopSubmissionScanner.ReadDescriptors(package));
+        return new(package, WorkshopSubmissionScanner.ReadDescriptors(package), digest);
     }
 
     private static void Extract(string zipPath, string destination)
@@ -346,7 +366,7 @@ internal static class GitHubSkinService
                 try
                 {
                     ReplaceFolder(mods, target, staged.Directory);
-                    CompleteInstall(entry, folder, packageId, version ?? "", "");
+                    CompleteInstall(entry, folder, packageId, version ?? "", staged.Digest, "");
                     return;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -354,7 +374,7 @@ internal static class GitHubSkinService
                     ModLog.Info($"GitHub 皮肤 {entry.FullName} 的目录暂时无法替换，改为退出游戏后写入：{ex.Message}");
                 }
             }
-            CompleteInstall(entry, folder, packageId, version ?? "", StageForQuit(id, staged.Directory));
+            CompleteInstall(entry, folder, packageId, version ?? "", staged.Digest, StageForQuit(id, staged.Directory));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -389,11 +409,13 @@ internal static class GitHubSkinService
         return staging;
     }
 
-    private static void CompleteInstall(GitHubSkinEntry entry, string folder, string packageId, string version, string staging)
+    private static void CompleteInstall(GitHubSkinEntry entry, string folder, string packageId, string version, string digest, string staging)
     {
         // A replace that was queued earlier is superseded either way, so its package goes too.
         if (Ledger.ClearPending(entry.FullName) is { Staging.Length: > 0 } superseded) TryDelete(superseded.Staging);
-        Ledger.Record(entry.FullName, new(folder, packageId, version));
+        // The digest of the file that was just written is what tells a later refresh whether the
+        // release still holds the same package, whatever the author names the tag.
+        Ledger.Record(entry.FullName, new(folder, packageId, version, digest));
         if (staging.Length > 0) Ledger.SetPending(entry.FullName, new(GitHubModsOperationKind.Replace, folder, staging));
         // The game that is running has never seen this folder: the card now offers the restart,
         // and keeps offering it until the game is started again.
@@ -549,6 +571,12 @@ internal static class GitHubSkinService
     {
         try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { ModLog.Warn("临时目录清理失败：" + ex.Message); }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { ModLog.Warn("临时文件清理失败：" + ex.Message); }
     }
 
     private static void CopyDirectory(string source, string destination)
