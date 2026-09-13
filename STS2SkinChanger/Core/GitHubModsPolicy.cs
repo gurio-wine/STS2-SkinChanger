@@ -1,55 +1,71 @@
 namespace STS2SkinChanger.Core;
 
-internal enum GitHubModsOperationKind { Remove, Replace }
-
-// One filesystem step that can only run once the game is gone. A skin the running game has loaded
-// keeps its DLL and its resource pack open, and Windows refuses to delete - or even rename - a
-// folder that holds an open file; the same attempt against the real game folder answers
-// "Access to the path ... is denied". Steam says the same thing about its own subscriptions and
-// removes those files after the game exits, so the quit helper does it here.
-internal sealed record GitHubModsOperation(GitHubModsOperationKind Kind, string Folder, string Staging);
-
-// What the quit helper has to do for the game's mods folder, and which folder that is. Empty
-// when there is nothing to do.
-internal sealed record GitHubModsPlan(string ModsDirectory, GitHubModsOperation[] Operations);
-
+// The rules for the game's mods folder, as names and booleans: what a folder inside it may be called,
+// which file names the loader reads as a manifest, which folder a new package goes into when the old
+// one is in use, and which folder may be deleted again. GitHubFolderSwap is the half that touches the
+// disk.
+//
+// Everything here follows the game's own loader (ModManager): a directory counts as a mod only when it
+// holds a file whose name ends in ".json" (ReadModsInDirRecursive), the DLL and the PCK are then taken
+// from that manifest's own directory (TryLoadMod), and the whole directory is read once, at the game's
+// own start-up. Renaming a manifest therefore hides a folder from the next start without touching any
+// file the running game holds open - which is what makes installing, updating and removing a skin a
+// plain folder operation instead of work that has to wait for the game to exit.
 internal static class GitHubModsPolicy
 {
-    // A staged package waits outside the mods folder: anything inside it is picked up by the
-    // game's own start-up scan, and a second folder holding the same manifest id is a conflict.
-    public static string StagingDirectory(string rootDirectory, ulong id) =>
-        Path.Combine(rootDirectory, "github-pending", id.ToString());
+    // Appended to a manifest name to take a folder out of the loader's view.
+    public const string DisabledSuffix = ".disabled";
 
     // One folder name inside the game's mods folder. The ledger stores dot-free tokens, while the
     // leftovers of an interrupted install carry a leading dot.
     public static bool IsModsFolderName(string? name) => name is { Length: > 0 and <= 64 } &&
         name is not "." and not ".." && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
-    // The names this mod itself writes while swapping a folder. A remove step may delete these and
-    // nothing a player could have created by hand.
+    // The names this mod itself writes while swapping a folder in a version that queued the swap for
+    // after the game had exited. They may be deleted, and nothing a player created by hand.
     public static bool IsLeftoverFolderName(string? name) => name is { Length: > 2 } && name[0] == '.' &&
         (name.EndsWith(".installing", StringComparison.OrdinalIgnoreCase) ||
          name.EndsWith(".previous", StringComparison.OrdinalIgnoreCase)) &&
         IsModsFolderName(name);
 
-    // Queued steps first, one step per folder, every replace before every remove: a folder that is
-    // about to receive a new package must never be deleted afterwards, whatever order the ledger
-    // handed the steps over in. Leftovers follow, once each.
-    public static GitHubModsOperation[] QuitPlan(IEnumerable<GitHubModsOperation> queued, IEnumerable<string> leftovers)
+    // The loader's own rule, spelled out so this mod can be held to it: a file counts as a manifest
+    // when its name ends in ".json" (ReadModsInDirRecursive compares ordinally, so the extension is
+    // case-sensitive there).
+    public static bool IsManifestName(string? fileName) => fileName is { Length: > 5 } &&
+        fileName.EndsWith(".json", StringComparison.Ordinal);
+
+    public static string DisabledManifestName(string packageId) => packageId + ".json" + DisabledSuffix;
+
+    // A folder this mod disabled earlier stays this mod's folder after a re-install, even when the
+    // ledger that recorded it is gone.
+    public static bool IsDisabledManifestName(string? fileName, string packageId) => packageId.Length > 0 &&
+        string.Equals(fileName, DisabledManifestName(packageId), StringComparison.OrdinalIgnoreCase);
+
+    // The short token a spare folder is named after. An unreadable digest yields no token at all:
+    // half a hash would name a folder after a package nobody can identify again.
+    public static string DigestToken(string? digest)
     {
-        var plan = new List<GitHubModsOperation>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var operation in queued.Where(step => step.Kind == GitHubModsOperationKind.Replace)
-                     .Concat(queued.Where(step => step.Kind != GitHubModsOperationKind.Replace)))
-            if (IsModsFolderName(operation.Folder) && seen.Add(operation.Folder)) plan.Add(operation);
-        foreach (var name in leftovers)
-            if (IsLeftoverFolderName(name) && seen.Add(name)) plan.Add(new(GitHubModsOperationKind.Remove, name, ""));
-        return [.. plan];
+        var normalized = GitHubSkinPolicy.NormalizeDigest(digest);
+        return normalized.Length == 64 ? normalized[..8] : "";
     }
 
-    // A queued step is dropped once the disk shows it is either done or pointless: the folder is
-    // gone (the helper ran, or the player deleted it by hand) or the staged package it needs is
-    // gone. Dropping is what keeps a step from being retried forever.
-    public static bool KeepQueued(GitHubModsOperationKind kind, bool folderExists, bool stagingExists) =>
-        folderExists && (kind != GitHubModsOperationKind.Replace || stagingExists);
+    // The folder a package goes into while the running game holds the canonical one open. The base is
+    // always the canonical name - never the folder the ledger points at now - so the name cannot grow
+    // a suffix with every update; the token is what keeps two packages apart.
+    public static string FreshFolderName(string folder, string token)
+    {
+        if (!GitHubInstallPolicy.IsSafeToken(folder) || !GitHubInstallPolicy.IsSafeToken(token)) return "";
+        var room = 64 - token.Length - 1;
+        if (room < 2) return "";
+        var name = (folder.Length > room ? folder[..room] : folder).TrimEnd('.');
+        var fresh = name + "-" + token;
+        return GitHubInstallPolicy.IsSafeToken(fresh) ? fresh : "";
+    }
+
+    // The one destructive step: only a folder this mod wrote may be deleted, and only while nothing on
+    // disk claims it. The folder an install points at now is in use, and a folder that holds a live
+    // manifest has been written again since - a re-install into the canonical name, or the player's own
+    // copy - and is not the folder this mod hid any more.
+    public static bool CanDeleteFolder(string? folder, bool live, bool holdsManifest) =>
+        GitHubInstallPolicy.IsSafeToken(folder) && !live && !holdsManifest;
 }

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text.Json;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Helpers;
@@ -21,18 +19,14 @@ internal static class QuitCacheCleanup
             {
                 var storage = SkinChangerPaths.Storage;
                 storage.StopCacheWrites();
+                // Cache files the running game still has mounted cannot be deleted here; they are
+                // reported and picked up by the cleanup the next start runs. Nothing outlives this
+                // process any more: an earlier version started a helper executable for that job, which
+                // no platform without it could run and which antivirus software read as a dropper.
                 var report = storage.CleanCaches();
-                // Folder work that the running game made impossible - swapping in a newly
-                // downloaded skin, deleting one it holds open - goes into the same helper.
-                var mods = GitHubSkinService.QuitPlan();
-                using var worker = report.Files.Count + report.Directories.Count > 0 || mods != null
-                    ? DeferredCacheCleanup.Start(report, storage.RootDirectory, mods) : null;
-                var deferred = worker != null;
+                var pending = report.Files.Count + report.Directories.Count;
                 return $"退出缓存清理：已删除 {report.RemovedFiles} 个文件；" +
-                       $"待处理文件={report.Files.Count}、目录={report.Directories.Count}；" +
-                       (mods == null ? "" : $"皮肤目录操作={mods.Operations.Length} 项；") +
-                       (deferred ? "已安排在本游戏进程结束后补清理。" :
-                        report.Files.Count + report.Directories.Count + report.Errors.Count == 0 ? "清理完成。" : "未完成的缓存清理将在下次启动重试。") +
+                       (pending + report.Errors.Count == 0 ? "清理完成。" : $"未完成的 {pending} 项缓存清理将在下次启动重试。") +
                        (report.Errors.Count == 0 ? "" : "部分目录无法检查：" + string.Join("；", report.Errors));
             }),
             () => { if (GodotObject.IsInstanceValid(__instance)) __instance.Quit(); },
@@ -56,41 +50,5 @@ internal sealed class QuitCleanupCoordinator
             AllowNativeQuit = true;
             quit();
         }
-    }
-}
-
-internal static class DeferredCacheCleanup
-{
-    public static Process? Start(CacheCleanupReport report, string storageRoot, GitHubModsPlan? mods = null)
-    {
-        if (!OperatingSystem.IsWindows() || report.Files.Count + report.Directories.Count == 0 && mods == null) return null;
-        if (!SkinChangerStorage.SafePath(storageRoot, report.UserDirectory)) throw new IOException("Unsafe cleanup control directory.");
-        // One directory per owning process prevents two concurrent clients sharing a plan.
-        var control = Path.Combine(storageRoot, "cleanup", System.Environment.ProcessId.ToString());
-        if (!SkinChangerStorage.SafePath(control, report.UserDirectory)) throw new IOException("Linked cleanup control directory.");
-        var worker = Path.Combine(Path.GetDirectoryName(typeof(Entry).Assembly.Location)!, "SkinChanger.CacheCleanup.exe");
-        if (!File.Exists(worker)) throw new FileNotFoundException("缺少随 Mod 附带的退出清理程序。", worker);
-        Directory.CreateDirectory(control);
-        var manifest = Path.Combine(control, "targets.json");
-        using var current = Process.GetCurrentProcess();
-        File.WriteAllText(manifest, JsonSerializer.Serialize(new
-        {
-            ParentPid = current.Id, ParentStartTicks = current.StartTime.ToUniversalTime().Ticks,
-            report.UserDirectory, report.TempDirectory, report.Files, report.Directories,
-            ModsDirectory = mods?.ModsDirectory ?? "",
-            ModsOperations = (mods?.Operations ?? []).Select(operation => new
-            {
-                Kind = operation.Kind == GitHubModsOperationKind.Replace ? "replace" : "remove",
-                operation.Folder, operation.Staging
-            }).ToArray()
-        }));
-        var start = new ProcessStartInfo
-        {
-            // No shell and no window hint: the helper is a GUI subsystem program that never shows
-            // one, and "started hidden" is the kind of detail heuristics count against a file.
-            FileName = worker, UseShellExecute = false, CreateNoWindow = true
-        };
-        start.ArgumentList.Add(manifest);
-        return Process.Start(start);
     }
 }

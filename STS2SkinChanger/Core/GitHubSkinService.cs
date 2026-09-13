@@ -92,9 +92,9 @@ internal static class GitHubSkinService
                 try { Ledger.Restore(SkinChangerPaths.GitHubInstallLedgerPath); }
                 catch (Exception ex) { ModLog.Warn("GitHub 安装记录不可用，将重新建立：" + ex.Message); }
                 RefreshInstalls();
-                // A previous session may have ended before its queued folder work happened, and an
-                // older build may have left a swap folder inside mods.
-                ReconcilePending();
+                // A previous session may have left a hidden folder behind (the game had it open), and
+                // an older build may have left a swap folder inside mods.
+                ReconcileFolders();
                 CleanLeftovers();
                 RefreshInstalls();
                 BackfillDigests();
@@ -371,26 +371,13 @@ internal static class GitHubSkinService
             var version = descriptor is null ? entry.ReleaseTag
                 : GitHubInstallPolicy.ReadManifestVersion(descriptor.RootPath ?? staged.Directory, descriptor.Id) ?? entry.ReleaseTag;
             var mods = GitHubInstallPolicy.ModsDirectory(OS.GetExecutablePath());
-            var target = Path.Combine(mods, folder);
-            // A skin the running game has loaded is open in this process, and Windows refuses to
-            // delete or rename a folder that holds an open file. Writing the package aside and
-            // letting the quit helper swap it in after the game is gone is the same promise the
-            // Steam side makes for its own subscriptions - and the only ending here that is not
-            // a lie to the player: the new files do arrive, on the next start.
-            if (!IsLoadedFolder(target))
-            {
-                try
-                {
-                    ReplaceFolder(mods, target, staged.Directory);
-                    CompleteInstall(entry, folder, packageId, version ?? "", staged.Digest, "");
-                    return;
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    ModLog.Info($"GitHub 皮肤 {entry.FullName} 的目录暂时无法替换，改为退出游戏后写入：{ex.Message}");
-                }
-            }
-            CompleteInstall(entry, folder, packageId, version ?? "", staged.Digest, StageForQuit(id, staged.Directory));
+            // A skin the running game has loaded keeps its assembly and its resource pack open, and
+            // Windows refuses to delete - or even rename - a folder that holds an open file. Writing
+            // the new package into a folder beside it and hiding the old copy's manifest is what the
+            // game's own loader allows at any time; see GitHubFolderSwap.
+            var placement = GitHubFolderSwap.Place(mods, Ledger.Find(entry.FullName)?.Folder, folder, packageId,
+                staged.Digest, staged.Directory, IsLoadedFolder, ModLog.Warn);
+            CompleteInstall(entry, placement, packageId, version ?? "", staged.Digest);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -399,49 +386,26 @@ internal static class GitHubSkinService
         finally { Installing.Remove(id); }
     }
 
-    // The old copy is moved aside first: renaming a folder that is in use fails without touching
-    // anything, while a recursive delete stops halfway and leaves a package the game can no
-    // longer load. Whatever is left of that moved copy is cleaned up here or by the quit plan.
-    private static void ReplaceFolder(string mods, string target, string source)
+    private static void CompleteInstall(GitHubSkinEntry entry, GitHubPlacement placement, string packageId, string version, string digest)
     {
-        Directory.CreateDirectory(mods);
-        if (Directory.Exists(target))
-        {
-            var previous = Path.Combine(mods, "." + Path.GetFileName(target) + ".previous");
-            TryDelete(previous);
-            Directory.Move(target, previous);
-            TryDelete(previous);
-        }
-        CopyDirectory(source, target);
-    }
-
-    // The staged package has to outlive this session, and it may not live inside mods: the game's
-    // own start-up scan would take it for a second copy of the same skin.
-    private static string StageForQuit(ulong id, string source)
-    {
-        var staging = GitHubModsPolicy.StagingDirectory(SkinChangerPaths.Storage.RootDirectory, id);
-        TryDelete(staging);
-        CopyDirectory(source, staging);
-        return staging;
-    }
-
-    private static void CompleteInstall(GitHubSkinEntry entry, string folder, string packageId, string version, string digest, string staging)
-    {
-        // A replace that was queued earlier is superseded either way, so its package goes too.
-        if (Ledger.ClearPending(entry.FullName) is { Staging.Length: > 0 } superseded) TryDelete(superseded.Staging);
-        // The digest of the file that was just written is what tells a later refresh whether the
+        // The digest of the package that was just written is what tells a later refresh whether the
         // release still holds the same package, whatever the author names the tag.
-        Ledger.Record(entry.FullName, new(folder, packageId, version, digest));
-        if (staging.Length > 0) Ledger.SetPending(entry.FullName, new(GitHubModsOperationKind.Replace, folder, staging));
+        Ledger.Record(entry.FullName, new(placement.Folder, packageId, version, digest));
+        // This folder is the live install now: a delete that was queued for the same name earlier (the
+        // player uninstalled and re-installed) would remove the package that was just written.
+        Ledger.ClearDelete(entry.FullName, placement.Folder);
+        // The copy that had to be hidden leaves at the next start, once nothing holds it open - the
+        // same promise the Steam side makes for the files of an unsubscribed item.
+        if (placement.Disabled is { Length: > 0 } disabled) Ledger.SetDelete(entry.FullName, disabled);
         // The game that is running has never seen this folder: the card now offers the restart,
         // and keeps offering it until the game is started again.
         RestartPending.Add(entry.FullName);
         SaveLedger();
         RefreshInstalls();
         PublishItems();
-        ModLog.Info(staging.Length > 0
-            ? $"GitHub 皮肤 {entry.FullName} 已排入退出后安装：mods/{folder}；下次启动游戏生效。"
-            : $"GitHub 皮肤 {entry.FullName} 已安装到 mods/{folder}；下次启动游戏生效。");
+        ModLog.Info(placement.Disabled is { Length: > 0 }
+            ? $"GitHub 皮肤 {entry.FullName} 已更新到 mods/{placement.Folder}；旧目录 mods/{placement.Disabled} 将在下次启动游戏时移除。"
+            : $"GitHub 皮肤 {entry.FullName} 已安装到 mods/{placement.Folder}；下次启动游戏生效。");
     }
 
     // Removing the folder this mod wrote is what "uninstalled" means for this source; the
@@ -452,28 +416,32 @@ internal static class GitHubSkinService
         if (Ledger.Find(entry.FullName) is not { } install) throw new InvalidOperationException("Skin is not installed.");
         var mods = GitHubInstallPolicy.ModsDirectory(OS.GetExecutablePath());
         var target = GitHubInstallPolicy.UninstallTarget(mods, install.Folder, install.PackageId);
-        if (target != null && IsLoadedFolder(target))
+        var loaded = target != null && IsLoadedFolder(target);
+        if (loaded)
         {
-            // The game holds this folder open, so its files can only go once the game is gone -
-            // the very promise the Steam side makes. The card may forget the skin right away.
+            // The game holds this folder open, so its files can only go at the next start. Hiding the
+            // manifest is what the loader allows right now, and it is what makes the skin really gone
+            // from the next start on - the card may forget it right away.
+            if (!GitHubFolderSwap.Disable(target!, ModLog.Warn))
+                throw new InvalidOperationException($"无法停用正在使用的皮肤目录：mods/{install.Folder}");
             DropInstall(entry.FullName);
-            Ledger.SetPending(entry.FullName, new(GitHubModsOperationKind.Remove, install.Folder, ""));
-            SaveLedger();
-            RefreshInstalls();
-            PublishItems();
-            ModLog.Info($"GitHub 皮肤 {entry.FullName} 正被本次游戏使用；文件将在退出游戏后移除：{target}");
-            return;
+            Ledger.SetDelete(entry.FullName, install.Folder);
         }
-        if (target != null) await Task.Run(() => Directory.Delete(target, recursive: true));
-        DropInstall(entry.FullName);
+        else
+        {
+            if (target != null) await Task.Run(() => Directory.Delete(target, recursive: true));
+            DropInstall(entry.FullName);
+        }
         SaveLedger();
         RefreshInstalls();
         PublishItems();
-        ModLog.Info($"GitHub 皮肤 {entry.FullName} 已卸载；下次启动游戏生效。");
+        ModLog.Info(loaded
+            ? $"GitHub 皮肤 {entry.FullName} 正被本次游戏使用；文件将在下次启动游戏时移除：{target}"
+            : $"GitHub 皮肤 {entry.FullName} 已卸载；下次启动游戏生效。");
     }
 
-    // Forgetting the skin also throws away the package a queued replace was waiting with: the
-    // player asked for the folder to be gone, not for a newer version of it.
+    // Forgetting the skin also throws away the package an old version staged for a helper that ran
+    // after the game had exited: the player asked for the folder to be gone, not for a newer version.
     private static void DropInstall(string fullName)
     {
         Ledger.Remove(fullName);
@@ -535,24 +503,76 @@ internal static class GitHubSkinService
         { ModLog.Warn("无法定位游戏 mods 目录：" + ex.Message); return null; }
     }
 
-    // Steps the quit helper did not get to run - a game closed by force, or a platform without the
-    // helper - are picked up here: whatever the disk already shows as done or pointless is dropped,
-    // and the rest stays queued, so the next exit finishes it.
-    private static void ReconcilePending()
+    // Folder work an earlier session could not finish is finished here, at the first refresh of a new
+    // session: the hidden folders have nobody holding them open any more, so their files can go. A
+    // game closed by force leaves exactly this state behind, and so does a platform that never had the
+    // helper an older version shipped.
+    private static void ReconcileFolders()
     {
-        if (Ledger.Pending.Count == 0) return;
         var mods = ModsDirectory();
+        if (mods == null) return;
+        var changed = MigrateLegacyPending(mods);
+        var pending = Ledger.Deletes.SelectMany(pair => pair.Value.Select(folder => (FullName: pair.Key, Folder: folder))).ToArray();
+        if (pending.Length > 0)
+        {
+            var live = Ledger.Installs.Values.Select(install => install.Folder).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var remaining = GitHubFolderSwap.Sweep(mods, pending, live, ModLog.Info).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Anything the sweep refused or finished is dropped: a folder an install points at now, one
+            // that was re-installed, or one that is simply gone must not be retried forever.
+            foreach (var (fullName, folder) in pending)
+                if (!remaining.Contains(folder)) changed |= Ledger.ClearDelete(fullName, folder);
+        }
+        if (changed) SaveLedger();
+    }
+
+    // 1.0.12 queued folder work for a helper process that ran after the game had exited. That helper is
+    // gone, so both kinds of step are carried out right here, which is what the current model does
+    // anyway: a staged package is written into the mods folder, and a queued removal joins the folders
+    // waiting for the next start. A staged package is never dropped while it is still on disk - the
+    // ledger records the version it holds, and discarding it would leave the card claiming a version
+    // the mods folder does not have.
+    private static bool MigrateLegacyPending(string mods)
+    {
+        if (Ledger.Pending.Count == 0) return false;
         var changed = false;
         foreach (var (fullName, operation) in Ledger.Pending.ToArray())
         {
-            var folderExists = mods != null && Directory.Exists(Path.Combine(mods, operation.Folder));
-            var stagingExists = operation.Staging.Length > 0 && Directory.Exists(operation.Staging);
-            if (GitHubModsPolicy.KeepQueued(operation.Kind, folderExists, stagingExists)) continue;
-            Ledger.ClearPending(fullName);
-            if (operation.Staging.Length > 0) TryDelete(operation.Staging);
-            changed = true;
+            if (operation.Kind == GitHubModsOperationKind.Remove)
+            {
+                Ledger.ClearPending(fullName);
+                Ledger.SetDelete(fullName, operation.Folder);
+                changed = true;
+                ModLog.Info($"GitHub 皮肤 {fullName} 的旧版退出卸载步骤已改为下次启动时删除 mods/{operation.Folder}。");
+                continue;
+            }
+            var install = Ledger.Find(fullName);
+            if (install == null || !Directory.Exists(operation.Staging))
+            {
+                Ledger.ClearPending(fullName);
+                TryDelete(operation.Staging);
+                changed = true;
+                ModLog.Warn($"GitHub 皮肤 {fullName} 的旧版待安装包已不在磁盘上，目录保持原样（需要时可卸载后重新安装：{operation.Staging}）。");
+                continue;
+            }
+            try
+            {
+                var placement = GitHubFolderSwap.Place(mods, install.Folder, install.Folder, install.PackageId,
+                    install.Digest, operation.Staging, IsLoadedFolder, ModLog.Warn);
+                Ledger.Record(fullName, install with { Folder = placement.Folder });
+                Ledger.ClearDelete(fullName, placement.Folder);
+                if (placement.Disabled is { Length: > 0 } disabled) Ledger.SetDelete(fullName, disabled);
+                Ledger.ClearPending(fullName);
+                TryDelete(operation.Staging);
+                RestartPending.Add(fullName);
+                changed = true;
+                ModLog.Info($"GitHub 皮肤 {fullName} 的旧版待安装包已写入 mods/{placement.Folder}；下次启动游戏生效。");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                ModLog.Warn($"GitHub 皮肤 {fullName} 的旧版待安装包暂时写不进去，下次启动再试：{ex.GetBaseException().Message}");
+            }
         }
-        if (changed) SaveLedger();
+        return changed;
     }
 
     // The swap folders an interrupted install of an earlier version left inside mods. Nothing
@@ -571,21 +591,11 @@ internal static class GitHubSkinService
         }
     }
 
-    // What the quit helper has to do once this process is gone. Null when there is nothing: the
-    // helper is only started for real work.
-    public static GitHubModsPlan? QuitPlan()
-    {
-        var mods = ModsDirectory();
-        if (mods == null) return null;
-        var queued = Ledger.Pending.Values.Select(operation => new GitHubModsOperation(operation.Kind, operation.Folder, operation.Staging));
-        var leftovers = Directory.Exists(mods) ? Directory.EnumerateDirectories(mods).Select(Path.GetFileName).OfType<string>() : [];
-        var operations = GitHubModsPolicy.QuitPlan(queued, leftovers);
-        return operations.Length == 0 ? null : new(mods, operations);
-    }
-
-    // The folder is still on disk but already forgotten, and its files leave when the game does.
+    // The files are still on disk because the game that had this folder loaded was running, and they
+    // leave at the next start. Only an uninstalled skin says this: an update hides the previous copy
+    // the same way, and that card is about the new copy.
     public static bool IsPendingRemoval(ulong id) => Entry(id) is { } entry &&
-        Ledger.PendingFor(entry.FullName) is { Kind: GitHubModsOperationKind.Remove };
+        InstallState(id) == GitHubInstallState.NotInstalled && Ledger.HasDelete(entry.FullName);
 
     // The game keeps every skin it loaded open for the whole session: the assembly it loaded and
     // the resource pack this mod mounted cannot be handed back. Such a folder can be neither
@@ -616,19 +626,6 @@ internal static class GitHubSkinService
     {
         try { if (File.Exists(path)) File.Delete(path); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { ModLog.Warn("临时文件清理失败：" + ex.Message); }
-    }
-
-    private static void CopyDirectory(string source, string destination)
-    {
-        Directory.CreateDirectory(destination);
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            var relative = Path.GetRelativePath(source, file);
-            if (relative.Split(Path.DirectorySeparatorChar).Any(part => part.StartsWith(".git", StringComparison.OrdinalIgnoreCase))) continue;
-            var target = Path.Combine(destination, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: true);
-        }
     }
 
     private static void PublishItems()

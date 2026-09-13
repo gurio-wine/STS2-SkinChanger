@@ -90,15 +90,16 @@ if (args.Length == 1 && args[0] == "--test-multiplayer-hands")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-github-swap")
+{
+    GitHubFolderSwapTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-storage")
 {
     StorageLifecycleTests.Run();
-    await StorageLifecycleTests.TestQuitAndLockedFiles();
-    return;
-}
-if (args.Length == 3 && args[0] == "--storage-exit-probe")
-{
-    StorageLifecycleTests.ExitProbe(args[1], args[2]);
+    StorageLifecycleTests.TestQuitAndLockedFiles();
     return;
 }
 
@@ -417,7 +418,7 @@ if (args.Length == 3 && args[0] == "--audit-part-takeover")
 BaselinePartTakeoverTests.Run();
 MerchantFigureScopeTests.Run();
 StorageLifecycleTests.Run();
-await StorageLifecycleTests.TestQuitAndLockedFiles();
+StorageLifecycleTests.TestQuitAndLockedFiles();
 CreatureVisualParentTests.Run();
 ProviderToolbarTests.Run();
 ManualCharacterVariantTests.Run();
@@ -1358,6 +1359,7 @@ CardPresentationLifecycleTests.Run();
 CardPriorityPerformanceTests.Run();
 ExportedCardSurfaceTests.Run();
 StatefulCardArtTests.CheckObservers();
+GitHubFolderSwapTests.Run();
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 RequiredLibraryVisualGuardTests.Run(args);
 WorkshopTests.Run();

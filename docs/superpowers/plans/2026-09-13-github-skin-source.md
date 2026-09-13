@@ -1869,7 +1869,7 @@ README 的工坊段落补一条：来源筛选（Steam / GitHub）、GitHub 列�
 
 - 确认游戏已退出（检查游戏进程）。
 - `dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release`
-- 把 `STS2SkinChanger/bin/Release/` 下的 `Gurio.SkinChanger.dll`、`SkinChanger.CacheCleanup.exe`、`thunninoiSkinManager.dll`、`SkinChanger.json` 复制到三处：`workshop/content`、测试版工坊目录 `workshop/content/2868840/3787302680`、正式版快照缓存 `_workshop_formal_cache/3787302680`。
+- 把 `STS2SkinChanger/bin/Release/` 下的 `Gurio.SkinChanger.dll`、`thunninoiSkinManager.dll`、`SkinChanger.json`、`README.md`（部署为 `README`）复制到三处：`workshop/content`、测试版工坊目录 `workshop/content/2868840/3787302680`、正式版快照缓存 `_workshop_formal_cache/3787302680`。（清单里原有的 `SkinChanger.CacheCleanup.exe` 自 1.0.12.1 起不再存在，见规格文末“不再随包发布退出助手”。）
 - 逐个核对四处 SHA-256 与构建源一致，并确认四处版本标记都是本轮最后一位。
 
 - [ ] **Step 4: 提交**

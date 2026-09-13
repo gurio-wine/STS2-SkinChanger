@@ -98,22 +98,26 @@ internal static class StorageLifecycleTests
     private static object? Call(object target, string name, params object[] args) =>
         target.GetType().GetMethod(name)!.Invoke(target, args);
 
-    public static async Task TestQuitAndLockedFiles()
+    // The quit path deletes the caches it can and leaves the rest behind: the mod no longer ships a
+    // helper process, so whatever a mounted resource pack kept open is picked up by the cleanup that
+    // runs at the next start. Same ordering, no second executable, and nothing platform-specific left
+    // to skip.
+    public static void TestQuitAndLockedFiles()
     {
         var gate = new TaskCompletionSource<string>();
         var order = new List<string>();
         var coordinator = new QuitCleanupCoordinator();
         var pending = coordinator.Run(() => { order.Add("clean"); return gate.Task; }, () => order.Add("quit"), _ => { });
-        await coordinator.Run(() => throw new Exception("duplicate quit"), () => order.Add("duplicate"), _ => { });
+        coordinator.Run(() => throw new Exception("duplicate quit"), () => order.Add("duplicate"), _ => { }).GetAwaiter().GetResult();
         Require(!coordinator.AllowNativeQuit && order.SequenceEqual(new[] { "clean" }), "清理结束前不可退出，重复点击不得重入。");
         gate.SetResult("done");
-        await pending;
+        pending.GetAwaiter().GetResult();
         Require(coordinator.AllowNativeQuit && order.SequenceEqual(new[] { "clean", "quit" }), "清理必须先于原版退出。");
         var failed = new QuitCleanupCoordinator();
         var quitAfterFailure = false;
-        await failed.Run(() => throw new IOException("locked"), () => quitAfterFailure = true, _ => { });
+        failed.Run(() => throw new IOException("locked"), () => quitAfterFailure = true, _ => { }).GetAwaiter().GetResult();
         Require(quitAfterFailure && failed.AllowNativeQuit, "缓存清理失败不能阻止原版保存/退出。");
-        if (!OperatingSystem.IsWindows()) return;
+
         var root = Path.Combine(Path.GetTempPath(), "sc-quit-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -123,91 +127,41 @@ internal static class StorageLifecycleTests
             Directory.CreateDirectory(user);
             Directory.CreateDirectory(temp);
             File.WriteAllText(Path.Combine(user, "other_mod.json"), "keep");
-            var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-            foreach (var arg in new[] { Assembly.GetExecutingAssembly().Location, "--storage-exit-probe", user, temp }) start.ArgumentList.Add(arg);
-            using var child = Process.Start(start)!;
-            var output = child.StandardOutput.ReadToEndAsync();
-            var errors = child.StandardError.ReadToEndAsync();
-            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-            Require(child.ExitCode == 0, "退出补清理子进程失败：" + await output + await errors);
-            var locked = Path.Combine(user, "Gurio.SkinChanger", "cache", "probe", "locked.pck");
-            var controls = Path.Combine(user, "Gurio.SkinChanger", "cleanup");
-            // The quit helper also finishes the folder work the running game made impossible:
-            // swapping in a downloaded skin, and deleting one whose files are still open here.
-            var mods = Path.Combine(root, "game", "mods");
-            var staging = Path.Combine(user, "Gurio.SkinChanger", "github-pending", "7");
-            bool Finished() =>
-                !File.Exists(locked) && !Directory.Exists(Path.Combine(mods, "LockedSkin")) &&
-                File.Exists(Path.Combine(mods, "StagedSkin", "new.pck")) && !Directory.Exists(staging) &&
-                (!Directory.Exists(controls) || !Directory.EnumerateFiles(controls, "targets.json", SearchOption.AllDirectories).Any());
-            var deadline = Stopwatch.StartNew();
-            while (deadline.Elapsed < TimeSpan.FromSeconds(20) && !Finished()) await Task.Delay(100);
-            Require(!File.Exists(locked), "资源仍被占用时先保留，父进程退出后必须自动删除。" + await output + await errors);
-            Require(!Directory.EnumerateDirectories(controls).Any(), "补清理清单和临时控制目录应自行删除。");
-            Require(File.ReadAllText(Path.Combine(user, "other_mod.json")) == "keep", "退出助手不能清理其它 Mod。");
-            Require(File.ReadAllText(Path.Combine(user, "Gurio.SkinChanger", "skin_changer.json")) == "settings", "退出助手不能删除配置。");
-            Require(!Directory.Exists(Path.Combine(mods, "LockedSkin")),
-                "游戏进程结束后，退出助手必须删掉本次被占用的皮肤目录。" + await output + await errors);
-            Require(File.ReadAllText(Path.Combine(mods, "StagedSkin", "new.pck")) == "new-pack" &&
-                !File.Exists(Path.Combine(mods, "StagedSkin", "old.pck")) && !Directory.Exists(staging),
-                "退出助手必须用暂存包换掉旧皮肤目录，并在成功后删除暂存包。");
-            Require(File.ReadAllText(Path.Combine(mods, "UntouchedSkin", "old.pck")) == "old-pack" &&
-                File.Exists(Path.Combine(user, "Gurio.SkinChanger", "evil-staging", "new.pck")),
-                "计划里指向暂存目录之外的替换必须被退出助手再次拒绝，不能拿别的目录当包。");
-            Require(File.ReadAllText(Path.Combine(root, "evil", "keep.json")) == "safe",
-                "计划里越界的目录名不得让退出助手删掉 mods 之外的东西。");
-            Console.WriteLine("Quit cleanup passed: native ordering, duplicate/failure paths, real Windows post-process locked-file cleanup and deferred mods folder swaps.");
+            var storage = new SkinChangerStorage(user, temp, "probe");
+            try
+            {
+                storage.StartCacheSession();
+                File.WriteAllText(storage.ConfigurationFile("skin_changer.json"), "settings");
+                var path = Path.Combine(storage.CacheDirectory, "locked.pck");
+                storage.WriteCache(path, () => File.WriteAllText(path, "mounted resource"));
+                if (OperatingSystem.IsWindows())
+                {
+                    // A resource pack this process has mounted: the delete fails while the handle is
+                    // open, exactly as it does in the game.
+                    using var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    storage.StopCacheWrites();
+                    var report = storage.CleanCaches();
+                    Require(report.Files.Contains(path) && File.Exists(path),
+                        "本次游戏仍挂载的缓存文件不能删，必须留在原地并写进报告。");
+                }
+                else storage.StopCacheWrites();
+                using (var next = new SkinChangerStorage(user, temp, "next-session"))
+                {
+                    next.StartCacheSession();
+                    next.CleanCaches();
+                    Require(!File.Exists(path) && !Directory.Exists(storage.CacheDirectory),
+                        "上次没删成的缓存必须由下一次启动的清理收尾。");
+                }
+                Require(File.ReadAllText(Path.Combine(user, "other_mod.json")) == "keep" &&
+                    File.ReadAllText(storage.ConfigurationFile("skin_changer.json")) == "settings",
+                    "清理不能碰其它 Mod 或玩家设置。");
+            }
+            finally { storage.Dispose(); }
+            Console.WriteLine("Quit cleanup passed: native ordering, failure paths, and locked cache files left for the next start.");
         }
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    public static void ExitProbe(string user, string temp)
-    {
-        using var storage = new SkinChangerStorage(user, temp, "probe");
-        storage.StartCacheSession();
-        File.WriteAllText(storage.ConfigurationFile("skin_changer.json"), "settings");
-        var path = Path.Combine(storage.CacheDirectory, "locked.pck");
-        storage.WriteCache(path, () => File.WriteAllText(path, "mounted resource"));
-        using var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        storage.StopCacheWrites();
-        var report = storage.CleanCaches();
-        Require(report.Files.Contains(path), "测试必须确实遇到被占用的文件。");
-        // An injected out-of-scope target must be rejected again by the external helper.
-        report.Files.Add(storage.ConfigurationFile("skin_changer.json"));
-
-        // A skin the game has loaded is held open by this process for the whole session, exactly
-        // like the real game holds the assembly and the resource pack it loaded. Both a delete and
-        // a swap have to wait for this process to end.
-        var game = Path.Combine(Path.GetDirectoryName(user.TrimEnd(Path.DirectorySeparatorChar))!, "game");
-        var mods = Path.Combine(game, "mods");
-        var lockedSkin = Path.Combine(mods, "LockedSkin");
-        var stagedSkin = Path.Combine(mods, "StagedSkin");
-        var untouchedSkin = Path.Combine(mods, "UntouchedSkin");
-        var staging = Path.Combine(storage.RootDirectory, "github-pending", "7");
-        var foreign = Path.Combine(storage.RootDirectory, "evil-staging");
-        Directory.CreateDirectory(lockedSkin);
-        Directory.CreateDirectory(stagedSkin);
-        Directory.CreateDirectory(untouchedSkin);
-        Directory.CreateDirectory(staging);
-        Directory.CreateDirectory(foreign);
-        Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(game)!, "evil"));
-        File.WriteAllText(Path.Combine(lockedSkin, "Skin.dll"), "loaded assembly");
-        File.WriteAllText(Path.Combine(stagedSkin, "old.pck"), "old-pack");
-        File.WriteAllText(Path.Combine(untouchedSkin, "old.pck"), "old-pack");
-        File.WriteAllText(Path.Combine(staging, "new.pck"), "new-pack");
-        File.WriteAllText(Path.Combine(foreign, "new.pck"), "new-pack");
-        File.WriteAllText(Path.Combine(Path.GetDirectoryName(game)!, "evil", "keep.json"), "safe");
-        using var heldAssembly = new FileStream(Path.Combine(lockedSkin, "Skin.dll"), FileMode.Open, FileAccess.Read, FileShare.Read);
-        using var heldPack = new FileStream(Path.Combine(stagedSkin, "old.pck"), FileMode.Open, FileAccess.Read, FileShare.Read);
-        using var helper = DeferredCacheCleanup.Start(report, storage.RootDirectory, new GitHubModsPlan(mods,
-        [
-            new(GitHubModsOperationKind.Remove, "LockedSkin", ""),
-            new(GitHubModsOperationKind.Replace, "StagedSkin", staging),
-            new(GitHubModsOperationKind.Remove, "../evil", ""),
-            new(GitHubModsOperationKind.Replace, "UntouchedSkin", foreign)
-        ]));
-        Require(helper != null, "必须安排一次性退出助手，不依赖下次加载 Mod。");
-    }
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
