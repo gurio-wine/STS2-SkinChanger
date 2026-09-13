@@ -9,7 +9,7 @@ internal enum GitHubRecognition { Pending, Recognized, NoPackage, NoResources, F
 internal sealed record GitHubSkinEntry(
     string FullName, string Name, string Description, int Stars, DateTimeOffset PushedAt, string ReleaseTag,
     string PackageId, string PackageName, string PackageVersion, WorkshopTarget[] Targets, bool RestartRequired,
-    GitHubRecognition Recognition, string Error, string AssetUrl, long AssetSize)
+    GitHubRecognition Recognition, string Error, string AssetUrl, long AssetSize, string Readme)
 {
     [JsonIgnore] public ulong Id => SkinSourceIdentity.GitHubId(Owner, RepoName);
     [JsonIgnore] public string Owner => FullName.Split('/')[0];
@@ -27,7 +27,8 @@ internal sealed record GitHubSkinState(int Format, GitHubSkinEntry[] Entries)
 // player download and rescan every repository on each start.
 internal sealed class GitHubSkinCatalog
 {
-    public const int Format = 1;
+    // Format 2 added the persisted README excerpt; a format-1 cache is dropped and refetched.
+    public const int Format = 2;
     private const int MaxCacheBytes = 4 * 1024 * 1024;
     private const int MaxEntries = 1000;
 
@@ -35,7 +36,7 @@ internal sealed class GitHubSkinCatalog
     public GitHubSkinEntry[] Entries => State.Entries;
 
     public static GitHubSkinEntry FromRepo(GitHubRepoInfo info) => new(info.Repo.FullName, info.Repo.Name,
-        info.Description, info.Stars, info.PushedAt, "", "", "", "", [], true, GitHubRecognition.Pending, "", "", 0);
+        info.Description, info.Stars, info.PushedAt, "", "", "", "", [], true, GitHubRecognition.Pending, "", "", 0, "");
 
     public void Merge(IEnumerable<GitHubSkinEntry> entries)
     {
@@ -48,9 +49,10 @@ internal sealed class GitHubSkinCatalog
                 next[entry.FullName] = known with { Stars = entry.Stars, Description = entry.Description, PushedAt = entry.PushedAt };
                 continue;
             }
-            // A new commit invalidates the previous recognition entirely.
+            // A new commit invalidates the previous recognition entirely, including the
+            // README text that was taken from the old revision.
             next[entry.FullName] = entry.Recognition == GitHubRecognition.Pending ? entry
-                : entry with { Recognition = GitHubRecognition.Pending, Targets = [], PackageId = "", PackageName = "", PackageVersion = "", ReleaseTag = "" };
+                : entry with { Recognition = GitHubRecognition.Pending, Targets = [], PackageId = "", PackageName = "", PackageVersion = "", ReleaseTag = "", Readme = "" };
         }
         Publish(next.Values.OrderByDescending(entry => entry.PushedAt).ToArray());
     }
@@ -107,6 +109,7 @@ internal sealed class GitHubSkinCatalog
                 entry.Stars < 0 || entry.ReleaseTag is not { Length: <= 128 } || entry.PackageId is not { Length: <= 64 } ||
                 entry.PackageName is not { Length: <= 256 } || entry.PackageVersion is not { Length: <= 64 } ||
                 entry.Error is not { Length: <= 512 } || entry.AssetSize is < 0 or > GitHubSkinPolicy.MaxAssetBytes ||
+                entry.Readme is not { Length: <= GitHubReadmePolicy.MaxExcerptChars } ||
                 entry.AssetUrl is not { Length: <= 4096 } ||
                 (entry.AssetUrl.Length > 0 && (!Uri.TryCreate(entry.AssetUrl, UriKind.Absolute, out var uri) ||
                     uri.Scheme != Uri.UriSchemeHttps || !GitHubSkinPolicy.IsAllowedHost(uri.Host))) ||

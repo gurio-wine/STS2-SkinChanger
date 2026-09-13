@@ -113,10 +113,9 @@ internal partial class SkinWorkshopPanel
             view.Metric.Text = ItemMetric(item.Id);
             if (SkinSourceIdentity.IsGitHub(item.Id))
             {
-                // GitHub rows have no Steam page to unsubscribe from; the row's second button
-                // opens the repository instead, and the metric follows the GitHub sort order.
-                view.SecondaryAction = () => OpenItem(item.Id);
-                view.Cancel.Text = GitHubText(GitHubSkinTextKey.OpenRepo);
+                // GitHub rows have no Steam page to unsubscribe from: the card itself opens
+                // the repository, and the second button removes an installed skin.
+                view.SecondaryAction = () => PerformGitHubSecondary(item.Id);
                 view.Title.Text = GitHubSkinService.Title(item.Id);
                 view.Metric.Text = GitHubMetric(item.Id);
             }

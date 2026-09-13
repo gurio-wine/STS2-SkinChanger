@@ -61,6 +61,18 @@ internal static class GitHubInstallPolicyTests
             Require(GitHubInstallPolicy.ReadManifestVersion(root, "broken") == null &&
                 GitHubInstallPolicy.ReadManifestVersion(root, "../escape") == null,
                 "损坏清单与非法 ID 都要返回 null，不能抛异常或读到目录外。");
+
+            // 卸载只认自己写下的清单：同名的手工目录必须留下。
+            var mods = Path.Combine(root, "mods");
+            var installed = Path.Combine(mods, "KaguyaSilentRavenSkin");
+            Directory.CreateDirectory(installed);
+            File.Copy(Path.Combine(root, "KaguyaSilentRavenSkin.json"), Path.Combine(installed, "KaguyaSilentRavenSkin.json"));
+            Directory.CreateDirectory(Path.Combine(mods, "PlayerMade"));
+            Require(GitHubInstallPolicy.UninstallTarget(mods, "KaguyaSilentRavenSkin", "KaguyaSilentRavenSkin") == installed,
+                "卸载要能删掉我们自己安装的目录。");
+            Require(GitHubInstallPolicy.UninstallTarget(mods, "PlayerMade", "PlayerMade") == null &&
+                GitHubInstallPolicy.UninstallTarget(mods, "Missing", "Missing") == null,
+                "没有我们自己写下的清单就不能删：玩家手工放的目录和不存在的目录都必须返回 null。");
         }
         finally { Directory.Delete(root, true); }
         Console.WriteLine("GitHub install policy passed: zip guards, install path, version state, manifest version.");

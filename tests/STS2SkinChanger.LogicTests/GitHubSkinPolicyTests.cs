@@ -58,6 +58,10 @@ internal static class GitHubSkinPolicyTests
         Require(GitHubSkinPolicy.SearchUri(1).Host == "api.github.com" &&
             GitHubSkinPolicy.SearchUri(1).Query.Contains("topic%3Asts2-sc-mod"),
             "搜索请求必须打在 topic 查询上。");
+        // README 走 API 端点：文件名大小写和默认分支由 GitHub 解析，raw 主机做不到。
+        Require(GitHubSkinPolicy.ReadmeUri(repos[0].Repo).AbsoluteUri == "https://api.github.com/repos/qbyoffice/SilentSkinMod/readme" &&
+            GitHubSkinPolicy.IsAllowedHost(GitHubSkinPolicy.ReadmeUri(repos[0].Repo).Host),
+            "仓库简介的地址必须落在白名单主机上，否则请求会被出网校验拒掉。");
 
         var recognized = SkinSourceIdentity.GitHubId("o", "r");
         Require(GitHubSkinPolicy.KeepWithoutTargets(recognized, 0, "") && !GitHubSkinPolicy.KeepWithoutTargets(recognized, 0, "character"),

@@ -78,8 +78,8 @@ internal partial class SkinWorkshopPanel
             TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis, Visible = false };
         _githubSortPicker = githubSort;
         ContextualSkinControls.ApplyGameTheme(githubSort);
-        githubSort.AddItem(GitHubText(GitHubSkinTextKey.Updated), (int)GitHubSort.Updated);
         githubSort.AddItem(GitHubText(GitHubSkinTextKey.Stars), (int)GitHubSort.Stars);
+        githubSort.AddItem(GitHubText(GitHubSkinTextKey.Updated), (int)GitHubSort.Updated);
         githubSort.AddItem(GitHubText(GitHubSkinTextKey.Name), (int)GitHubSort.Name);
         githubSort.Select((int)_githubSort);
         githubSort.ItemSelected += index =>
@@ -130,9 +130,9 @@ internal partial class SkinWorkshopPanel
     private void RefreshFilters()
     {
         _subscriptionPicker.SetOptions(WorkshopSubscriptionFilter.Options, _subscriptions.Value);
-        _sourcePicker.SetOptions(SourceOptions, _source);
-        _sourcePicker.Picker.Visible = !CodeErrors;
-        _sourcePicker.Picker.TooltipText = GitHubText(GitHubSkinTextKey.Source);
+        _sourcePicker.Visible = !CodeErrors;
+        _sourcePicker.Select(SkinSources.IndexOf(_source));
+        _sourcePicker.TooltipText = GitHubText(GitHubSkinTextKey.Source);
         _installPicker.SetOptions(InstallOptions, _installFilter);
         _installPicker.Picker.Visible = !CodeErrors && GitHubMode;
         _githubSortPicker.Visible = !CodeErrors && GitHubMode;

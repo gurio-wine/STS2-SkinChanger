@@ -246,12 +246,18 @@ internal partial class SkinWorkshopPanel : Control
                     action.Text = recognized ? GitHubText(installState switch
                     {
                         GitHubInstallState.Updatable => GitHubSkinTextKey.Update,
-                        GitHubInstallState.Installed => GitHubSkinTextKey.Reinstall,
+                        // An up-to-date install has nothing left to install; the one action
+                        // that still means something is removing it again.
+                        GitHubInstallState.Installed => GitHubSkinTextKey.Uninstall,
                         _ => GitHubSkinTextKey.Install
                     }) : "";
                     action.TooltipText = installing ? GitHubText(GitHubSkinTextKey.Installing) : entry?.Error ?? "";
-                    cancel.Visible = true; cancel.Disabled = installing;
-                    cancel.Text = GitHubText(GitHubSkinTextKey.OpenRepo);
+                    // The card itself opens the repository, so the second button only ever
+                    // carries the other half of the action: removing a skin that has an
+                    // update waiting, while the primary button installs that update.
+                    cancel.Visible = recognized && installState == GitHubInstallState.Updatable;
+                    cancel.Disabled = installing || _restartPending;
+                    cancel.Text = GitHubText(GitHubSkinTextKey.Uninstall);
                     cancel.TooltipText = cancel.Text;
                     label.Text = installing ? GitHubText(GitHubSkinTextKey.Installing) : GitHubStatus(entry, installState);
                     label.TooltipText = entry is { Error.Length: > 0 } ? entry.Error : label.Text;

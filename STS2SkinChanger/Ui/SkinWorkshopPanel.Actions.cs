@@ -18,7 +18,7 @@ internal partial class SkinWorkshopPanel
             {
                 // Installing writes into the game's mods folder; the game loads it on next start.
                 if (GitHubSkinService.IsInstalling(id)) return;
-                _ = InstallGitHub(id);
+                PerformGitHub(id);
                 return;
             }
             var state = SkinWorkshopService.DownloadState(id);
@@ -73,6 +73,32 @@ internal partial class SkinWorkshopPanel
             WorkshopCommunityLinks.OpenItem(id);
         }
         catch (Exception ex) { ShowActionError(id, ex); }
+    }
+
+    // One button, two meanings: an installed skin is removed, anything else is installed.
+    // An entry that is only up to date offers no second install, which is what "reinstall"
+    // used to do while the folder was already on disk.
+    private void PerformGitHub(ulong id)
+    {
+        if (GitHubSkinService.InstallState(id) == GitHubInstallState.Installed) _ = UninstallGitHub(id);
+        else _ = InstallGitHub(id);
+    }
+
+    private void PerformGitHubSecondary(ulong id)
+    {
+        if (_closed || _restartPending || GitHubSkinService.IsInstalling(id)) return;
+        // The button is only shown while an update is waiting; that is when removing the
+        // installed copy is the alternative the player might actually want.
+        if (GitHubSkinService.InstallState(id) != GitHubInstallState.Updatable) return;
+        _actionErrors.Remove(id);
+        _ = UninstallGitHub(id);
+    }
+
+    private async Task UninstallGitHub(ulong id)
+    {
+        try { await GitHubSkinService.UninstallAsync(id); }
+        catch (Exception ex) { ShowActionError(id, ex); }
+        finally { if (!_closed && GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll(); }
     }
 
     private async Task InstallGitHub(ulong id)

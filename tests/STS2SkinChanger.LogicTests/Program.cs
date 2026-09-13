@@ -1984,6 +1984,8 @@ Require(
 
 GitHubSourceIdentityTests.Run();
 GitHubSkinPolicyTests.Run();
+GitHubReadmePolicyTests.Run();
+SkinSourceTests.Run();
 GitHubInstallPolicyTests.Run();
 GitHubSkinCatalogTests.Run();
 GitHubSkinClientTests.Run();

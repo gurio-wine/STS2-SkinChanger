@@ -52,6 +52,12 @@ internal static class GitHubInstallPolicy
         !string.IsNullOrWhiteSpace(availableVersion) && CompareVersions(installedVersion, availableVersion) < 0
             ? GitHubInstallState.Updatable : GitHubInstallState.Installed;
 
+    // Only a folder that still holds the manifest this mod installed may be removed: a folder
+    // the player made by hand must never be deleted just because it shares the name.
+    public static string? UninstallTarget(string modsDirectory, string folder, string packageId) =>
+        ReadManifestVersion(Path.Combine(modsDirectory, folder), packageId) == null
+            ? null : Path.Combine(modsDirectory, folder);
+
     public static string? ReadManifestVersion(string modRoot, string packageId)
     {
         if (!IsSafeToken(packageId)) return null;

@@ -31,12 +31,20 @@ internal static class GitHubSkinService
     public static string Title(ulong id) => Entry(id) is { } entry ? DisplayName(entry) : "";
     public static string CoverUrl(ulong id) => Entry(id)?.CoverUrl ?? "";
     public static string RepoUrl(ulong id) => Entry(id)?.Repo.Url ?? "";
+    public static string Description(ulong id) => Entry(id)?.Description ?? "";
+    public static string Readme(ulong id) => Entry(id)?.Readme ?? "";
     public static bool IsInstalling(ulong id) => Installing.Contains(id);
     public static GitHubInstallState InstallState(ulong id) => Entry(id) is { Recognition: GitHubRecognition.Recognized } entry
         ? GitHubInstallPolicy.Classify(InstalledVersion(entry), entry.PackageVersion)
         : GitHubInstallState.NotInstalled;
 
     private static string DisplayName(GitHubSkinEntry entry) => entry.PackageName.Length > 0 ? entry.PackageName : entry.Name;
+
+    // One client for the whole session: the README of a hovered card may be fetched before
+    // any refresh has run, so creation cannot be tied to RefreshAsync.
+    private static GitHubSkinClient Client() => _client ??= new GitHubSkinClient(
+        new HttpClientHandler { AllowAutoRedirect = false },
+        $"STS2-SkinChanger/{STS2SkinChanger.Entry.InternalTestVersion}");
 
     public static void StartRefresh()
     {
@@ -57,8 +65,7 @@ internal static class GitHubSkinService
                 catch (Exception ex) { ModLog.Warn("GitHub 皮肤缓存不可用，将重新拉取：" + ex.Message); }
                 PublishItems();
             }
-            _client ??= new GitHubSkinClient(new HttpClientHandler { AllowAutoRedirect = false },
-                $"STS2-SkinChanger/{STS2SkinChanger.Entry.InternalTestVersion}");
+            var client = Client();
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(30));
             var token = timeout.Token;
             var repos = await FetchReposAsync(token);
@@ -88,7 +95,7 @@ internal static class GitHubSkinService
         for (var page = 1; page <= GitHubSkinPolicy.MaxSearchPages; page++)
         {
             Progress = $"{page}/{GitHubSkinPolicy.MaxSearchPages}";
-            var json = await _client!.SearchPageAsync(page, token);
+            var json = await Client().SearchPageAsync(page, token);
             var pageItems = GitHubSkinPolicy.ParseSearch(json);
             result.AddRange(pageItems);
             if (pageItems.Length < GitHubSkinPolicy.SearchPageSize) break;
@@ -127,7 +134,7 @@ internal static class GitHubSkinService
 
     private static async Task<GitHubSkinEntry> RecognizeAsync(GitHubSkinEntry entry, CancellationToken token)
     {
-        var json = await _client!.LatestReleaseAsync(entry.Repo, token);
+        var json = await Client().LatestReleaseAsync(entry.Repo, token);
         if (json == null) return entry with { Recognition = GitHubRecognition.NoPackage, Error = "release" };
         var release = GitHubSkinPolicy.ParseRelease(json);
         if (release == null) return entry with { Recognition = GitHubRecognition.NoPackage, Error = "release" };
@@ -153,7 +160,7 @@ internal static class GitHubSkinService
         var zip = Path.Combine(root, "package.zip");
         // Keep the archive between runs: re-installing an unchanged release must not download it again.
         if (!File.Exists(zip) || new FileInfo(zip).Length != entry.AssetSize)
-            await _client!.DownloadAsync(new Uri(entry.AssetUrl), zip, token);
+            await Client().DownloadAsync(new Uri(entry.AssetUrl), zip, token);
         Extract(zip, package);
         var descriptors = WorkshopSubmissionScanner.ReadDescriptors(package);
         if (descriptors.Length == 0) return null;
@@ -208,6 +215,31 @@ internal static class GitHubSkinService
         }
     }
 
+    // Fetched on the first hover and kept in the catalog, so a repository is read once.
+    // A failure is not cached: the next hover may well succeed.
+    public static async Task<string> ReadmeAsync(ulong id, CancellationToken token)
+    {
+        if (Entry(id) is not { } entry || entry.Readme.Length > 0) return Readme(id);
+        try
+        {
+            var text = await Client().ReadmeAsync(entry.Repo, token);
+            var excerpt = GitHubReadmePolicy.ToExcerpt(text, GitHubReadmePolicy.MaxExcerptChars);
+            if (excerpt.Length == 0) return "";
+            Catalog.Publish(entry with { Readme = excerpt });
+            // No revision bump: a README changes neither the filters nor the order, and a
+            // rebuild here would cancel the very hover that asked for it.
+            RefreshEntries();
+            SaveCatalog();
+            return excerpt;
+        }
+        catch (OperationCanceledException) { return ""; }
+        catch (Exception ex)
+        {
+            ModLog.Info($"GitHub 仓库简介不可用（{entry.FullName}）：{ex.GetBaseException().Message}");
+            return "";
+        }
+    }
+
     public static async Task InstallAsync(ulong id, CancellationToken token)
     {
         if (!Installing.Add(id)) return;
@@ -248,6 +280,19 @@ internal static class GitHubSkinService
         finally { Installing.Remove(id); }
     }
 
+    // Removing the folder we installed is what "uninstalled" means for this source; the
+    // download cache stays, so re-installing the same release needs no network at all.
+    public static async Task UninstallAsync(ulong id)
+    {
+        var entry = Entry(id) ?? throw new InvalidOperationException("Unknown GitHub skin.");
+        var mods = GitHubInstallPolicy.ModsDirectory(OS.GetExecutablePath());
+        var folder = GitHubInstallPolicy.FolderName(entry.PackageId, entry.RepoName);
+        var target = GitHubInstallPolicy.UninstallTarget(mods, folder, entry.PackageId)
+            ?? throw new InvalidOperationException("Skin is not installed.");
+        await Task.Run(() => Directory.Delete(target, recursive: true));
+        ModLog.Info($"GitHub 皮肤 {entry.FullName} 已从 {target} 卸载；下次启动游戏生效。");
+    }
+
     private static void TryDelete(string directory)
     {
         try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
@@ -280,10 +325,15 @@ internal static class GitHubSkinService
 
     private static void PublishItems()
     {
+        RefreshEntries();
+        Revision++;
+    }
+
+    private static void RefreshEntries()
+    {
         _entriesById = Catalog.Entries.ToDictionary(entry => entry.Id);
         _items = Catalog.Entries.Select(entry => new WorkshopCatalogItem(entry.Id,
             entry.Recognition == GitHubRecognition.Recognized ? entry.Targets : [], true)).ToArray();
-        Revision++;
     }
 
     private static void SaveCatalog()

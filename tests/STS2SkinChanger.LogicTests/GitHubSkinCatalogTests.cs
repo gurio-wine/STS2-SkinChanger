@@ -1,4 +1,5 @@
 using STS2SkinChanger.Core;
+using System.Text.Json;
 
 internal static class GitHubSkinCatalogTests
 {
@@ -40,10 +41,26 @@ internal static class GitHubSkinCatalogTests
                 restored.Entries[0].Targets.Single().Target == "silent", "目录缓存必须能跨会话完整恢复。");
             File.WriteAllText(path, """{"format":99,"entries":[]}""");
             Require(Throws(() => restored.Restore(path)), "未知格式的缓存必须拒绝，不能按半懂的数据继续跑。");
-            File.WriteAllText(path, """{"format":1,"entries":[{"fullName":"../evil","name":"x"}]}""");
+            File.WriteAllText(path, """{"format":1,"entries":[]}""");
+            Require(Throws(() => restored.Restore(path)), "旧格式缓存没有简介字段，必须整份丢弃后重新拉取。");
+            File.WriteAllText(path, """{"format":2,"entries":[{"fullName":"../evil","name":"x"}]}""");
             Require(Throws(() => restored.Restore(path)), "缓存里的仓库名同样要按不可信输入校验。");
             File.WriteAllText(path, "{");
             Require(Throws(() => restored.Restore(path)), "损坏缓存必须抛错，由调用方保留空目录并重新拉取。");
+
+            // 简介随缓存一起保存：悬停只请求一次，之后离线也能显示。
+            restored.Publish(recognized with { Readme = new string('x', GitHubReadmePolicy.MaxExcerptChars) });
+            restored.Save(path, null);
+            var withReadme = new GitHubSkinCatalog();
+            withReadme.Restore(path);
+            Require(withReadme.Entries[0].Readme.Length == GitHubReadmePolicy.MaxExcerptChars,
+                "仓库简介必须跨会话恢复，避免每次悬停都花一次接口额度。");
+            withReadme.Merge([pending with { PushedAt = DateTimeOffset.Parse("2026-09-13T00:00:00Z") }]);
+            Require(withReadme.Entries[0].Readme.Length == 0,
+                "仓库有了新提交，旧版本的简介必须作废重新读取。");
+            File.WriteAllText(path, JsonSerializer.Serialize(new GitHubSkinState(GitHubSkinCatalog.Format,
+                [recognized with { Readme = new string('x', GitHubReadmePolicy.MaxExcerptChars + 1) }])));
+            Require(Throws(() => restored.Restore(path)), "超过长度上限的简介必须拒绝，缓存文件不能被撑大。");
         }
         finally { Directory.Delete(Path.GetDirectoryName(path)!, true); }
 

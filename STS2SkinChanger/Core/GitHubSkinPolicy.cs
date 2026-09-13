@@ -34,6 +34,10 @@ internal static class GitHubSkinPolicy
 
     public static Uri LatestReleaseUri(GitHubRepoRef repo) => new($"https://api.github.com/repos/{repo.FullName}/releases/latest");
 
+    // The API resolves whichever README name the repository actually uses, on its default
+    // branch; raw.githubusercontent.com would need the exact file name and letter case.
+    public static Uri ReadmeUri(GitHubRepoRef repo) => new($"https://api.github.com/repos/{repo.FullName}/readme");
+
     public static string CoverUrl(GitHubRepoRef repo) => $"https://opengraph.githubassets.com/1/{repo.FullName}";
 
     public static bool IsAllowedHost(string? host) => host != null && Hosts.Contains(host, StringComparer.OrdinalIgnoreCase);

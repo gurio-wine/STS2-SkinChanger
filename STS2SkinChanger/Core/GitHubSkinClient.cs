@@ -37,13 +37,21 @@ internal sealed class GitHubSkinClient : IDisposable
         return await ReadTextAsync(response, token);
     }
 
+    // The raw media type avoids a base64 payload for a file that is shown as plain text.
+    public async Task<string?> ReadmeAsync(GitHubRepoRef repo, CancellationToken token)
+    {
+        using var response = await SendAsync(Request(GitHubSkinPolicy.ReadmeUri(repo), "application/vnd.github.raw"), token, allowNotFound: true);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        return await ReadTextAsync(response, token);
+    }
+
     // Headers go on every request rather than on the client defaults, so what the
     // handler receives is exactly what was configured.
-    private HttpRequestMessage Request(Uri uri)
+    private HttpRequestMessage Request(Uri uri, string accept = "application/vnd.github+json")
     {
         var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.UserAgent.ParseAdd(_userAgent);
-        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+        request.Headers.Accept.ParseAdd(accept);
         return request;
     }
 
