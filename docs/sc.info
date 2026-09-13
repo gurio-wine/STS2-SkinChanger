@@ -1,0 +1,133 @@
+// ================================================================
+//  sc.info —— Skin Changer 外部来源识别文件
+//  sc.info —— identification file for Skin Changer (GitHub-sourced Mods)
+// ----------------------------------------------------------------
+//  用途 / What it is:
+//    Mod 发在 GitHub 时，把本文件放在仓库根目录（文件名就叫 sc.info），
+//    Skin Changer 就能直接认出它是什么皮肤、包含哪些内容，不用下载扫描。
+//    Place this file at your repository root (name it exactly "sc.info") and
+//    Skin Changer recognizes what the Mod contains without downloading it.
+//
+//  说明 / Rules:
+//    · 纯文本，不加密、不校验哈希；改成你自己的内容后直接提交。
+//      Plain text. No encryption, no checksum. Edit and commit.
+//    · 文件里的注释（// 开头）可以保留，也可以删掉。
+//      Comments (lines starting with //) may stay or be deleted.
+//    · 下面带中文说明的字段是真的示例值，发给别人前请整段替换。
+//      The values below are real examples — replace them with your own.
+//    · 不认识的多余字段会被忽略，你可以自己加备注。
+//      Unknown extra fields are ignored; add your own notes freely.
+// ================================================================
+{
+  // 文件版本，固定 1，不要改 / format version, always 1
+  "sc": 1,
+
+  // 显示名称（必填）。列表里显示的就是这个名字，中英日韩都可以。
+  // Display name (required). Shown in the Mod list; any language.
+  "name": "示例：铁甲战士 暗影皮肤",
+
+  // 这个 Mod 同时还发在 Steam 创意工坊时，填数字工坊 ID；只在 GitHub 发布就留 0。
+  // Workshop item ID if this Mod is also on Steam; 0 if GitHub only.
+  "workshopId": 0,
+
+  // 这个 Mod 会替换什么（必填，至少一项；可以多项）。
+  // What this Mod replaces (required, one or more entries).
+  // kind / target 的取值见文件末尾。
+  "targets": [
+    { "kind": "character", "target": "ironclad" },
+    { "kind": "cards", "target": "ironclad" }
+  ],
+
+  // 玩家必须重启游戏才能生效吗？true / false
+  // Does the player have to restart the game for this Mod to work?
+  "restartRequired": true,
+
+  // 可选：适配的游戏版本，例如 "0.107.1"；不确定就留空字符串。
+  // Optional: game version this Mod targets, e.g. "0.107.1"; "" if unsure.
+  "gameVersion": "",
+
+  // 可选：仓库里的预览图路径，例如 "preview.png"；没有就留空。
+  // Optional: preview image path inside your repository; "" if none.
+  "cover": ""
+}
+
+// ================================================================
+//  取值参考 / allowed values —— 以下内容不用抄进上面，只是查表用
+// ----------------------------------------------------------------
+//  kind 只能是这 7 种之一：
+//    character  角色本体（换人物外观）
+//    cards      卡面（换卡牌图）
+//    monster    怪物
+//    ancient    先古之民
+//    companion  同伴
+//    merchant   商人
+//    event      事件
+//
+//  target 填游戏内部 id（一律小写）。常用取值：
+//
+//  [character]
+//    ironclad  silent  regent  necrobinder  defect  watcher
+//
+//  [cards]
+//    ironclad  silent  regent  necrobinder  defect  watcher
+//    colorless  curse  status  token  event
+//
+//  [ancient]
+//    darv  neow  nonupeipe  orobas  pael  tanx  tezcatara  vakuu
+//
+//  [companion]
+//    byrdpip  osty  paels_legion
+//
+//  [merchant]
+//    merchant  fake_merchant_monster
+//
+//  [monster]
+//    aeonglass  assassin_ruby_raider  axe_ruby_raider  axebot
+//    bowlbug_egg  bowlbug_nectar  bowlbug_rock  bowlbug_silk
+//    brute_ruby_raider  bygone_effigy  byrdonis  calcified_cultist
+//    ceremonial_beast  chomper  corpse_slug  crossbow_ruby_raider
+//    crusher  cubex_construct  damp_cultist  decimillipede_segment_back
+//    decimillipede_segment_front  decimillipede_segment_middle
+//    devoted_sculptor  entomancer  exoskeleton  eye_with_teeth
+//    fabricator  fat_gremlin  flail_knight  flyconid  fogmog
+//    fossil_stalker  frog_knight  fuzzy_wurm_crawler  gas_bomb
+//    globe_head  gremlin_merc  guardbot  haunted_ship  hunter_killer
+//    infested_prism  inklet  kin_follower  kin_priest  knowledge_demon
+//    lagavulin_matriarch  leaf_slime_m  leaf_slime_s  living_fog
+//    living_shield  louse_progenitor  magi_knight  mawler  mecha_knight
+//    mysterious_knight  myte  nibbit  noisebot  ovicopter  owl_magistrate
+//    parafright  phantasmal_gardener  phrog_parasite  punch_construct
+//    queen  rocket  scroll_of_biting  seapunk  sewer_clam  shrinker_beetle
+//    skulking_colony  slimed_berserker  slithering_strangler  sludge_spinner
+//    slumbering_beetle  snapping_jaxfruit  sneaky_gremlin  soul_fysh
+//    soul_nexus  spectral_knight  spiny_toad  stabbot  terror_eel
+//    test_subject  the_forgotten  the_insatiable  the_lost  the_obscura
+//    thieving_hopper  toadpole  torch_head_amalgam  tough_egg
+//    tracker_ruby_raider  tunneler  turret_operator  twig_slime_m
+//    twig_slime_s  two_tailed_rat  vantom  vine_shambler  waterfall_giant
+//    wriggler  zapbot
+//
+//  [event]（target 要带 event: 前缀）
+//    event:abyssal_baths  event:amalgamator  event:aroma_of_chaos
+//    event:battleworn_dummy  event:brain_leech  event:bugslayer
+//    event:byrdonis_nest  event:colorful_philosophers  event:colossal_flower
+//    event:crystal_sphere  event:dense_vegetation  event:doll_room
+//    event:doors_of_light_and_dark  event:drowning_beacon
+//    event:endless_conveyor  event:field_of_man_sized_holes
+//    event:grave_of_the_forgotten  event:hungry_for_mushrooms
+//    event:infested_automaton  event:jungle_maze_adventure  event:lost_wisp
+//    event:luminous_choir  event:morphic_grove  event:potion_courier
+//    event:punch_off  event:ranwid_the_elder  event:reflections
+//    event:relic_trader  event:room_full_of_cheese  event:round_tea_party
+//    event:sapphire_seed  event:self_help_book  event:slippery_bridge
+//    event:spiraling_whirlpool  event:spirit_grafter  event:stone_of_all_time
+//    event:sunken_statue  event:sunken_treasury  event:symbiote
+//    event:tablet_of_truth  event:tea_master  event:the_future_of_potions
+//    event:the_legends_were_true  event:this_or_that  event:tinker_time
+//    event:trash_heap  event:trial  event:unrest_site
+//    event:war_historian_repy  event:waterlogged_scriptorium
+//    event:welcome_to_wongos  event:wellspring  event:whispering_hollow
+//    event:wood_carvings  event:zen_weaver
+//
+//  其它同类 id 同样有效：上面列的是已有皮肤用过的取值。
+// ================================================================
