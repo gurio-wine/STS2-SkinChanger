@@ -67,6 +67,22 @@ internal static class GitHubInstallPolicy
             ? GitHubInstallState.Updatable : GitHubInstallState.Installed;
     }
 
+    // A record written before digests existed carries only a version, so it cannot take part in
+    // digest comparison and silently falls back to reading the tag - the very comparison an
+    // author-named tag ("latest", a date, a -beta suffix) cannot support. The digest the release
+    // publishes is adopted once, as soon as a refresh sees both sides, and that record joins
+    // digest comparison from then on without a re-install. This may only happen while the tag
+    // still agrees the install is current: the version is the last evidence such a record has,
+    // and adopting the digest of a release the version calls newer would erase the update the
+    // card shows today. An install the version column calls old keeps its record untouched and
+    // picks up a digest the moment the player updates it.
+    public static string BackfillDigest(string? installedVersion, string? installedDigest, string? availableVersion, string? availableDigest)
+    {
+        if (string.IsNullOrWhiteSpace(installedVersion) || GitHubSkinPolicy.NormalizeDigest(installedDigest).Length > 0) return "";
+        var available = GitHubSkinPolicy.NormalizeDigest(availableDigest);
+        return available.Length > 0 && CompareVersions(installedVersion, availableVersion) >= 0 ? available : "";
+    }
+
     // A downloaded package may only be reused when it is the one the release publishes now. The
     // size alone cannot say that - an author may replace the file with one of the same size - so
     // the published digest decides whenever there is one. With no digest on the release there is

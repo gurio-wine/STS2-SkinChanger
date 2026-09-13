@@ -96,6 +96,7 @@ internal static class GitHubSkinService
                 ReconcilePending();
                 CleanLeftovers();
                 RefreshInstalls();
+                BackfillDigests();
                 PublishItems();
             }
             var client = Client();
@@ -107,6 +108,7 @@ internal static class GitHubSkinService
             SaveCatalog();
             await CheckInfoAsync(token);
             await CheckReleasesAsync(token);
+            BackfillDigests();
             ModLog.Info($"GitHub 皮肤列表刷新完成：{Catalog.Entries.Length} 个仓库，已识别 " +
                 $"{Catalog.Entries.Count(entry => entry.Recognition == GitHubRecognition.Recognized)} 个，本地已安装 {Ledger.Count} 个。");
         }
@@ -487,6 +489,29 @@ internal static class GitHubSkinService
         foreach (var entry in Catalog.Entries)
             if (Ledger.Find(entry.FullName) is { } install) installs[entry.Id] = install;
         _installsById = installs;
+    }
+
+    // A record this mod wrote before digests existed holds a version but no digest, so that one
+    // repository is still judged by the tag alone. Once the catalog knows what the release
+    // publishes, that digest is adopted and written straight back: from this session on the card
+    // answers by package content, without asking the player to re-install anything. Nothing is
+    // adopted while the version says the install is older than the release - there the update has
+    // to stay visible on the card, and the digest arrives with the update itself.
+    private static void BackfillDigests()
+    {
+        var changed = false;
+        foreach (var entry in Catalog.Entries)
+        {
+            if (Ledger.Find(entry.FullName) is not { } install) continue;
+            var digest = GitHubInstallPolicy.BackfillDigest(install.Version, install.Digest, entry.ReleaseTag, entry.AssetDigest);
+            if (digest.Length == 0 || !Ledger.Record(entry.FullName, install with { Digest = digest })) continue;
+            changed = true;
+            ModLog.Info($"GitHub 皮肤 {entry.FullName} 的安装记录已补记发布校验值，此后按包内容判断更新。");
+        }
+        if (!changed) return;
+        SaveLedger();
+        RefreshInstalls();
+        PublishItems();
     }
 
     private static string? ModsDirectory()

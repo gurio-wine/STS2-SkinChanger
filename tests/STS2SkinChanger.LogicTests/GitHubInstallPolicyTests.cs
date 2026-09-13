@@ -73,6 +73,23 @@ internal static class GitHubInstallPolicyTests
         Require(GitHubInstallPolicy.Classify(null, null, "0.1.4", DigestB) == GitHubInstallState.NotInstalled &&
             GitHubInstallPolicy.Classify("", DigestA, "0.1.4", DigestB) != GitHubInstallState.NotInstalled,
             "只有版本号和校验值都空才是未安装；有校验值但没有版本号的安装记录仍然是已安装。");
+        // 加校验值之前写下的安装记录只有版本号，只能按版本号比较。刷新时看到发布方公布的校验值
+        // 就补记一次，此后这条记录也按包内容判断——tag 一个字都不改、只把包换掉也能发现更新。
+        Require(GitHubInstallPolicy.BackfillDigest("0.1.4", "", "v0.1.4-beta", DigestA) == DigestA &&
+            GitHubInstallPolicy.BackfillDigest("0.1.4", null, "0.1.4", "sha256:" + DigestA) == DigestA &&
+            // 真实台账里的那一条：安装时记下的是 tag（v0.1.4），发布方的 tag 是 v0.1.4-beta。
+            GitHubInstallPolicy.BackfillDigest("v0.1.4", null, "v0.1.4-beta", "sha256:" + DigestA) == DigestA,
+            "没有校验值的安装记录要在刷新时补记发布方公布的校验值，带 sha256: 前缀的也要认。");
+        var adopted = GitHubInstallPolicy.BackfillDigest("0.1.4", "", "v0.1.4-beta", DigestA);
+        Require(GitHubInstallPolicy.Classify("0.1.4", adopted, "v0.1.4-beta", DigestA) == GitHubInstallState.Installed &&
+            GitHubInstallPolicy.Classify("0.1.4", adopted, "v0.1.4-beta", DigestB) == GitHubInstallState.Updatable,
+            "补记之后换 tag 不再是唯一的更新信号：tag 完全相同、包被换掉也必须显示为可更新。");
+        Require(GitHubInstallPolicy.BackfillDigest("0.1.4", "", "0.1.5", DigestB).Length == 0 &&
+            GitHubInstallPolicy.BackfillDigest("0.1.4", "", "latest", "").Length == 0 &&
+            GitHubInstallPolicy.BackfillDigest("", "", "0.1.4", DigestA).Length == 0 &&
+            GitHubInstallPolicy.BackfillDigest("0.1.4", DigestB, "0.1.5", DigestA).Length == 0 &&
+            GitHubInstallPolicy.BackfillDigest("0.1.4", "", "0.1.5", "not-a-digest").Length == 0,
+            "版本号仍说这个安装比发布的新时不能补记（补了就把真实更新抹掉）；发布方没有校验值、还没有安装记录或已经记过时都不补。");
         // 缓存里的包只有在"就是现在发布的那一份"时才能复用：大小一样也可能是被换过的文件。
         Require(GitHubInstallPolicy.CanReusePackage(DigestA, 100, 100, DigestA) &&
             !GitHubInstallPolicy.CanReusePackage(DigestA, 100, 100, DigestB) &&
