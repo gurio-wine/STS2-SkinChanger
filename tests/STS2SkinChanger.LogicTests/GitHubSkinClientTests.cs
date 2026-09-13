@@ -64,8 +64,25 @@ internal static class GitHubSkinClientTests
                 }
                 finally { Directory.Delete(destination, true); }
 
-                var payload = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[1024]) });
-                using var payloadClient = new GitHubSkinClient(payload, "SkinChanger/1.0.8.9");
+                // Real GitHub behaviour: an asset download answers 302 into release-assets.githubusercontent.com.
+                var releaseAssets = new Handler(request => request.RequestUri!.Host == "github.com"
+                    ? new HttpResponseMessage(HttpStatusCode.Redirect)
+                    { Headers = { Location = new Uri("https://release-assets.githubusercontent.com/github-production-release-asset/1/r.zip?sig=abc") } }
+                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[512]) });
+                using var releaseClient = new GitHubSkinClient(releaseAssets, "SkinChanger/1.0.8.11");
+                var redirected = Path.Combine(Path.GetTempPath(), "sc-gh-dl-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(redirected);
+                try
+                {
+                    var written = await releaseClient.DownloadAsync(
+                        new Uri("https://github.com/o/r/releases/download/v1/r.zip"), Path.Combine(redirected, "r.zip"), CancellationToken.None);
+                    Require(written == 512 && releaseAssets.Requests.Count == 2 &&
+                        releaseAssets.Requests[1].RequestUri!.Host == "release-assets.githubusercontent.com",
+                        "Release 资产会 302 到 release-assets.githubusercontent.com；这条真实链路必须被放行，否则下载永远失败。");
+                }
+                finally { Directory.Delete(redirected, true); }
+
+                var payload = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[1024]) });                using var payloadClient = new GitHubSkinClient(payload, "SkinChanger/1.0.8.9");
                 var target = Path.Combine(Path.GetTempPath(), "sc-gh-dl-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(target);
                 try

@@ -111,6 +111,15 @@ internal partial class SkinWorkshopPanel
             view.Cancel.Text = WorkshopBrowserText.Get(WorkshopBrowserTextKey.Unsubscribe);
             view.Title.Text = SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…";
             view.Metric.Text = ItemMetric(item.Id);
+            if (SkinSourceIdentity.IsGitHub(item.Id))
+            {
+                // GitHub rows have no Steam page to unsubscribe from; the row's second button
+                // opens the repository instead, and the metric follows the GitHub sort order.
+                view.SecondaryAction = () => OpenItem(item.Id);
+                view.Cancel.Text = GitHubText(GitHubSkinTextKey.OpenRepo);
+                view.Title.Text = GitHubSkinService.Title(item.Id);
+                view.Metric.Text = GitHubMetric(item.Id);
+            }
             BindTags(view, item);
             _hoverItems.Add(new(item.Id, view.Slot, view.Panel));
             _actions.Add((item.Id, view.Status, view.Action, view.Cancel));

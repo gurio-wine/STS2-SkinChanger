@@ -33,6 +33,8 @@ internal static class GitHubSkinPolicyTests
         Require(GitHubSkinPolicy.IsAllowedHost("api.github.com") && GitHubSkinPolicy.IsAllowedHost("objects.githubusercontent.com") &&
             GitHubSkinPolicy.IsAllowedHost("opengraph.githubassets.com"),
             "接口、资产重定向与封面的主机必须在白名单内。");
+        Require(GitHubSkinPolicy.IsAllowedHost("release-assets.githubusercontent.com"),
+            "GitHub 现在把 Release 资产重定向到 release-assets.githubusercontent.com；漏掉它会让每一次下载都被拒绝。");
         Require(!GitHubSkinPolicy.IsAllowedHost("evil.example.com") && !GitHubSkinPolicy.IsAllowedHost("github.com.evil.example.com"),
             "非白名单主机，包括后缀伪装的域名，必须被拒绝。");
         Require(!GitHubSkinPolicy.TryParseFullName("owner/..", out _), "只有点号的仓库名不是合法仓库，必须被拒绝。");

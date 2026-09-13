@@ -26,7 +26,8 @@ internal static class GitHubSkinPolicy
     private const int MaxJsonBytes = 4 * 1024 * 1024;
 
     private static readonly string[] Hosts =
-        ["api.github.com", "github.com", "objects.githubusercontent.com", "codeload.github.com", "opengraph.githubassets.com"];
+        ["api.github.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
+         "codeload.github.com", "opengraph.githubassets.com"];
 
     public static Uri SearchUri(int page) => new(
         $"https://api.github.com/search/repositories?q=topic%3A{Topic}&sort=updated&order=desc&per_page={SearchPageSize}&page={Math.Clamp(page, 1, MaxSearchPages)}");

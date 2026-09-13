@@ -14,6 +14,13 @@ internal partial class SkinWorkshopPanel
         try
         {
             _actionErrors.Remove(id);
+            if (SkinSourceIdentity.IsGitHub(id))
+            {
+                // Installing writes into the game's mods folder; the game loads it on next start.
+                if (GitHubSkinService.IsInstalling(id)) return;
+                _ = InstallGitHub(id);
+                return;
+            }
             var state = SkinWorkshopService.DownloadState(id);
             if (state?.Busy == true) return;
             var primary = WorkshopItemActions.Primary(SkinWorkshopService.IsSubscribed(id), SkinWorkshopService.IsActive(id),
@@ -47,13 +54,36 @@ internal partial class SkinWorkshopPanel
     }
     private void OpenItem(ulong id)
     {
-        if (_closed || !SkinWorkshopService.CanReadMetadata(id)) return;
+        if (_closed) return;
+        if (SkinSourceIdentity.IsGitHub(id))
+        {
+            try
+            {
+                _actionErrors.Remove(id);
+                var url = GitHubSkinService.RepoUrl(id);
+                if (url.Length > 0) OS.ShellOpen(url);
+            }
+            catch (Exception ex) { ShowActionError(id, ex); }
+            return;
+        }
+        if (!SkinWorkshopService.CanReadMetadata(id)) return;
         try
         {
             _actionErrors.Remove(id);
             WorkshopCommunityLinks.OpenItem(id);
         }
         catch (Exception ex) { ShowActionError(id, ex); }
+    }
+
+    private async Task InstallGitHub(ulong id)
+    {
+        try
+        {
+            using var token = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+            await GitHubSkinService.InstallAsync(id, token.Token);
+        }
+        catch (Exception ex) { ShowActionError(id, ex); }
+        finally { if (!_closed && GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll(); }
     }
     private void OpenSubmission(Button button)
     {

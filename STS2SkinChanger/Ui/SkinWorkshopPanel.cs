@@ -10,6 +10,7 @@ internal partial class SkinWorkshopPanel : Control
     private bool _suspended;
     private WorkshopSubmissionPanel? _submission;
     private Button _communityRefresh=null!;
+    private Button _submissionButton=null!;
     private int _communityRevision=-1;
     private static readonly string[] Kinds = ["", "character", "cards", "monster", "ancient", "merchant", "companion", "event"];
     private string _kind = "";
@@ -88,8 +89,12 @@ internal partial class SkinWorkshopPanel : Control
         heading.AddChild(Text(WorkshopText.EntryLabel, 27, true));
         var submit = Button(WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitMod), () => { });
         submit.Pressed += () => OpenSubmission(submit); heading.AddChild(submit);
+        _submissionButton = submit;
         _communityRefresh=Button(WorkshopSubmissionText.Get(SubmissionText.Refresh),()=>_ = SkinWorkshopService.RefreshCommunity());
         heading.AddChild(_communityRefresh);
+        _githubRefresh=Button(GitHubText(GitHubSkinTextKey.Refresh), GitHubSkinService.StartRefresh);
+        _githubRefresh.Visible=false;
+        heading.AddChild(_githubRefresh);
         BuildSort(heading);
         BuildFilters(content);
         var scroll = new ScrollContainer { SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
@@ -112,6 +117,7 @@ internal partial class SkinWorkshopPanel : Control
         _origin.TreeExited += Close;
         _originConnected = true;
         _communityRevision=SkinWorkshopService.CommunityRevision;
+        _githubRevision=GitHubSkinService.Revision;
         Rebuild();
     }
 
@@ -124,7 +130,7 @@ internal partial class SkinWorkshopPanel : Control
         var generation = ++_generation;
         if (_emptyLabel == null) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
         if(CodeErrors) { RebuildCodeErrors(generation, token); UpdateVisibleActions(); RecordPageBuild(started); return; }
-        _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
+        RefreshSubscriptions();
         var filtered = FilteredItems();
         _filteredIds = filtered.Select(item => item.Id).ToArray();
         var pages = Math.Max(1, (filtered.Length + PageSize - 1) / PageSize);
@@ -206,6 +212,7 @@ internal partial class SkinWorkshopPanel : Control
         }
         UpdateVisibleActions();
         PollFilters();
+        PollGitHub();
     }
     private void UpdateVisibleActions()
     {
@@ -219,6 +226,37 @@ internal partial class SkinWorkshopPanel : Control
         {
             try
             {
+                if (SkinSourceIdentity.IsGitHub(id))
+                {
+                    var entry = GitHubSkinService.Entry(id);
+                    var installState = GitHubSkinService.InstallState(id);
+                    var installing = GitHubSkinService.IsInstalling(id);
+                    // An unrecognized repository has nothing to install: the row keeps its
+                    // repository link and its state text, and shows no primary button.
+                    var recognized = entry is { Recognition: GitHubRecognition.Recognized };
+                    action.Visible = recognized;
+                    action.Disabled = installing || _restartPending;
+                    action.Text = recognized ? GitHubText(installState switch
+                    {
+                        GitHubInstallState.Updatable => GitHubSkinTextKey.Update,
+                        GitHubInstallState.Installed => GitHubSkinTextKey.Reinstall,
+                        _ => GitHubSkinTextKey.Install
+                    }) : "";
+                    action.TooltipText = installing ? GitHubText(GitHubSkinTextKey.Installing) : entry?.Error ?? "";
+                    cancel.Visible = true; cancel.Disabled = installing;
+                    cancel.Text = GitHubText(GitHubSkinTextKey.OpenRepo);
+                    cancel.TooltipText = cancel.Text;
+                    label.Text = installing ? GitHubText(GitHubSkinTextKey.Installing) : GitHubStatus(entry, installState);
+                    label.TooltipText = entry is { Error.Length: > 0 } ? entry.Error : label.Text;
+                    if (_actionErrors.TryGetValue(id, out var installError))
+                    { label.Text = GitHubText(GitHubSkinTextKey.InstallFailed); label.TooltipText = installError; }
+                    if (action.HasMeta("sc_restart_accent") && action.GetMeta("sc_restart_accent").AsBool())
+                    {
+                        ModThemeRuntime.TextControl(action, 20);
+                        action.SetMeta("sc_restart_accent", false);
+                    }
+                    continue;
+                }
                 var state = SkinWorkshopService.DownloadState(id);
                 var active = SkinWorkshopService.IsActive(id);
                 var subscribed = SkinWorkshopService.IsSubscribed(id);
