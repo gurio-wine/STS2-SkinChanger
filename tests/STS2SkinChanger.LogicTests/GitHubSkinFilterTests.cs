@@ -1,0 +1,39 @@
+using STS2SkinChanger.Core;
+
+internal static class GitHubSkinFilterTests
+{
+    public static void Run()
+    {
+        void Require(bool condition, string reason) { if (!condition) throw new InvalidOperationException(reason); }
+        const GitHubInstallState missing = GitHubInstallState.NotInstalled;
+        Require(GitHubSkinFilter.DefaultFilter == GitHubSkinFilter.Missing,
+            "GitHub 来源的默认筛选是未安装：打开这个来源就是为了找能装的东西。");
+        Require(GitHubSkinFilter.Options.SequenceEqual(["missing", "installed", "updatable", "unrecognized"]),
+            "筛选保留未安装/已安装/可更新，并新增未识别；全部由空值表示。");
+        Require(!GitHubSkinFilter.IsOption(GitHubSkinFilter.All) && !GitHubSkinFilter.IsOption("bogus"),
+            "只有这四个值算筛选值。");
+
+        Require(GitHubSkinFilter.Matches(GitHubSkinFilter.Missing, true, missing) &&
+            GitHubSkinFilter.Matches(GitHubSkinFilter.Missing, false, missing),
+            "未安装要包含还没发布信息码的仓库，否则默认视图会在没有已识别皮肤时整片空掉。");
+        Require(!GitHubSkinFilter.Matches(GitHubSkinFilter.Missing, true, GitHubInstallState.Installed),
+            "已安装的不能留在未安装里。");
+        Require(GitHubSkinFilter.Matches(GitHubSkinFilter.Installed, true, GitHubInstallState.Updatable) &&
+            !GitHubSkinFilter.Matches(GitHubSkinFilter.Installed, true, missing),
+            "已安装同时覆盖已是最新和有待更新两种状态。");
+        Require(GitHubSkinFilter.Matches(GitHubSkinFilter.Updatable, true, GitHubInstallState.Updatable) &&
+            !GitHubSkinFilter.Matches(GitHubSkinFilter.Updatable, true, GitHubInstallState.Installed),
+            "可更新只匹配真的有新版本的那一项。");
+
+        Require(GitHubSkinFilter.Matches(GitHubSkinFilter.Unrecognized, false, missing) &&
+            !GitHubSkinFilter.Matches(GitHubSkinFilter.Unrecognized, true, missing),
+            "未识别只看有没有可读的信息码，与安装状态无关。");
+        Require(GitHubSkinFilter.Matches(GitHubSkinFilter.Unrecognized, false, GitHubInstallState.Installed),
+            "作者后来删掉 sc.info 时，已装的目录仍然属于未识别，仍要能在这里找到并卸载。");
+        Require(GitHubSkinFilter.Matches(GitHubSkinFilter.All, true, GitHubInstallState.Installed) &&
+            GitHubSkinFilter.Matches(GitHubSkinFilter.All, false, missing),
+            "全部不做任何筛选。");
+
+        Console.WriteLine("GitHub skin filter passed: default not-installed, unrecognized added, states separated.");
+    }
+}

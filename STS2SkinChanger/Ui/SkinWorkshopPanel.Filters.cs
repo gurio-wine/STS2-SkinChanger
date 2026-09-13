@@ -133,7 +133,7 @@ internal partial class SkinWorkshopPanel
         _sourcePicker.Visible = !CodeErrors;
         _sourcePicker.Select(SkinSources.IndexOf(_source));
         _sourcePicker.TooltipText = GitHubText(GitHubSkinTextKey.Source);
-        _installPicker.SetOptions(InstallOptions, _installFilter);
+        _installPicker.SetOptions(GitHubSkinFilter.Options, _installFilter);
         _installPicker.Picker.Visible = !CodeErrors && GitHubMode;
         _githubSortPicker.Visible = !CodeErrors && GitHubMode;
         // Only the subscription state is Steam-specific; type, region, target and load tags are shared.

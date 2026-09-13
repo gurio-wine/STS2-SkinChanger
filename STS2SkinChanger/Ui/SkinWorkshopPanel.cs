@@ -9,6 +9,7 @@ internal partial class SkinWorkshopPanel : Control
     private const int PageSize = 8;
     private bool _suspended;
     private WorkshopSubmissionPanel? _submission;
+    private GitHubScanPanel? _scan;
     private Button _communityRefresh=null!;
     private Button _submissionButton=null!;
     private int _communityRevision=-1;
@@ -226,7 +227,7 @@ internal partial class SkinWorkshopPanel : Control
         if (_closed) return;
         // The browser's CanvasLayer sits above the native UI. Yield to ALL native
         // modals, including another Mod's subscription notice, not only our own.
-        _suspended = _submission != null || MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
+        _suspended = _submission != null || _scan != null || MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
         if (_suspended) ResetHover();
         _layer.Visible = !_suspended;
         foreach (var (id, label, action, cancel) in _actions)
@@ -238,31 +239,40 @@ internal partial class SkinWorkshopPanel : Control
                     var entry = GitHubSkinService.Entry(id);
                     var installState = GitHubSkinService.InstallState(id);
                     var installing = GitHubSkinService.IsInstalling(id);
-                    // An unrecognized repository has nothing to install: the row keeps its
-                    // repository link and its state text, and shows no primary button.
-                    var recognized = entry is { Recognition: GitHubRecognition.Recognized };
-                    action.Visible = recognized;
-                    action.Disabled = installing || _restartPending;
-                    action.Text = recognized ? GitHubText(installState switch
+                    var scanning = GitHubSkinService.IsScanning(id);
+                    var recognized = GitHubSkinService.IsRecognized(id);
+                    // A repository without a published sc.info code cannot be installed, but its
+                    // release can still be scanned to produce the code its author has to publish.
+                    var actionKey = installState switch
                     {
                         GitHubInstallState.Updatable => GitHubSkinTextKey.Update,
                         // An up-to-date install has nothing left to install; the one action
                         // that still means something is removing it again.
                         GitHubInstallState.Installed => GitHubSkinTextKey.Uninstall,
-                        _ => GitHubSkinTextKey.Install
-                    }) : "";
-                    action.TooltipText = installing ? GitHubText(GitHubSkinTextKey.Installing) : entry?.Error ?? "";
+                        _ => recognized ? GitHubSkinTextKey.Install : GitHubSkinTextKey.Scan
+                    };
+                    action.Visible = true;
+                    action.Disabled = installing || scanning || _restartPending;
+                    action.Text = GitHubText(scanning ? GitHubSkinTextKey.Scanning : installing ? GitHubSkinTextKey.Installing : actionKey);
+                    action.TooltipText = scanning || installing ? action.Text
+                        : actionKey == GitHubSkinTextKey.Scan ? GitHubText(GitHubSkinTextKey.ScanHint)
+                        : entry?.Error ?? "";
                     // The card itself opens the repository, so the second button only ever
                     // carries the other half of the action: removing a skin that has an
                     // update waiting, while the primary button installs that update.
-                    cancel.Visible = recognized && installState == GitHubInstallState.Updatable;
+                    cancel.Visible = installState == GitHubInstallState.Updatable;
                     cancel.Disabled = installing || _restartPending;
                     cancel.Text = GitHubText(GitHubSkinTextKey.Uninstall);
                     cancel.TooltipText = cancel.Text;
-                    label.Text = installing ? GitHubText(GitHubSkinTextKey.Installing) : GitHubStatus(entry, installState);
+                    label.Text = scanning ? GitHubText(GitHubSkinTextKey.Scanning)
+                        : installing ? GitHubText(GitHubSkinTextKey.Installing)
+                        : GitHubStatus(entry, installState);
                     label.TooltipText = entry is { Error.Length: > 0 } ? entry.Error : label.Text;
                     if (_actionErrors.TryGetValue(id, out var installError))
-                    { label.Text = GitHubText(GitHubSkinTextKey.InstallFailed); label.TooltipText = installError; }
+                    {
+                        label.Text = GitHubText(recognized ? GitHubSkinTextKey.InstallFailed : GitHubSkinTextKey.ScanFailed);
+                        label.TooltipText = installError;
+                    }
                     if (action.HasMeta("sc_restart_accent") && action.GetMeta("sc_restart_accent").AsBool())
                     {
                         ModThemeRuntime.TextControl(action, 20);
@@ -302,7 +312,7 @@ internal partial class SkinWorkshopPanel : Control
     }
     private void HandleInput(InputEvent ev)
     {
-        if (_submission != null) return;
+        if (_submission != null || _scan != null) return;
         if (ev is InputEventMouse) _hoverKeyboard = false;
         else if (ev is InputEventKey { Pressed: true } or InputEventJoypadButton { Pressed: true }) _hoverKeyboard = true;
         // Do not wait for the animation timer to hide the old introduction on exit.
@@ -318,6 +328,7 @@ internal partial class SkinWorkshopPanel : Control
     {
         if (_closed) return; _closed = true;
         _submission?.Close(); _submission=null;
+        _scan?.Close(); _scan=null;
         ResetHover();
         DisconnectOrigin();
         _pageToken?.Cancel();
@@ -329,6 +340,7 @@ internal partial class SkinWorkshopPanel : Control
     {
         _closed = true;
         _submission?.Close(); _submission=null;
+        _scan?.Close(); _scan=null;
         ResetHover();
         LogHoverTiming();
         LogPageBuildTiming();

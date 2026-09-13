@@ -2,22 +2,35 @@ using System.IO.Compression;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
 using Godot;
+using STS2SkinChanger.Catalog;
 
 namespace STS2SkinChanger.Core;
 
-// The second skin source. The list comes from the GitHub topic search, recognition from the
-// same offline package scan the Workshop submission flow uses, and installation from a plain
-// copy into the game's own mods folder, which the game loads on its next start.
+// The result of scanning one repository on demand: the recognized item, the codes an author
+// publishes as sc.info, and the reason when the package could not be recognized at all.
+internal readonly record struct GitHubScanResult(WorkshopCatalogItem? Item, string[] Codes, string Error);
+
+// The second skin source. The list comes from the GitHub topic search; whether a repository is
+// a skin comes from the sc.info code its author published - never from a download the player did
+// not ask for. Installation copies a release package into the game's own mods folder, and the
+// scan action produces the very code an author has to publish, straight from the package.
 internal static class GitHubSkinService
 {
-    // Unauthenticated GitHub access allows 60 core requests per hour; one refresh must not
-    // spend the whole budget, so the rest stays pending and continues on the next refresh.
-    private const int MaxReleaseQueriesPerRefresh = 30;
+    // One sc.info read per repository keeps a large topic from becoming one long queue; whatever
+    // is left stays pending and continues on the next refresh. Requests are tiny static files
+    // from the raw host, so they cost no API budget.
+    private const int MaxInfoChecksPerRefresh = 60;
+    // Only an installed repository needs its release: that is what "update available" compares
+    // against. A repository nobody installed costs no API request at all.
+    private const int MaxReleaseChecksPerRefresh = 10;
     private static readonly GitHubSkinCatalog Catalog = new();
+    private static readonly GitHubInstallLedger Ledger = new();
     private static readonly HashSet<ulong> Installing = [];
+    private static readonly HashSet<ulong> Scanning = [];
     private static GitHubSkinClient? _client;
     private static WorkshopCatalogItem[] _items = [];
     private static IReadOnlyDictionary<ulong, GitHubSkinEntry> _entriesById = new Dictionary<ulong, GitHubSkinEntry>();
+    private static IReadOnlyDictionary<ulong, GitHubInstall> _installsById = new Dictionary<ulong, GitHubInstall>();
 
     public static int Revision { get; private set; }
     public static bool Busy { get; private set; }
@@ -28,17 +41,18 @@ internal static class GitHubSkinService
     public static IReadOnlyDictionary<ulong, GitHubSkinEntry> EntriesById => _entriesById;
 
     public static GitHubSkinEntry? Entry(ulong id) => _entriesById.GetValueOrDefault(id);
-    public static string Title(ulong id) => Entry(id) is { } entry ? DisplayName(entry) : "";
+    public static string Title(ulong id) => _installsById.TryGetValue(id, out var install) && install.PackageName.Length > 0
+        ? install.PackageName : Entry(id)?.Name ?? "";
     public static string CoverUrl(ulong id) => Entry(id)?.CoverUrl ?? "";
     public static string RepoUrl(ulong id) => Entry(id)?.Repo.Url ?? "";
     public static string Description(ulong id) => Entry(id)?.Description ?? "";
     public static string Readme(ulong id) => Entry(id)?.Readme ?? "";
     public static bool IsInstalling(ulong id) => Installing.Contains(id);
-    public static GitHubInstallState InstallState(ulong id) => Entry(id) is { Recognition: GitHubRecognition.Recognized } entry
-        ? GitHubInstallPolicy.Classify(InstalledVersion(entry), entry.PackageVersion)
+    public static bool IsScanning(ulong id) => Scanning.Contains(id);
+    public static bool IsRecognized(ulong id) => Entry(id) is { Recognition: GitHubRecognition.Recognized };
+    public static GitHubInstallState InstallState(ulong id) => _installsById.TryGetValue(id, out var install)
+        ? GitHubInstallPolicy.Classify(install.Version, Entry(id)?.ReleaseTag)
         : GitHubInstallState.NotInstalled;
-
-    private static string DisplayName(GitHubSkinEntry entry) => entry.PackageName.Length > 0 ? entry.PackageName : entry.Name;
 
     // One client for the whole session: the README of a hovered card may be fetched before
     // any refresh has run, so creation cannot be tied to RefreshAsync.
@@ -63,6 +77,9 @@ internal static class GitHubSkinService
             {
                 try { Catalog.Restore(SkinChangerPaths.GitHubCatalogPath); }
                 catch (Exception ex) { ModLog.Warn("GitHub 皮肤缓存不可用，将重新拉取：" + ex.Message); }
+                try { Ledger.Restore(SkinChangerPaths.GitHubInstallLedgerPath); }
+                catch (Exception ex) { ModLog.Warn("GitHub 安装记录不可用，将重新建立：" + ex.Message); }
+                RefreshInstalls();
                 PublishItems();
             }
             var client = Client();
@@ -72,9 +89,10 @@ internal static class GitHubSkinService
             Catalog.Merge(repos.Select(GitHubSkinCatalog.FromRepo));
             PublishItems();
             SaveCatalog();
-            await RecognizePendingAsync(token);
+            await CheckInfoAsync(token);
+            await CheckReleasesAsync(token);
             ModLog.Info($"GitHub 皮肤列表刷新完成：{Catalog.Entries.Length} 个仓库，已识别 " +
-                $"{Catalog.Entries.Count(entry => entry.Recognition == GitHubRecognition.Recognized)} 个。");
+                $"{Catalog.Entries.Count(entry => entry.Recognition == GitHubRecognition.Recognized)} 个，本地已安装 {Ledger.Count} 个。");
         }
         catch (GitHubRateLimitedException ex)
         {
@@ -103,24 +121,19 @@ internal static class GitHubSkinService
         return result.DistinctBy(info => info.Repo.FullName, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private static async Task RecognizePendingAsync(CancellationToken token)
+    // Recognition is one small file per repository. Nothing is downloaded and nothing is
+    // installed: a repository without the file stays listed as "not recognized".
+    private static async Task CheckInfoAsync(CancellationToken token)
     {
-        var pending = Catalog.Entries.Where(entry => entry.Recognition == GitHubRecognition.Pending)
-            .OrderByDescending(entry => entry.PushedAt).Take(MaxReleaseQueriesPerRefresh).ToArray();
+        var pending = Catalog.Entries.Where(entry => entry.Recognition is GitHubRecognition.Pending or GitHubRecognition.Failed)
+            .OrderByDescending(entry => entry.PushedAt).Take(MaxInfoChecksPerRefresh).ToArray();
         if (pending.Length == 0) return;
-        // Recognition reuses the live catalog's game pack and card list, so it can only run
-        // once the game has built them; the entries stay listed as pending until then.
-        if (SkinService.Catalog is null)
-        {
-            ModLog.Info($"皮肤目录尚未就绪，{pending.Length} 个 GitHub 仓库留待下次刷新识别。");
-            return;
-        }
         for (var index = 0; index < pending.Length; index++)
         {
             token.ThrowIfCancellationRequested();
             Progress = $"{index + 1}/{pending.Length}";
             var entry = pending[index];
-            try { Catalog.Publish(await RecognizeAsync(entry, token)); }
+            try { Catalog.Publish(Recognize(entry, await Client().InfoFileAsync(entry.Repo, token))); }
             catch (GitHubRateLimitedException) { RateLimited = true; throw; }
             catch (Exception ex)
             {
@@ -132,66 +145,76 @@ internal static class GitHubSkinService
         }
     }
 
-    private static async Task<GitHubSkinEntry> RecognizeAsync(GitHubSkinEntry entry, CancellationToken token)
+    private static GitHubSkinEntry Recognize(GitHubSkinEntry entry, string? info)
     {
+        var result = GitHubInfoPolicy.Read(info, entry.Id);
+        return result.Item is { } item
+            ? entry with { Recognition = GitHubRecognition.Recognized, Error = "", Targets = item.Targets, RestartRequired = item.RestartRequired }
+            : entry with { Recognition = GitHubRecognition.Unrecognized, Error = result.Error, Targets = [], RestartRequired = true };
+    }
+
+    // A release is only fetched for a repository that is installed here, because that is the
+    // only case where the version in the release changes what the panel shows.
+    private static async Task CheckReleasesAsync(CancellationToken token)
+    {
+        var wanted = Catalog.Entries.Where(entry => _installsById.ContainsKey(entry.Id) && entry.ReleaseTag.Length == 0)
+            .OrderByDescending(entry => entry.PushedAt).Take(MaxReleaseChecksPerRefresh).ToArray();
+        for (var index = 0; index < wanted.Length; index++)
+        {
+            token.ThrowIfCancellationRequested();
+            Progress = $"{index + 1}/{wanted.Length}";
+            var entry = wanted[index];
+            try { Catalog.Publish(await WithReleaseAsync(entry, token)); }
+            catch (GitHubRateLimitedException) { RateLimited = true; throw; }
+            catch (Exception ex) { ModLog.Info($"GitHub 版本检查跳过（{entry.FullName}）：{ex.GetBaseException().Message}"); }
+            PublishItems();
+            SaveCatalog();
+        }
+    }
+
+    private static async Task<GitHubSkinEntry> WithReleaseAsync(GitHubSkinEntry entry, CancellationToken token)
+    {
+        if (entry.ReleaseTag.Length > 0) return entry;
         var json = await Client().LatestReleaseAsync(entry.Repo, token);
-        if (json == null) return entry with { Recognition = GitHubRecognition.NoPackage, Error = "release" };
-        var release = GitHubSkinPolicy.ParseRelease(json);
-        if (release == null) return entry with { Recognition = GitHubRecognition.NoPackage, Error = "release" };
+        var release = json == null ? null : GitHubSkinPolicy.ParseRelease(json);
+        if (release == null) return entry;
         var asset = GitHubSkinPolicy.SelectAsset(release, entry.RepoName);
-        var tagged = entry with { ReleaseTag = release.Tag, AssetUrl = asset?.Url ?? "", AssetSize = asset?.Size ?? 0 };
-        if (asset == null) return tagged with { Recognition = GitHubRecognition.NoPackage };
-        var package = await StageAsync(tagged, token);
-        if (package == null) return tagged with { Recognition = GitHubRecognition.NoResources };
-        var scan = package.Value;
-        return scan.Item == null
-            ? tagged with { Recognition = GitHubRecognition.NoResources, Error = scan.Error[..Math.Min(512, scan.Error.Length)] }
-            : tagged with { Recognition = GitHubRecognition.Recognized, PackageId = scan.PackageId, PackageName = scan.PackageName,
-                PackageVersion = scan.PackageVersion, Targets = scan.Item.Targets, RestartRequired = true };
+        return entry with { ReleaseTag = release.Tag, AssetUrl = asset?.Url ?? "", AssetSize = asset?.Size ?? 0 };
     }
 
-    private readonly record struct StagedPackage(string Directory, string PackageId, string PackageName, string PackageVersion,
-        WorkshopCatalogItem? Item, string Error);
-
-    private static async Task<StagedPackage?> StageAsync(GitHubSkinEntry entry, CancellationToken token)
+    private sealed record StagedPackage(string Directory, SkinModDescriptor[] Descriptors)
     {
+        public SkinModDescriptor? Select(string repoName)
+        {
+            var index = GitHubPackageLayout.SelectIndex(Descriptors.Select(mod => mod.RootPath).ToArray(), Directory, repoName);
+            return index < 0 ? null : Descriptors[index];
+        }
+    }
+
+    private static async Task<StagedPackage> StageAsync(GitHubSkinEntry entry, CancellationToken token)
+    {
+        var release = await WithReleaseAsync(entry, token);
+        // Reading the release is what makes the version column and the update check work, so the
+        // freshly read tag is published even when the download below fails.
+        Catalog.Publish(release);
+        PublishItems();
+        SaveCatalog();
+        if (release.AssetUrl.Length == 0)
+            throw new InvalidOperationException("This release has no downloadable zip package.");
         var root = Path.Combine(SkinChangerPaths.GitHubCacheDirectory, entry.Id.ToString());
-        if (!PrepareStaging(root, out var package)) return null;
-        var zip = Path.Combine(root, "package.zip");
-        // Keep the archive between runs: re-installing an unchanged release must not download it again.
-        if (!File.Exists(zip) || new FileInfo(zip).Length != entry.AssetSize)
-            await Client().DownloadAsync(new Uri(entry.AssetUrl), zip, token);
-        Extract(zip, package);
-        var descriptors = WorkshopSubmissionScanner.ReadDescriptors(package);
-        if (descriptors.Length == 0) return null;
-        // The scan below runs through the same gate and snapshot the submission scanner uses,
-        // so a GitHub package is recognized exactly like a Workshop one.
-        var snapshot = SkinService.CaptureWorkshopScanContext();
-        var gameVersion = AccessTools.Field(typeof(ModManager), "_gameVersion")?.GetValue(null)?.ToString() ?? "";
-        var dependencies = ModManager.Mods.Where(mod => mod.state == ModLoadState.Loaded && mod.manifest?.id != null)
-            .GroupBy(mod => mod.manifest!.id!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().manifest!.version ?? "", StringComparer.OrdinalIgnoreCase);
-        var result = await SkinService.RunWorkshopScan(() => WorkshopSubmissionScanner.Scan(
-            new(entry.Id, entry.Name, package), snapshot.GamePack, snapshot.Cards, gameVersion, dependencies, snapshot.Baselines), token);
-        // The scan reports which manifest the synthetic source id was bound to; that is the package.
-        var descriptor = descriptors.FirstOrDefault(mod =>
-            result.ProviderId.Length > 0 && mod.Id.Equals(result.ProviderId, StringComparison.OrdinalIgnoreCase)) ?? descriptors[0];
-        return new(package, descriptor.Id, descriptor.Name,
-            GitHubInstallPolicy.ReadManifestVersion(descriptor.RootPath ?? package, descriptor.Id) ?? entry.ReleaseTag,
-            result.Item, result.Error);
-    }
-
-    private static bool PrepareStaging(string root, out string package)
-    {
-        package = Path.Combine(root, "package");
+        var package = Path.Combine(root, "package");
         try
         {
             if (Directory.Exists(package)) Directory.Delete(package, recursive: true);
             Directory.CreateDirectory(root);
-            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { ModLog.Warn("GitHub 暂存目录不可用：" + ex.Message); return false; }
+        { throw new InvalidOperationException("The download folder is unavailable: " + ex.Message, ex); }
+        var zip = Path.Combine(root, "package.zip");
+        if (!File.Exists(zip) || new FileInfo(zip).Length != release.AssetSize)
+            await Client().DownloadAsync(new Uri(release.AssetUrl), zip, token);
+        Extract(zip, package);
+        return new(package, WorkshopSubmissionScanner.ReadDescriptors(package));
     }
 
     private static void Extract(string zipPath, string destination)
@@ -240,29 +263,75 @@ internal static class GitHubSkinService
         }
     }
 
+    // The scan is what produces the sc.info code, and it is the only action here that downloads
+    // a package the player did not ask to install. Whatever it downloads is removed again before
+    // the result is handed back, so nothing stays cached behind the player's back.
+    public static async Task<GitHubScanResult> ScanAsync(ulong id, CancellationToken token)
+    {
+        var entry = Entry(id) ?? throw new InvalidOperationException("Unknown GitHub repository.");
+        if (!Scanning.Add(id)) return new(null, [], "busy");
+        var root = Path.Combine(SkinChangerPaths.GitHubCacheDirectory, entry.Id.ToString());
+        try
+        {
+            var staged = await StageAsync(entry, token);
+            var descriptor = staged.Select(entry.RepoName);
+            // A bundle-only card art pack ships no cosmetic manifest, but the scanner can still
+            // recognize it from its artwork alone, so the missing descriptor is not an error here.
+            var scan = await SkinService.RunWorkshopScan(() => Scan(entry, staged.Directory, descriptor), token);
+            if (scan.Item == null) return new(null, [], scan.Error.Length > 0 ? scan.Error : "unrecognized");
+            var codes = WorkshopSubmissionCodec.Encode(scan.Item, STS2SkinChanger.Entry.InternalTestVersion, GameVersion());
+            return new(scan.Item, codes, "");
+        }
+        finally
+        {
+            TryDelete(root);
+            Scanning.Remove(id);
+        }
+    }
+
+    // The scan reuses the live catalog's game pack and card list, exactly like the Workshop
+    // submission scan, so a code produced here is a code the Workshop browser would accept.
+    private static WorkshopScanResult Scan(GitHubSkinEntry entry, string package, SkinModDescriptor? descriptor)
+    {
+        if (SkinService.Catalog is null) return new(null, entry.Name, "The game catalog is not ready yet.");
+        var snapshot = SkinService.CaptureWorkshopScanContext();
+        return WorkshopSubmissionScanner.Scan(new(entry.Id, descriptor?.Name ?? entry.Name, package),
+            snapshot.GamePack, snapshot.Cards, GameVersion(), Dependencies(), snapshot.Baselines);
+    }
+
+    private static string GameVersion() => AccessTools.Field(typeof(ModManager), "_gameVersion")?.GetValue(null)?.ToString() ?? "";
+
+    private static Dictionary<string, string> Dependencies() => ModManager.Mods
+        .Where(mod => mod.state == ModLoadState.Loaded && mod.manifest?.id != null)
+        .GroupBy(mod => mod.manifest!.id!, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(group => group.Key, group => group.First().manifest!.version ?? "", StringComparer.OrdinalIgnoreCase);
+
     public static async Task InstallAsync(ulong id, CancellationToken token)
     {
         if (!Installing.Add(id)) return;
         try
         {
             var entry = Entry(id) ?? throw new InvalidOperationException("Unknown GitHub skin.");
-            if (entry.Recognition != GitHubRecognition.Recognized) throw new InvalidOperationException("Skin is not recognized.");
-            var package = await StageAsync(entry, token) ?? throw new InvalidOperationException("Release package is unavailable.");
+            var staged = await StageAsync(entry, token);
+            var descriptor = staged.Select(entry.RepoName);
+            var packageId = descriptor?.Id ?? "";
+            var folder = GitHubInstallPolicy.FolderName(packageId, entry.RepoName);
+            var version = descriptor is null ? entry.ReleaseTag
+                : GitHubInstallPolicy.ReadManifestVersion(descriptor.RootPath ?? staged.Directory, descriptor.Id) ?? entry.ReleaseTag;
             var mods = GitHubInstallPolicy.ModsDirectory(OS.GetExecutablePath());
             Directory.CreateDirectory(mods);
-            var folder = GitHubInstallPolicy.FolderName(package.PackageId, entry.RepoName);
             var target = Path.Combine(mods, folder);
-            var staged = Path.Combine(mods, "." + folder + ".installing");
+            var installing = Path.Combine(mods, "." + folder + ".installing");
             var backup = Path.Combine(mods, "." + folder + ".previous");
-            if (Directory.Exists(staged)) Directory.Delete(staged, recursive: true);
+            if (Directory.Exists(installing)) Directory.Delete(installing, recursive: true);
             if (Directory.Exists(backup)) Directory.Delete(backup, recursive: true);
-            CopyDirectory(package.Directory, staged);
+            CopyDirectory(staged.Directory, installing);
             // The previous package is only moved aside once the new one is complete on disk,
             // and is put back if the swap fails, so an update never leaves the player without one.
             if (Directory.Exists(target)) Directory.Move(target, backup);
             try
             {
-                Directory.Move(staged, target);
+                Directory.Move(installing, target);
                 TryDelete(backup);
             }
             catch
@@ -270,7 +339,11 @@ internal static class GitHubSkinService
                 if (!Directory.Exists(target) && Directory.Exists(backup)) Directory.Move(backup, target);
                 throw;
             }
-            finally { TryDelete(staged); }
+            finally { TryDelete(installing); }
+            Ledger.Record(entry.FullName, new(folder, packageId, descriptor?.Name ?? "", version ?? ""));
+            SaveLedger();
+            RefreshInstalls();
+            PublishItems();
             ModLog.Info($"GitHub 皮肤 {entry.FullName} 已安装到 {target}；下次启动游戏生效。");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -280,17 +353,50 @@ internal static class GitHubSkinService
         finally { Installing.Remove(id); }
     }
 
-    // Removing the folder we installed is what "uninstalled" means for this source; the
+    // Removing the folder this mod wrote is what "uninstalled" means for this source; the
     // download cache stays, so re-installing the same release needs no network at all.
     public static async Task UninstallAsync(ulong id)
     {
         var entry = Entry(id) ?? throw new InvalidOperationException("Unknown GitHub skin.");
+        if (Ledger.Find(entry.FullName) is not { } install) throw new InvalidOperationException("Skin is not installed.");
         var mods = GitHubInstallPolicy.ModsDirectory(OS.GetExecutablePath());
-        var folder = GitHubInstallPolicy.FolderName(entry.PackageId, entry.RepoName);
-        var target = GitHubInstallPolicy.UninstallTarget(mods, folder, entry.PackageId)
+        var target = GitHubInstallPolicy.UninstallTarget(mods, install.Folder, install.PackageId)
             ?? throw new InvalidOperationException("Skin is not installed.");
         await Task.Run(() => Directory.Delete(target, recursive: true));
+        Ledger.Remove(entry.FullName);
+        SaveLedger();
+        RefreshInstalls();
+        PublishItems();
         ModLog.Info($"GitHub 皮肤 {entry.FullName} 已从 {target} 卸载；下次启动游戏生效。");
+    }
+
+    // The ledger is the only record of what this mod wrote into the game folder, so it is read
+    // back against the disk: a folder the player deleted is forgotten, a version that changed
+    // underneath (a manual edit) is picked up again.
+    private static void RefreshInstalls()
+    {
+        var mods = ModsDirectory();
+        if (mods == null) return;
+        var changed = false;
+        foreach (var (fullName, install) in Ledger.Installs.ToArray())
+        {
+            var root = Path.Combine(mods, install.Folder);
+            if (!Directory.Exists(root)) { Ledger.Remove(fullName); changed = true; continue; }
+            var version = GitHubInstallPolicy.ReadManifestVersion(root, install.PackageId);
+            if (version != null && version != install.Version) { Ledger.Record(fullName, install with { Version = version }); changed = true; }
+        }
+        if (changed) SaveLedger();
+        var installs = new Dictionary<ulong, GitHubInstall>();
+        foreach (var entry in Catalog.Entries)
+            if (Ledger.Find(entry.FullName) is { } install) installs[entry.Id] = install;
+        _installsById = installs;
+    }
+
+    private static string? ModsDirectory()
+    {
+        try { return GitHubInstallPolicy.ModsDirectory(OS.GetExecutablePath()); }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or NotSupportedException)
+        { ModLog.Warn("无法定位游戏 mods 目录：" + ex.Message); return null; }
     }
 
     private static void TryDelete(string directory)
@@ -312,17 +418,6 @@ internal static class GitHubSkinService
         }
     }
 
-    private static string? InstalledVersion(GitHubSkinEntry entry)
-    {
-        try
-        {
-            var mods = GitHubInstallPolicy.ModsDirectory(OS.GetExecutablePath());
-            var folder = GitHubInstallPolicy.FolderName(entry.PackageId, entry.RepoName);
-            return GitHubInstallPolicy.ReadManifestVersion(Path.Combine(mods, folder), entry.PackageId);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-    }
-
     private static void PublishItems()
     {
         RefreshEntries();
@@ -340,5 +435,11 @@ internal static class GitHubSkinService
     {
         try { Catalog.Save(SkinChangerPaths.GitHubCatalogPath, null); }
         catch (Exception ex) { ModLog.Warn("GitHub 皮肤缓存写入失败：" + ex.Message); }
+    }
+
+    private static void SaveLedger()
+    {
+        try { Ledger.Save(SkinChangerPaths.GitHubInstallLedgerPath, null); }
+        catch (Exception ex) { ModLog.Warn("GitHub 安装记录写入失败：" + ex.Message); }
     }
 }

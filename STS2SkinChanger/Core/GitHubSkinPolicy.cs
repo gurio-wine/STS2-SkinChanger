@@ -27,12 +27,17 @@ internal static class GitHubSkinPolicy
 
     private static readonly string[] Hosts =
         ["api.github.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
-         "codeload.github.com", "opengraph.githubassets.com"];
+         "codeload.github.com", "opengraph.githubassets.com", "raw.githubusercontent.com"];
 
     public static Uri SearchUri(int page) => new(
         $"https://api.github.com/search/repositories?q=topic%3A{Topic}&sort=updated&order=desc&per_page={SearchPageSize}&page={Math.Clamp(page, 1, MaxSearchPages)}");
 
     public static Uri LatestReleaseUri(GitHubRepoRef repo) => new($"https://api.github.com/repos/{repo.FullName}/releases/latest");
+
+    // sc.info is read from the raw host on purpose: it is a static file, it costs no core API
+    // budget, and "HEAD" resolves whichever default branch the repository actually uses.
+    public static Uri InfoUri(GitHubRepoRef repo) =>
+        new($"https://raw.githubusercontent.com/{repo.FullName}/HEAD/{GitHubInfoPolicy.FileName}");
 
     // The API resolves whichever README name the repository actually uses, on its default
     // branch; raw.githubusercontent.com would need the exact file name and letter case.

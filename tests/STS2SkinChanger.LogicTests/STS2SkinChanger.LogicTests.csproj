@@ -12,12 +12,19 @@
     <Compile Include="../../STS2SkinChanger/Core/GitHubSkinPolicy.cs" Link="GitHubSkinPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubZipPolicy.cs" Link="GitHubZipPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubInstallPolicy.cs" Link="GitHubInstallPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubPackageLayout.cs" Link="GitHubPackageLayout.cs" />
     <Compile Include="../../STS2SkinChanger/Core/WorkshopCatalogPolicy.cs" Link="WorkshopCatalogPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubSkinCatalog.cs" Link="GitHubSkinCatalog.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubSkinClient.cs" Link="GitHubSkinClient.cs" />
     <Compile Include="../../STS2SkinChanger/Core/SkinSourceRoutingPolicy.cs" Link="SkinSourceRoutingPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubSkinText.cs" Link="GitHubSkinText.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubReadmePolicy.cs" Link="GitHubReadmePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubInfoPolicy.cs" Link="GitHubInfoPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubInstallLedger.cs" Link="GitHubInstallLedger.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinFilter.cs" Link="GitHubSkinFilter.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopSubmissionCodec.cs" Link="WorkshopSubmissionCodec.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopSubmissionIntegrity.cs" Link="WorkshopSubmissionIntegrity.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopSubmissionCode.cs" Link="WorkshopSubmissionCode.cs" />
     <Compile Include="../../STS2SkinChanger/Core/SkinSources.cs" Link="SkinSources.cs" />
     <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj"
                       ReferenceOutputAssembly="false" />

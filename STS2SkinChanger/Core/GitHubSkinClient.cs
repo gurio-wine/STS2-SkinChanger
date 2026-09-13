@@ -31,6 +31,15 @@ internal sealed class GitHubSkinClient : IDisposable
         return await ReadTextAsync(response, token);
     }
 
+    // sc.info is a small static file read from the raw host, so it never spends the API budget.
+    // A missing file is the normal answer for a repository that never published a code.
+    public async Task<string?> InfoFileAsync(GitHubRepoRef repo, CancellationToken token)
+    {
+        using var response = await SendAsync(Request(GitHubSkinPolicy.InfoUri(repo), "text/plain"), token, allowNotFound: true);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        return await ReadTextAsync(response, token, GitHubInfoPolicy.MaxBytes);
+    }
+
     private async Task<string> GetJsonAsync(Uri uri, CancellationToken token)
     {
         using var response = await SendAsync(Request(uri), token);
@@ -77,11 +86,11 @@ internal sealed class GitHubSkinClient : IDisposable
         return response;
     }
 
-    private static async Task<string> ReadTextAsync(HttpResponseMessage response, CancellationToken token)
+    private static async Task<string> ReadTextAsync(HttpResponseMessage response, CancellationToken token, int maxBytes = MaxJsonBytes)
     {
-        if (response.Content.Headers.ContentLength > MaxJsonBytes) throw new InvalidDataException("GitHub response too large.");
+        if (response.Content.Headers.ContentLength > maxBytes) throw new InvalidDataException("GitHub response too large.");
         var text = await response.Content.ReadAsStringAsync(token);
-        if (text.Length > MaxJsonBytes) throw new InvalidDataException("GitHub response too large.");
+        if (text.Length > maxBytes) throw new InvalidDataException("GitHub response too large.");
         return text;
     }
 

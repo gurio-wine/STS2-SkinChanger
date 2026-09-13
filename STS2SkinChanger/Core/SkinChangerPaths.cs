@@ -23,8 +23,11 @@ internal static class SkinChangerPaths
     public static string WorkshopCacheDirectory => Path.Combine(CacheDirectory, "workshop");
     public static string RuntimeCacheDirectory => Path.Combine(CacheDirectory, "runtime");
     public static string GitHubCacheDirectory => Path.Combine(CacheDirectory, "github");
-    // Recognized results must outlive a session: rebuilding them costs a download per repository.
+    // Recognized results must outlive a session: rebuilding them costs a request per repository.
     public static string GitHubCatalogPath => Configuration("github_skins.json");
+    // Which folder belongs to which repository is written once, at install time, and has to
+    // survive every catalog format change - it is the ownership record uninstall relies on.
+    public static string GitHubInstallLedgerPath => Configuration("github_installs.json");
     public static void WriteCache(string path, Action write)
     {
         if (!Storage.WriteCache(path, write)) throw new OperationCanceledException("Skin Changer is quitting.");

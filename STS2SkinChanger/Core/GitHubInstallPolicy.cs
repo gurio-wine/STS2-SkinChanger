@@ -25,7 +25,8 @@ internal static class GitHubInstallPolicy
         return fallback.Length is > 0 and <= 64 ? fallback : "Skin";
     }
 
-    private static bool IsSafeToken(string? value) => value is { Length: > 0 and <= 64 } &&
+    // Public because the install ledger stores these tokens and has to re-validate them.
+    public static bool IsSafeToken(string? value) => value is { Length: > 0 and <= 64 } &&
         value[0] != '.' && value[^1] != '.' &&
         value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
@@ -53,10 +54,16 @@ internal static class GitHubInstallPolicy
             ? GitHubInstallState.Updatable : GitHubInstallState.Installed;
 
     // Only a folder that still holds the manifest this mod installed may be removed: a folder
-    // the player made by hand must never be deleted just because it shares the name.
-    public static string? UninstallTarget(string modsDirectory, string folder, string packageId) =>
-        ReadManifestVersion(Path.Combine(modsDirectory, folder), packageId) == null
-            ? null : Path.Combine(modsDirectory, folder);
+    // the player made by hand must never be deleted just because it shares the name. A package
+    // without any manifest (a bundle-only card art pack) has no id to verify, and there the
+    // ledger entry itself is the proof that this mod wrote the folder.
+    public static string? UninstallTarget(string modsDirectory, string folder, string packageId)
+    {
+        if (!IsSafeToken(folder)) return null;
+        var path = Path.Combine(modsDirectory, folder);
+        if (!Directory.Exists(path)) return null;
+        return packageId.Length == 0 || ReadManifestVersion(path, packageId) != null ? path : null;
+    }
 
     public static string? ReadManifestVersion(string modRoot, string packageId)
     {

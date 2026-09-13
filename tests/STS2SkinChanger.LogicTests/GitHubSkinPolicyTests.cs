@@ -35,6 +35,11 @@ internal static class GitHubSkinPolicyTests
             "接口、资产重定向与封面的主机必须在白名单内。");
         Require(GitHubSkinPolicy.IsAllowedHost("release-assets.githubusercontent.com"),
             "GitHub 现在把 Release 资产重定向到 release-assets.githubusercontent.com；漏掉它会让每一次下载都被拒绝。");
+        // sc.info 走 raw 主机：静态小文件、不占接口额度，HEAD 会自动落到默认分支。
+        var info = GitHubSkinPolicy.InfoUri(repos[0].Repo);
+        Require(info.AbsoluteUri == "https://raw.githubusercontent.com/qbyoffice/SilentSkinMod/HEAD/sc.info" &&
+            GitHubSkinPolicy.IsAllowedHost(info.Host),
+            "sc.info 的地址固定为仓库根目录的 HEAD/sc.info，且 raw 主机必须在白名单内，否则识别永远读不到文件。");
         Require(!GitHubSkinPolicy.IsAllowedHost("evil.example.com") && !GitHubSkinPolicy.IsAllowedHost("github.com.evil.example.com"),
             "非白名单主机，包括后缀伪装的域名，必须被拒绝。");
         Require(!GitHubSkinPolicy.TryParseFullName("owner/..", out _), "只有点号的仓库名不是合法仓库，必须被拒绝。");

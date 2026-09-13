@@ -73,6 +73,22 @@ internal static class GitHubInstallPolicyTests
             Require(GitHubInstallPolicy.UninstallTarget(mods, "PlayerMade", "PlayerMade") == null &&
                 GitHubInstallPolicy.UninstallTarget(mods, "Missing", "Missing") == null,
                 "没有我们自己写下的清单就不能删：玩家手工放的目录和不存在的目录都必须返回 null。");
+            // 纯素材包没有清单可核对，此时台账条目就是归属证明；这里只管目录本身合法且存在。
+            var loose = Path.Combine(mods, "CardArtPack");
+            Directory.CreateDirectory(loose);
+            Require(GitHubInstallPolicy.UninstallTarget(mods, "CardArtPack", "") == loose &&
+                GitHubInstallPolicy.UninstallTarget(mods, "Missing", "") == null &&
+                GitHubInstallPolicy.UninstallTarget(mods, "../evil", "") == null,
+                "没有清单的包按记录删除，但目录必须仍是合法片段且真的存在。");
+
+            // Release 压缩包里可能有好几个 Mod：优先取根目录的那个，其次取与仓库同名的文件夹。
+            var nested = Path.Combine(root, "SilentSkinMod");
+            Require(GitHubPackageLayout.SelectIndex([nested, root], root, "SilentSkinMod") == 1 &&
+                GitHubPackageLayout.SelectIndex([nested], root, "SilentSkinMod") == 0 &&
+                GitHubPackageLayout.SelectIndex([nested], root, "Other") == 0 &&
+                GitHubPackageLayout.SelectIndex([root + Path.DirectorySeparatorChar], root, "Other") == 0 &&
+                GitHubPackageLayout.SelectIndex([], root, "Other") == -1,
+                "整包里挑哪一个是皮肤包必须确定：根清单优先，其次同名的子目录，空包返回 -1。");
         }
         finally { Directory.Delete(root, true); }
         Console.WriteLine("GitHub install policy passed: zip guards, install path, version state, manifest version.");

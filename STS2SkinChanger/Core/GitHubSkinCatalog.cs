@@ -4,12 +4,15 @@ using System.Text.Json.Serialization;
 
 namespace STS2SkinChanger.Core;
 
-internal enum GitHubRecognition { Pending, Recognized, NoPackage, NoResources, Failed }
+// Recognized means the repository published a sc.info code this browser could read back.
+// Unrecognized is the normal state of a repository that never did; Failed means the file
+// could not be read this time and the check is retried on the next refresh.
+internal enum GitHubRecognition { Pending, Recognized, Unrecognized, Failed }
 
 internal sealed record GitHubSkinEntry(
-    string FullName, string Name, string Description, int Stars, DateTimeOffset PushedAt, string ReleaseTag,
-    string PackageId, string PackageName, string PackageVersion, WorkshopTarget[] Targets, bool RestartRequired,
-    GitHubRecognition Recognition, string Error, string AssetUrl, long AssetSize, string Readme)
+    string FullName, string Name, string Description, int Stars, DateTimeOffset PushedAt, string Readme,
+    GitHubRecognition Recognition, string Error, WorkshopTarget[] Targets, bool RestartRequired,
+    string ReleaseTag, string AssetUrl, long AssetSize)
 {
     [JsonIgnore] public ulong Id => SkinSourceIdentity.GitHubId(Owner, RepoName);
     [JsonIgnore] public string Owner => FullName.Split('/')[0];
@@ -23,12 +26,13 @@ internal sealed record GitHubSkinState(int Format, GitHubSkinEntry[] Entries)
     public static GitHubSkinState Empty => new(GitHubSkinCatalog.Format, []);
 }
 
-// Recognized results are cached across sessions; the search list alone would make the
-// player download and rescan every repository on each start.
+// Recognition results are cached across sessions; the search list alone would make the
+// player re-read a sc.info file for every repository on each start.
 internal sealed class GitHubSkinCatalog
 {
-    // Format 2 added the persisted README excerpt; a format-1 cache is dropped and refetched.
-    public const int Format = 2;
+    // Format 3 replaced the downloaded-package recognition with the published sc.info code,
+    // so a format-2 cache (which held package titles and versions) is dropped and refetched.
+    public const int Format = 3;
     private const int MaxCacheBytes = 4 * 1024 * 1024;
     private const int MaxEntries = 1000;
 
@@ -36,7 +40,7 @@ internal sealed class GitHubSkinCatalog
     public GitHubSkinEntry[] Entries => State.Entries;
 
     public static GitHubSkinEntry FromRepo(GitHubRepoInfo info) => new(info.Repo.FullName, info.Repo.Name,
-        info.Description, info.Stars, info.PushedAt, "", "", "", "", [], true, GitHubRecognition.Pending, "", "", 0, "");
+        info.Description, info.Stars, info.PushedAt, "", GitHubRecognition.Pending, "", [], true, "", "", 0);
 
     public void Merge(IEnumerable<GitHubSkinEntry> entries)
     {
@@ -49,10 +53,12 @@ internal sealed class GitHubSkinCatalog
                 next[entry.FullName] = known with { Stars = entry.Stars, Description = entry.Description, PushedAt = entry.PushedAt };
                 continue;
             }
-            // A new commit invalidates the previous recognition entirely, including the
-            // README text that was taken from the old revision.
-            next[entry.FullName] = entry.Recognition == GitHubRecognition.Pending ? entry
-                : entry with { Recognition = GitHubRecognition.Pending, Targets = [], PackageId = "", PackageName = "", PackageVersion = "", ReleaseTag = "", Readme = "" };
+            // A new commit invalidates everything that was read from the old revision: the code,
+            // the release it pointed at and the README text.
+            next[entry.FullName] = entry with
+            {
+                Recognition = GitHubRecognition.Pending, Error = "", Targets = [], ReleaseTag = "", AssetUrl = "", AssetSize = 0, Readme = ""
+            };
         }
         Publish(next.Values.OrderByDescending(entry => entry.PushedAt).ToArray());
     }
@@ -106,16 +112,15 @@ internal sealed class GitHubSkinCatalog
         if (state is not { Format: Format, Entries: not null } || state.Entries.Length > MaxEntries ||
             state.Entries.Any(entry => entry == null || !GitHubSkinPolicy.TryParseFullName(entry.FullName, out _) ||
                 entry.Name is not { Length: <= 128 } || entry.Description is not { Length: <= 1024 } ||
-                entry.Stars < 0 || entry.ReleaseTag is not { Length: <= 128 } || entry.PackageId is not { Length: <= 64 } ||
-                entry.PackageName is not { Length: <= 256 } || entry.PackageVersion is not { Length: <= 64 } ||
+                entry.Stars < 0 || entry.ReleaseTag is not { Length: <= 128 } ||
                 entry.Error is not { Length: <= 512 } || entry.AssetSize is < 0 or > GitHubSkinPolicy.MaxAssetBytes ||
                 entry.Readme is not { Length: <= GitHubReadmePolicy.MaxExcerptChars } ||
                 entry.AssetUrl is not { Length: <= 4096 } ||
                 (entry.AssetUrl.Length > 0 && (!Uri.TryCreate(entry.AssetUrl, UriKind.Absolute, out var uri) ||
                     uri.Scheme != Uri.UriSchemeHttps || !GitHubSkinPolicy.IsAllowedHost(uri.Host))) ||
-                !Enum.IsDefined(entry.Recognition) || entry.Targets is null || entry.Targets.Length > 64 ||
+                !Enum.IsDefined(entry.Recognition) || entry.Targets is null || entry.Targets.Length > 512 ||
                 entry.Targets.Any(target => target == null || string.IsNullOrWhiteSpace(target.Kind) || target.Kind.Length > 32 ||
-                    string.IsNullOrWhiteSpace(target.Target) || target.Target.Length > 128) ||
+                    string.IsNullOrWhiteSpace(target.Target) || target.Target.Length > 160) ||
                 entry.Recognition == GitHubRecognition.Recognized && entry.Targets.Length == 0))
             throw new InvalidDataException("Unverified or invalid GitHub catalog cache.");
     }
@@ -149,6 +154,6 @@ internal static class GitHubSortPolicy
         // Pure numbers only: the column shows values, labels come from the panel's language table.
         GitHubSort.Stars => entry.Stars.ToString("N0", CultureInfo.CurrentCulture),
         GitHubSort.Updated => entry.PushedAt.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        _ => entry.PackageVersion.Length > 0 ? entry.PackageVersion : entry.ReleaseTag
+        _ => entry.Name
     };
 }

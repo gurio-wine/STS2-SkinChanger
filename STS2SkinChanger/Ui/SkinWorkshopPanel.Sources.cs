@@ -7,9 +7,8 @@ namespace STS2SkinChanger.Ui;
 // type/region/target filters are shared, while subscription and download state stay Steam-only.
 internal partial class SkinWorkshopPanel
 {
-    private const string InstallAll = "";
     private string _source = SkinSources.Steam;
-    private string _installFilter = InstallAll;
+    private string _installFilter = GitHubSkinFilter.DefaultFilter;
     private OptionButton _sourcePicker = null!;
     private WorkshopPagedChoice _installPicker = null!;
     private OptionButton _githubSortPicker = null!;
@@ -18,7 +17,6 @@ internal partial class SkinWorkshopPanel
     // looking for a skin is after.
     private GitHubSort _githubSort = GitHubSort.Stars;
     private int _githubRevision = -1;
-    private static readonly string[] InstallOptions = ["missing", "installed", "updatable"];
 
     private bool GitHubMode => _source == SkinSources.GitHub;
 
@@ -27,17 +25,12 @@ internal partial class SkinWorkshopPanel
 
     private static string InstallName(string value) => GitHubText(value switch
     {
-        "missing" => GitHubSkinTextKey.NotInstalled,
-        "installed" => GitHubSkinTextKey.Installed,
-        "updatable" => GitHubSkinTextKey.Updatable,
+        GitHubSkinFilter.Missing => GitHubSkinTextKey.NotInstalled,
+        GitHubSkinFilter.Installed => GitHubSkinTextKey.Installed,
+        GitHubSkinFilter.Updatable => GitHubSkinTextKey.Updatable,
+        GitHubSkinFilter.Unrecognized => GitHubSkinTextKey.Unrecognized,
         _ => GitHubSkinTextKey.All
     });
-
-    // A GitHub skin has no Workshop subscription, so "installed" has to ask the install
-    // state of its own source; the Workshop answer is always false for a synthetic id.
-    private static bool Installed(ulong id) => SkinSourceIdentity.IsGitHub(id)
-        ? GitHubSkinService.InstallState(id) != GitHubInstallState.NotInstalled
-        : SkinWorkshopService.IsInstalled(id);
 
     private void BuildSourceFilters(HFlowContainer filters)
     {
@@ -55,7 +48,8 @@ internal partial class SkinWorkshopPanel
         // Steam's own filter follows the source picker; GitHub swaps it for its install filter.
         filters.AddChild(_subscriptionPicker.Picker); KeepHoverBelow(_subscriptionPicker.Picker);
         _installPicker = new(InstallName, value =>
-        { _installFilter = value; _page = 0; _listScroll.ScrollVertical = 0; RefreshFilters(); Rebuild(); });
+        { _installFilter = value; _page = 0; _listScroll.ScrollVertical = 0; RefreshFilters(); Rebuild(); },
+            () => GitHubText(GitHubSkinTextKey.All));
         filters.AddChild(_installPicker.Picker); KeepHoverBelow(_installPicker.Picker);
     }
 
@@ -73,14 +67,8 @@ internal partial class SkinWorkshopPanel
 
     private IEnumerable<WorkshopCatalogItem> SourceFiltered(IEnumerable<WorkshopCatalogItem> items) => items
         .Where(item => GitHubMode ? SkinSourceIdentity.IsGitHub(item.Id) : SkinSourceRoutingPolicy.IsSteamItem(item.Id))
-        .Where(item => !GitHubMode || _installFilter.Length == 0 || _installFilter switch
-        {
-            // "Installed" covers both an up-to-date install and one with an update waiting.
-            "missing" => !Installed(item.Id),
-            "installed" => Installed(item.Id),
-            "updatable" => GitHubSkinService.InstallState(item.Id) == GitHubInstallState.Updatable,
-            _ => true
-        });
+        .Where(item => !GitHubMode || GitHubSkinFilter.Matches(_installFilter, GitHubSkinService.IsRecognized(item.Id),
+            GitHubSkinService.InstallState(item.Id)));
 
     private string GitHubMetric(ulong id) => GitHubSortPolicy.Metric(GitHubSkinService.Entry(id), _githubSort);
 
@@ -94,6 +82,7 @@ internal partial class SkinWorkshopPanel
                 GitHubInstallState.Installed => GitHubSkinTextKey.Installed,
                 _ => GitHubSkinTextKey.NotInstalled
             }),
+            // A repository that never published a sc.info code is the normal case, not an error.
             _ => GitHubText(GitHubSkinTextKey.Unrecognized)
         };
 

@@ -42,6 +42,21 @@ internal static class GitHubSkinClientTests
                 using var missingClient = new GitHubSkinClient(missing, "SkinChanger/1.0.8.9");
                 Require(await missingClient.LatestReleaseAsync(new GitHubRepoRef("o", "r"), CancellationToken.None) == null,
                     "没有 Release 的仓库要返回 null，而不是抛错中断整次刷新。");
+                // sc.info 缺失是常态：没发布信息码的仓库占多数，404 不能中断整次刷新。
+                Require(await missingClient.InfoFileAsync(new GitHubRepoRef("o", "r"), CancellationToken.None) == null &&
+                    missing.Requests[^1].RequestUri!.Host == "raw.githubusercontent.com",
+                    "没有 sc.info 的仓库要返回 null，并且只读 raw 主机上的仓库根文件。");
+
+                var infoFile = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("SCM3 1 a 1/1 b.12345678") });
+                using var infoClient = new GitHubSkinClient(infoFile, "SkinChanger/1.0.8.15");
+                Require(await infoClient.InfoFileAsync(new GitHubRepoRef("o", "r"), CancellationToken.None) == "SCM3 1 a 1/1 b.12345678",
+                    "sc.info 的内容必须原样返回给识别策略。");
+
+                var hugeInfo = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent(new string('x', GitHubInfoPolicy.MaxBytes + 1)) });
+                using var hugeInfoClient = new GitHubSkinClient(hugeInfo, "SkinChanger/1.0.8.15");
+                Require(await Throws<InvalidDataException>(() => hugeInfoClient.InfoFileAsync(new GitHubRepoRef("o", "r"), CancellationToken.None)),
+                    "超过上限的 sc.info 必须在读进内存前拒绝，不能让一个仓库撑爆刷新。");
 
                 var foreign = new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
                 using var foreignClient = new GitHubSkinClient(foreign, "SkinChanger/1.0.8.9");
