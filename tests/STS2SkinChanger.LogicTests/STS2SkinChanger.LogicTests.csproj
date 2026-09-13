@@ -8,7 +8,8 @@
 
   <ItemGroup>
     <Compile Include="../../STS2SkinChanger/Core/WorkshopPagePool.cs" Link="WorkshopPagePool.cs" />
-    <Compile Include="../../STS2SkinChanger/Core/SkinSourceIdentity.cs" Link="SkinSourceIdentity.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GodotScriptPathRegistrationPolicy.cs"
+             Link="GodotScriptPathRegistrationPolicy.cs" />    <Compile Include="../../STS2SkinChanger/Core/SkinSourceIdentity.cs" Link="SkinSourceIdentity.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubSkinPolicy.cs" Link="GitHubSkinPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubReleasePolicy.cs" Link="GitHubReleasePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubZipPolicy.cs" Link="GitHubZipPolicy.cs" />

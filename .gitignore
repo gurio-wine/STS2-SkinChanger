@@ -18,6 +18,8 @@
 /tests/STS2SkinChanger.SettingsFixture/obj/
 /tests/STS2SkinChanger.WorkshopBootstrapFixture/bin/
 /tests/STS2SkinChanger.WorkshopBootstrapFixture/obj/
+/tests/STS2SkinChanger.ScriptPathFixture/bin/
+/tests/STS2SkinChanger.ScriptPathFixture/obj/
 /tests/STS2SkinChanger.FrameworkTests/bin/
 /tests/STS2SkinChanger.FrameworkTests/obj/
 /compat/ThunninoiSkinManagerCompat/bin/

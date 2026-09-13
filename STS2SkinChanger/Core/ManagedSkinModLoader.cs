@@ -956,27 +956,8 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    private static bool IsAlreadyRegisteredGodotScriptException(Exception exception)
-    {
-        for (var current = exception; current != null; current = current.InnerException)
-        {
-            if (current is not ArgumentException)
-            {
-                continue;
-            }
-
-            var message = current.Message;
-            if (message.Contains("same key", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("already been added", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("相同的键", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("已添加", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool IsAlreadyRegisteredGodotScriptException(Exception exception) =>
+        GodotScriptPathRegistrationPolicy.IsHarmlessDuplicate(exception);
 
     /// <summary>
     /// Removes every Harmony callback installed by a managed provider that is no longer selected.
@@ -4291,9 +4272,11 @@ internal static class GodotScriptPathRegistrationCompatibilityPatch
     // Godot's ScriptManagerBridge stores script paths in a private Dictionary and uses Add rather
     // than an idempotent assignment. Complete skin providers commonly register their C# scenes
     // once from Skin Changer and once again from their own initializer; the second call otherwise
-    // aborts the provider's whole visual session with a duplicate-key exception. Only an exact
-    // same-path/same-Type repeat is ignored. A genuine path collision between different types is
-    // deliberately left to Godot so it cannot silently select the wrong script.
+    // aborts the provider's whole visual session with a duplicate-key exception. A repeat of one
+    // declaration is skipped - the identical type, or the same module reached through another copy
+    // of the pack. A genuine path collision between different scripts is deliberately left to
+    // Godot so it cannot silently select the wrong script; that one is caught by
+    // GodotScriptRegistrationSessionGuard so it still cannot end the session.
     private static bool Prepare() => FindTarget() != null;
 
     private static MethodBase TargetMethod() =>
@@ -4311,7 +4294,7 @@ internal static class GodotScriptPathRegistrationCompatibilityPatch
             return true;
         }
 
-        return existingType != scriptType;
+        return !GodotScriptPathRegistrationPolicy.IsIdempotentRepeat(existingType, scriptType);
     }
 
     private static MethodBase? FindTarget()
@@ -4327,6 +4310,51 @@ internal static class GodotScriptPathRegistrationCompatibilityPatch
             binder: null,
             types: [typeof(string), typeof(Type)],
             modifiers: null);
+    }
+}
+
+[HarmonyPatch]
+internal static class GodotScriptRegistrationSessionGuard
+{
+    // Godot aborts the entire assembly scan on the first path it already holds, and a managed skin
+    // pack calls that scan from inside its own initializer. On the reported machines that
+    // duplicate-key exception escaped the pack's initializer and Skin Changer rolled the provider's
+    // behaviour patches back, so the skin still had its resources but never its model. A repeated
+    // path therefore has to stay inside the registration call: the mapping Godot already made stays
+    // authoritative, the visual session keeps running, and the exact path is logged so the player
+    // can hand it to the pack author. Every other registration failure still propagates.
+    private static bool Prepare() => FindTarget() != null;
+
+    private static MethodBase TargetMethod() =>
+        FindTarget() ?? throw new MissingMethodException(
+            "Godot.Bridge.ScriptManagerBridge.LookupScriptsInAssembly");
+
+    private static Exception? Finalizer(Assembly __0, Exception __exception)
+    {
+        if (!GodotScriptPathRegistrationPolicy.IsHarmlessDuplicate(__exception))
+        {
+            return __exception;
+        }
+
+        var path = GodotScriptPathRegistrationPolicy.DuplicatePath(__exception);
+        ModLog.Warn(
+            $"注册 {__0.GetName().Name} 的 Godot 场景脚本时遇到重复路径" +
+            (path is null ? string.Empty : $" {path}") +
+            "：已保留先注册的映射并继续本次视觉会话；" +
+            "若该皮肤缺模型或缺交互，请把这条日志连同路径反馈给皮肤作者。");
+        return null;
+    }
+
+    private static MethodBase? FindTarget()
+    {
+        var bridgeType = typeof(GodotObject).Assembly.GetType(
+            "Godot.Bridge.ScriptManagerBridge");
+        return bridgeType?
+            .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(method =>
+                method.Name.Equals("LookupScriptsInAssembly", StringComparison.Ordinal) &&
+                method.GetParameters() is [{ ParameterType: var parameterType }] &&
+                parameterType == typeof(Assembly));
     }
 }
 

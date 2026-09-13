@@ -103,12 +103,19 @@ if (args.Length == 1 && args[0] == "--test-storage")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-provider-script-registration")
+{
+    ProviderScriptRegistrationTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-provider-compatibility")
 {
     ProviderCompatibilityTests.Run();
     ProviderRuntimeAuditTests.Run();
     ProviderMinimumVersionPolicyTests.Run();
     ProviderVersionTakeoverTests.Run();
+    ProviderScriptRegistrationTests.Run();
     return;
 }
 if (args.Length == 1 && args[0] == "--test-workshop-submissions")

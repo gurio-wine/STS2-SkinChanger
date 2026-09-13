@@ -10,6 +10,7 @@
     <Compile Remove="LegacyMerchantCommandFixture.cs" />
     <ProjectReference Include="../STS2SkinChanger.SettingsFixture/STS2SkinChanger.SettingsFixture.csproj" />
     <ProjectReference Include="../STS2SkinChanger.WorkshopBootstrapFixture/STS2SkinChanger.WorkshopBootstrapFixture.csproj" />
+    <ProjectReference Include="../STS2SkinChanger.ScriptPathFixture/STS2SkinChanger.ScriptPathFixture.csproj" />
     <ProjectReference Include="../../STS2SkinChanger/STS2SkinChanger.csproj" />
     <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj" />
     <Reference Include="sts2">

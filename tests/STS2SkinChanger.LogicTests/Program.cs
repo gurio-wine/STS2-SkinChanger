@@ -1999,6 +1999,7 @@ GitHubSourceRoutingTests.Run();
 GitHubSkinTextTests.Run();
 WorkshopOptionSelectionPolicyTests.Run();
 WorkshopPagePoolTests.Run();
+GodotScriptPathRegistrationPolicyTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
 internal static class DirectCharacterRuntimeFixture
