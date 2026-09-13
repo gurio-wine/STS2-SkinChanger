@@ -528,7 +528,7 @@ internal static class CardArtPackTests
     }
 
     /// <summary>Builds a real PNG so the reader exercises signature validation and IHDR parsing.</summary>
-    private static byte[] MakePng(int width, int height, bool withAlpha)
+    internal static byte[] MakePng(int width, int height, bool withAlpha)
     {
         using var stream = new MemoryStream();
         stream.Write(PngSignature);

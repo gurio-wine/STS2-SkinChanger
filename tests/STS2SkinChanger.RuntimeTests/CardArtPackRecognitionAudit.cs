@@ -133,6 +133,27 @@ internal static class CardArtPackRecognitionAudit
                     $"{option.Assets.Count} assets");
             }
         }
+
+        // A provider whose artwork only reaches the catalog through this folder read must still be
+        // encodable as a submission, so the same scan the panel runs is reported here.
+        var workshopId = SkinCatalog.WorkshopSourceId(providerRoot);
+        if (workshopId == 0)
+        {
+            Console.WriteLine("  本包不是工坊目录，跳过投稿扫描。");
+            return;
+        }
+
+        var result = WorkshopSubmissionScanner.Scan(
+            new(workshopId, providerId, providerRoot),
+            gamePck,
+            cards,
+            "0.111.0",
+            new Dictionary<string, string>());
+        Console.WriteLine(result.Item == null
+            ? $"  submission scan {workshopId}: rejected ({result.Error})"
+            : $"  submission scan {workshopId}: targets=" +
+              string.Join("|", result.Item.Targets.Select(target => target.Kind + ":" + target.Target)) +
+              $" restart={result.Item.RestartRequired}");
     }
 
     /// <summary>

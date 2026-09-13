@@ -73,6 +73,7 @@ internal static class WorkshopSubmissionTests
         await MetadataDelta();
         ScanPackages();
         SubmissionCandidates();
+        LooseCardPortraitSubmission();
         Console.WriteLine("Legacy codec and submission infrastructure passed: bounded decoding, built-in precedence, complete pagination and cache rollback.");
     }
 
@@ -210,6 +211,74 @@ internal static class WorkshopSubmissionTests
                     Require(!string.IsNullOrWhiteSpace(string.Format(WorkshopSubmissionText.ForLanguage(language,key),1,2,"mod")),"投稿界面本地化缺失。");
         }
         finally { Directory.Delete(directory,true); }
+    }
+
+    /// <summary>
+    /// A provider that keeps its card art as ordinary image files beside its code replaces card art
+    /// from that code, which stays held back while it is not selected. The submission scan must read
+    /// the same folder the live catalog reads, or such an item would export nothing and could never
+    /// be submitted even though its cards are already offered.
+    /// </summary>
+    private static void LooseCardPortraitSubmission()
+    {
+        var root = Directory.CreateTempSubdirectory("sc-submission-loose-cards-");
+        try
+        {
+            // The Workshop folder shape is what binds the artwork to the item it came from.
+            var source = Path.Combine(root.FullName, "2868840", "3797161358");
+            var portraits = Path.Combine(source, "portraits");
+            Directory.CreateDirectory(portraits);
+            var cards = new List<CardCatalogEntry>();
+            for (var index = 0; index < 24; index++)
+            {
+                var name = $"loose_kei_{index:00}";
+                cards.Add(new CardCatalogEntry(
+                    $"LooseKei{index:00}",
+                    $"res://images/packed/card_portraits/regent/{name}.png",
+                    "regent",
+                    "regent",
+                    "regent"));
+                File.WriteAllBytes(
+                    Path.Combine(portraits, name.ToUpperInvariant() + ".png"),
+                    CardArtPackTests.MakePng(608, 416, withAlpha: false));
+            }
+
+            File.WriteAllText(Path.Combine(source, "LooseKeiCards.json"),
+                """{"id":"LooseKeiCards","name":"Loose Kei Cards","has_pck":false,"has_dll":true,"affects_gameplay":false}""",
+                new UTF8Encoding(false));
+            File.WriteAllBytes(Path.Combine(source, "LooseKeiCards.dll"), [1, 2, 3]);
+            var game = Path.Combine(root.FullName, "game.pck");
+            PckArchive.Write(game, new Dictionary<string, byte[]>());
+            var scan = WorkshopSubmissionScanner.Scan(
+                new(3797161358, "Loose Kei Cards", source), game, cards.ToArray(), "0.111.0",
+                new Dictionary<string, string>());
+            Require(scan.Item != null, "只把卡面存成普通图片的提供者必须能投稿：" + scan.Error);
+            Require(scan.Item!.Id == 3797161358 &&
+                    scan.Item.Targets.Any(target => target.Kind == "cards"),
+                "投稿必须落在该工坊物品自己的卡面分类上。");
+
+            // A folder whose pictures are not card art stays the author's own material, so it is
+            // rejected exactly as it is at startup.
+            var iconsRoot = Path.Combine(root.FullName, "2868840", "3797161359");
+            var icons = Path.Combine(iconsRoot, "images");
+            Directory.CreateDirectory(icons);
+            for (var index = 0; index < 24; index++)
+            {
+                File.WriteAllBytes(
+                    Path.Combine(icons, $"icon_{index:00}.png"),
+                    CardArtPackTests.MakePng(64, 64, withAlpha: true));
+            }
+
+            File.WriteAllText(Path.Combine(iconsRoot, "IconProvider.json"),
+                """{"id":"IconProvider","name":"Icon Provider","has_pck":false,"has_dll":true,"affects_gameplay":false}""",
+                new UTF8Encoding(false));
+            File.WriteAllBytes(Path.Combine(iconsRoot, "IconProvider.dll"), [1, 2, 3]);
+            var rejected = WorkshopSubmissionScanner.Scan(
+                new(3797161359, "Icon Provider", iconsRoot), game, cards.ToArray(), "0.111.0",
+                new Dictionary<string, string>());
+            Require(rejected.Item == null, "只含图标的提供者不能因为图片够多就成为卡面投稿。");
+        }
+        finally { root.Delete(true); }
     }
 
     private static string Page(int total, int start, int size, string code) =>

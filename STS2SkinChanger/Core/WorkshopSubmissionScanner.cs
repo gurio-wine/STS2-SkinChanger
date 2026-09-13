@@ -67,7 +67,15 @@ internal static class WorkshopSubmissionScanner
             var mods = ReadDescriptors(local.Directory);
             // A pack is taken over straight from its bundle, exactly as at startup, so a folder
             // without any cosmetic manifest must be scannable through its artwork alone.
-            var packs = CardArtPackScanner.Scan([local.Directory]).Packs;
+            var packs = CardArtPackScanner.Scan([local.Directory]).Packs.ToList();
+            // A provider that keeps its card art as ordinary image files replaces card art from its
+            // own code, which stays held back until the player selects it. Without reading the
+            // folder here the item would export nothing and could never be submitted, even though
+            // its cards are already offered on the card rows.
+            packs.AddRange(LooseCardPortraitPackScanner.Scan(
+                mods.Where(mod => !string.IsNullOrWhiteSpace(mod.RootPath))
+                    .Select(mod => new LooseCardPortraitProvider(mod.Id, mod.Name, mod.RootPath!)),
+                cards));
             if (mods.Length == 0 && packs.Count == 0) return new(null, local.Name, "No cosmetic manifest.");
             using var catalog = SkinCatalog.Build(gamePack, (baselines ?? []).Where(b => b.AffectsGameplay &&
                 !mods.Any(m => string.Equals(m.RootPath, b.RootPath, StringComparison.OrdinalIgnoreCase))).Concat(mods));
