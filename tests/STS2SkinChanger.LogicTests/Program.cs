@@ -1975,6 +1975,7 @@ Require(
     !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("NMerchantRoom", "_Ready", "UiSounds.Patch"),
     "商店语音接管既要该包商人模块的证据、又要回调本身是交互或音频：没有名字的回调、挂在别处的补丁和纯粹的呈现回调都不能被接管。");
 
+GitHubSourceIdentityTests.Run();
 WorkshopPagePoolTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
