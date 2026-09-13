@@ -4055,6 +4055,32 @@ internal static partial class SkinService
             includeProviderDependencies: true);
     }
 
+    /// <summary>
+    /// True when the effective selection for a group (multiplayer scope, preview or configuration)
+    /// serves the character's canonical combat scene path itself. The game's own creation then
+    /// instantiates the skin's scene instead of the game's, so creation has to be owned up front
+    /// and converted by the scene factory when the served scene is a framework scene.
+    /// </summary>
+    public static bool SelectionServesCombatScene(string groupId, string scenePath)
+    {
+        lock (Sync)
+        {
+            var option = FindVisualOption(groupId, GetVisualSelection(groupId));
+            return CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+                option == null || option.Id.Equals(
+                    SkinCatalog.BaseOptionId,
+                    StringComparison.OrdinalIgnoreCase),
+                option?.Assets.Keys.Any(path =>
+                    path.Equals(scenePath, StringComparison.OrdinalIgnoreCase)) == true);
+        }
+    }
+
+    private static SkinOption? FindVisualOption(string groupId, string selection) =>
+        Catalog?.Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option =>
+                option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+
     public static bool TryInstantiateSelectedCharacterCreatureVisuals(
         string groupId,
         string scenePath,
@@ -4063,12 +4089,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
-            var catalog = Catalog;
-            var selection = GetVisualSelection(groupId);
-            var option = catalog?.Groups.FirstOrDefault(group =>
-                    group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
-                .Options.FirstOrDefault(candidate =>
-                    candidate.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            var option = FindVisualOption(groupId, GetVisualSelection(groupId));
             var hasManagedCombatScene = option?.FrameworkContract?
                                             .CharacterResources.ContainsKey("CombatVisual") == true ||
                                         option?.Assets.Keys.Any(path =>

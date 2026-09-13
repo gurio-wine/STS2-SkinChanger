@@ -971,6 +971,22 @@ Require(
         hasManagedCombatDependencies: false),
     "只修改名称、头像或其它素材而没有战斗场景的皮肤不能拦截角色模型创建。");
 Require(
+    CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+        isBaseSelection: false,
+        servesCanonicalCombatScene: true),
+    "选中皮肤自己提供规范战斗场景时，必须在游戏原方法强转之前接管创建；" +
+    "框架注册的 VisualsPath 允许是纯 Node2D 场景，等到后置替换时游戏已经抛出 InvalidCastException。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+        isBaseSelection: false,
+        servesCanonicalCombatScene: false),
+    "只替换头像、骨骼等依赖而没有替换根场景的皮肤仍由游戏自己实例化规范场景，不能被提前接管。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+        isBaseSelection: true,
+        servesCanonicalCombatScene: true),
+    "游戏原皮不得接管角色模型创建；没有皮肤占用规范路径时游戏原方法自己实例化即可。");
+Require(
     CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
         scopedSelection: "remote-skin",
         configuredSelection: "local-skin"),

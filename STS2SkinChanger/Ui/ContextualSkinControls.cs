@@ -42,6 +42,7 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
+    internal const string ManagedCombatSceneMeta = "sts2_skin_managed_combat_scene";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static readonly ConditionalWeakTable<NCharacterSelectScreen, CharacterBackgroundHostLayout>
         CharacterBackgroundHostLayouts = new();
@@ -2116,6 +2117,15 @@ internal static partial class ContextualSkinControls
         string visualsPath,
         ref NCreatureVisuals result)
     {
+        // Creation for this node was already owned by the combat scene entry point, which
+        // converted the served scene through the scene factory before the game could cast it.
+        // Instantiating the same scene again here would fail for a framework scene (plain Node2D)
+        // and only duplicate work for a native one.
+        if (result != null && result.HasMeta(ManagedCombatSceneMeta))
+        {
+            return;
+        }
+
         var group = FindGroup(modelId, modelTypeName);
         if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
         {

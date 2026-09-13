@@ -556,6 +556,57 @@ if (frameworkCombatPriority is not int combatPriority || combatPriority != Prior
         "框架角色战斗场景工厂补丁必须最先执行，避免游戏先把允许为 Node2D 的框架场景强制转换成 NCreatureVisuals。");
 }
 
+// 框架内容注册表的 CharacterSceneAssetSet.VisualsPath 同样占用角色规范战斗场景路径，
+// 而框架场景允许是纯 Node2D：前置补丁必须按当前选择接管创建，不能只处理声明式 CombatVisual 契约。
+var frameworkCombatCalls = PatchProcessor.GetOriginalInstructions(frameworkCombatPrefix)
+    .Select(instruction => instruction.operand).OfType<MethodInfo>().ToArray();
+if (!frameworkCombatCalls.Any(method => method.Name == "SelectionServesCombatScene") ||
+    !frameworkCombatCalls.Any(method => method.Name == "InstantiateManagedCharacterCreatureVisuals"))
+{
+    throw new InvalidOperationException(
+        "框架注册的皮肤自己提供规范战斗场景时，必须在 CharacterModel.CreateVisuals 原方法之前接管创建并走场景工厂；" +
+        "否则纯 Node2D 场景会在战斗中被游戏强转成 NCreatureVisuals 而中断整场战斗。");
+}
+var frameworkCombatMarker = frameworkCombatPatchType
+    .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+    .SelectMany(method => PatchProcessor.GetOriginalInstructions(method))
+    .Any(instruction => instruction.operand is string text &&
+                        text == "sts2_skin_managed_combat_scene");
+if (!frameworkCombatMarker)
+{
+    throw new InvalidOperationException(
+        "场景工厂创建的角色节点必须留下归属标记；否则最终结果替换会再实例化同一份框架场景并强转失败。");
+}
+
+var skinControlsType = typeof(Entry).Assembly.GetType(
+                           "STS2SkinChanger.Ui.ContextualSkinControls") ??
+                       throw new InvalidOperationException("找不到上下文皮肤控件类型。");
+var replaceCreatedVisuals = AccessTools.Method(
+                                skinControlsType,
+                                "ReplaceCreatedVisuals",
+                                [
+                                    typeof(string),
+                                    typeof(string),
+                                    typeof(string),
+                                    typeof(NCreatureVisuals).MakeByRefType()
+                                ]) ??
+                            throw new InvalidOperationException("找不到最终结果替换入口。");
+var replaceCreatedInstructions = PatchProcessor.GetOriginalInstructions(replaceCreatedVisuals).ToArray();
+var managedSceneMarkerIndex = Array.FindIndex(
+    replaceCreatedInstructions,
+    instruction => instruction.operand is string text && text == "sts2_skin_managed_combat_scene");
+var replacementInstantiationIndex = Array.FindIndex(
+    replaceCreatedInstructions,
+    instruction => instruction.operand is MethodInfo method && method.Name == "InstantiateRuntimeScene");
+if (managedSceneMarkerIndex < 0 ||
+    replacementInstantiationIndex < 0 ||
+    managedSceneMarkerIndex > replacementInstantiationIndex)
+{
+    throw new InvalidOperationException(
+        "最终结果替换必须在实例化之前跳过已由场景工厂创建的角色节点；" +
+        "否则框架场景会再次强转失败，普通皮肤也会重复实例化整份场景。");
+}
+
 var combatRoomCreate = typeof(NCombatRoom).GetMethod(
     nameof(NCombatRoom.Create),
     BindingFlags.Static | BindingFlags.Public,
