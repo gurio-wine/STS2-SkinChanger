@@ -272,7 +272,7 @@ internal partial class SkinWorkshopPanel : Control
                     cancel.TooltipText = cancel.Text;
                     label.Text = scanning ? GitHubText(GitHubSkinTextKey.Scanning)
                         : installing ? GitHubText(GitHubSkinTextKey.Installing)
-                        : GitHubStatus(entry, installState, awaitingRestart);
+                        : GitHubStatus(entry, installState, awaitingRestart, GitHubSkinService.IsPendingRemoval(id));
                     label.TooltipText = entry is { Error.Length: > 0 } ? entry.Error : label.Text;
                     if (_actionErrors.TryGetValue(id, out var installError))
                     {

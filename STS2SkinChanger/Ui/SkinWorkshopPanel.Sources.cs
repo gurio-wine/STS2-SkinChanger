@@ -72,10 +72,13 @@ internal partial class SkinWorkshopPanel
 
     private string GitHubMetric(ulong id) => GitHubSortPolicy.Metric(GitHubSkinService.Entry(id), _githubSort);
 
-    private static string GitHubStatus(GitHubSkinEntry? entry, GitHubInstallState state, bool pendingRestart) => entry is null ? "" :
+    private static string GitHubStatus(GitHubSkinEntry? entry, GitHubInstallState state, bool pendingRestart, bool pendingRemoval) => entry is null ? "" :
         entry.Recognition switch
         {
             GitHubRecognition.Pending => GitHubText(GitHubSkinTextKey.Refreshing),
+            // The folder of a skin the running game holds open only leaves once the game does, so
+            // the card says so instead of claiming the files are already gone.
+            _ when pendingRemoval => GitHubText(GitHubSkinTextKey.RemovePending),
             // A waiting restart is carried by the action button, exactly like on the Steam side,
             // so the status line does not repeat it.
             GitHubRecognition.Recognized when pendingRestart => "",

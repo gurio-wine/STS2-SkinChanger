@@ -39,16 +39,58 @@ internal static class GitHubInstallLedgerTests
             Require(!restored.Remove("someone/else") && restored.Remove("qbyoffice/SilentSkinMod") && restored.Count == 0,
                 "卸载只删除确实记录过的仓库。");
 
-            File.WriteAllText(path, """{"Format":2,"Installs":{}}""");
+            File.WriteAllText(path, """{"Format":3,"Installs":{}}""");
             Require(Throws(() => restored.Restore(path)), "未知格式的台账必须拒绝，由调用方从空台账重新开始。");
-            File.WriteAllText(path, """{"Format":1,"Installs":{"../evil":{"Folder":"a","PackageId":"a","PackageName":"","Version":""}}}""");
+            File.WriteAllText(path, """{"Format":2,"Installs":{"../evil":{"Folder":"a","PackageId":"a","PackageName":"","Version":""}}}""");
             restored.Restore(path);
             Require(restored.Count == 0, "缓存里的仓库名同样按不可信输入校验，非法条目直接丢弃。");
-            File.WriteAllText(path, """{"Format":1,"Installs":{"o/r":{"Folder":"Mod","PackageId":"","PackageName":"","Version":"1.0"}}}""");
+            File.WriteAllText(path, """{"Format":2,"Installs":{"o/r":{"Folder":"Mod","PackageId":"","PackageName":"","Version":"1.0"}}}""");
             restored.Restore(path);
             Require(restored.Find("o/r") is { Folder: "Mod" }, "合法的空清单条目必须能读回。");
             File.WriteAllText(path, "{");
             Require(Throws(() => restored.Restore(path)), "损坏的台账必须抛错，不能按半懂的数据继续跑。");
+
+            // Steps that only the quit helper may run have to survive the same way: a session that
+            // was closed by force still has to finish replacing or removing the folder next time.
+            var staged = Path.Combine(Path.GetTempPath(), "sc-gh-ledger-staging");
+            var queued = new GitHubInstallLedger();
+            Require(queued.Record("o/r", install) &&
+                queued.SetPending("o/r", new(GitHubModsOperationKind.Replace, install.Folder, staged)) &&
+                queued.PendingFor("o/r") is { Kind: GitHubModsOperationKind.Replace, Folder: "KaguyaSilentRavenSkin", Staging: var staging } &&
+                staging == staged,
+                "游戏运行中无法替换的皮肤必须把替换步骤连同暂存目录一起记下来。");
+            Require(queued.PendingFor("O/R") is not null, "待执行步骤也按仓库全名查找，大小写不敏感。");
+            Require(!queued.SetPending("o/r", new(GitHubModsOperationKind.Replace, "../evil", staged)) &&
+                !queued.SetPending("o/r", new(GitHubModsOperationKind.Replace, ".Skin.installing", staged)) &&
+                !queued.SetPending("o/r", new(GitHubModsOperationKind.Replace, install.Folder, "relative\\path")) &&
+                !queued.SetPending("o/r", new(GitHubModsOperationKind.Remove, install.Folder, staged)) &&
+                !queued.SetPending("o/r", new((GitHubModsOperationKind)7, install.Folder, "")),
+                "步骤里的目录名、暂存路径与步骤类型都会变成真实文件操作，非法值必须拒绝写入。");
+            Require(queued.PendingFor("o/r") is { Kind: GitHubModsOperationKind.Replace },
+                "被拒绝的步骤不能顶掉已经排好的那一条。");
+            var kind = queued.SetPending("o/r", new(GitHubModsOperationKind.Remove, install.Folder, ""));
+            Require(kind && queued.PendingFor("o/r") is { Kind: GitHubModsOperationKind.Remove, Staging: "" },
+                "同一仓库只保留一个步骤：改排卸载必须顶掉还没执行的替换。");
+            Require(queued.ClearPending("o/r") is { Kind: GitHubModsOperationKind.Remove } && queued.PendingFor("o/r") == null &&
+                queued.ClearPending("o/r") == null,
+                "步骤执行或作废后必须能从台账里清掉，并且只清一次。");
+
+            queued.SetPending("o/r", new(GitHubModsOperationKind.Replace, install.Folder, staged));
+            queued.Save(path, null);
+            var resumed = new GitHubInstallLedger();
+            resumed.Restore(path);
+            Require(resumed.Find("o/r") is { Folder: "KaguyaSilentRavenSkin" } &&
+                resumed.PendingFor("o/r") is { Kind: GitHubModsOperationKind.Replace, Staging: var resumedStaging } &&
+                resumedStaging == staged,
+                "待执行的替换步骤必须跨会话读回，否则强退之后那个目录再也换不掉。");
+            File.WriteAllText(path, """{"Format":2,"Installs":{"o/r":{"Folder":"Mod","PackageId":"","Version":"1"}},"Pending":{"o/r":{"Kind":2,"Folder":"Other","Staging":"C:\\sc\\github-pending\\1"}}}""");
+            resumed.Restore(path);
+            Require(resumed.PendingFor("o/r") == null && resumed.Find("o/r") is { Folder: "Mod" },
+                "未知的步骤类型只能丢弃这一条，不能连整份台账一起作废。");
+            File.WriteAllText(path, """{"Format":2,"Installs":{"o/r":{"Folder":"Mod","PackageId":"","Version":"1"}},"Pending":{"o/r":{"Kind":1,"Folder":"Other","Staging":"C:\\sc\\github-pending\\1"}}}""");
+            resumed.Restore(path);
+            Require(resumed.PendingFor("o/r") == null,
+                "替换步骤指向的目录与已记录的安装目录不一致时必须丢弃，否则退出助手会往别的目录里写包。");
         }
         finally { Directory.Delete(Path.GetDirectoryName(path)!, true); }
 

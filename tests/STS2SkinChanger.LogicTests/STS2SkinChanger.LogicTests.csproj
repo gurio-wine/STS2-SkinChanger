@@ -21,6 +21,7 @@
     <Compile Include="../../STS2SkinChanger/Core/GitHubReadmePolicy.cs" Link="GitHubReadmePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubInfoPolicy.cs" Link="GitHubInfoPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubInstallLedger.cs" Link="GitHubInstallLedger.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubModsPolicy.cs" Link="GitHubModsPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubSkinFilter.cs" Link="GitHubSkinFilter.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GitHubItemActions.cs" Link="GitHubItemActions.cs" />
     <Compile Include="../../STS2SkinChanger/Core/WorkshopSubmissionCodec.cs" Link="WorkshopSubmissionCodec.cs" />

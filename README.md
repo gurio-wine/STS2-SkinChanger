@@ -95,11 +95,11 @@
 
 ## 配置与退出清理
 
-配置集中放在 `user://Gurio.SkinChanger/`（Windows 通常是 `%APPDATA%/SlayTheSpire2/Gurio.SkinChanger/`）。`skin_changer.json` 保存皮肤、优先级、预设、皮肤包和外观参数；`skin_changer_theme.json` 与 `skin_changer_theme_presets.json` 保存主题；`skin_changer_bundle_runs/` 保存继续游戏的外观记录；`skin_changer_bundle_run_restore.json` 是皮肤包恢复点。相邻 `.bak` 为备份。
+配置集中放在 `user://Gurio.SkinChanger/`（Windows 通常是 `%APPDATA%/SlayTheSpire2/Gurio.SkinChanger/`）。`skin_changer.json` 保存皮肤、优先级、预设、皮肤包和外观参数；`skin_changer_theme.json` 与 `skin_changer_theme_presets.json` 保存主题；`skin_changer_bundle_runs/` 保存继续游戏的外观记录；`skin_changer_bundle_run_restore.json` 是皮肤包恢复点；`github_skins.json` 是 GitHub 皮肤列表缓存，`github_installs.json` 记录“仓库 → 已装目录/版本”和还没执行的退出步骤，`github-pending/` 存放等待退出后写入的皮肤包。相邻 `.bak` 为备份。
 
 首次加载新版时自动迁移旧位置的上述文件、备份及 `sts2_skin_switcher.json`，不需要手动移动。已存在的新配置优先；冲突的旧文件保留在 `migration-backup/`。迁移失败保留原文件并回退读取，不修改游戏存档或其它 Mod 的设置。开发测试只操作独立临时夹，不迁移玩家实档。
 
-生成资源、工坊图片/元数据/社区清单集中于 `cache/<会话>/`，不会清理 Steam 订阅文件、皮肤素材或作者设置。主菜单确认退出后，先在后台清理缓存，再执行游戏原本的设置保存与退出；取消退出不清理。Windows 正在挂载的 PCK 可能被锁住，由随 Mod 附带的 `SkinChanger.CacheCleanup.exe` 等待当前进程退出后补清理，不需要玩家安装 SDK、不修改脚本执行策略、不创建计划任务。助手只接受限定缓存路径、不穿越目录链接、不删除其它运行中会话的缓存，完成后删除临时清单。macOS/Linux 直接清理可删除缓存；异常占用/权限失败保留并在下次加载时重试。强杀进程不保证执行退出清理，启动时仍有补清理；日志记录清理数量和未完成情况。
+生成资源、工坊图片/元数据/社区清单集中于 `cache/<会话>/`，不会清理 Steam 订阅文件、皮肤素材或作者设置。主菜单确认退出后，先在后台清理缓存，再执行游戏原本的设置保存与退出；取消退出不清理。Windows 正在挂载的 PCK 可能被锁住，由随 Mod 附带的 `SkinChanger.CacheCleanup.exe` 等待当前进程退出后补清理，不需要玩家安装 SDK、不修改脚本执行策略、不创建计划任务。助手只接受限定缓存路径、不穿越目录链接、不删除其它运行中会话的缓存，完成后删除临时清单。**游戏运行中无法替换的 GitHub 皮肤目录也由同一个助手在退出后处理**：已加载皮肤的 DLL 与资源包被进程打开，删除与改名都会被系统拒绝，所以“安装/更新/卸载”在目录被占用时写入 `Gurio.SkinChanger/github-pending/` 并排入退出计划，卡片显示“需要重启”或“退出游戏后移除”，与 Steam 取消订阅后的“文件在退出后移除”一致；助手只接受游戏自己的 `mods` 目录与配置目录下的暂存包，越界路径一律跳过。macOS/Linux 直接清理可删除缓存；异常占用/权限失败保留并在下次加载时重试。强杀进程不保证执行退出清理，启动时仍有补清理（排队的皮肤目录步骤同样在下次启动继续排队）；日志记录清理数量和未完成情况。
 
 关闭时工坊缓存也会清理，下一次启动按需重新获取；同一次启动内仍复用，不因筛选、排序或翻页重复下载。离线读取旧社区清单的能力仅限缓存尚在时。
 

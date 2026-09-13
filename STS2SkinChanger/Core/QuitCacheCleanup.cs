@@ -22,11 +22,15 @@ internal static class QuitCacheCleanup
                 var storage = SkinChangerPaths.Storage;
                 storage.StopCacheWrites();
                 var report = storage.CleanCaches();
-                using var worker = report.Files.Count + report.Directories.Count > 0
-                    ? DeferredCacheCleanup.Start(report, storage.RootDirectory) : null;
+                // Folder work that the running game made impossible - swapping in a newly
+                // downloaded skin, deleting one it holds open - goes into the same helper.
+                var mods = GitHubSkinService.QuitPlan();
+                using var worker = report.Files.Count + report.Directories.Count > 0 || mods != null
+                    ? DeferredCacheCleanup.Start(report, storage.RootDirectory, mods) : null;
                 var deferred = worker != null;
                 return $"退出缓存清理：已删除 {report.RemovedFiles} 个文件；" +
                        $"待处理文件={report.Files.Count}、目录={report.Directories.Count}；" +
+                       (mods == null ? "" : $"皮肤目录操作={mods.Operations.Length} 项；") +
                        (deferred ? "已安排在本游戏进程结束后补清理。" :
                         report.Files.Count + report.Directories.Count + report.Errors.Count == 0 ? "清理完成。" : "未完成的缓存清理将在下次启动重试。") +
                        (report.Errors.Count == 0 ? "" : "部分目录无法检查：" + string.Join("；", report.Errors));
@@ -57,9 +61,9 @@ internal sealed class QuitCleanupCoordinator
 
 internal static class DeferredCacheCleanup
 {
-    public static Process? Start(CacheCleanupReport report, string storageRoot)
+    public static Process? Start(CacheCleanupReport report, string storageRoot, GitHubModsPlan? mods = null)
     {
-        if (!OperatingSystem.IsWindows() || report.Files.Count + report.Directories.Count == 0) return null;
+        if (!OperatingSystem.IsWindows() || report.Files.Count + report.Directories.Count == 0 && mods == null) return null;
         if (!SkinChangerStorage.SafePath(storageRoot, report.UserDirectory)) throw new IOException("Unsafe cleanup control directory.");
         // One directory per owning process prevents two concurrent clients sharing a plan.
         var control = Path.Combine(storageRoot, "cleanup", System.Environment.ProcessId.ToString());
@@ -72,7 +76,13 @@ internal static class DeferredCacheCleanup
         File.WriteAllText(manifest, JsonSerializer.Serialize(new
         {
             ParentPid = current.Id, ParentStartTicks = current.StartTime.ToUniversalTime().Ticks,
-            report.UserDirectory, report.TempDirectory, report.Files, report.Directories
+            report.UserDirectory, report.TempDirectory, report.Files, report.Directories,
+            ModsDirectory = mods?.ModsDirectory ?? "",
+            ModsOperations = (mods?.Operations ?? []).Select(operation => new
+            {
+                Kind = operation.Kind == GitHubModsOperationKind.Replace ? "replace" : "remove",
+                operation.Folder, operation.Staging
+            }).ToArray()
         }));
         var start = new ProcessStartInfo
         {
