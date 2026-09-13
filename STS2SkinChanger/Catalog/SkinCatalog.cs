@@ -31,6 +31,9 @@ internal sealed partial class SkinCatalog : IDisposable
     private static readonly object ManagedScriptCountCacheSync = new();
     private static readonly Dictionary<string, ManagedScriptCountCacheEntry> ManagedScriptCountCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object CharacterVisualPatchCacheSync = new();
+    private static readonly Dictionary<string, CharacterVisualPatchCacheEntry> CharacterVisualPatchCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly PckArchive _gameArchive;
     private readonly List<PckResourceIndex> _baselineIndexes;
@@ -1369,6 +1372,115 @@ internal sealed partial class SkinCatalog : IDisposable
                 unicodeMetadata.Contains(value, comparison);
         }
         catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether a provider replaces the character's own visual creation with the art it ships in its
+    /// own package. Such a package draws the character at runtime, so the canonical files it also
+    /// contains are supplements rather than the whole of what it presents. Only the patch targets an
+    /// assembly declares are read; no Mod name, Workshop ID or author namespace is involved, and the
+    /// assembly is never loaded or executed.
+    /// </summary>
+    internal static bool ReplacesCharacterVisualsAtRuntime(SkinModDescriptor mod)
+    {
+        if (mod.RootPath == null || !mod.HasDll)
+        {
+            return false;
+        }
+
+        string assemblyPath;
+        try
+        {
+            assemblyPath = SkinPackagePaths.Resolve(mod.RootPath, mod.ResourceNamespaceId, ".dll");
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        FileInfo info;
+        try
+        {
+            info = new FileInfo(assemblyPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return false;
+        }
+
+        if (!info.Exists || info.Length <= 0)
+        {
+            return false;
+        }
+
+        lock (CharacterVisualPatchCacheSync)
+        {
+            if (CharacterVisualPatchCache.TryGetValue(assemblyPath, out var cached) &&
+                cached.Length == info.Length &&
+                cached.LastWriteTimeUtc == info.LastWriteTimeUtc)
+            {
+                return cached.ReplacesCharacterVisuals;
+            }
+        }
+
+        var replacesCharacterVisuals = HasCharacterVisualCreationPatch(assemblyPath);
+        lock (CharacterVisualPatchCacheSync)
+        {
+            CharacterVisualPatchCache[assemblyPath] = new CharacterVisualPatchCacheEntry(
+                info.Length,
+                info.LastWriteTimeUtc,
+                replacesCharacterVisuals);
+        }
+
+        return replacesCharacterVisuals;
+    }
+
+    private static bool HasCharacterVisualCreationPatch(string assemblyPath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(assemblyPath);
+            using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!peReader.HasMetadata)
+            {
+                return false;
+            }
+
+            var reader = peReader.GetMetadataReader();
+            foreach (var typeHandle in reader.TypeDefinitions)
+            {
+                var type = reader.GetTypeDefinition(typeHandle);
+                var patchMetadata = new StringBuilder();
+                AppendHarmonyPatchMetadata(reader, type.GetCustomAttributes(), patchMetadata);
+                foreach (var methodHandle in type.GetMethods())
+                {
+                    AppendHarmonyPatchMetadata(
+                        reader,
+                        reader.GetMethodDefinition(methodHandle).GetCustomAttributes(),
+                        patchMetadata);
+                }
+
+                if (patchMetadata.Length == 0)
+                {
+                    continue;
+                }
+
+                var value = patchMetadata.ToString();
+                if (value.Contains("CharacterModel", StringComparison.Ordinal) &&
+                    value.Contains("CreateVisuals", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or BadImageFormatException)
         {
             return false;
         }
@@ -4832,10 +4944,11 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Id,
                     index.Mod.Name,
                     assets,
-                    IsCharacterIconOnly:
+                    IsCharacterIconOnly: CharacterGroupEvidencePolicy.IsIconOnlySupplement(
                         knownCharacterGroupIds.Contains(identity.Id) &&
                         !anchoredCharacterGroupIds.Contains(identity.Id) &&
-                        assets.Keys.Any(IsCharacterIconSourcePath)));
+                        assets.Keys.Any(IsCharacterIconSourcePath),
+                        ReplacesCharacterVisualsAtRuntime(index.Mod))));
             }
         }
 
@@ -6624,8 +6737,10 @@ internal sealed partial class SkinCatalog : IDisposable
                     {
                         Assets = mergedAssets,
                         IsRuntimeProvider = true,
-                        IsCharacterIconOnly = existing.IsCharacterIconOnly &&
-                                              mappedAssets.Keys.All(IsCharacterIconSourcePath)
+                        IsCharacterIconOnly = CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+                            existing.IsCharacterIconOnly &&
+                            mappedAssets.Keys.All(IsCharacterIconSourcePath),
+                            ReplacesCharacterVisualsAtRuntime(index.Mod))
                     };
                     continue;
                 }
@@ -6635,8 +6750,10 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Name,
                     mappedAssets,
                     IsRuntimeProvider: true,
-                    IsCharacterIconOnly: knownCharacterGroupIds.Contains(identity.Id) &&
-                                         mappedAssets.Keys.All(IsCharacterIconSourcePath)));
+                    IsCharacterIconOnly: CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+                        knownCharacterGroupIds.Contains(identity.Id) &&
+                        mappedAssets.Keys.All(IsCharacterIconSourcePath),
+                        ReplacesCharacterVisualsAtRuntime(index.Mod))));
             }
         }
     }
@@ -7887,6 +8004,11 @@ internal sealed record ManagedScriptCountCacheEntry(
     long Length,
     DateTime LastWriteTimeUtc,
     int Count);
+
+internal sealed record CharacterVisualPatchCacheEntry(
+    long Length,
+    DateTime LastWriteTimeUtc,
+    bool ReplacesCharacterVisuals);
 
 internal sealed class SkinGroup(string id, string displayName)
 {

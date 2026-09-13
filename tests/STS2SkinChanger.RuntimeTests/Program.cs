@@ -192,6 +192,12 @@ if (args.Length == 3 && args[0] == "--audit-standalone-relics")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--audit-runtime-visual-owner")
+{
+    RuntimeVisualOwnerAudit.Run(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-appearance-revival-random-exclusion")
 {
     AppearanceRevivalTests.Run();

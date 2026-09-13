@@ -18,4 +18,21 @@ internal static class CharacterGroupEvidencePolicy
 
         return anchors.Count == 0 ? candidates : anchors;
     }
+
+    /// <summary>
+    /// Whether an option stays a supplement for its character instead of an appearance the player
+    /// can switch to.
+    /// <para>
+    /// A package that replaces the character's own visual creation draws the character itself from
+    /// its own files at runtime. The canonical paths it happens to ship (a character-select image, a
+    /// top-panel icon) are then a side effect of that package, not the whole of what it presents, so
+    /// it must not be reduced to an icon-only pack: doing so holds back the code that draws the
+    /// character and keeps the package's files unmounted, which leaves the game original on screen
+    /// even while the player has selected it.
+    /// </para>
+    /// </summary>
+    public static bool IsIconOnlySupplement(
+        bool presentsOnlySupplementAssets,
+        bool replacesCharacterVisualsAtRuntime) =>
+        presentsOnlySupplementAssets && !replacesCharacterVisualsAtRuntime;
 }

@@ -322,6 +322,28 @@ Require(
     "真正同时提供两名角色完整模型的合集必须保留两个角色选项。");
 
 Require(
+    CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: true,
+        replacesCharacterVisualsAtRuntime: false),
+    "只带角色选择图与头像、且不重画角色本体的包仍然是头像包，不能变成可切换的完整皮肤。");
+Require(
+    !CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: true,
+        replacesCharacterVisualsAtRuntime: true),
+    "自带角色本体、只顺带覆盖角色选择图的包必须按完整皮肤处理：" +
+    "套用头像包会把作者的角色模型挡在门外，选中它时画面上仍是游戏原版。");
+Require(
+    !CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: false,
+        replacesCharacterVisualsAtRuntime: false),
+    "带角色模型的普通皮肤任何时候都不能被当成头像包。");
+Require(
+    !CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: false,
+        replacesCharacterVisualsAtRuntime: true),
+    "自带角色本体的提供者即使已经带模型资源，也不能被降级成头像包。");
+
+Require(
     DirectCharacterRuntimeTargetPolicy.ResolveTargets(
             [("TargetCharacterId", "REGENT")],
             ["ironclad", "silent", "regent", "defect"])
