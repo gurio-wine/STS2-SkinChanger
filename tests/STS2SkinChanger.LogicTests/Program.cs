@@ -2042,6 +2042,7 @@ GitHubSkinTextTests.Run();
 WorkshopOptionSelectionPolicyTests.Run();
 WorkshopPagePoolTests.Run();
 GodotScriptPathRegistrationPolicyTests.Run();
+ModPrivateDependencyPolicyTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
 internal static class DirectCharacterRuntimeFixture

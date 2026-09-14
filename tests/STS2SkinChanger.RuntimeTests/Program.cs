@@ -113,6 +113,7 @@ if (args.Length == 1 && args[0] == "--test-provider-compatibility")
 {
     ProviderCompatibilityTests.Run();
     ProviderRuntimeAuditTests.Run();
+    ModPrivateDependencyResolverTests.Run();
     ProviderMinimumVersionPolicyTests.Run();
     ProviderVersionTakeoverTests.Run();
     ProviderScriptRegistrationTests.Run();
@@ -459,6 +460,7 @@ SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
 ProviderCompatibilityTests.Run();
 ProviderRuntimeAuditTests.Run();
+ModPrivateDependencyResolverTests.Run();
 ProviderMinimumVersionPolicyTests.Run();
 ProviderVersionTakeoverTests.Run();
 PackageCompatibilityTests.Run();

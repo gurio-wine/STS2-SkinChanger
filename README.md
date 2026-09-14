@@ -97,6 +97,8 @@
 
 皮肤 Mod 自己声明的最低游戏版本（`min_game_version`）按同一原则处理。游戏会直接拒绝声明高于当前版本的 Mod，而那只说明作者是在另一分支上编译的这款皮肤；对属于本 Mod 接管范围的外观包，**声明由核验代替**：把要用的那份 DLL 整份 JIT 编译一遍（在独立的可卸载上下文里，不执行作者代码、不跑初始化器、不打补丁），全部方法都能编译才接管，并在上述接口桥之上转换已知差异；任何一处编译不了的包保持游戏原本的拒绝，日志写明阻塞的方法名。纯资源包没有代码可依赖新版本，照常接管。声明无法解析、或读不到当前游戏版本时不猜测，交回游戏判断。原清单与作者文件始终不修改。核验偏严：游戏按需惰性编译，从不执行的方法即使引用了当前版本不存在的类型也不会报错，这里为了“先有证据再接管”会把它们一并算作不可用，因此部分作者包仍停在原来的拒绝状态。
 
+游戏加载每个 Mod 的 DLL 时用的是 `AssemblyLoadContext.LoadFromAssemblyPath`，依赖探测只覆盖游戏目录，它自己的 `AssemblyResolve` 兜底也只回答 `sts2` 与 `0Harmony`。把私有依赖放在自己包里的 Mod 因此永远拿不到它——`3D Card Effects` 随包的 `Microsoft.ML.OnnxRuntime` 就是这样，日志里连续十次 “Could not load file or assembly” 之后，它只能放弃为 Mod 卡图生成景深，3D 视差在玩家眼里等于没有效果。这类失败的依赖现在按请求方自己的包目录解析：只使用确实随包提供的文件，游戏自带同名程序集时绝不顶替，解析到的程序集同时获得原生探测，使它自己的 `onnxruntime.dll` 一类原生库也能加载；请求方位于游戏目录或 .NET 运行时目录时不参与。原包与原 DLL 不修改。
+
 ## 配置与退出清理
 
 配置集中放在 `user://Gurio.SkinChanger/`（Windows 通常是 `%APPDATA%/SlayTheSpire2/Gurio.SkinChanger/`）。`skin_changer.json` 保存皮肤、优先级、预设、皮肤包和外观参数；`skin_changer_theme.json` 与 `skin_changer_theme_presets.json` 保存主题；`skin_changer_bundle_runs/` 保存继续游戏的外观记录；`skin_changer_bundle_run_restore.json` 是皮肤包恢复点；`github_skins.json` 是 GitHub 皮肤列表缓存，`github_installs.json` 记录“仓库 → 已装目录/版本”以及等待下次启动删除的旧目录。相邻 `.bak` 为备份。
