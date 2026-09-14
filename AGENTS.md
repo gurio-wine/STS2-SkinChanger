@@ -12,9 +12,10 @@
 ## 发现与修改
 
 - 优先使用 codebase-memory-mcp 的图查询；当前 Windows 索引名为 `STS2-SkinChanger`。索引时明确传入仓库绝对路径，不索引整个用户目录。
-- 索引时必须显式传 `name`：只给 `repo_path`（或 CLI 同理）会另建一个 `C-Users-...` 形式的重复项目，规范项目仍是 `STS2-SkinChanger`，误建的要删掉。索引是增量的，但过期索引会静默漏掉新文件——查不到刚提交的符号时先重建，不要断言它不存在。
+- 索引时必须显式传 `name`：只给 `repo_path`（或 CLI 同理）会另建一个 `C-Users-...` 形式的重复项目，规范项目仍是 `STS2-SkinChanger`，误建的要删掉。索引是增量的，但过期索引会静默漏掉新文件——查不到刚提交的符号时先重建，不要断言它不存在。`check_index_coverage` 只报告已知失败：某个文件根本没入图时它同样显示 `no_recorded_issue`，不能当作“已入图”的证据，只认符号查询结果。
 - `detect_changes` 的 `base_branch` 默认是 `main`，本仓库没有这个分支，会**静默返回 0 变更**（假阴性）；必须显式传 `master`。
 - MCP 未重新连接时，可用 `codebase-memory-mcp cli` 调用同一套工具。工具不可用、索引排除或解析不完整时再用 `rg`，不要运行 CodeGraph。
+- 仓库内的定位、调用链、影响面先走图查询（`search_graph` / `trace_path` / `detect_changes`），不要习惯性先 `rg`；改完代码用 `detect_changes(since=HEAD~1, base_branch=master)` 自查影响面。只有目标在索引之外（游戏 `sts2.dll`、框架、第三方 Mod 包等二进制）时才用 `rg` 或反编译。
 - 在 `DSH-V41F` 分支上修改，不切回 master、不改动 master；不创建额外隔离工作区，尽量不派子智能体。
 - 排查中已确认原因的错误直接修复并验证，不再单独停下来询问是否修复；涉及新的设计取舍、额外权限或无法确认原因时再说明。
 - 改完后提交。**未上传时只提升第四位**（如 1.0.7.0 → 1.0.7.1），一次会话内多次提交也依次只加第四位；第三位只在实际上传工坊时提升，并与三段公开版本一起更新。四段内测标记需同步 csproj、Entry、SkinChanger.json 和 workshop/workshop.json。
