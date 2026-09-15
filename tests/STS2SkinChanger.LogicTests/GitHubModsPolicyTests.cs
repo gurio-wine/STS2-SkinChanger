@@ -40,12 +40,6 @@ internal static class GitHubModsPolicyTests
         Require(GitHubModsPolicy.DisabledManifestName("Skin") == "Skin.json.disabled" &&
             !GitHubModsPolicy.IsManifestName(GitHubModsPolicy.DisabledManifestName("Skin")),
             "停用后的清单名必须让游戏认不出来，否则旧目录下次启动会和新目录一起被加载。");
-        Require(GitHubModsPolicy.IsDisabledManifestName("Skin.json.disabled", "Skin") &&
-            GitHubModsPolicy.IsDisabledManifestName("skin.JSON.DISABLED", "Skin") &&
-            !GitHubModsPolicy.IsDisabledManifestName("Skin.json.disabled", "Other") &&
-            !GitHubModsPolicy.IsDisabledManifestName("Skin.json.disabled", "") &&
-            !GitHubModsPolicy.IsDisabledManifestName(null, "Skin"),
-            "之前被本 Mod 停用过的目录要能认回来（台账丢失后重新安装不能把它当成玩家的目录）。");
 
         // The folder a new package goes into while the game holds the old one open: the canonical
         // name plus a token from the package digest.

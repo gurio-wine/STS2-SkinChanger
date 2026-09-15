@@ -6514,22 +6514,6 @@ internal static partial class SkinService
                 pair => pair.Value,
                 StringComparer.OrdinalIgnoreCase);
 
-    private static void ReplaceCardSelections(IReadOnlyDictionary<string, string> selections)
-    {
-        foreach (var key in Config.Selections.Keys
-                     .Where(key => key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
-                     .ToArray())
-        {
-            Config.Selections.Remove(key);
-        }
-
-        foreach (var pair in selections.Where(pair =>
-                     pair.Key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase)))
-        {
-            Config.Selections[pair.Key] = pair.Value;
-        }
-    }
-
     private static void ReplaceCardSelectionsForGroup(
         string groupId,
         IReadOnlyDictionary<string, string> selections)

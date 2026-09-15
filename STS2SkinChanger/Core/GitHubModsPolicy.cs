@@ -1,9 +1,8 @@
 namespace STS2SkinChanger.Core;
 
 // The rules for the game's mods folder, as names and booleans: what a folder inside it may be called,
-// which file names the loader reads as a manifest, which folder a new package goes into when the old
-// one is in use, and which folder may be deleted again. GitHubFolderSwap is the half that touches the
-// disk.
+// which file names the loader reads as a manifest, and which folder may be deleted again. Which folder
+// a new package goes into is decided in GitHubFolderSwap.Place, the half that touches the disk.
 //
 // Everything here follows the game's own loader (ModManager): a directory counts as a mod only when it
 // holds a file whose name ends in ".json" (ReadModsInDirRecursive), the DLL and the PCK are then taken
@@ -21,8 +20,11 @@ internal static class GitHubModsPolicy
     public static bool IsModsFolderName(string? name) => name is { Length: > 0 and <= 64 } &&
         name is not "." and not ".." && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
-    // The names this mod itself writes while swapping a folder in a version that queued the swap for
-    // after the game had exited. They may be deleted, and nothing a player created by hand.
+    // The temporary names a folder swap can leave behind, from two different sources: ".previous" is
+    // what this mod writes today (GitHubFolderSwap.Replace), while ".installing" was only ever written
+    // by the older releases that staged an install beside the folder - the branch stays so those
+    // leftovers can still be recognised and deleted. They may be deleted, and nothing a player made by
+    // hand.
     public static bool IsLeftoverFolderName(string? name) => name is { Length: > 2 } && name[0] == '.' &&
         (name.EndsWith(".installing", StringComparison.OrdinalIgnoreCase) ||
          name.EndsWith(".previous", StringComparison.OrdinalIgnoreCase)) &&
@@ -30,16 +32,13 @@ internal static class GitHubModsPolicy
 
     // The loader's own rule, spelled out so this mod can be held to it: a file counts as a manifest
     // when its name ends in ".json" (ReadModsInDirRecursive compares ordinally, so the extension is
-    // case-sensitive there).
+    // case-sensitive there). Only test assertions call this; production goes through
+    // GitHubFolderSwap.HoldsManifest, and the two differ on purpose - that one compares without case
+    // and also demands a non-empty ManifestId, because it decides a deletion.
     public static bool IsManifestName(string? fileName) => fileName is { Length: > 5 } &&
         fileName.EndsWith(".json", StringComparison.Ordinal);
 
     public static string DisabledManifestName(string packageId) => packageId + ".json" + DisabledSuffix;
-
-    // A folder this mod disabled earlier stays this mod's folder after a re-install, even when the
-    // ledger that recorded it is gone.
-    public static bool IsDisabledManifestName(string? fileName, string packageId) => packageId.Length > 0 &&
-        string.Equals(fileName, DisabledManifestName(packageId), StringComparison.OrdinalIgnoreCase);
 
     // The short token a spare folder is named after. An unreadable digest yields no token at all:
     // half a hash would name a folder after a package nobody can identify again.
