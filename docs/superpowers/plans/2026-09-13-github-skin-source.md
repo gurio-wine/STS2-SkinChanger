@@ -1883,3 +1883,11 @@ Run: `git add -A; git commit -m "docs: document the GitHub skin source"`（含�
 - **Spec 覆盖**：来源筛选（Task 8）、搜索与排除本仓库/fork（Task 2）、`pushed_at`/tag 缓存与限额降级（Task 4、5、6）、出网与重定向白名单（Task 2、5）、包内清单元数据（Task 6）、opengraph 封面（Task 2、7）、安装前识别与未识别分支（Task 6、8）、安装与更新判定（Task 3、6）、UI 复用现有筛选/排序/行/封面（Task 8）、15 语言与两版本兼容（Task 8、9）、测试（Task 1-5 纯逻辑 + Task 6 实包 audit）均落到具体任务。
 - **与 spec 的两处偏差（已在计划中实现并需在 spec 里回填）**：① 列表首屏不阻塞在下载上——先出仓库列表，识别在后台逐项进行并实时刷新标签；② 单次刷新最多查询 30 个 Release、单资产上限 128 MB，超出的留在待识别状态，避免一次刷新打满未认证限额与带宽。
 - **命名一致性**：`SkinSourceIdentity.IsGitHub/IsSteam`、`GitHubSkinEntry.Id`、`GitHubSkinService.Items/Entry/InstallState/EntriesById`、`GitHubSortPolicy.OrderIds/Metric`、`GitHubSkinText.ForLanguage` 在各任务间保持一致。
+
+## 完成记录（2026-09-16 补记）
+
+九个 Task 已全部落地：`7bfcbbb`（1.0.8.5）到 `6777cc7`（1.0.8.13）逐个提交，首次公开于 `0fb9946`（1.0.9）。上面的复选框是执行期间的原文，按本仓库惯例不再回填。
+
+**识别方案已被取代**：Task 6 原本让面板下载 Release 包离线识别、把类型/目标标签缓存进目录。玩家在第 3 轮复验中否决了“刷新即下载”，`1d3950c`（1.0.9）改为只读仓库根的 `sc.info` 信息码；此后第 4–10 轮复验又相继改掉了未识别分栏、卡片命名、按钮路由、安装台账落盘与更新判据。**最终设计以 `docs/superpowers/specs/2026-09-13-github-skin-source-design.md` 为准**，本文只作为最初的实施计划留档：文中“刷新最多查询 30 个 Release”“按 tag 判更新”“未安装包含未识别”“暂存后按清单 ID 装进 `mods/`”等描述均已失效；规格文末“不再随包发布退出助手：目录操作改为无锁完成”一节还整体取代了它自己上文关于退出助手、`github-pending` 暂存与退出计划的那几条。
+
+**自检结论中的两处偏差同样已被取代**：① 首屏不阻塞下载仍然成立（列表先出、识别后台逐项）；② “单次刷新最多查询 30 个 Release、单资产上限 128 MB”现在只剩资产上限有效——刷新不再查询 Release，改为每个已安装仓库各查一次、上限 10 个/轮（`GitHubSkinService.MaxReleaseChecksPerRefresh`），识别也不再下载任何包。

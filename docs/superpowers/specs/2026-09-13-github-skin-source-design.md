@@ -1,6 +1,8 @@
 # 创意工坊新增 GitHub 来源
 
-已由用户在会话中确认：在现有皮肤创意工坊面板增加“来源”筛选，Steam 为默认，新增 GitHub；GitHub 列表来自 `https://github.com/topics/sts2-sc-mod`；排除本 Mod 仓库 `gurio-wine/STS2-SkinChanger`。作者不需要做任何事：不上传 sc.info、不填表、不改仓库结构。原先准备的 `docs/sc.info` 模板作废并删除。
+已由用户在会话中确认：在现有皮肤创意工坊面板增加“来源”筛选，Steam 为默认，新增 GitHub；GitHub 列表来自 `https://github.com/topics/sts2-sc-mod`；排除本 Mod 仓库 `gurio-wine/STS2-SkinChanger`。原先准备的 `docs/sc.info` 模板作废并删除。
+
+> 以下是首版设计（2026-09-13 当天）。当天的第 3 轮复验就推翻了它的两个前提——“作者不需要做任何事”变成作者必须在仓库根放一个 `sc.info`（见“改成 sc.info 信息码”），识别也从“刷新即下载”改成只在点“扫描”/“安装”时下载。仍成立的部分（合成 ID、来源分派、出网白名单、封面、15 语言）不在此重复；现行行为以本文各节与文末结论为准，实现细节见 README 的“功能”一节。
 
 - 列表来自 GitHub 搜索接口 `GET /search/repositories?q=topic:sts2-sc-mod`，排除本仓库与 fork；身份用 `owner/repo`，显示名优先取包内清单，其次 Release 标题，最后仓库名。
 - 单一身份键空间保持不变：条目的 `Id` 仍是 `ulong`。GitHub 条目使用合成 ID `SHA-256("owner/repo")` 取低 62 位后置最高位，确定性、无需分配表；真实工坊 ID 远小于该范围，不会碰撞。`Id → 来源` 由来源注册表解析，仓库名从 GitHub 缓存反查。
