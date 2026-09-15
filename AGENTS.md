@@ -16,7 +16,7 @@
 - `detect_changes` 的 `base_branch` 默认是 `main`，本仓库没有这个分支，会**静默返回 0 变更**（假阴性）；必须显式传 `master`。
 - MCP 未重新连接时，可用 `codebase-memory-mcp cli` 调用同一套工具。工具不可用、索引排除或解析不完整时再用 `rg`，不要运行 CodeGraph。
 - 仓库内的定位、调用链、影响面先走图查询（`search_graph` / `trace_path` / `detect_changes`），不要习惯性先 `rg`；改完代码用 `detect_changes(since=HEAD~1, base_branch=master)` 自查影响面。只有目标在索引之外（游戏 `sts2.dll`、框架、第三方 Mod 包等二进制）时才用 `rg` 或反编译。
-- 在开发分支上修改——只要当前分支不在 master 即可，分支名不限定；不切回 master、不改动 master；不创建额外隔离工作区，尽量不派子智能体。
+- 在开发分支上修改——只要当前分支不在 master 即可，分支名不限定；不切回 master、不改动 master；不创建额外隔离工作区。可以派子智能体；有可并行且互不依赖的任务时优先派，路由按以下优先级选：模型优先 `deepseek-v4.1-flash` > `deepseek-v4-pro` > `glm-5.3-flash`，供应商优先 `buddy` > `codearts` > `workbuddy`；模型优先级高于供应商优先级（如 buddy 没有 deepseek-v4.1-flash 时先看 codearts 是否有），思考程度选可选的最高档。
 - 排查中已确认原因的错误直接修复并验证，不再单独停下来询问是否修复；涉及新的设计取舍、额外权限或无法确认原因时再说明。
 - 改完后提交。**未上传时只提升第四位**（如 1.0.7.0 → 1.0.7.1），一次会话内多次提交也依次只加第四位；第三位只在实际上传工坊时提升，并与三段公开版本一起更新。四段内测标记需同步 csproj、Entry、SkinChanger.json 和 workshop/workshop.json。
 - 不控制游戏做实机测试，由用户检查画面。构建和离线测试成功不能代表游戏表现已修复。
