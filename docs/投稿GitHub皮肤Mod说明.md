@@ -1,6 +1,6 @@
 # 把你的皮肤发到 GitHub（作者说明）
 
-English version: [publish-github-skin-mod.md](publish-github-skin-mod.md)
+其他语言：[English](publish-github-skin-mod.md) · [繁體中文](publish-github-skin-mod.zh-Hant.md) · [日本語](publish-github-skin-mod.ja.md) · [한국어](publish-github-skin-mod.ko.md) · [Русский](publish-github-skin-mod.ru.md) · [Deutsch](publish-github-skin-mod.de.md) · [Français](publish-github-skin-mod.fr.md) · [Italiano](publish-github-skin-mod.it.md) · [Polski](publish-github-skin-mod.pl.md) · [Português (Brasil)](publish-github-skin-mod.pt-BR.md) · [ไทย](publish-github-skin-mod.th.md) · [Türkçe](publish-github-skin-mod.tr.md) · [Español (España)](publish-github-skin-mod.es.md) · [Español (LatAm)](publish-github-skin-mod.es-419.md)
 
 玩家装了「皮肤切换器」后，会在游戏里的 **皮肤创意工坊 → 来源：GitHub** 里看到你的仓库，点一下就能安装。
 你要做的只有三件事：加一个标签、发一个 zip、贴一段码。

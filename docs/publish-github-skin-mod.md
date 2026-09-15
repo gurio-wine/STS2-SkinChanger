@@ -1,6 +1,6 @@
 # Publish your skin mod on GitHub (author guide)
 
-中文版：[投稿GitHub皮肤Mod说明.md](投稿GitHub皮肤Mod说明.md)
+Translations: [简体中文](投稿GitHub皮肤Mod说明.md) · [繁體中文](publish-github-skin-mod.zh-Hant.md) · [日本語](publish-github-skin-mod.ja.md) · [한국어](publish-github-skin-mod.ko.md) · [Русский](publish-github-skin-mod.ru.md) · [Deutsch](publish-github-skin-mod.de.md) · [Français](publish-github-skin-mod.fr.md) · [Italiano](publish-github-skin-mod.it.md) · [Polski](publish-github-skin-mod.pl.md) · [Português (Brasil)](publish-github-skin-mod.pt-BR.md) · [ไทย](publish-github-skin-mod.th.md) · [Türkçe](publish-github-skin-mod.tr.md) · [Español (España)](publish-github-skin-mod.es.md) · [Español (LatAm)](publish-github-skin-mod.es-419.md)
 
 With Skin Changer installed, players see your repository in game under **Skin Workshop → Source: GitHub** and can install it with one click.
 There are only three things to do: add one topic, publish one zip, paste one code.
