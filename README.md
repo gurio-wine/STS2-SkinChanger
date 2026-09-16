@@ -113,7 +113,7 @@
 
 需要 **.NET 9 SDK**（只有运行时不能编译）。`global.json` 将工具链限定为稳定版 .NET 9；当前开发主环境为 Windows 原生 PowerShell。
 
-构建产物就是主 DLL、清单、兼容层与 README 四件，没有额外的可执行文件；部署/上传按这四个文件核对哈希。验证存储与皮肤目录流程：`dotnet run --project tests/STS2SkinChanger.RuntimeTests -c Release -- --test-storage`（真实临时文件迁移、备份冲突、对局记录、活跃会话隔离、晚到写入、退出时序，以及被占用的缓存文件留给下次启动清理）与 `-- --test-github-swap`（合成 `mods` 目录上的安装/更新/卸载：写入备用目录、真实占用文件时停用旧清单、按游戏加载器的规则断言旧目录不再可见、重启后删除并守住删除红线）；不启动游戏。
+构建产物就是主 DLL、清单与兼容层三件，没有额外的可执行文件；部署/上传按这三个文件核对哈希。验证存储与皮肤目录流程：`dotnet run --project tests/STS2SkinChanger.RuntimeTests -c Release -- --test-storage`（真实临时文件迁移、备份冲突、对局记录、活跃会话隔离、晚到写入、退出时序，以及被占用的缓存文件留给下次启动清理）与 `-- --test-github-swap`（合成 `mods` 目录上的安装/更新/卸载：写入备用目录、真实占用文件时停用旧清单、按游戏加载器的规则断言旧目录不再可见、重启后删除并守住删除红线）；不启动游戏。
 
 从 WSL 迁移现有仓库时，建议执行 `git config --local core.longpaths true`。Codex 的历史检查点引用可能具有很长的路径；开启后 Windows Git 才能完整读取这些引用，无需删除历史检查点。
 
