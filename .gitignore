@@ -26,5 +26,6 @@
 /compat/ThunninoiSkinManagerCompat/obj/
 /.tmp-boundary-audit/
 /workshop/content/
+/.dsh-email-downloads/
 *.user
 *.suo
