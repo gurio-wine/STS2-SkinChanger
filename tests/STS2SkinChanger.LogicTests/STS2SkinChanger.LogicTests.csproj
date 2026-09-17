@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Compile Include="../../STS2SkinChanger/Core/WorkshopPagePool.cs" Link="WorkshopPagePool.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GamePackLocator.cs" Link="GamePackLocator.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GodotScriptPathRegistrationPolicy.cs"
              Link="GodotScriptPathRegistrationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/SkinSourceIdentity.cs" Link="SkinSourceIdentity.cs" />

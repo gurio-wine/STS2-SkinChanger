@@ -1587,7 +1587,8 @@ static void RunGamePackLocatorSelfTest()
         var windowsPack = Path.Combine(windowsDirectory, "SlayTheSpire2.pck");
         File.WriteAllBytes(windowsPack, []);
         var windowsResult = GamePackLocator.Resolve(
-            Path.Combine(windowsDirectory, "SlayTheSpire2.exe"));
+            Path.Combine(windowsDirectory, "SlayTheSpire2.exe"),
+            []);
         if (!windowsResult.Equals(windowsPack, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"Windows pack resolution failed: {windowsResult}");
@@ -1601,7 +1602,8 @@ static void RunGamePackLocatorSelfTest()
         var macPack = Path.Combine(macResourcesDirectory, "SlayTheSpire2.pck");
         File.WriteAllBytes(macPack, []);
         var macResult = GamePackLocator.Resolve(
-            Path.Combine(macExecutableDirectory, "SlayTheSpire2"));
+            Path.Combine(macExecutableDirectory, "SlayTheSpire2"),
+            []);
         if (!macResult.Equals(macPack, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"macOS bundle pack resolution failed: {macResult}");
@@ -1611,7 +1613,8 @@ static void RunGamePackLocatorSelfTest()
         var alternateMacPack = Path.Combine(macResourcesDirectory, "Slay the Spire 2.pck");
         File.WriteAllBytes(alternateMacPack, []);
         var alternateMacResult = GamePackLocator.Resolve(
-            Path.Combine(macExecutableDirectory, "Slay the Spire 2"));
+            Path.Combine(macExecutableDirectory, "Slay the Spire 2"),
+            []);
         if (!alternateMacResult.Equals(alternateMacPack, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(

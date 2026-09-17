@@ -1072,7 +1072,10 @@ internal static partial class SkinService
                 var cleaned = SkinChangerPaths.Storage.CleanCaches();
                 if (cleaned.RemovedFiles > 0) ModLog.Info($"已清理 {cleaned.RemovedFiles} 个过期皮肤缓存文件。");
                 foreach (var error in cleaned.Errors) ModLog.Warn("部分旧缓存清理失败：" + error);
-                var gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
+                var gamePckPath = GamePackLocator.Resolve(
+                    OS.GetExecutablePath(),
+                    GameCommandLine.Arguments(),
+                    message => ModLog.Warn("定位游戏主资源包：" + message));
                 ModLog.Info($"已定位游戏主资源包：{gamePckPath}");
                 var loadedMods = ManagedSkinModLoader.GetCatalogMods()
                     .Where(mod => mod.manifest is { id: not null })

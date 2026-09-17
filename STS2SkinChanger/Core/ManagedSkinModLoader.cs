@@ -642,7 +642,10 @@ internal static class ManagedSkinModLoader
         string? gamePckPath = null;
         try
         {
-            gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
+            gamePckPath = GamePackLocator.Resolve(
+                OS.GetExecutablePath(),
+                GameCommandLine.Arguments(),
+                message => ModLog.Warn("定位游戏主资源包：" + message));
         }
         catch (Exception exception)
         {
