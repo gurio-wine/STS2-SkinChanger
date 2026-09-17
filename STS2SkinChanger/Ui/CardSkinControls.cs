@@ -2231,7 +2231,9 @@ internal static class CardInspectSkinControls
         // part of the individual-card selector. Do it only when the player actually opens the
         // dropdown, not whenever the enlarged card screen refreshes.
         SkinService.InitializeCardGroupsAfterModels();
-        var options = SkinService.GetCardOptions(card);
+        // Follow the manual order saved on the skin priority screen instead of the catalogue's
+        // name order; the inherit/original rows stay above these either way.
+        var options = SkinService.GetCardOptionsInPriorityOrder(card);
         var selected = SkinService.GetCardOverrideSelection(card);
 
         selector.SetMeta(UpdatingMeta, true);

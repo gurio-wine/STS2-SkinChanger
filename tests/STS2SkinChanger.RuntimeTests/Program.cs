@@ -307,6 +307,12 @@ if (args.Length == 1 && args[0] == "--test-ancient-card-priorities")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-card-option-order")
+{
+    CardOptionOrderTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-bundle-sources")
 {
     CharacterSkinBundleSourceTests.Run();
@@ -479,6 +485,7 @@ CreatureVisualLifecycleTests.Run();
 BundlePresetTests.Run();
 BundleContentModeTests.Run();
 CardPresetMigrationTests.Run();
+CardOptionOrderTests.Run();
 AncientCardPriorityTests.Run();
 CharacterSkinBundleContractTests.Run();
 CharacterSkinBundleSourceTests.Run();

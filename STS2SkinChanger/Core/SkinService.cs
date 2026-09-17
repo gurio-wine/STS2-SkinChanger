@@ -2794,6 +2794,45 @@ internal static partial class SkinService
         }
     }
 
+    /// <summary>
+    /// Same members as <see cref="GetCardOptions"/>, but in the manual order saved by the skin
+    /// priority screen. The individual-card dropdown must follow that order instead of the
+    /// catalogue's name order; options outside the saved priority list keep a stable tail.
+    /// </summary>
+    public static IReadOnlyList<CardSkinOption> GetCardOptionsInPriorityOrder(CardModel card)
+    {
+        lock (Sync)
+        {
+            var lookup = GetCardLookup(card);
+            if (lookup.Group == null)
+            {
+                return lookup.Options;
+            }
+
+            // Deliberately the single group that already supplies the options, never the Ancient
+            // fallback groups: their order belongs to a different priority list.
+            var ordered = new List<CardSkinOption>(lookup.Options.Count);
+            foreach (var entry in GetCardPriorityEntriesInternal(lookup.Group))
+            {
+                if (lookup.OptionsById.TryGetValue(entry.OptionId, out var option))
+                {
+                    ordered.Add(option.Option);
+                }
+            }
+
+            foreach (var option in lookup.Options)
+            {
+                if (ordered.All(candidate =>
+                        !candidate.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    ordered.Add(option);
+                }
+            }
+
+            return ordered;
+        }
+    }
+
     public static string? GetCardOptionName(string optionId)
     {
         lock (Sync)
