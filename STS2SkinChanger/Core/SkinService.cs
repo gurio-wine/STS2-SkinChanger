@@ -2795,42 +2795,85 @@ internal static partial class SkinService
     }
 
     /// <summary>
-    /// Same members as <see cref="GetCardOptions"/>, but in the manual order saved by the skin
-    /// priority screen. The individual-card dropdown must follow that order instead of the
-    /// catalogue's name order; options outside the saved priority list keep a stable tail.
+    /// The saved priority rows of the card group that supplies a card's skins, plus the same
+    /// options in that saved order. Callers use them to render the list the priority screen shows,
+    /// including which skins are ticked.
     /// </summary>
-    public static IReadOnlyList<CardSkinOption> GetCardOptionsInPriorityOrder(CardModel card)
+    public static (IReadOnlyList<CardSkinOption> Options, IReadOnlyList<SkinPriorityState> States) GetCardOptionsForDisplay(
+        CardModel card)
     {
         lock (Sync)
         {
             var lookup = GetCardLookup(card);
-            if (lookup.Group == null)
-            {
-                return lookup.Options;
-            }
-
             // Deliberately the single group that already supplies the options, never the Ancient
             // fallback groups: their order belongs to a different priority list.
-            var ordered = new List<CardSkinOption>(lookup.Options.Count);
-            foreach (var entry in GetCardPriorityEntriesInternal(lookup.Group))
+            if (lookup.Group == null)
             {
-                if (lookup.OptionsById.TryGetValue(entry.OptionId, out var option))
-                {
-                    ordered.Add(option.Option);
-                }
+                return (lookup.Options, []);
             }
 
-            foreach (var option in lookup.Options)
-            {
-                if (ordered.All(candidate =>
-                        !candidate.Id.Equals(option.Id, StringComparison.OrdinalIgnoreCase)))
-                {
-                    ordered.Add(option);
-                }
-            }
-
-            return ordered;
+            var states = GetCardPriorityStatesInternal(lookup.Group);
+            return (SkinPriorityDisplayPolicy.Project(lookup.Options, option => option.Id, states), states);
         }
+    }
+
+    private static IReadOnlyList<SkinPriorityState> GetCardPriorityStatesInternal(CardSkinGroup group) =>
+        SkinPriorityDisplayPolicy.States(
+            GetCardPriorityEntriesInternal(group),
+            entry => entry.OptionId,
+            entry => entry.Enabled);
+
+    /// <summary>
+    /// The saved priority rows that govern a character, monster or event appearance group, or null
+    /// when the group has no skin-priority screen at all. Characters, companions, Ancients and
+    /// merchants are chosen directly and were never part of a manual order; only bestiary regions
+    /// and event regions have one, so those lists must keep the catalogue order they are given.
+    /// </summary>
+    public static IReadOnlyList<SkinPriorityState>? GetVisualPriorityStates(string groupId)
+    {
+        lock (Sync)
+        {
+            var categoryId = Config.MonsterSkinCategoryGroups
+                .FirstOrDefault(pair => pair.Value.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                .Key;
+            if (!string.IsNullOrWhiteSpace(categoryId))
+            {
+                return SkinPriorityDisplayPolicy.States(
+                    GetMonsterPriorityEntriesInternal(categoryId),
+                    entry => entry.OptionId,
+                    entry => entry.Enabled);
+            }
+
+            var region = Config.EventSkinPriorities.RegionGroups
+                .FirstOrDefault(pair => pair.Value.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                .Key;
+            return string.IsNullOrWhiteSpace(region)
+                ? null
+                : SkinPriorityDisplayPolicy.States(
+                    GetEventPriorityEntries(region),
+                    entry => entry.OptionId,
+                    entry => entry.Enabled);
+        }
+    }
+
+    /// <summary>
+    /// A player-facing list of one group's skins, ready to draw: the same members in the order the
+    /// group's skin-priority screen saved, together with the priority state each row carries, so a
+    /// list cannot order itself by one snapshot and dim itself by another. A group without a
+    /// priority screen keeps the order it was given and reports no states.
+    /// </summary>
+    public static (IReadOnlyList<SkinOption> Options, IReadOnlyList<SkinPriorityState>? States) GetSkinListForDisplay(
+        string groupId,
+        IReadOnlyList<SkinOption> options)
+    {
+        var states = GetVisualPriorityStates(groupId);
+        return (states == null
+            ? options
+            : SkinPriorityDisplayPolicy.Project(options, option => option.Id, states), states);
     }
 
     public static string? GetCardOptionName(string optionId)

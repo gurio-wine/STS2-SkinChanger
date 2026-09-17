@@ -723,7 +723,11 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         var options = SkinService.Catalog?.IsCharacterAppearanceGroup(_group.Id) == true
             ? SkinService.GetCharacterSkinOptions(_group.Id)
             : _group.Options;
-        foreach (var option in options)
+        // Bestiary categories have their own skin-priority screen; characters are chosen directly
+        // and have none, so their list keeps the catalogue order and stays fully opaque.
+        var (displayOptions, priority) = SkinService.GetSkinListForDisplay(_group.Id, options);
+        SkinChoiceDimming.Bind(_skinDropdown, priority);
+        foreach (var option in displayOptions)
         {
             var index = _skinDropdown.ItemCount;
             _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
@@ -731,6 +735,10 @@ internal partial class CharacterAppearanceScreen : NSubmenu
         }
 
         SkinWorkshopEntry.Append(_skinDropdown);
+        // The dimming bound above must actually reach the screen: a native PopupMenu cannot tint
+        // single rows, so the popup draws through the shared colored list. Creating it here also
+        // lets the random-exclusion binding below attach to the same list.
+        PresetChoiceColoring.Attach(_skinDropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
         if (_skinDropdown.GetPopup().GetNodeOrNull<ItemList>("SCColoredChoices") is { } choices)
             CharacterSkinRandomExclusionUi.Attach(_skinDropdown, choices, () =>
                 _group != null && SkinService.Catalog?.IsCharacterAppearanceGroup(_group.Id) == true

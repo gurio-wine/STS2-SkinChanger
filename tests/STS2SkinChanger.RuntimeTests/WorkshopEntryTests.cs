@@ -47,6 +47,33 @@ internal static class WorkshopEntryTests
             Require(Calls(AccessTools.Method(assembly.GetType("STS2SkinChanger.Ui." + type, true), method), "RefreshSelectionColor"),
                 $"{type} 收起时的当前选择也要及时显示强调色。");
 
+        // Every player-facing skin list must take its order and its dimming from the one shared
+        // priority projection; a list that re-adds options itself would silently drift from it.
+        // The bundle editor is excluded on purpose: it only ever edits character groups, which
+        // have no priority screen, so it must keep the catalogue order untouched.
+        foreach (var (type, method) in new[] {
+            ("AncientCompendiumScreen", "PopulateSkinDropdown"),
+            ("CharacterAppearanceScreen", "PopulateSkinDropdown"),
+            ("CardInspectSkinControls", "PopulateOptions"),
+            ("ContextualSkinControls", "Populate") })
+            Require(Calls(AccessTools.Method(assembly.GetType("STS2SkinChanger.Ui." + type, true), method), "Bind"),
+                $"{type}.{method} 必须复用统一的皮肤优先级投影，不能各自重排或各自判定淡化。");
+        var dimming = assembly.GetType("STS2SkinChanger.Ui.SkinChoiceDimming", true)!;
+        Require(Calls(AccessTools.Method(dimming, "Row"), "IsUnchecked"),
+            "淡化的行必须查同一份优先级状态，不能凭名字或序号猜测。");
+        Require(!Calls(AccessTools.Method(dimming, "Row"), "IsAccented") &&
+            !Calls(AccessTools.Method(dimming, "Row"), "ChoiceColor"),
+            "淡化只叠加透明度，不能替换掉原有的强调色或随机排除判断。");
+        // Bind only records the state; the colored popup list is what actually paints it. A native
+        // PopupMenu cannot tint single rows. The contextual character selector paints through its
+        // own bundle popup list, so it is exempt here.
+        foreach (var (type, method) in new[] {
+            ("AncientCompendiumScreen", "PopulateSkinDropdown"),
+            ("CharacterAppearanceScreen", "PopulateSkinDropdown"),
+            ("CardInspectSkinControls", "PopulateOptions") })
+            Require(Calls(AccessTools.Method(assembly.GetType("STS2SkinChanger.Ui." + type, true), method), "Attach"),
+                $"{type}.{method} 的淡化必须经由共享的彩色选项列表渲染，纯文本弹出画不出逐行透明度。");
+
         var panel = assembly.GetType("STS2SkinChanger.Ui.SkinWorkshopPanel", true)!;
         Require(AccessTools.DeclaredMethod(panel, "Show").GetParameters().Any(p => p.Name == "region"),
             "地区优先级入口必须传递地区筛选，不能将地区 ID 当作怪物/事件 ID。");

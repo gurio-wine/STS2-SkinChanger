@@ -2040,6 +2040,7 @@ GitHubSkinClientTests.Run();
 GitHubSourceRoutingTests.Run();
 GitHubSkinTextTests.Run();
 WorkshopOptionSelectionPolicyTests.Run();
+SkinPriorityDisplayPolicyTests.Run();
 WorkshopPagePoolTests.Run();
 GodotScriptPathRegistrationPolicyTests.Run();
 ModPrivateDependencyPolicyTests.Run();

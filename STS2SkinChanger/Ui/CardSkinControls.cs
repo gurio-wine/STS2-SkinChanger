@@ -2232,12 +2232,14 @@ internal static class CardInspectSkinControls
         // dropdown, not whenever the enlarged card screen refreshes.
         SkinService.InitializeCardGroupsAfterModels();
         // Follow the manual order saved on the skin priority screen instead of the catalogue's
-        // name order; the inherit/original rows stay above these either way.
-        var options = SkinService.GetCardOptionsInPriorityOrder(card);
+        // name order; the inherit/original rows stay above these either way. The same snapshot
+        // says which of the skins the category switched off, so they can be dimmed below.
+        var (options, priority) = SkinService.GetCardOptionsForDisplay(card);
         var selected = SkinService.GetCardOverrideSelection(card);
 
         selector.SetMeta(UpdatingMeta, true);
         dropdown.Clear();
+        SkinChoiceDimming.Bind(dropdown, priority);
         dropdown.AddItem(CardSkinControls.InheritedSelectionText(card));
         dropdown.SetItemMetadata(0, SkinService.InheritCardSelectionId);
         dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
@@ -2254,6 +2256,10 @@ internal static class CardInspectSkinControls
                 .Equals(selected, StringComparison.OrdinalIgnoreCase));
         dropdown.Select(selectedIndex);
         SkinWorkshopEntry.Append(dropdown);
+        // The dimming bound above must actually reach the screen: a native PopupMenu cannot tint
+        // single rows, so the popup draws through the shared colored list. The collapsed button
+        // keeps its own SkinWorkshopEntry coloring, hence colorSelection: false.
+        PresetChoiceColoring.Attach(dropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
         selector.SetMeta(OptionsCardMeta, cardId);
         selector.SetMeta(UpdatingMeta, false);
     }

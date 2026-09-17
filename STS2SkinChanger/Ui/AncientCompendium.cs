@@ -1876,7 +1876,11 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var baseIndex = _skinDropdown.ItemCount;
         _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         _skinDropdown.SetItemMetadata(baseIndex, SkinCatalog.BaseOptionId);
-        foreach (var option in group.Options)
+        // Event regions have their own skin-priority screen; every other group here (Ancients,
+        // merchants, companions) is chosen directly and keeps the catalogue order.
+        var (options, priority) = SkinService.GetSkinListForDisplay(group.Id, group.Options);
+        SkinChoiceDimming.Bind(_skinDropdown, priority);
+        foreach (var option in options)
         {
             var index = _skinDropdown.ItemCount;
             _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
@@ -1884,6 +1888,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         SkinWorkshopEntry.Append(_skinDropdown);
+        // The dimming bound above must actually reach the screen: a native PopupMenu cannot tint
+        // single rows, so the popup draws through the shared colored list.
+        PresetChoiceColoring.Attach(_skinDropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
         var current = eventCategory ? SkinService.GetEventOverrideSelection(group.Id) : SkinService.Config.GetSelection(group.Id);
         var selectedIndex = Enumerable.Range(0, _skinDropdown.ItemCount)
             .FirstOrDefault(index => _skinDropdown.GetItemMetadata(index).AsString()

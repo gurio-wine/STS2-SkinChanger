@@ -58,16 +58,27 @@ internal static class CardOptionOrderTests
             Require(Ids(GetCardOptions(ordinary)).SequenceEqual(["skin:1", "skin:2", "skin:3", "skin:4"]),
                 "分类选项本身仍按名字序提供，本用例必须能区分两种顺序。");
             var ordered = Ids(GetCardOptionsInPriorityOrder(ordinary));
-            Require(ordered.SequenceEqual(["skin:4", "skin:1", "skin:3", "skin:2"]),
-                "单卡下拉必须跟随皮肤优先级界面的手动排序，当前为：" + string.Join(",", ordered) + "。");
+            Require(ordered.SequenceEqual(["skin:4", "skin:1", "skin:2", "skin:3"]),
+                "单卡下拉必须跟随皮肤优先级界面的手动排序：已勾选的按手动顺序在前，未勾选的退到其后，当前为：" +
+                string.Join(",", ordered) + "。");
             Require(ordered.Order(StringComparer.OrdinalIgnoreCase)
                     .SequenceEqual(Ids(GetCardOptions(ordinary)).Order(StringComparer.OrdinalIgnoreCase)),
                 "跟随优先级只能改顺序，不能增删下拉里的皮肤条目。");
             Require(ordered.Contains("skin:3"),
-                "被皮肤优先级界面关闭的皮肤仍须出现在单卡下拉里，本次只修顺序。");
+                "被皮肤优先级界面关闭的皮肤仍须出现在单卡下拉里，只降透明度、不删除。");
+            Require(ordered.ToList().IndexOf("skin:3") > ordered.ToList().IndexOf("skin:2"),
+                "未勾选的皮肤必须排在所有已勾选的皮肤之后。");
+            // The dimming must read the same snapshot the order came from: the states follow the
+            // saved rows (4, 1, 3, 2), so the row the priority screen switched off reports false.
+            var states = PriorityStates(ordinary);
+            Require(states.Select(entry => entry.OptionId).SequenceEqual(["skin:4", "skin:1", "skin:3", "skin:2"]) &&
+                states.Select(entry => entry.Enabled).SequenceEqual([true, true, false, true]),
+                "下拉的淡化状态必须与排序取自同一份优先级快照。");
 
-            // A skin that the priority screen has never recorded must not displace the recorded
-            // ones; it appends behind them instead of falling back to the name order.
+            // A skin the priority screen has never seen is appended by the priority model itself,
+            // and it is appended ticked whenever the category enables anything. It therefore joins
+            // the ticked half at its stored position instead of being pushed to the very end; only
+            // skins recorded as switched off fall below the ticked ones.
             Options(Groups(catalog).Cast<object>().First(group => Id(group) == "defect"))
                 .Add(Option("skin:5", "StrikeDefect", "BiasedCognition"));
             Configure("""
@@ -75,9 +86,12 @@ internal static class CardOptionOrderTests
                 {"OptionId":"skin:4","Enabled":true},{"OptionId":"skin:1","Enabled":true},
                 {"OptionId":"skin:3","Enabled":false},{"OptionId":"skin:2","Enabled":true}]}}
                 """);
-            Require(Ids(GetCardOptionsInPriorityOrder(ordinary))
-                    .SequenceEqual(["skin:4", "skin:1", "skin:3", "skin:2", "skin:5"]),
-                "未记录进优先级的新皮肤必须追加在尾部，不能插进已有顺序。");
+            var extended = Ids(GetCardOptionsInPriorityOrder(ordinary));
+            Require(extended.SequenceEqual(["skin:4", "skin:1", "skin:2", "skin:5", "skin:3"]),
+                "新皮肤被优先级模型追加为已勾选，必须落在已勾选一半的末尾，未勾选的仍在最后，当前为：" +
+                string.Join(",", extended) + "。");
+            Require(extended.ToList().IndexOf("skin:5") < extended.ToList().IndexOf("skin:3"),
+                "新皮肤不能插进未勾选一半里。");
 
             // Ancient cards resolve their options from a single category. That category alone
             // decides the order; the other priority list must never be merged into it.
@@ -96,7 +110,7 @@ internal static class CardOptionOrderTests
                     .SequenceEqual(Ids(GetCardOptions(ancient)).Order(StringComparer.OrdinalIgnoreCase)),
                 "先古牌同样只能改顺序，集合必须与分类选项一致。");
 
-            Console.WriteLine("Card option order passed: priority order, stable tail and single-category Ancient order.");
+            Console.WriteLine("Card option order passed: ticked skins first in manual order, unticked below, single-category Ancient order.");
         }
         finally
         {
@@ -109,8 +123,21 @@ internal static class CardOptionOrderTests
     private static object GetCardOptions(CardModel card) =>
         AccessTools.Method(Service, "GetCardOptions").Invoke(null, [card])!;
 
-    private static object GetCardOptionsInPriorityOrder(CardModel card) =>
-        AccessTools.Method(Service, "GetCardOptionsInPriorityOrder").Invoke(null, [card])!;
+    // The dropdown reads one snapshot: the saved order and the per-row ticked/unticked state.
+    private static object GetCardOptionsForDisplay(CardModel card) =>
+        AccessTools.Method(Service, "GetCardOptionsForDisplay").Invoke(null, [card])!;
+
+    private static object Snapshot(CardModel card, string field) =>
+        GetCardOptionsForDisplay(card).GetType().GetField(field)!.GetValue(GetCardOptionsForDisplay(card))!;
+
+    private static object GetCardOptionsInPriorityOrder(CardModel card) => Snapshot(card, "Item1");
+
+    private static (string OptionId, bool Enabled)[] PriorityStates(CardModel card) =>
+        ((IEnumerable)Snapshot(card, "Item2")).Cast<object>()
+            .Select(entry => (
+                (string)entry.GetType().GetProperty("OptionId")!.GetValue(entry)!,
+                (bool)entry.GetType().GetProperty("Enabled")!.GetValue(entry)!))
+            .ToArray();
 
     private static string[] Ids(object options) => ((IEnumerable)options).Cast<object>()
         .Select(option => (string)AccessTools.Property(option.GetType(), "Id").GetValue(option)!)

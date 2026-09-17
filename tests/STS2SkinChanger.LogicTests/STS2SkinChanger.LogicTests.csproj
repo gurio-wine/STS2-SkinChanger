@@ -150,6 +150,10 @@
              Link="ReloadingReferenceCache.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/WorkshopOptionSelectionPolicy.cs"
              Link="WorkshopOptionSelectionPolicy.cs" />
+    <!-- Every player-facing skin list is ordered and dimmed by this one projection, so it is
+         exercised here rather than through the game's UI. -->
+    <Compile Include="../../STS2SkinChanger/Core/SkinPriorityDisplayPolicy.cs"
+             Link="SkinPriorityDisplayPolicy.cs" />
   </ItemGroup>
 
   <Target Name="CopyFrameworkCompatibilityFixture" AfterTargets="Build">

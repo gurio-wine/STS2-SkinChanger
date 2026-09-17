@@ -82,11 +82,15 @@ internal static class PresetChoiceColoring
         {
             StyleSelection();
             for (var i = 0; i < Math.Min(list.ItemCount, picker.ItemCount); i++)
-                list.SetItemCustomFgColor(i, Owned(i) ? ModThemeRuntime.Accent : ModThemeRuntime.Text);
+                list.SetItemCustomFgColor(i, RowColor(picker, Owned(i), i));
             CharacterSkinRandomExclusionUi.Refresh(picker);
         });
         RefreshItems(picker, list, isAccented);
     }
+
+    private static Color RowColor(OptionButton picker, bool owned, int index) =>
+        SkinChoiceDimming.Row(owned ? ModThemeRuntime.Accent : ModThemeRuntime.Text,
+            picker, picker.GetItemMetadata(index).AsString());
 
     private static void RefreshItems(OptionButton picker, ItemList list, Func<string, bool> isAccented)
     {
@@ -95,7 +99,7 @@ internal static class PresetChoiceColoring
         {
             list.AddItem(picker.GetItemText(i));
             list.SetItemDisabled(i, picker.IsItemDisabled(i));
-            if (isAccented(picker.GetItemMetadata(i).AsString())) list.SetItemCustomFgColor(i, ModThemeRuntime.Accent);
+            list.SetItemCustomFgColor(i, RowColor(picker, isAccented(picker.GetItemMetadata(i).AsString()), i));
         }
         if (picker.Selected >= 0 && picker.Selected < list.ItemCount) list.Select(picker.Selected);
         CharacterSkinRandomExclusionUi.Refresh(picker);
