@@ -8,6 +8,12 @@
 
   <ItemGroup>
     <Compile Include="../../STS2SkinChanger/Core/WorkshopPagePool.cs" Link="WorkshopPagePool.cs" />
+    <!-- The quit path is deliberately engine-free: the same filesystem code the game runs is
+         exercised here, so the start-up regression cannot come back unnoticed. -->
+    <Compile Include="../../STS2SkinChanger/Core/SkinChangerStorage.cs" Link="SkinChangerStorage.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/QuitInterceptionPolicy.cs" Link="QuitInterceptionPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/QuitCleanupCoordinator.cs" Link="QuitCleanupCoordinator.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/QuitExitCleanup.cs" Link="QuitExitCleanup.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GamePackLocator.cs" Link="GamePackLocator.cs" />
     <Compile Include="../../STS2SkinChanger/Core/GodotScriptPathRegistrationPolicy.cs"
              Link="GodotScriptPathRegistrationPolicy.cs" />

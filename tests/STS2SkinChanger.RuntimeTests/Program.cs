@@ -100,6 +100,7 @@ if (args.Length == 1 && args[0] == "--test-storage")
 {
     StorageLifecycleTests.Run();
     StorageLifecycleTests.TestQuitAndLockedFiles();
+    QuitBoundaryTests.Run();
     return;
 }
 
@@ -430,6 +431,7 @@ BaselinePartTakeoverTests.Run();
 MerchantFigureScopeTests.Run();
 StorageLifecycleTests.Run();
 StorageLifecycleTests.TestQuitAndLockedFiles();
+QuitBoundaryTests.Run();
 CreatureVisualParentTests.Run();
 ProviderToolbarTests.Run();
 ManualCharacterVariantTests.Run();
