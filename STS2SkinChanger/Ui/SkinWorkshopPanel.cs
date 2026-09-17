@@ -1,3 +1,4 @@
+using System.Reflection;
 using Godot;
 using STS2SkinChanger.Core;
 using STS2SkinChanger.Catalog;
@@ -107,6 +108,10 @@ internal partial class SkinWorkshopPanel : Control
         scroll.AddChild(_rows);
         var footer = new HBoxContainer(); content.AddChild(footer);
         footer.AddChild(Button(ModLocalization.Get(ModText.Close), Close));
+        var version = Text(PanelVersionText(), 16);
+        version.Modulate = new Color(1f, 1f, 1f, .6f);
+        version.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        footer.AddChild(version);
         footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
         _previous = Button(WorkshopText.Get(WorkshopTextKey.Previous), () => { _page--; scroll.ScrollVertical = 0; Rebuild(); });
         footer.AddChild(_previous);
@@ -370,6 +375,18 @@ internal partial class SkinWorkshopPanel : Control
         var label = new Label { Text = text, MouseFilter = MouseFilterEnum.Ignore };
         if (ContextualSkinControls.GameFont is { } font) label.AddThemeFontOverride("font", font);
         ModThemeRuntime.TextControl(label, size, accent); return label;
+    }
+
+    // Version stamp for the footer, e.g. "1.0.18.2". Reads this assembly's own
+    // InformationalVersion and drops a "+commit" suffix so only the four-part
+    // number is shown; falls back to the four-part AssemblyVersion.
+    private static string PanelVersionText()
+    {
+        var assembly = typeof(SkinWorkshopPanel).Assembly;
+        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString() ?? "";
+        var commit = version.IndexOf('+');
+        return commit < 0 ? version : version[..commit];
     }
     private static Button Button(string text, Action pressed)
     {
