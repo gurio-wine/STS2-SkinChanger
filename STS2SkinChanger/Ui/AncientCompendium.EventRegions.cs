@@ -11,24 +11,24 @@ internal partial class AncientCompendiumScreen
     private HashSet<string> _eventRegionMembers = new(StringComparer.OrdinalIgnoreCase);
     private bool _refreshingEventRegions;
 
-    private static readonly IReadOnlyDictionary<string, (string Shared, string Other)> EventRegionNames =
-        new Dictionary<string, (string, string)>
+    private static readonly IReadOnlyDictionary<string, (string Global, string Shared, string Other)> EventRegionNames =
+        new Dictionary<string, (string, string, string)>
         {
-            ["eng"] = ("Across regions", "Other regions"),
-            ["zhs"] = ("跨地区", "其它地区"),
-            ["zht"] = ("跨地區", "其他地區"),
-            ["deu"] = ("Regionsübergreifend", "Andere Regionen"),
-            ["esp"] = ("Varias regiones", "Otras regiones"),
-            ["spa"] = ("Varias regiones", "Otras regiones"),
-            ["fra"] = ("Plusieurs régions", "Autres régions"),
-            ["ita"] = ("Più regioni", "Altre regioni"),
-            ["jpn"] = ("地域共通", "その他の地域"),
-            ["kor"] = ("공통 지역", "기타 지역"),
-            ["pol"] = ("Wiele regionów", "Pozostałe regiony"),
-            ["ptb"] = ("Várias regiões", "Outras regiões"),
-            ["rus"] = ("Разные регионы", "Прочие регионы"),
-            ["tha"] = ("หลายพื้นที่", "พื้นที่อื่น"),
-            ["tur"] = ("Bölgeler arası", "Diğer bölgeler")
+            ["eng"] = ("All events", "Across regions", "Other regions"),
+            ["zhs"] = ("全部事件", "跨地区", "其它地区"),
+            ["zht"] = ("全部事件", "跨地區", "其他地區"),
+            ["deu"] = ("Alle Ereignisse", "Regionsübergreifend", "Andere Regionen"),
+            ["esp"] = ("Todos los eventos", "Varias regiones", "Otras regiones"),
+            ["spa"] = ("Todos los eventos", "Varias regiones", "Otras regiones"),
+            ["fra"] = ("Tous les événements", "Plusieurs régions", "Autres régions"),
+            ["ita"] = ("Tutti gli eventi", "Più regioni", "Altre regioni"),
+            ["jpn"] = ("すべてのイベント", "地域共通", "その他の地域"),
+            ["kor"] = ("모든 이벤트", "공통 지역", "기타 지역"),
+            ["pol"] = ("Wszystkie wydarzenia", "Wiele regionów", "Pozostałe regiony"),
+            ["ptb"] = ("Todos os eventos", "Várias regiões", "Outras regiões"),
+            ["rus"] = ("Все события", "Разные регионы", "Прочие регионы"),
+            ["tha"] = ("เหตุการณ์ทั้งหมด", "หลายพื้นที่", "พื้นที่อื่น"),
+            ["tur"] = ("Tüm olaylar", "Bölgeler arası", "Diğer bölgeler")
         };
 
     private void BuildEventRegionSelector(VBoxContainer sidebar)
@@ -62,6 +62,7 @@ internal partial class AncientCompendiumScreen
             ModelDb.AllSharedEvents.Select(e => e.Id.Entry));
         var names = EventRegionNames.GetValueOrDefault(ModLocalization.CurrentLanguage, EventRegionNames["eng"]);
         var titles = acts.ToDictionary(a => a.Id.Entry, a => a.Title.GetFormattedText());
+        titles[EventRegionPolicy.Global] = names.Global;
         titles[EventRegionPolicy.Shared] = names.Shared;
         titles[EventRegionPolicy.Other] = names.Other;
         _refreshingEventRegions = true;

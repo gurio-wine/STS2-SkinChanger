@@ -647,6 +647,8 @@ internal partial class AncientCompendiumScreen : NSubmenu
         base.OnSubmenuOpened();
         ConfigurePreviewResolution();
         _previewViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+        SkinService.InitializeAncientSkinCategories();
+        RefreshAncientPriorityHeader();
         RefreshAncients();
     }
 
@@ -828,6 +830,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         _entryList.AddThemeConstantOverride("separation", 10);
         ModThemeListHover.AddScrollList(scroll, _entryList);
         BuildEventPriorityControls();
+        BuildAncientPriorityControls();
         _sidebarDrawer = new CompendiumSidebarDrawer(sidebar, () => !_merchantInventoryOpen && !_eventPriorityOverlay.Visible);
         _sidebarDrawer.KeepOpenFor(_eventRegionSelector);
 
@@ -1584,6 +1587,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
     private void RefreshAncients()
     {
+        RefreshAncientPriorityHeader();
         RefreshEventRegions();
         foreach (var child in _entryList.GetChildren())
         {
@@ -1867,11 +1871,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
             return;
         }
 
+        var isAncient = _selectedCategory == OtherCategory.Ancients;
         var eventCategory = EventSkinPolicy.IsEventGroup(group.Id) && SkinService.HasEventSkinCategory(group.Id);
-        if (eventCategory)
+        if (eventCategory || isAncient)
         {
             _skinDropdown.AddItem(ModLocalization.Get(ModText.FollowCategory));
-            _skinDropdown.SetItemMetadata(0, SkinService.InheritEventSelectionId);
+            _skinDropdown.SetItemMetadata(0, isAncient ? SkinService.InheritAncientSelectionId : SkinService.InheritEventSelectionId);
         }
         var baseIndex = _skinDropdown.ItemCount;
         _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
@@ -1884,7 +1889,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         SkinWorkshopEntry.Append(_skinDropdown);
-        var current = eventCategory ? SkinService.GetEventOverrideSelection(group.Id) : SkinService.Config.GetSelection(group.Id);
+        var current = isAncient
+            ? SkinService.GetAncientOverrideSelection(group.Id)
+            : (eventCategory ? SkinService.GetEventOverrideSelection(group.Id) : SkinService.Config.GetSelection(group.Id));
         var selectedIndex = Enumerable.Range(0, _skinDropdown.ItemCount)
             .FirstOrDefault(index => _skinDropdown.GetItemMetadata(index).AsString()
                 .Equals(current, StringComparison.OrdinalIgnoreCase));
@@ -1904,6 +1911,24 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         var groupId = _skinDropdown.GetMeta("sts2_skin_group", string.Empty).AsString();
         var optionId = _skinDropdown.GetItemMetadata(index).AsString();
+        if (_selectedCategory == OtherCategory.Ancients)
+        {
+            if (optionId == SkinService.InheritAncientSelectionId)
+            {
+                SkinService.FollowAncientCategoryPriority(groupId);
+                if (_selectedAncient != null)
+                {
+                    AncientCompendiumEntry.RefreshCompendiumEntryIcon(this);
+                    var a = _selectedAncient;
+                    Callable.From(() => RebuildPreview(a)).CallDeferred();
+                }
+                return;
+            }
+            else
+            {
+                SkinService.SetAncientManualSelection(groupId);
+            }
+        }
         if (SkinWorkshopEntry.Open(optionId, this, groupId, () => PopulateSkinDropdown(
                 SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id == groupId)), kind: _selectedCategory switch
                 { OtherCategory.Ancients => "ancient", OtherCategory.Merchants => "merchant", OtherCategory.Events => "event", _ => "companion" })) return;

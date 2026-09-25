@@ -2,6 +2,7 @@ namespace STS2SkinChanger.Core;
 
 internal static class EventRegionPolicy
 {
+    public const string Global = "__global__";
     public const string Shared = "__shared__";
     public const string Other = "__other__";
 
@@ -13,6 +14,13 @@ internal static class EventRegionPolicy
         var shared = sharedEvents.Where(valid.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var assigned = new HashSet<string>(shared, StringComparer.OrdinalIgnoreCase);
         var result = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+        // Prepend the Global entry containing every valid event
+        if (all.Length > 0)
+        {
+            result[Global] = all;
+        }
+
         foreach (var (id, events) in acts)
         {
             var members = events.Where(e => valid.Contains(e) && !shared.Contains(e))

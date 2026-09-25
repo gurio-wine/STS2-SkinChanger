@@ -141,6 +141,7 @@ internal sealed class SkinConfig
     public bool MultiplayerSkinSyncEnabled { get; set; } = true;
 
     public bool LoadOtherPlayersCustomSkins { get; set; } = true;
+    public EventSkinPrioritySettings AncientSkinPriorities { get; set; } = new();
 
     public bool ShowInRunAppearanceEntry { get; set; } = true;
 
@@ -196,6 +197,7 @@ internal sealed class SkinConfig
         copy.MonsterGroupsFollowingCategory = MonsterGroupsFollowingCategory.ToList();
         copy.MonsterGroupsWithManualSelection = MonsterGroupsWithManualSelection.ToList();
         copy.EventSkinPriorities = EventSkinPriorities.Clone();
+        copy.AncientSkinPriorities = AncientSkinPriorities.Clone();
         return copy;
     }
 
@@ -263,6 +265,8 @@ internal sealed class SkinConfig
         var config = JsonSerializer.Deserialize<SkinConfig>(json, JsonOptions) ?? new SkinConfig();
         config.EventSkinPriorities ??= new();
         config.EventSkinPriorities.Normalize();
+        config.AncientSkinPriorities ??= new();
+        config.AncientSkinPriorities.Normalize();
         config.RandomCharacterSkinGroups = (config.RandomCharacterSkinGroups ?? [])
             .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
