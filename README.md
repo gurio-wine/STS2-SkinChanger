@@ -115,15 +115,13 @@
 
 构建产物就是主 DLL、清单与兼容层三件，没有额外的可执行文件；部署/上传按这三个文件核对哈希。验证存储与皮肤目录流程：`dotnet run --project tests/STS2SkinChanger.RuntimeTests -c Release -- --test-storage`（真实临时文件迁移、备份冲突、对局记录、活跃会话隔离、晚到写入、退出时序，以及被占用的缓存文件留给下次启动清理）与 `-- --test-github-swap`（合成 `mods` 目录上的安装/更新/卸载：写入备用目录、真实占用文件时停用旧清单、按游戏加载器的规则断言旧目录不再可见、重启后删除并守住删除红线）；不启动游戏。
 
-从 WSL 迁移现有仓库时，建议执行 `git config --local core.longpaths true`。Codex 的历史检查点引用可能具有很长的路径；开启后 Windows Git 才能完整读取这些引用，无需删除历史检查点。
-
 项目通过 `Directory.Build.props` 引用本机游戏目录中的 `GodotSharp.dll`、`0Harmony.dll`、`Steamworks.NET.dll` 和 `sts2.dll`，默认使用最低支持的正式版 `v0.107.1`：
 
 ```powershell
 dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c Release
 ```
 
-Windows 默认游戏程序集目录为 `D:/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64`；WSL 自动使用对应的 `/mnt/d/...` 路径。其它安装位置通过 `-p:GameAssemblyDir=<游戏程序集目录>` 指定。
+Windows 默认游戏程序集目录为 `D:/Programs/Steam/steamapps/content/app_2868840/depot_2868841/data_sts2_windows_x86_64`。其它安装位置通过 `-p:GameAssemblyDir=<游戏程序集目录>` 指定。
 
 测试版必须显式指定引用，并使用独立的 `ReleaseBeta` 配置，避免把测试版验证产物误当成正式版兼容发布包：
 
@@ -131,7 +129,7 @@ Windows 默认游戏程序集目录为 `D:/Programs/Steam/steamapps/content/app_
 dotnet build STS2SkinChanger/STS2SkinChanger.csproj -c ReleaseBeta -p:Optimize=true "-p:GameAssemblyDir=D:/Programs/Steam/steamapps/common/Slay the Spire 2/data_sts2_windows_x86_64"
 ```
 
-Windows 与 WSL 的还原和中间文件分别写入 `obj/windows`、`obj/unix`，不会沿用旧系统的 NuGet 绝对路径。旧 `obj` 目录无需复制或手工改路径，也不会作为源代码参加编译。不要同时从两个系统构建到同一个输出目录。
+还原和中间文件按构建系统写入 `obj/windows`（类 Unix 为 `obj/unix`），不会作为源代码参加编译。不要同时从两个系统构建到同一个输出目录。
 
 不同版本的反编译结果统一存放在 `D:/Projects/Godot/Slay The Spire 2/<版本号>/`。
 

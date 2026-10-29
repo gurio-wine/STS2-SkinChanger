@@ -10,6 +10,8 @@
 /tools/OnlineCacheProbe/obj/
 /tools/WorkshopPublisher/bin/
 /tools/WorkshopPublisher/obj/
+/tools/WorkshopCatalogExport/bin/
+/tools/WorkshopCatalogExport/obj/
 /tests/STS2SkinChanger.LogicTests/bin/
 /tests/STS2SkinChanger.LogicTests/obj/
 /tests/STS2SkinChanger.RuntimeTests/bin/
@@ -24,8 +26,7 @@
 /tests/STS2SkinChanger.FrameworkTests/obj/
 /compat/ThunninoiSkinManagerCompat/bin/
 /compat/ThunninoiSkinManagerCompat/obj/
-/.tmp-boundary-audit/
 /workshop/content/
-/.dsh-email-downloads/
+/.video_agent/
 *.user
 *.suo

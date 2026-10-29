@@ -2,27 +2,19 @@
 
 ## 当前环境
 
-- 当前主环境为 Windows 原生 PowerShell。仓库位于 `C:/Users/gurio/Documents/ChatGPT/STS2-SkinChanger`。
-- 历史 WSL 会话可能携带错误 cwd；每次终端调用显式指定上述真实目录，不要把 `/mnt/c/...` 拼接到 Codex 安装目录，也不要为错误目录创建占位副本。
-- 使用 Windows 的 `dotnet` 构建和测试。SDK 版本由 `global.json` 约束；旧 WSL 环境保留，但不作为默认工具链。
+- 主环境为 Windows 原生 PowerShell。仓库位于 `C:/Users/gurio/Documents/ChatGPT/STS2-SkinChanger`。
+- 使用 Windows 的 `dotnet` 构建和测试。SDK 版本由 `global.json` 约束。
 - `Directory.Build.props` 集中管理游戏引用：默认正式版 `v0.107.1`；测试版 `v0.111.0` 必须显式传入 `GameAssemblyDir`。不能因为正式版文件缺失而自动改用测试版。
-- Windows/WSL 还原缓存分别位于 `obj/windows` 与 `obj/unix`，不要相互复制。代码与配置使用 LF；不要批量改写整库换行。
-- Windows Git 对本仓库启用 `core.longpaths=true`。历史 Codex 检查点引用可能超过 Windows 默认路径长度；遇到此类报错应检查仓库级长路径设置，不删除检查点或误判为对象损坏。
+- 代码与配置使用 LF；不要批量改写整库换行。
 
 ## 发现与修改
 
-- 优先使用 codebase-memory-mcp 的图查询；当前 Windows 索引名为 `STS2-SkinChanger`。索引时明确传入仓库绝对路径，不索引整个用户目录。
-- 索引时必须显式传 `name`：只给 `repo_path`（或 CLI 同理）会另建一个 `C-Users-...` 形式的重复项目，规范项目仍是 `STS2-SkinChanger`，误建的要删掉。索引是增量的，但过期索引会静默漏掉新文件——查不到刚提交的符号时先重建，不要断言它不存在。`check_index_coverage` 只报告已知失败：某个文件根本没入图时它同样显示 `no_recorded_issue`，不能当作“已入图”的证据，只认符号查询结果。
-- `detect_changes` 的 `base_branch` 默认是 `main`，本仓库没有这个分支，会**静默返回 0 变更**（假阴性）；必须显式传 `master`。
+- 优先使用 codebase-memory-mcp 的图查询；当前 Windows 索引名为 `STS2-SkinChanger`。命名、增量索引与变更检测的注意事项见 [docs/agents/codebase-memory.md](docs/agents/codebase-memory.md)。
 - MCP 未重新连接时，可用 `codebase-memory-mcp cli` 调用同一套工具。工具不可用、索引排除或解析不完整时再用 `rg`，不要运行 CodeGraph。
-- 仓库内的定位、调用链、影响面先走图查询（`search_graph` / `trace_path` / `detect_changes`），不要习惯性先 `rg`；改完代码用 `detect_changes(since=HEAD~1, base_branch=master)` 自查影响面。只有目标在索引之外（游戏 `sts2.dll`、框架、第三方 Mod 包等二进制）时才用 `rg` 或反编译。
-- 在开发分支上修改——只要当前分支不在 master 即可，分支名不限定；不切回 master、不改动 master；不创建额外隔离工作区。多用、尽量用子智能体：本体只负责规划与派发，具体任务一律优先派子代理执行（可并行且互不依赖的并行派发），仅派发明显不划算的琐碎操作才本体直接做；路由按以下优先级选：模型优先 `deepseek-v4.1-flash` > `deepseek-v4-pro` > `glm-5.3-flash`，供应商优先 `buddy` > `codearts` > `workbuddy`；模型优先级高于供应商优先级（如 buddy 没有 deepseek-v4.1-flash 时先看 codearts 是否有），思考程度选可选的最高档。
-- 子代理只做单一任务：一个子代理一次只交付一件事，不把多步流程串进同一个子代理；多步流程由本体拆成单步任务，逐步派发，每步确认结果后再派下一步。提示词只带一个明确交付物，不附加后续步骤；验证以工具自带核对为准，本体只做一次抽查，不叠加重复复核。
-- 子代理不得再开子代理：所有派发只由本体进行，禁止嵌套，防止无限递归。
-- 子代理验证与改动相称：只跑与本次改动相关的检查，不为无关改动跑全套测试。
-- 子代理卡住或遇取舍点即回报：命令失败、找不到文件时停下回报原因，不反复重试、不自行绕路；遇到需要设计取舍的分叉（如是否重部署未变更的旧产物）报回选项，由用户或本体拍板，不替其决定。
+- 定位、调用链、影响面先走图查询，不要习惯性先 `rg`；改完代码用 `detect_changes` 自查影响面。只有目标在索引之外（游戏 `sts2.dll`、框架、第三方 Mod 包等二进制）时才用 `rg` 或反编译。
+- 直接在 master 修改；不创建隔离工作区，尽量不派子智能体。
 - 排查中已确认原因的错误直接修复并验证，不再单独停下来询问是否修复；涉及新的设计取舍、额外权限或无法确认原因时再说明。
-- 改完后提交。**未上传时只提升第四位**（如 1.0.7.0 → 1.0.7.1），一次会话内多次提交也依次只加第四位；第三位只在实际上传工坊时提升，并与三段公开版本一起更新。四段内测标记需同步 csproj、Entry、SkinChanger.json 和 workshop/workshop.json。
+- 改完后提交，并提升四段内测版本：未上传时只加第四位，第三位只在实际上传工坊时提升，并与三段公开版本一起更新。四段内测标记需同步 csproj、Entry、SkinChanger.json 和 workshop/workshop.json。
 - 不控制游戏做实机测试，由用户检查画面。构建和离线测试成功不能代表游戏表现已修复。
 
 ## 验证与发布
@@ -30,8 +22,8 @@
 - 常用命令见 README 的“构建”和“开发检查工具”。发布产物必须来自默认正式版引用的 `Release` 构建，保持 `AnyCPU`。
 - 测试版验证用 `ReleaseBeta` 配置，避免覆盖正式版发布产物。
 - 部署前确认游戏已退出；核对构建产物、workshop/content、测试版工坊目录和正式版快照缓存的 DLL 版本及 SHA-256。
-- 仅用户要求时上传；先 Steam 工坊，再推 GitHub。当前在 master 分支时，推送 GitHub 无需额外确认，直接推 master；不在 master 分支时，只有用户明确要求才推送 GitHub，且推的是当前工作分支，不推 master。工坊标题/描述变化须同步全部 15 种语言。
-- 游戏内工坊清单新增或更新物品时，开发者先检查实际包的启动代码、前置、版本和完整资源接管，再填写重启标签；只展示“需要重启 / 可免重启”，不提供“不兼容 / 待确认”标签。不能仅凭没有 DLL、已被收录或启动时已加载就宣称免重启。本地包缺失时，先告诉用户具体 Mod，让用户重新订阅并完成下载，再继续核验；不得擅自赋予任何分类，也不得以“保守”或“兜底”为由标成需要重启。清单工具必须停下并保持已有文件不变。使用 `WorkshopCatalogExport --refresh-restart-hints` 检查正式版与测试版基线，实际订阅时仍复核文件，具体失败原因单独显示。
+- 仅用户要求时上传；先 Steam 工坊，再推 GitHub。工坊标题/描述变化须同步全部 15 种语言。
+- 游戏内工坊清单的重启标签核验规则见 [docs/agents/workshop-catalog.md](docs/agents/workshop-catalog.md)。
 - 不向全局 Python 安装项目依赖；本项目核心构建不需要 Python。
 
 ## 沟通
