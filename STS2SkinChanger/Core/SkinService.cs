@@ -1706,6 +1706,7 @@ internal static partial class SkinService
             var previousFollowingGroups = Config.MonsterGroupsFollowingCategory.ToList();
             var previousManualGroups = Config.MonsterGroupsWithManualSelection.ToList();
             var previousEventManualGroups = Config.EventSkinPriorities.ManualGroups.ToList();
+            var previousAncientManualGroups = Config.AncientSkinPriorities.ManualGroups.ToList();
             var previousActiveMonsterPresets = new Dictionary<string, string>(
                 Config.ActiveMonsterSkinPresets,
                 StringComparer.OrdinalIgnoreCase);
@@ -1716,6 +1717,9 @@ internal static partial class SkinService
                 foreach (var id in affectedGroups.Where(EventSkinPolicy.IsEventGroup))
                     if (!Config.EventSkinPriorities.ManualGroups.Contains(id, StringComparer.OrdinalIgnoreCase))
                         Config.EventSkinPriorities.ManualGroups.Add(id);
+                foreach (var id in affectedGroups.Where(HasAncientSkinCategory))
+                    if (!Config.AncientSkinPriorities.ManualGroups.Contains(id, StringComparer.OrdinalIgnoreCase))
+                        Config.AncientSkinPriorities.ManualGroups.Add(id);
                 foreach (var categoryId in Config.MonsterSkinCategoryGroups
                              .Where(pair => pair.Value.Any(affectedGroups.Contains))
                              .Select(pair => pair.Key))
@@ -1759,6 +1763,7 @@ internal static partial class SkinService
                 Config.MonsterGroupsFollowingCategory = previousFollowingGroups;
                 Config.MonsterGroupsWithManualSelection = previousManualGroups;
                 Config.EventSkinPriorities.ManualGroups = previousEventManualGroups;
+                Config.AncientSkinPriorities.ManualGroups = previousAncientManualGroups;
                 Config.ActiveMonsterSkinPresets = previousActiveMonsterPresets;
 
                 TryRestoreOverlay(affectedGroups, cardOverlay: false);

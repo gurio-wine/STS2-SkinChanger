@@ -123,18 +123,6 @@ internal static partial class SkinService
         }
     }
 
-    public static bool SetAncientManualSelection(string groupId)
-    {
-        lock (Sync)
-        {
-            if (!Config.AncientSkinPriorities.ManualGroups.Contains(groupId, StringComparer.OrdinalIgnoreCase))
-            {
-                Config.AncientSkinPriorities.ManualGroups.Add(groupId);
-            }
-            return true;
-        }
-    }
-
     private static bool ChangeAncientPriorityConfiguration(Action mutation)
     {
         if (Catalog == null)

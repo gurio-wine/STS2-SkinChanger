@@ -1919,23 +1919,16 @@ internal partial class AncientCompendiumScreen : NSubmenu
 
         var groupId = _skinDropdown.GetMeta("sts2_skin_group", string.Empty).AsString();
         var optionId = _skinDropdown.GetItemMetadata(index).AsString();
-        if (_selectedCategory == OtherCategory.Ancients)
+        if (_selectedCategory == OtherCategory.Ancients && optionId == SkinService.InheritAncientSelectionId)
         {
-            if (optionId == SkinService.InheritAncientSelectionId)
+            SkinService.FollowAncientCategoryPriority(groupId);
+            if (_selectedAncient != null)
             {
-                SkinService.FollowAncientCategoryPriority(groupId);
-                if (_selectedAncient != null)
-                {
-                    AncientCompendiumEntry.RefreshCompendiumEntryIcon(this);
-                    var a = _selectedAncient;
-                    Callable.From(() => RebuildPreview(a)).CallDeferred();
-                }
-                return;
+                AncientCompendiumEntry.RefreshCompendiumEntryIcon(this);
+                var a = _selectedAncient;
+                Callable.From(() => RebuildPreview(a)).CallDeferred();
             }
-            else
-            {
-                SkinService.SetAncientManualSelection(groupId);
-            }
+            return;
         }
         if (SkinWorkshopEntry.Open(optionId, this, groupId, () => PopulateSkinDropdown(
                 SkinService.Catalog?.Groups.FirstOrDefault(g => g.Id == groupId)), kind: _selectedCategory switch
