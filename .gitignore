@@ -10,8 +10,6 @@
 /tools/OnlineCacheProbe/obj/
 /tools/WorkshopPublisher/bin/
 /tools/WorkshopPublisher/obj/
-/tools/CacheCleanupWorker/bin/
-/tools/CacheCleanupWorker/obj/
 /tests/STS2SkinChanger.LogicTests/bin/
 /tests/STS2SkinChanger.LogicTests/obj/
 /tests/STS2SkinChanger.RuntimeTests/bin/
@@ -20,11 +18,14 @@
 /tests/STS2SkinChanger.SettingsFixture/obj/
 /tests/STS2SkinChanger.WorkshopBootstrapFixture/bin/
 /tests/STS2SkinChanger.WorkshopBootstrapFixture/obj/
+/tests/STS2SkinChanger.ScriptPathFixture/bin/
+/tests/STS2SkinChanger.ScriptPathFixture/obj/
 /tests/STS2SkinChanger.FrameworkTests/bin/
 /tests/STS2SkinChanger.FrameworkTests/obj/
 /compat/ThunninoiSkinManagerCompat/bin/
 /compat/ThunninoiSkinManagerCompat/obj/
 /.tmp-boundary-audit/
 /workshop/content/
+/.dsh-email-downloads/
 *.user
 *.suo

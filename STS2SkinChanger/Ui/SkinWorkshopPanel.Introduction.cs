@@ -160,10 +160,14 @@ internal partial class SkinWorkshopPanel
         if (_intro.Visible)
         {
             PositionIntroduction();
-            if (SkinWorkshopService.CachedDetails(active.Id) is { } details) _introTitle.Text = details.Title;
+            _introTitle.Text = ItemTitle(active.Id);
             _carousel?.Tick(!InstantHover);
         }
     }
+
+    private static string ItemTitle(ulong id) => SkinSourceIdentity.IsGitHub(id)
+        ? GitHubSkinService.Title(id)
+        : SkinWorkshopService.CachedDetails(id)?.Title ?? "…";
 
     private static bool InstantHover => SaveManager.Instance?.PrefsSave?.FastMode == FastModeType.Instant;
 
@@ -194,7 +198,7 @@ internal partial class SkinWorkshopPanel
         // Delay the actual work, not just visibility: cached text still needs
         // shaping/layout and cached images can complete synchronously.
         _introToken = new();
-        _introTitle.Text = SkinWorkshopService.CachedDetails(item.Id)?.Title ?? "…";
+        _introTitle.Text = ItemTitle(item.Id);
         _introDescription.Text = "…"; _introImage.Texture = null; _introImageStatus.Text = "…"; _introImageStatus.Show();
         _introPage.Hide();
         _intro.Show(); PositionIntroduction();
@@ -285,6 +289,7 @@ internal partial class SkinWorkshopPanel
     {
         try
         {
+            if (SkinSourceIdentity.IsGitHub(id)) { await LoadGitHubIntroduction(id, generation, token); return; }
             var detail = await SkinWorkshopService.Introduction(id, token);
             if (!IntroductionCurrent(generation, token)) return;
             _introDescription.Text = !detail.Available ? WorkshopDetailsText.Get(WorkshopDetailsTextKey.LoadFailed) :
@@ -307,6 +312,23 @@ internal partial class SkinWorkshopPanel
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { ModLog.Info("工坊简介显示失败：" + ex.Message); }
+    }
+
+    // A GitHub skin has no Workshop page: the description is the repository README, read once
+    // per repository, and the picture is the same repository preview the card already shows.
+    private async Task LoadGitHubIntroduction(ulong id, int generation, CancellationToken token)
+    {
+        var readme = await GitHubSkinService.ReadmeAsync(id, token);
+        if (!IntroductionCurrent(generation, token)) return;
+        _introDescription.Text = readme.Length > 0 ? readme
+            : GitHubSkinService.Description(id) is { Length: > 0 } description ? description
+            : WorkshopDetailsText.Get(WorkshopDetailsTextKey.NoDescription);
+        _introPage.Hide();
+        var texture = await WorkshopCoverCache.GetPreview(GitHubSkinService.CoverUrl(id), token);
+        if (!IntroductionCurrent(generation, token)) return;
+        _introImage.Texture = texture;
+        if (texture != null) { _introImageStatus.Hide(); RoundCover(_introImage); }
+        else _introImageStatus.Text = WorkshopDetailsText.Get(WorkshopDetailsTextKey.ImageUnavailable);
     }
 
     private bool IntroductionCurrent(int generation, CancellationToken token) =>

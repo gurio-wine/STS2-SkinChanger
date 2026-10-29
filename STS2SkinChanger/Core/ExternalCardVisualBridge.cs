@@ -18,6 +18,10 @@ internal static class ExternalCardVisualBridge
     private static readonly HashSet<string> LoggedFailures = new(StringComparer.Ordinal);
     private static ICardVisualOwnershipAdapter[] _adapterSnapshot = [];
     private static volatile bool _discoveryDirty = true;
+    // Card types this installation takes over itself from a pure asset card-art pack. A live
+    // editor may still hold its own override for the same card, so its frame and text layers
+    // have to yield; Skin Changer renders those cards with its own full-frame layout.
+    private static readonly HashSet<string> ArtPackCoveredCardTypes = new(StringComparer.Ordinal);
     private static WeakReference<Node>? _scriptedManagerReference;
     private static ulong _nextScriptedManagerProbeTicks;
     private static bool _scriptedManagerLogged;
@@ -47,6 +51,35 @@ internal static class ExternalCardVisualBridge
     }
 
     public static void WarmUp() => EnumerateAdapters();
+
+    /// <summary>
+    /// Records the card types now supplied by a pure asset card-art pack. Their card presentation
+    /// belongs to Skin Changer, so an accompanying editor must not also claim the frame and text
+    /// layers for them.
+    /// </summary>
+    public static void RegisterArtPackCoverage(IEnumerable<string> cardTypes)
+    {
+        lock (Sync)
+        {
+            var changed = false;
+            foreach (var cardType in cardTypes)
+            {
+                if (!string.IsNullOrWhiteSpace(cardType))
+                {
+                    changed |= ArtPackCoveredCardTypes.Add(NormalizeCardType(cardType));
+                }
+            }
+
+            if (changed)
+            {
+                ModLog.Info(
+                    "卡图包覆盖的卡牌由皮肤切换器负责全画幅呈现；" +
+                    "外部编辑器不再接管这些卡牌的卡框与文字层。");
+            }
+        }
+    }
+
+    private static string NormalizeCardType(string cardType) => cardType.ToLowerInvariant();
 
     /// <summary>
     /// Lets a scripted card-art manager capture the final visual winner after every provider has
@@ -190,6 +223,14 @@ internal static class ExternalCardVisualBridge
                 manager.Call("has_override", sourcePath).AsBool(),
                 manager.Call("is_full_art_mode", sourcePath).AsBool(),
                 manager.Call("is_ancient_text_outside_enabled", sourcePath).AsBool());
+            if (ArtPackCoveredCardTypes.Contains(NormalizeCardType(
+                    card.Model!.GetType().Name)))
+            {
+                // A pack already supplies this card as a framed image, so only the editor's own
+                // portrait stays authoritative; its frame and text layers are superseded.
+                return new ExternalCardVisualOwnership(state.Portrait, false, false);
+            }
+
             return new ExternalCardVisualOwnership(state.Portrait, state.Frame, state.Text);
         }
         catch (Exception exception)

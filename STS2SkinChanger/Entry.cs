@@ -15,7 +15,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.6.0";
+    public const string InternalTestVersion = "1.0.19.0";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -28,6 +28,7 @@ public static class Entry
         ModLog.Info(
             $"内测版本 {InternalTestVersion}；程序集={assembly.GetName().Name} " +
             $"{assembly.GetName().Version}；路径={assembly.Location}");
+        ModPrivateDependencyResolver.Install(ModLog.Info);
         SkinChangerPaths.Initialize();
         FrameworkCompatibilityLayer.Initialize();
         ManagedSkinModLoader.Initialize();
@@ -78,6 +79,17 @@ internal static class EssentialInitializationPatch
         SkinService.PrepareSelectedCharacterPreviews();
         ExternalCardVisualBridge.WarmUp();
         SkinWorkshopService.StartCommunityRefresh();
+    }
+
+    // Start-up is over once this runs: from here on a Quit call is the player leaving, and until
+    // here it is not (see QuitInterceptionPolicy). Deliberately a finalizer rather than the last
+    // line of the postfix - the steps above are not individually guarded, so a throw would leave
+    // the interception closed for the rest of the session and no later Quit could ever exit.
+    [HarmonyFinalizer]
+    private static Exception? Finalizer(Exception? __exception)
+    {
+        QuitCacheCleanup.MarkInitializationCompleted();
+        return __exception;
     }
 }
 

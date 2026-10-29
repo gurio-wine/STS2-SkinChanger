@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using STS2SkinChanger.Catalog;
+using STS2SkinChanger.Ui;
 using System.Reflection;
 
 namespace STS2SkinChanger.Core;
@@ -178,7 +179,10 @@ internal static class FrameworkSkinRuntime
 /// Node2D scene. Its original manager converts that scene through
 /// NodeFactory&lt;NCreatureVisuals&gt; before returning it to the game. A global resource redirect
 /// alone cannot preserve that contract because CharacterModel.CreateVisuals instantiates the
-/// scene directly as NCreatureVisuals and throws before a postfix can repair it.
+/// scene directly as NCreatureVisuals and throws before a postfix can repair it. A framework
+/// content registry (CharacterAssetReplacement/RegisterCharacterAssetReplacement) declares the
+/// same kind of scene — its VisualsPath is served at the character's canonical combat scene path,
+/// so the same conversion must own creation before that cast as well.
 /// </summary>
 [HarmonyPatch(typeof(CharacterModel), nameof(CharacterModel.CreateVisuals))]
 internal static class FrameworkCombatVisualPatch
@@ -187,19 +191,41 @@ internal static class FrameworkCombatVisualPatch
     [HarmonyPriority(Priority.First)]
     private static bool Prefix(CharacterModel __instance, ref NCreatureVisuals __result)
     {
-        if (!FrameworkSkinRuntime.TryGetCharacterContract(
+        var canonicalPath =
+            $"res://scenes/creature_visuals/{__instance.Id.Entry.ToLowerInvariant()}.tscn";
+        if (FrameworkSkinRuntime.TryGetCharacterContract(
                 __instance,
                 out var groupId,
-                out var contract) ||
-            !contract.CharacterResources.ContainsKey("CombatVisual"))
+                out var contract) &&
+            contract.CharacterResources.ContainsKey("CombatVisual"))
+        {
+            __result = MarkManagedCombatScene(
+                SkinService.InstantiateManagedCharacterCreatureVisuals(groupId, canonicalPath),
+                groupId);
+            return false;
+        }
+
+        var group = ContextualSkinControls.FindGroup(__instance.Id.Entry, __instance.GetType().Name);
+        if (group == null || !SkinService.SelectionServesCombatScene(group.Id, canonicalPath))
         {
             return true;
         }
 
-        var canonicalPath =
-            $"res://scenes/creature_visuals/{__instance.Id.Entry.ToLowerInvariant()}.tscn";
-        __result = SkinService.InstantiateManagedCharacterCreatureVisuals(groupId, canonicalPath);
+        __result = MarkManagedCombatScene(
+            SkinService.InstantiateManagedCharacterCreatureVisuals(group.Id, canonicalPath),
+            group.Id);
         return false;
+    }
+
+    /// <summary>
+    /// Records that this node's scene was already created and converted by the scene factory, so
+    /// the later result replacement must not instantiate the same scene again — for a framework
+    /// scene that second instantiation cannot be cast to NCreatureVisuals at all.
+    /// </summary>
+    private static NCreatureVisuals MarkManagedCombatScene(NCreatureVisuals visuals, string groupId)
+    {
+        visuals.SetMeta(ContextualSkinControls.ManagedCombatSceneMeta, groupId);
+        return visuals;
     }
 }
 

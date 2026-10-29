@@ -18,18 +18,33 @@ internal partial class SkinWorkshopPanel
     private bool _filterRebuildPending;
     private Label? _emptyLabel;
     private readonly Dictionary<ulong, Button> _loadTags = [];
-    private string EmptyText => WorkshopText.Get(_subscriptions.Value.Length > 0 && _subscriptions.Unavailable ? WorkshopTextKey.Offline : WorkshopTextKey.Empty);
+    private string EmptyText => GitHubMode ? GitHubText(GitHubSkinTextKey.Empty)
+        : WorkshopText.Get(_subscriptions.Value.Length > 0 && _subscriptions.Unavailable ? WorkshopTextKey.Offline : WorkshopTextKey.Empty);
     private WorkshopSort _sort = WorkshopSort.Subscriptions;
     private OptionButton _sortPicker=null!;
     private bool _reverseSort;
     private OptionButton _sortDirectionPicker = null!;
-    private bool CodeErrors => _subscriptions.Value=="code_errors";
+    // The code-error browser is a Steam subscription view; GitHub rows never enter it.
+    private bool CodeErrors => !GitHubMode && _subscriptions.Value=="code_errors";
+    // Subscription state only exists for Workshop items; synthetic GitHub ids are never queried.
+    private IEnumerable<ulong> SteamCatalogIds => SkinWorkshopService.Catalog
+        .Where(item => SkinSourceRoutingPolicy.IsSteamItem(item.Id)).Select(item => item.Id);
     private WorkshopCatalogItem[] FilteredItems()
     {
-        var filtered = _subscriptions.Filter(WorkshopBrowserPolicy.Filter(SkinWorkshopService.Catalog, _kind, _target, RegionMembers)
-            .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item)))).ToDictionary(item => item.Id);
-        return WorkshopSortPolicy.OrderIds(filtered.Keys, SkinWorkshopService.CachedMetadata, _sort,
-            _reverseSort, SkinWorkshopService.CommunityReplies).Select(id => filtered[id]).ToArray();
+        // An unrecognized GitHub repository is still listed so the player can open it; the kind
+        // filter cannot keep it (it claims no type), so it is added back explicitly.
+        var unknownKind = GitHubMode && GitHubSkinFilter.IgnoresKindFilter(_installFilter) ? "" : _kind;
+        var listed = SkinWorkshopService.Catalog.Where(item =>
+            item.Targets.Length > 0 || GitHubSkinPolicy.KeepWithoutTargets(item.Id, item.Targets.Length, unknownKind)).ToArray();
+        var items = SourceFiltered(WorkshopBrowserPolicy.Filter(listed, _kind, _target, RegionMembers)
+            .Concat(listed.Where(item => item.Targets.Length == 0))
+            .Where(item => WorkshopLoadTags.Matches(_loadFilter, SkinWorkshopService.LoadTag(item))));
+        var filtered = (GitHubMode ? items : _subscriptions.Filter(items)).ToDictionary(item => item.Id);
+        return GitHubMode
+            ? GitHubSortPolicy.OrderIds(filtered.Keys, GitHubSkinService.EntriesById, _githubSort, _reverseSort)
+                .Select(id => filtered[id]).ToArray()
+            : WorkshopSortPolicy.OrderIds(filtered.Keys, SkinWorkshopService.CachedMetadata, _sort,
+                _reverseSort, SkinWorkshopService.CommunityReplies).Select(id => filtered[id]).ToArray();
     }
 
     private string ItemMetric(ulong id) => WorkshopSortPolicy.Metric(SkinWorkshopService.CachedDetails(id), _sort,
@@ -44,7 +59,7 @@ internal partial class SkinWorkshopPanel
         ContextualSkinControls.ApplyGameTheme(direction);
         direction.AddItem(WorkshopDetailsText.Get(WorkshopDetailsTextKey.Forward), 0);
         direction.AddItem(WorkshopDetailsText.Get(WorkshopDetailsTextKey.Reverse), 1);
-        direction.Select(_reverseSort ? 1 : 0);
+        SelectByItemId(direction, _reverseSort ? 1 : 0);
         direction.ItemSelected += index =>
         { _reverseSort = direction.GetItemId((int)index) == 1; _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
         heading.AddChild(direction);
@@ -55,12 +70,36 @@ internal partial class SkinWorkshopPanel
         ContextualSkinControls.ApplyGameTheme(picker);
         foreach (var sort in Enum.GetValues<WorkshopSort>()) picker.AddItem(WorkshopDetailsText.Get(
             sort == WorkshopSort.LatestReply ? WorkshopDetailsTextKey.LatestReply : (WorkshopDetailsTextKey)sort), (int)sort);
-        picker.Select((int)_sort);
+        SelectByItemId(picker, (int)_sort);
         picker.ItemSelected += index => { _sort = (WorkshopSort)picker.GetItemId((int)index); _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
         heading.AddChild(picker);
         KeepHoverBelow(picker);
+        // GitHub has its own three orders; the shared direction picker still reverses them.
+        var githubSort = new OptionButton { CustomMinimumSize = new Vector2(245, 42), FitToLongestItem = false, ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis, Visible = false };
+        _githubSortPicker = githubSort;
+        ContextualSkinControls.ApplyGameTheme(githubSort);
+        githubSort.AddItem(GitHubText(GitHubSkinTextKey.Stars), (int)GitHubSort.Stars);
+        githubSort.AddItem(GitHubText(GitHubSkinTextKey.Updated), (int)GitHubSort.Updated);
+        githubSort.AddItem(GitHubText(GitHubSkinTextKey.Name), (int)GitHubSort.Name);
+        // The three entries are added stars-first while the enum starts at "updated", so the
+        // selection has to follow the item id - selecting by index showed the wrong order.
+        SelectByItemId(githubSort, (int)_githubSort);
+        githubSort.ItemSelected += index =>
+        { _githubSort = (GitHubSort)githubSort.GetItemId((int)index); _page = 0; _listScroll.ScrollVertical = 0; Rebuild(); };
+        heading.AddChild(githubSort);
+        KeepHoverBelow(githubSort);
     }
     private IReadOnlySet<string>? RegionMembers => _region.Length == 0 ? null : _names.Regions(_kind).GetValueOrDefault(_region) ?? new HashSet<string>();
+    // The pickers carry the value in the item id; here the id is turned back into the index the
+    // control wants, so an entry list whose order differs from the enum still shows the right label.
+    private static void SelectByItemId(OptionButton picker, int id)
+    {
+        var ids = new int[picker.ItemCount];
+        for (var index = 0; index < ids.Length; index++) ids[index] = picker.GetItemId(index);
+        var selected = WorkshopOptionSelectionPolicy.IndexOfId(ids, id);
+        if (selected >= 0) picker.Select(selected);
+    }
     private void BuildFilters(VBoxContainer content)
     {
         if (_kind == "companion" && _target == "osty") { _kind = "character"; _target = "necrobinder"; }
@@ -75,7 +114,8 @@ internal partial class SkinWorkshopPanel
         { _region = id; _target = ""; RefreshFilters(); _page = 0; Rebuild(); });
         _targetPicker = new(id => _names.Name(_kind, id), id => { _target = id; _page = 0; Rebuild(); });
         _loadPicker = new(WorkshopLoadTags.Name, SetLoadFilter);
-        foreach (var picker in new[] { _subscriptionPicker, _typePicker, _regionPicker, _targetPicker, _loadPicker })
+        BuildSourceFilters(filters);
+        foreach (var picker in new[] { _typePicker, _regionPicker, _targetPicker, _loadPicker })
         { filters.AddChild(picker.Picker); KeepHoverBelow(picker.Picker); }
         InferRegion(); RefreshFilters();
     }
@@ -102,7 +142,15 @@ internal partial class SkinWorkshopPanel
     private void RefreshFilters()
     {
         _subscriptionPicker.SetOptions(WorkshopSubscriptionFilter.Options, _subscriptions.Value);
-        _sortPicker.Visible=!CodeErrors;
+        _sourcePicker.Visible = !CodeErrors;
+        SelectByItemId(_sourcePicker, SkinSources.IndexOf(_source));
+        _sourcePicker.TooltipText = GitHubText(GitHubSkinTextKey.Source);
+        _installPicker.SetOptions(GitHubSkinFilter.Options, _installFilter);
+        _installPicker.Picker.Visible = !CodeErrors && GitHubMode;
+        _githubSortPicker.Visible = !CodeErrors && GitHubMode;
+        // Only the subscription state is Steam-specific; type, region, target and load tags are shared.
+        _subscriptionPicker.Picker.Visible = !CodeErrors && !GitHubMode;
+        _sortPicker.Visible=!CodeErrors && !GitHubMode;
         _sortDirectionPicker.Visible=!CodeErrors;
         _typePicker.Picker.Visible=_loadPicker.Picker.Visible=!CodeErrors;
         _typePicker.SetOptions(Kinds, _kind);
@@ -165,7 +213,7 @@ internal partial class SkinWorkshopPanel
     private void PollFilters()
     {
         if(CodeErrors)return;
-        _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
+        _subscriptions.Refresh(SteamCatalogIds, SkinWorkshopService.IsSubscribed);
         foreach (var item in SkinWorkshopService.Catalog)
             if (_loadTags.TryGetValue(item.Id, out var button)) UpdateLoadTag(item, button);
         if (GodotObject.IsInstanceValid(_emptyLabel)) _emptyLabel!.Text = EmptyText;

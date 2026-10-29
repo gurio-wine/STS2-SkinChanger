@@ -599,12 +599,19 @@ internal static class CardSkinControls
         {
             // Some providers use the game's AncientPortrait node as a convenient tall canvas
             // for ordinary alternate art. Keep that canvas and (when requested) its border, but
-            // leave all Ancient-only effects disabled: no candle, Ancient banner, glass overlay,
-            // or black Ancient description background.
+            // leave the Ancient-only effects disabled: no candle, Ancient banner or glass
+            // overlay, and the Ancient description background only on request.
             SetVisible(portrait, false);
             SetVisible(portraitBorder, false);
             SetVisible(frame, false);
             SetVisible(ancientPortrait, true);
+            // The tall canvas already shares the card's aspect, so portrait-aspect provider art
+            // fills it either way. Artwork exported at the art window's wider aspect (a full-art
+            // card-art pack) must cover that canvas instead of being squeezed into it.
+            if (ancientPortrait != null)
+            {
+                ancientPortrait.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
+            }
             SetVisible(ancientGlass, false);
             SetVisible(ancientBanner, false);
             SetVisible(ancientTextBg, false);
@@ -687,7 +694,17 @@ internal static class CardSkinControls
         }
         else if (useExpandedPortrait)
         {
-            SetVisible(ancientTextBg, false);
+            // Artwork that covers the whole card sits behind the description, so the Ancient
+            // type-coloured background is what keeps the text readable. Providers that merely
+            // borrow the tall canvas keep it off unless they ask for it.
+            var expandedTextBackground = presentation.TextBackgroundVisible ?? false;
+            SetVisible(ancientTextBg, expandedTextBackground);
+            if (expandedTextBackground && ancientTextBg is { Texture: null } backgroundWithoutTexture)
+            {
+                backgroundWithoutTexture.Texture = SkinService.LoadCardPresentationResource<Texture2D>(
+                    card.Model!,
+                    presentation.AncientTextBackground ?? DefaultAncientTextBackgroundPath(card.Model!));
+            }
             RemoveNormalTextBackground(card);
         }
         else
@@ -2214,11 +2231,15 @@ internal static class CardInspectSkinControls
         // part of the individual-card selector. Do it only when the player actually opens the
         // dropdown, not whenever the enlarged card screen refreshes.
         SkinService.InitializeCardGroupsAfterModels();
-        var options = SkinService.GetCardOptions(card);
+        // Follow the manual order saved on the skin priority screen instead of the catalogue's
+        // name order; the inherit/original rows stay above these either way. The same snapshot
+        // says which of the skins the category switched off, so they can be dimmed below.
+        var (options, priority) = SkinService.GetCardOptionsForDisplay(card);
         var selected = SkinService.GetCardOverrideSelection(card);
 
         selector.SetMeta(UpdatingMeta, true);
         dropdown.Clear();
+        SkinChoiceDimming.Bind(dropdown, priority);
         dropdown.AddItem(CardSkinControls.InheritedSelectionText(card));
         dropdown.SetItemMetadata(0, SkinService.InheritCardSelectionId);
         dropdown.AddItem(ModLocalization.Get(ModText.GameOriginal));
@@ -2235,6 +2256,10 @@ internal static class CardInspectSkinControls
                 .Equals(selected, StringComparison.OrdinalIgnoreCase));
         dropdown.Select(selectedIndex);
         SkinWorkshopEntry.Append(dropdown);
+        // The dimming bound above must actually reach the screen: a native PopupMenu cannot tint
+        // single rows, so the popup draws through the shared colored list. The collapsed button
+        // keeps its own SkinWorkshopEntry coloring, hence colorSelection: false.
+        PresetChoiceColoring.Attach(dropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
         selector.SetMeta(OptionsCardMeta, cardId);
         selector.SetMeta(UpdatingMeta, false);
     }

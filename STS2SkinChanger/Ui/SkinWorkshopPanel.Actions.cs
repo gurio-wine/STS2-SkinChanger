@@ -14,46 +14,171 @@ internal partial class SkinWorkshopPanel
         try
         {
             _actionErrors.Remove(id);
+            if (SkinSourceIdentity.IsGitHub(id))
+            {
+                // Installing writes into the game's mods folder; the game loads it on next start.
+                if (GitHubSkinService.IsInstalling(id) || GitHubSkinService.IsScanning(id)) return;
+                PerformGitHub(id);
+                return;
+            }
             var state = SkinWorkshopService.DownloadState(id);
             if (state?.Busy == true) return;
             var primary = WorkshopItemActions.Primary(SkinWorkshopService.IsSubscribed(id), SkinWorkshopService.IsActive(id),
                 SkinWorkshopService.IsInstalled(id), SkinWorkshopService.Catalog.First(i => i.Id == id).RestartRequired, state?.State, false);
-            if (primary == WorkshopTextKey.Restart)
-            {
-                _restartPending = true; Poll();
-                // Same cross-platform normal shutdown path as the load-order dialog.
-                // Never invoke this just because a download or query completed.
-                Callable.From(() =>
-                {
-                    try
-                    {
-                        var game = NGame.Instance;
-                        if (!GodotObject.IsInstanceValid(game)) throw new InvalidOperationException("Game is no longer available.");
-                        OS.SetRestartOnExit(true);
-                        ModLog.Info($"玩家点击工坊皮肤 {id} 的“需要重启”，按游戏正常退出流程重启。");
-                        game!.Quit();
-                    }
-                    catch (Exception ex)
-                    {
-                        OS.SetRestartOnExit(false);
-                        _restartPending = false;
-                        ShowActionError(id, ex);
-                    }
-                }).CallDeferred();
-            }
+            if (primary == WorkshopTextKey.Restart) RestartGame(id, "工坊皮肤");
             else if (primary != null) _ = Subscribe(id);
         }
         catch (Exception ex) { ShowActionError(id, ex); }
     }
+
+    // Same cross-platform normal shutdown path for both sources. Never invoke this just because
+    // a download or query completed.
+    private void RestartGame(ulong id, string what)
+    {
+        if (_restartPending) return;
+        _restartPending = true; Poll();
+        Callable.From(() =>
+        {
+            try
+            {
+                var game = NGame.Instance;
+                if (!GodotObject.IsInstanceValid(game)) throw new InvalidOperationException("Game is no longer available.");
+                OS.SetRestartOnExit(true);
+                ModLog.Info($"玩家点击{what} {id} 的“需要重启”，按游戏正常退出流程重启。");
+                game!.Quit();
+            }
+            catch (Exception ex)
+            {
+                OS.SetRestartOnExit(false);
+                _restartPending = false;
+                ShowActionError(id, ex);
+            }
+        }).CallDeferred();
+    }
     private void OpenItem(ulong id)
     {
-        if (_closed || !SkinWorkshopService.CanReadMetadata(id)) return;
+        if (_closed) return;
+        if (SkinSourceIdentity.IsGitHub(id))
+        {
+            try
+            {
+                _actionErrors.Remove(id);
+                var url = GitHubSkinService.RepoUrl(id);
+                if (url.Length > 0) OS.ShellOpen(url);
+            }
+            catch (Exception ex) { ShowActionError(id, ex); }
+            return;
+        }
+        if (!SkinWorkshopService.CanReadMetadata(id)) return;
         try
         {
             _actionErrors.Remove(id);
             WorkshopCommunityLinks.OpenItem(id);
         }
         catch (Exception ex) { ShowActionError(id, ex); }
+    }
+
+    // One button, five meanings: a repository without a code is scanned to produce that code, an
+    // installable one is installed, a waiting update is installed, an installed skin whose folder
+    // the running game has not loaded yet asks for the restart, and a skin that is in use is
+    // removed again.
+    private static GitHubItemAction PrimaryAction(ulong id) => GitHubItemActions.Primary(
+        GitHubSkinService.IsRecognized(id), GitHubSkinService.InstallState(id), GitHubSkinService.IsPendingRestart(id));
+
+    private void PerformGitHub(ulong id)
+    {
+        switch (PrimaryAction(id))
+        {
+            case GitHubItemAction.Install or GitHubItemAction.Update: _ = InstallGitHub(id); break;
+            case GitHubItemAction.Restart: RestartGame(id, "GitHub 皮肤"); break;
+            case GitHubItemAction.Uninstall: _ = UninstallGitHub(id); break;
+            default: _ = ScanGitHub(id); break;
+        }
+    }
+
+    private async Task ScanGitHub(ulong id)
+    {
+        var polling = BusyPolling();
+        try
+        {
+            using var token = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+            var result = await GitHubSkinService.ScanAsync(id, token.Token);
+            if (_closed || !GodotObject.IsInstanceValid(this) || !IsInsideTree()) return;
+            OpenScanResult(id, result);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { ShowActionError(id, ex); }
+        finally
+        {
+            polling.QueueFree();
+            if (!_closed && GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
+        }
+    }
+
+    // A download and a scan take seconds, and this panel only refreshes on demand. Without its
+    // own ticker the row would sit on the old text until the work is already done.
+    private Godot.Timer BusyPolling()
+    {
+        var timer = new Godot.Timer { WaitTime = .25, ProcessMode = ProcessModeEnum.Always };
+        timer.Timeout += () =>
+        {
+            if (_closed || !GodotObject.IsInstanceValid(this) || !IsInsideTree()) { timer.QueueFree(); return; }
+            Poll();
+        };
+        AddChild(timer); timer.Start();
+        return timer;
+    }
+
+    // The codes live only in this window: nothing is saved, so a repository stays "not
+    // recognized" until its author actually publishes them as sc.info.
+    private void OpenScanResult(ulong id, GitHubScanResult result)
+    {
+        try
+        {
+            if (_scan != null) return;
+            ResetHover();
+            var entry = GitHubSkinService.Entry(id);
+            var details = result.Item is { } item
+                ? string.Join(" · ", item.Targets.Select(target => _names.Name(target.Kind, target.Target)).Distinct())
+                : "";
+            // The same name the card wears, so the window and the row it came from read alike.
+            _scan = GitHubScanPanel.Show(this, entry?.Name ?? "", details, result, () => { _scan = null; if (!_closed) Poll(); });
+            UpdateVisibleActions();
+        }
+        catch (Exception ex) { ShowActionError(id, ex); }
+    }
+
+    private void PerformGitHubSecondary(ulong id)
+    {
+        if (_closed || _restartPending || GitHubSkinService.IsInstalling(id)) return;
+        // The second button exists only while the primary button carries the other half of the
+        // action: a waiting update, or the restart that loads the copy just written to disk.
+        if (!GitHubItemActions.ShowsUninstall(PrimaryAction(id))) return;
+        _actionErrors.Remove(id);
+        _ = UninstallGitHub(id);
+    }
+
+    private async Task UninstallGitHub(ulong id)
+    {
+        try { await GitHubSkinService.UninstallAsync(id); }
+        catch (Exception ex) { ShowActionError(id, ex); }
+        finally { if (!_closed && GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll(); }
+    }
+
+    private async Task InstallGitHub(ulong id)
+    {
+        var polling = BusyPolling();
+        try
+        {
+            using var token = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+            await GitHubSkinService.InstallAsync(id, token.Token);
+        }
+        catch (Exception ex) { ShowActionError(id, ex); }
+        finally
+        {
+            polling.QueueFree();
+            if (!_closed && GodotObject.IsInstanceValid(this) && IsInsideTree()) Poll();
+        }
     }
     private void OpenSubmission(Button button)
     {
@@ -75,7 +200,9 @@ internal partial class SkinWorkshopPanel
     }
     private void ShowActionError(ulong id, Exception ex)
     {
-        ModLog.Warn($"工坊皮肤 {id} 操作失败：{ex.GetBaseException().Message}");
+        // A bare synthetic id names no repository when the log is read back later.
+        var who = SkinSourceIdentity.IsGitHub(id) && GitHubSkinService.Entry(id) is { } entry ? entry.FullName : id.ToString();
+        ModLog.Warn($"工坊皮肤 {who} 操作失败：{ex.GetBaseException().Message}");
         if (_closed || !GodotObject.IsInstanceValid(this)) return;
         _actionErrors[id] = ex.GetBaseException().Message;
         var row = _actions.FirstOrDefault(item => item.Id == id);

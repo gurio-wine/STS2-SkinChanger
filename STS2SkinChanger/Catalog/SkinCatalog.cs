@@ -31,6 +31,9 @@ internal sealed partial class SkinCatalog : IDisposable
     private static readonly object ManagedScriptCountCacheSync = new();
     private static readonly Dictionary<string, ManagedScriptCountCacheEntry> ManagedScriptCountCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object CharacterVisualPatchCacheSync = new();
+    private static readonly Dictionary<string, CharacterVisualPatchCacheEntry> CharacterVisualPatchCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly PckArchive _gameArchive;
     private readonly List<PckResourceIndex> _baselineIndexes;
@@ -39,6 +42,10 @@ internal sealed partial class SkinCatalog : IDisposable
     private readonly IReadOnlyList<CardSkinGroup> _configuredCardGroups;
     private readonly IReadOnlyList<CardSkinOption> _pckCardOptions;
     private readonly List<CardSkinGroup> _cardGroups;
+    // Card-art packs are discovered after the models exist, so their options arrive later than
+    // the PCK-derived ones and are merged into the same final group list.
+    private readonly Dictionary<string, CardSkinGroup> _artPackCardGroups =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly IReadOnlySet<string> _managedGodotScriptProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationProviders;
     private readonly IReadOnlySet<string> _cosmeticLocalizationPaths;
@@ -926,6 +933,10 @@ internal sealed partial class SkinCatalog : IDisposable
                 var cardPresentations = 0;
                 var managedScriptCount = 0;
                 var hasInteractiveScenes = false;
+                var packResourceCount = 0;
+                var servedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var servedGroupIds = new List<string>();
+                var partGroupIds = new List<string>();
                 if (mod.PckPath != null && File.Exists(mod.PckPath))
                 {
                     PckArchive? archive = null;
@@ -942,7 +953,14 @@ internal sealed partial class SkinCatalog : IDisposable
                             ? CountManagedGodotScripts(archive)
                             : 0;
                         hasInteractiveScenes = managedScriptCount > 0 && ContainsInteractiveScene(archive);
-                        visualGroups = CountProbeVisualGroups(index, baselineIndexes);
+                        packResourceCount = index.Assets.Count;
+                        var probeGroups = CountProbeVisualGroups(index, baselineIndexes);
+                        visualGroups = probeGroups.AnchoredGroupCount;
+                        partGroupIds.AddRange(probeGroups.PartGroupIds);
+                        servedSources.UnionWith(probeGroups.ServedSources);
+                        servedGroupIds.AddRange(probeGroups.AnchoredGroupIds);
+                        servedGroupIds.AddRange(probeGroups.PartGroupIds);
+
                         var frameworkContracts = FrameworkSkinContractScanner.Scan(
                                 mod.RootPath,
                                 mod.ResourceNamespaceId)
@@ -951,6 +969,15 @@ internal sealed partial class SkinCatalog : IDisposable
                                 baselineIndexes,
                                 contract))
                             .ToArray();
+                        foreach (var contract in frameworkContracts)
+                        {
+                            servedGroupIds.Add(contract.TargetGroupId);
+                            foreach (var path in contract.ResourcePaths)
+                            {
+                                servedSources.Add(NormalizeTakeoverPath(path));
+                            }
+                        }
+
                         visualGroups = Math.Max(
                             visualGroups,
                             frameworkContracts
@@ -988,8 +1015,34 @@ internal sealed partial class SkinCatalog : IDisposable
                     }
                 }
 
+                // A framework content registry can declare a character's appearance even when every
+                // resource lives in the provider's own namespace and no path can be anchored to the
+                // game. That declaration is evidence, but only for a character this build actually
+                // ships: an unknown or misspelled target is never promoted into a skin.
+                if (mod.HasDll && mod.RootPath != null)
+                {
+                    var registeredReplacements = ManagedCharacterAssetReplacementScanner
+                        .Scan(mod.RootPath, mod.ResourceNamespaceId)
+                        .Where(replacement => IsGameCharacterGroup(replacement.TargetGroupId, baselineIndexes))
+                        .ToArray();
+                    foreach (var replacement in registeredReplacements)
+                    {
+                        servedGroupIds.Add(replacement.TargetGroupId);
+                        servedSources.UnionWith(replacement.CanonicalPathsByProviderPath.Values);
+                    }
+
+                    visualGroups = Math.Max(
+                        visualGroups,
+                        registeredReplacements
+                            .Select(replacement => replacement.TargetGroupId)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count());
+                }
+
                 var runtimeImages = 0;
-                var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0;
+                var hasResourceBackedCosmetics = visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 ||
+                                                 partGroupIds.Count > 0;
+                var unservablePackWithVisualPatches = false;
                 if (mod.RootPath != null)
                 {
                     runtimeImages = DiscoverRuntimeAncientImages(mod).Count;
@@ -998,13 +1051,43 @@ internal sealed partial class SkinCatalog : IDisposable
                     if (mod.HasDll && visualGroups == 0 && cardAssets == 0 && cardPresentations == 0 &&
                         LooksLikeDllSkinProvider(mod))
                     {
-                        // 只读取 PE 字符串，不把程序集载入运行时。纯 DLL 皮肤即使没有
-                        // 可识别 PCK，只要明显补丁了视觉入口，也会被加载器隔离。
-                        visualGroups = 1;
+                        // 只读取 PE 字符串，不把程序集载入运行时。补丁外观入口但没有资源可呈现
+                        // 的包必须交回游戏原加载器：隔离它会让作者的全部内容失效。整包皮肤之外
+                        // 的风格/UI 包是这种情况，完全不带自己外观资源的附加视觉包（同伴、特效）
+                        // 也是——它只能添加由本体或别的 Mod 资源拼出来的东西，本 Mod 一项也呈现
+                        // 不了，隔离它同样只会让它停止工作。
+                        var bringsOwnAppearance = SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+                            packResourceCount,
+                            runtimeImages,
+                            ReplacesCharacterVisualsAtRuntime(mod),
+                            HasLooseAppearanceResource(mod.RootPath));
+                        if (packResourceCount >= SubstantialPackResourceCount)
+                        {
+                            unservablePackWithVisualPatches = true;
+                            ModLog.Info(
+                                $"未按皮肤接管 {mod.Name ?? mod.Id}：其 {packResourceCount} 项资源中没有可呈现的皮肤资源，" +
+                                "但 DLL 会补丁外观入口；按皮肤隔离会让整个包失效。" +
+                                "已交回游戏原加载器，其 DLL 与 PCK 按作者原意完整加载。");
+                        }
+                        else if (!bringsOwnAppearance)
+                        {
+                            unservablePackWithVisualPatches = true;
+                            ModLog.Info(
+                                $"未按皮肤接管 {mod.Name ?? mod.Id}：它不带任何自己的外观资源" +
+                                $"（包资源 {packResourceCount} 项、运行时图片 {runtimeImages} 张、目录内无外观文件），" +
+                                "也没有替换角色自己的外观创建入口；它只能添加由本体或别的 Mod 资源拼出来的东西，" +
+                                "按皮肤隔离只会让它停止工作。已交回游戏原加载器，其 DLL 按作者原意完整加载。");
+                        }
+                        else
+                        {
+                            visualGroups = 1;
+                        }
                     }
                 }
 
-                if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0)
+                var servedResourceCount = servedSources.Count + cardAssets + cardPresentations;
+                if (visualGroups > 0 || cardAssets > 0 || cardPresentations > 0 || runtimeImages > 0 ||
+                    partGroupIds.Count > 0)
                 {
                     providers.Add(new SkinProviderProbe(
                         mod.Id,
@@ -1016,7 +1099,18 @@ internal sealed partial class SkinCatalog : IDisposable
                         managedScriptCount,
                         hasInteractiveScenes,
                         mod.ResourceNamespaceId,
-                        HasResourceBackedCosmetics: hasResourceBackedCosmetics));
+                        HasResourceBackedCosmetics: hasResourceBackedCosmetics,
+                        PackResourceCount: packResourceCount,
+                        ServedResourceCount: servedResourceCount,
+                        ServedGroupIds: [.. servedGroupIds.Distinct(StringComparer.OrdinalIgnoreCase)],
+                        ServedSourcePaths: [.. servedSources.Order(StringComparer.OrdinalIgnoreCase).Take(64)],
+                        BaselinePartGroupCount: partGroupIds.Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                        BaselinePartGroupIds: [.. partGroupIds.Distinct(StringComparer.OrdinalIgnoreCase)]));
+                }
+                else if (unservablePackWithVisualPatches)
+                {
+                    // Not a skin: the reason and the log line are emitted where the DLL heuristic
+                    // is rejected, so that a package is never retried for a second explanation.
                 }
             }
         }
@@ -1081,28 +1175,94 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
-    private static int CountProbeVisualGroups(
-        PckResourceIndex index,
-        IReadOnlyCollection<PckResourceIndex> baselineIndexes)
+    private static (int AnchoredGroupCount, IReadOnlyList<string> AnchoredGroupIds, int PartGroupCount,
+        IReadOnlyList<string> PartGroupIds, HashSet<string> ServedSources)
+        CountProbeVisualGroups(
+            PckResourceIndex index,
+            IReadOnlyCollection<PckResourceIndex> baselineIndexes)
     {
+        var servedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (baselineIndexes.Count > 0)
         {
-            return BuildGroups([index], baselineIndexes)
-                .Count(group => group.Options.Count > 0);
+            var groups = BuildGroups([index], baselineIndexes)
+                .Where(group => group.Options.Count > 0)
+                .ToArray();
+            AddGroupSources(groups, servedSources);
+            // A group this package only serves through a baseline part override is not an
+            // appearance of its own: it must not make the package look like a skin provider.
+            var anchored = groups
+                .Where(group => group.Options.Any(option => !option.IsBaselinePartOverride))
+                .ToArray();
+            var parts = groups
+                .Where(group => group.Options.All(option => option.IsBaselinePartOverride))
+                .ToArray();
+            return (
+                anchored.Length,
+                [.. anchored.Select(group => group.Id)],
+                parts.Length,
+                [.. parts.Select(group => group.Id)],
+                servedSources);
         }
 
-        var groupIds = index.Assets.Keys
-            .Select(TryGetPrimaryGroup)
-            .Where(group => group != null)
-            .Cast<GroupIdentity>()
-            .Select(group => group.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in BuildGroups([index]).Where(group => group.Options.Count > 0))
+        // Without the game baseline there is nothing to compare against, so only the paths the
+        // catalog itself recognizes as game presentation resources can be served.
+        var groupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in index.Assets.Keys)
+        {
+            var group = TryGetPrimaryGroup(path);
+            if (group == null || !IsGroupAnchorResource(path, group))
+            {
+                continue;
+            }
+
+            groupIds.Add(group.Id);
+            servedSources.Add(path);
+        }
+
+        var fallbackGroups = BuildGroups([index]).Where(group => group.Options.Count > 0).ToArray();
+        AddGroupSources(fallbackGroups, servedSources);
+        foreach (var group in fallbackGroups)
         {
             groupIds.Add(group.Id);
         }
 
-        return groupIds.Count;
+        return (groupIds.Count, [.. groupIds], 0, [], servedSources);
+
+        static void AddGroupSources(
+            IEnumerable<SkinGroup> groups,
+            HashSet<string> sources)
+        {
+            foreach (var option in groups.SelectMany(group => group.Options))
+            {
+                foreach (var source in option.Assets.Keys)
+                {
+                    sources.Add(source);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// A package this size ships real content. When none of it is cosmetic the package is not a
+    /// skin, and the DLL-patch heuristic must not claim it: isolating it would drop everything.
+    /// </summary>
+    private const int SubstantialPackResourceCount = 24;
+
+    /// <summary>
+    /// Whether a resource is what the game presents a group with, rather than one part of it.
+    /// The merchant room is assembled from a body and a separate hand spine; a pack that only
+    /// replaces the hand is not a merchant appearance, and treating it as one would unmount the
+    /// rest of that pack (its UI, audio and fonts) from the game.
+    /// </summary>
+    private static bool IsGroupAnchorResource(string sourcePath, GroupIdentity group)
+    {
+        if (!group.Id.Equals("merchant", StringComparison.OrdinalIgnoreCase) &&
+            !group.Id.Equals("fake_merchant_monster", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return !MerchantHandPartPathRegex().IsMatch(NormalizeTakeoverPath(sourcePath));
     }
 
     private static int CountManagedGodotScripts(PckArchive archive)
@@ -1184,6 +1344,36 @@ internal sealed partial class SkinCatalog : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Whether the package folder holds a file the game could draw with. Read lazily: the first
+    /// appearance file is enough, so a large pack is not enumerated to the end.
+    /// </summary>
+    private static bool HasLooseAppearanceResource(string? rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories))
+            {
+                if (AppearanceResourceFilePolicy.IsAppearanceResourceFile(path))
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            return false;
+        }
+
+        return false;
+    }
+
     private static bool LooksLikeDllSkinProvider(SkinModDescriptor mod)
     {
         if (mod.RootPath == null)
@@ -1254,6 +1444,115 @@ internal sealed partial class SkinCatalog : IDisposable
         }
     }
 
+    /// <summary>
+    /// Whether a provider replaces the character's own visual creation with the art it ships in its
+    /// own package. Such a package draws the character at runtime, so the canonical files it also
+    /// contains are supplements rather than the whole of what it presents. Only the patch targets an
+    /// assembly declares are read; no Mod name, Workshop ID or author namespace is involved, and the
+    /// assembly is never loaded or executed.
+    /// </summary>
+    internal static bool ReplacesCharacterVisualsAtRuntime(SkinModDescriptor mod)
+    {
+        if (mod.RootPath == null || !mod.HasDll)
+        {
+            return false;
+        }
+
+        string assemblyPath;
+        try
+        {
+            assemblyPath = SkinPackagePaths.Resolve(mod.RootPath, mod.ResourceNamespaceId, ".dll");
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        FileInfo info;
+        try
+        {
+            info = new FileInfo(assemblyPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return false;
+        }
+
+        if (!info.Exists || info.Length <= 0)
+        {
+            return false;
+        }
+
+        lock (CharacterVisualPatchCacheSync)
+        {
+            if (CharacterVisualPatchCache.TryGetValue(assemblyPath, out var cached) &&
+                cached.Length == info.Length &&
+                cached.LastWriteTimeUtc == info.LastWriteTimeUtc)
+            {
+                return cached.ReplacesCharacterVisuals;
+            }
+        }
+
+        var replacesCharacterVisuals = HasCharacterVisualCreationPatch(assemblyPath);
+        lock (CharacterVisualPatchCacheSync)
+        {
+            CharacterVisualPatchCache[assemblyPath] = new CharacterVisualPatchCacheEntry(
+                info.Length,
+                info.LastWriteTimeUtc,
+                replacesCharacterVisuals);
+        }
+
+        return replacesCharacterVisuals;
+    }
+
+    private static bool HasCharacterVisualCreationPatch(string assemblyPath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(assemblyPath);
+            using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!peReader.HasMetadata)
+            {
+                return false;
+            }
+
+            var reader = peReader.GetMetadataReader();
+            foreach (var typeHandle in reader.TypeDefinitions)
+            {
+                var type = reader.GetTypeDefinition(typeHandle);
+                var patchMetadata = new StringBuilder();
+                AppendHarmonyPatchMetadata(reader, type.GetCustomAttributes(), patchMetadata);
+                foreach (var methodHandle in type.GetMethods())
+                {
+                    AppendHarmonyPatchMetadata(
+                        reader,
+                        reader.GetMethodDefinition(methodHandle).GetCustomAttributes(),
+                        patchMetadata);
+                }
+
+                if (patchMetadata.Length == 0)
+                {
+                    continue;
+                }
+
+                var value = patchMetadata.ToString();
+                if (value.Contains("CharacterModel", StringComparison.Ordinal) &&
+                    value.Contains("CreateVisuals", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or BadImageFormatException)
+        {
+            return false;
+        }
+    }
+
     private static bool HasDirectVisualHarmonyPatch(string assemblyPath)
     {
         using var stream = File.OpenRead(assemblyPath);
@@ -1264,10 +1563,9 @@ internal sealed partial class SkinCatalog : IDisposable
         }
 
         var reader = peReader.GetMetadataReader();
+        var hasDirectVisualTarget = false;
         var hasCreatureLifecyclePatch = false;
         var hasCharacterSelectPatch = false;
-        var hasRestSiteCharacterPatch = false;
-        var hasMerchantRoomPatch = false;
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
@@ -1287,29 +1585,21 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             var value = patchMetadata.ToString();
-            if (HasDirectVisualPatchTargetMetadata(value))
-            {
-                return true;
-            }
-
-            // A creature lifecycle patch by itself is not skin evidence: additive combat VFX
-            // mods also attach effect nodes from NCreature._Ready and may load canonical creature
-            // scenes to place those effects. Private full-character packs pair that hook with a
-            // character-select presentation patch. Requiring an actual second patch target keeps
-            // additive visual mods in the game's normal loading flow without a provider allow-list.
+            hasDirectVisualTarget |= HasDirectVisualPatchTargetMetadata(value);
+            // Creatures and rooms are where every additive visual Mod attaches its own actors, so
+            // room hooks are not skin evidence: see SkinProviderPatchEvidencePolicy for the entry
+            // point that separates a pickable character from an added companion or effect.
             hasCreatureLifecyclePatch |=
                 HasPatchTarget(value, "NCreature", "_Ready", "SetAnimationTrigger");
             hasCharacterSelectPatch |=
                 HasPatchTarget(value, "NCharacterSelectScreen", "SelectCharacter") ||
                 HasPatchTarget(value, "NCharacterSelectButton", "Init");
-            hasRestSiteCharacterPatch |=
-                HasPatchTarget(value, "NRestSiteCharacter", "_Ready");
-            hasMerchantRoomPatch |=
-                HasPatchTarget(value, "NMerchantRoom", "AfterRoomIsLoaded");
         }
 
-        if (hasCreatureLifecyclePatch &&
-            (hasCharacterSelectPatch || hasRestSiteCharacterPatch || hasMerchantRoomPatch))
+        if (SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+                hasDirectVisualTarget,
+                hasCreatureLifecyclePatch,
+                hasCharacterSelectPatch))
         {
             return true;
         }
@@ -2339,7 +2629,7 @@ internal sealed partial class SkinCatalog : IDisposable
         var directFile = baseline == null ? null : FindDirectFile(baseline, normalizedPath);
         if (directFile != null)
         {
-            var text = Encoding.UTF8.GetString(directFile.Archive.ReadFile(directFile.Path));
+            var text = Encoding.UTF8.GetString(directFile.Read());
             var atlasPath = EmbeddedResourcePathRegex()
                 .Matches(text)
                 .Select(match => match.Value)
@@ -2765,7 +3055,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var text = Encoding.UTF8.GetString(pending.File.Archive.ReadFile(pending.File.Path));
+            var text = Encoding.UTF8.GetString(pending.File.Read());
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
                 var sourcePath = match.Value;
@@ -2937,9 +3227,171 @@ internal sealed partial class SkinCatalog : IDisposable
     private static string NormalizeResourceToken(string value) =>
         new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
-    public void FinalizeCardGroups(IEnumerable<CardCatalogEntry> cards)
+    /// <summary>
+    /// Registers pure asset card-art packs as first-class card options. A pack lists artwork
+    /// per vanilla portrait path, so each card is matched through the game's own catalog entry
+    /// instead of through any provider namespace or folder convention.
+    /// </summary>
+    /// <returns>The card types covered by at least one pack, and the packs that were used.</returns>
+    public (IReadOnlySet<string> CardTypes, IReadOnlyList<CardArtPack> UsedPacks) AttachCardArtPacks(
+        IEnumerable<CardArtPack> packs,
+        IEnumerable<CardCatalogEntry> cards)
     {
+        var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedPacks = new List<CardArtPack>();
+        // A catalog built without its constructor (test fixtures) has nowhere to store options.
+        if (_artPackCardGroups == null)
+        {
+            return (covered, usedPacks);
+        }
+
         var cardEntries = cards
+            .Where(card => !string.IsNullOrWhiteSpace(card.PortraitPath))
+            .ToArray();
+
+        foreach (var pack in packs)
+        {
+            var byGroup = new Dictionary<string, (Dictionary<string, ResourceAsset> Assets,
+                Dictionary<string, string> Portraits, Dictionary<string, CardPresentationDefinition> Presentations)>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var packCard in pack.Cards)
+            {
+                var card = FindCardForPackEntry(packCard, cardEntries);
+                if (card == null ||
+                    !packCard.SourcePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var groupId = card.CatalogGroupId;
+                if (string.IsNullOrWhiteSpace(groupId))
+                {
+                    continue;
+                }
+
+                // Create the option lazily so a pack that matches nothing registers nothing.
+                if (!byGroup.TryGetValue(groupId, out var bucket))
+                {
+                    bucket = (new Dictionary<string, ResourceAsset>(StringComparer.OrdinalIgnoreCase),
+                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                        new Dictionary<string, CardPresentationDefinition>(StringComparer.OrdinalIgnoreCase));
+                    byGroup.Add(groupId, bucket);
+                }
+
+                var asset = new ResourceAsset(packCard.SourcePath);
+                asset.AddInlineFile(packCard.SourcePath, packCard.Bytes);
+                bucket.Assets[packCard.SourcePath] = asset;
+                bucket.Portraits[card.TypeName] = packCard.SourcePath;
+                // Each card takes the canvas its artwork was composed for: a card-shaped image
+                // covers the whole card, an art window crop keeps the game's framed layout.
+                if (CardArtPackScanPolicy.BuildCardPresentation(packCard) is { } presentation)
+                {
+                    bucket.Presentations[card.TypeName] = presentation;
+                }
+
+                covered.Add(card.TypeName);
+            }
+
+            if (byGroup.Count == 0)
+            {
+                continue;
+            }
+
+            usedPacks.Add(pack);
+            BindArtPackWorkshopSource(pack);
+            foreach (var (groupId, bucket) in byGroup)
+            {
+                // Registered as one group per library category, matching how a PCK provider's
+                // card option is scoped, so the pack appears on the same rows the player expects.
+                AddCardOption(_artPackCardGroups, groupId, new CardSkinOption(
+                    pack.Id,
+                    pack.Name,
+                    bucket.Portraits,
+                    new Dictionary<string, AncientCardPortrait>(StringComparer.OrdinalIgnoreCase),
+                    PckAssets: bucket.Assets,
+                    ProviderRootPath: pack.Root,
+                    ProviderId: pack.Id,
+                    Presentations: bucket.Presentations));
+            }
+        }
+
+        return (covered, usedPacks);
+    }
+
+    /// <summary>
+    /// A pack is published inside a Workshop item folder, so its artwork belongs to that item.
+    /// The item's own manifest is not required to declare the same id, and a pure data pack has
+    /// no PCK for the loader to register as a provider, so the export cannot rely on either:
+    /// binding the folder here keeps the active-item state and submission candidates in step
+    /// with the artwork that was actually taken over.
+    /// </summary>
+    private void BindArtPackWorkshopSource(CardArtPack pack)
+    {
+        var workshopId = WorkshopSourceId(pack.Root);
+        if (workshopId == 0 || _workshopSourceIds == null)
+        {
+            return;
+        }
+
+        _workshopSourceIds[pack.Id] = workshopId;
+    }
+
+    /// <summary>
+    /// Card types a pack supplies. A pack addresses cards by artwork path, so a covered card
+    /// whose pool lives in another library category must still be listed there.
+    /// </summary>
+    public IReadOnlySet<string> GetArtPackCardTypes() =>
+        (_artPackCardGroups?.Values ?? Enumerable.Empty<CardSkinGroup>())
+            .SelectMany(group => group.Options)
+            .SelectMany(option => option.NormalPortraits.Keys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static CardCatalogEntry? FindCardForPackEntry(
+        CardArtPackCard packCard,
+        IReadOnlyList<CardCatalogEntry> cards) =>
+        ResolveCardForPortraitStem(packCard.CardId, cards);
+
+    /// <summary>
+    /// Resolves the card a portrait file is named after. A bundle entry and a provider's own image
+    /// file both identify their card by name, so both go through this single rule. An ambiguous
+    /// name resolves to nothing: one name must never be routed to an arbitrary card.
+    /// </summary>
+    internal static CardCatalogEntry? ResolveCardForPortraitStem(
+        string stem,
+        IReadOnlyList<CardCatalogEntry> cards)
+    {
+        var token = NormalizeCardToken(stem);
+        if (token.Length == 0)
+        {
+            return null;
+        }
+
+        CardCatalogEntry? match = null;
+        foreach (var card in cards)
+        {
+            var portrait = TryGetCardArtIdentity(card.PortraitPath);
+            var matches = portrait != null && CardStemsMatch(token, portrait.Stem) ||
+                          CardStemsMatch(token, NormalizeCardToken(card.TypeName));
+            if (!matches)
+            {
+                continue;
+            }
+
+            // An ambiguous stem must not be routed to an arbitrary card.
+            if (match != null)
+            {
+                return null;
+            }
+
+            match = card;
+        }
+
+        return match;
+    }
+
+    public void FinalizeCardGroups(IEnumerable<CardCatalogEntry> cards)
+    {        var cardEntries = cards
             .Where(card => !string.IsNullOrWhiteSpace(card.PortraitPath) &&
                            !string.IsNullOrWhiteSpace(card.CatalogGroupId) &&
                            !string.IsNullOrWhiteSpace(card.FilterGroupId))
@@ -3176,6 +3628,63 @@ internal sealed partial class SkinCatalog : IDisposable
                 };
                 AddCardOption(groups, card.PoolGroupId, scoped);
                 AddCardOption(groups, "ancients", scoped);
+            }
+        }
+
+        // Card-art packs are merged last so a PCK provider that declares the same id keeps its
+        // own definition, and a pack-only card still reaches the library listing below.
+        // A catalog built without its constructor (test fixtures) simply has no packs.
+        foreach (var artPackGroup in _artPackCardGroups?.Values ?? Enumerable.Empty<CardSkinGroup>())
+        {
+            foreach (var option in artPackGroup.Options)
+            {
+                AddCardOption(groups, artPackGroup.Id, option);
+            }
+        }
+
+        // Every card a pack addresses is listed under its own library filters, including cards
+        // whose baseline portrait lives in another category (a token inside a character pack).
+        foreach (var coveredType in GetArtPackCardTypes())
+        {
+            if (!cardsByType.TryGetValue(coveredType, out var coveredCard))
+            {
+                continue;
+            }
+
+            foreach (var groupId in new[] { coveredCard.CatalogGroupId, coveredCard.FilterGroupId }
+                         .Where(id => !string.IsNullOrWhiteSpace(id))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!groups.TryGetValue(groupId, out var coveredGroup))
+                {
+                    continue;
+                }
+
+                foreach (var option in coveredGroup.Options.ToArray())
+                {
+                    if (!option.NormalPortraits.ContainsKey(coveredType) &&
+                        !option.CardPresentations.ContainsKey(coveredType))
+                    {
+                        continue;
+                    }
+
+                    AddCardOption(groups, groupId, option with
+                    {
+                        NormalPortraits = option.NormalPortraits
+                            .Where(pair => pair.Key.Equals(coveredType, StringComparison.OrdinalIgnoreCase))
+                            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase),
+                        AncientPortraits = new Dictionary<string, AncientCardPortrait>(
+                            StringComparer.OrdinalIgnoreCase),
+                        CardPresentations = option.CardPresentations
+                            .Where(pair => pair.Key.Equals(coveredType, StringComparison.OrdinalIgnoreCase))
+                            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase),
+                        Assets = option.Assets
+                            .Where(pair => pair.Key.Equals(
+                                option.NormalPortraits.GetValueOrDefault(coveredType),
+                                StringComparison.OrdinalIgnoreCase))
+                            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+                    });
+                }
             }
         }
 
@@ -3819,7 +4328,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return [];
         }
 
-        var text = Encoding.UTF8.GetString(file.Archive.ReadFile(file.Path));
+        var text = Encoding.UTF8.GetString(file.Read());
         return EmbeddedResourcePathRegex()
             .Matches(text)
             .Select(match => match.Value)
@@ -3880,7 +4389,7 @@ internal sealed partial class SkinCatalog : IDisposable
             }
 
             // 扫描始终用原始文本（提供者索引按原始路径登记），写入时才做别名重写。
-            var bytes = pending.File.Archive.ReadFile(pending.File.Path);
+            var bytes = pending.File.Read();
             var text = Encoding.UTF8.GetString(bytes);
             foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
             {
@@ -3931,7 +4440,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 // (.scn/.res) 内部无法重写，其回退引用会落到这些原始路径副本，
                 // 重写后整条链都指向别名空间的新鲜副本，避免命中游戏缓存的
                 // 原版贴图导致预览图混用资源。
-                var dependencyBytes = file.Archive.ReadFile(file.Path);
+                var dependencyBytes = file.Read();
                 if (IsRewritableTextResource(file.Path))
                 {
                     dependencyBytes = RewriteTextResource(
@@ -3953,7 +4462,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
         void Enqueue(PckResourceIndex? index, ResourceFile file)
         {
-            var key = (index?.Mod.Id ?? file.Archive.Path) + "\n" + file.Path;
+            var key = (index?.Mod.Id ?? file.ArchivePath) + "\n" + file.Path;
             if (queued.Add(key))
             {
                 queue.Enqueue((index, file));
@@ -4037,7 +4546,7 @@ internal sealed partial class SkinCatalog : IDisposable
             return false;
         }
 
-        bytes = directFile.Archive.ReadFile(directFile.Path);
+        bytes = directFile.Read();
         return bytes.Length > 0;
     }
 
@@ -4175,7 +4684,7 @@ internal sealed partial class SkinCatalog : IDisposable
                         .Cast<ResourceFile>()
                         .Concat(resource.PayloadFiles))
                     .DistinctBy(
-                        file => file.Archive.Path + "\n" + file.Path,
+                        file => file.ArchivePath + "\n" + file.Path,
                         StringComparer.OrdinalIgnoreCase)
                     .Select(file => new AliasedDependencyReference(
                         IsRewritableTextResource(file.Path),
@@ -4188,7 +4697,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             if (resource.DirectFile != null)
             {
-                var bytes = resource.DirectFile.Archive.ReadFile(resource.DirectFile.Path);
+                var bytes = resource.DirectFile.Read();
                 files[sourceAliases[resource.SourcePath]] = RewriteAliasedResourceBytes(
                     resource.DirectFile.Path,
                     bytes,
@@ -4212,7 +4721,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             foreach (var payloadFile in resource.PayloadFiles)
             {
-                var bytes = payloadFile.Archive.ReadFile(payloadFile.Path);
+                var bytes = payloadFile.Read();
                 files[payloadAliases[payloadFile.Path]] = RewriteAliasedResourceBytes(
                     payloadFile.Path,
                     bytes,
@@ -4227,7 +4736,7 @@ internal sealed partial class SkinCatalog : IDisposable
                 continue;
             }
 
-            var remapText = Encoding.UTF8.GetString(resource.RemapFile.Archive.ReadFile(resource.RemapFile.Path));
+            var remapText = Encoding.UTF8.GetString(resource.RemapFile.Read());
             var replacements = new Dictionary<string, string>(sourceAliases, StringComparer.OrdinalIgnoreCase);
             foreach (Match match in ResourcePathRegex().Matches(remapText))
             {
@@ -4411,17 +4920,22 @@ internal sealed partial class SkinCatalog : IDisposable
         foreach (var index in indexes)
         {
             var detectedPrimaryGroups = index.Assets.Keys
-                .Select(path => TryGetPrimaryGroup(path) ??
-                                managedMonsterAssetGroups.GetValueOrDefault(
-                                    NormalizeTakeoverPath(path)))
+                .Select(path => (Path: path, Group: TryGetPrimaryGroup(path) ??
+                                            managedMonsterAssetGroups.GetValueOrDefault(
+                                                NormalizeTakeoverPath(path))))
                 // A cosmetic provider may remap its private animation folders into ordinary
                 // looking character/monster paths. Those folders are dependencies of a real
                 // skin, not new game entities. Only IDs present in the game or a loaded gameplay
                 // Mod baseline may create selectable groups; otherwise one complex provider can
                 // leave phantom selections behind and keep its entire PCK active after switching
                 // away, contaminating unrelated character and monster skins.
-                .Where(group => group != null && knownGroupIds.Contains(group.Id))
-                .Cast<GroupIdentity>()
+                .Where(candidate => candidate.Group != null && knownGroupIds.Contains(candidate.Group.Id))
+                // A group also needs an anchor: the resource the game presents the group with.
+                // Files around that anchor are parts of it, and a pack that only replaces one
+                // part is not presenting the group (a style overhaul that happens to override
+                // the merchant room's hand animation must not become a selectable merchant skin).
+                .Where(candidate => IsGroupAnchorResource(candidate.Path, candidate.Group!))
+                .Select(candidate => candidate.Group!)
                 .DistinctBy(group => group.Id)
                 .ToArray();
             var anchoredCharacterGroupIds = index.Assets.Keys
@@ -4443,6 +4957,7 @@ internal sealed partial class SkinCatalog : IDisposable
 
             if (primaryGroups.Length == 0)
             {
+                AddBaselinePartOptions(index, baselines, groups, knownGroupIds);
                 continue;
             }
 
@@ -4497,10 +5012,11 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Id,
                     index.Mod.Name,
                     assets,
-                    IsCharacterIconOnly:
+                    IsCharacterIconOnly: CharacterGroupEvidencePolicy.IsIconOnlySupplement(
                         knownCharacterGroupIds.Contains(identity.Id) &&
                         !anchoredCharacterGroupIds.Contains(identity.Id) &&
-                        assets.Keys.Any(IsCharacterIconSourcePath)));
+                        assets.Keys.Any(IsCharacterIconSourcePath),
+                        ReplacesCharacterVisualsAtRuntime(index.Mod))));
             }
         }
 
@@ -4524,6 +5040,56 @@ internal sealed partial class SkinCatalog : IDisposable
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
     }
+
+    /// <summary>
+    /// Registers the parts a non-skin package overrides as selectable options. The package itself
+    /// keeps loading through the game's own loader; only paths the game baseline can hand back are
+    /// taken over, so selecting another option — or the game's original — restores the shipped
+    /// presentation instead of leaving the author's art behind.
+    /// </summary>
+    private static void AddBaselinePartOptions(
+        PckResourceIndex index,
+        IReadOnlyCollection<PckResourceIndex> baselines,
+        IDictionary<string, SkinGroup> groups,
+        IReadOnlySet<string> knownGroupIds)
+    {
+        var partPaths = BaselinePartTakeoverPolicy.ResolveServablePartPaths(
+            index.Assets.Keys,
+            path => TryGetPrimaryGroup(path) is { } owner && knownGroupIds.Contains(owner.Id),
+            path => TryGetPrimaryGroup(path) is not { } owner || IsGroupAnchorResource(path, owner),
+            path => baselines.Any(baseline => ResourceExists(baseline, path)));
+        foreach (var partGroup in partPaths
+                     .GroupBy(path => TryGetPrimaryGroup(path)!.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            var identity = TryGetPrimaryGroup(partGroup.First())!;
+            if (!groups.TryGetValue(identity.Id, out var group))
+            {
+                group = new SkinGroup(identity.Id, identity.DisplayName);
+                groups.Add(identity.Id, group);
+            }
+
+            group.Options.Add(new SkinOption(
+                index.Mod.Id,
+                index.Mod.Name,
+                partGroup.ToDictionary(
+                    path => path,
+                    path => index.Assets[path],
+                    StringComparer.OrdinalIgnoreCase),
+                IsBaselinePartOverride: true)
+            {
+                ProviderRootPath = index.Mod.RootPath
+            });
+        }
+    }
+
+    /// <summary>
+    /// The selection a group starts with when the player never chose one. A part takeover is
+    /// already rendered by the author's own mounted package, so it stays the default until the
+    /// player selects something else for that group.
+    /// </summary>
+    internal static string? ResolvePartTakeoverDefault(IEnumerable<SkinOption> options) =>
+        BaselinePartTakeoverPolicy.ResolveAdoptedDefault(
+            [.. options.Where(option => option.IsBaselinePartOverride).Select(option => option.Id)]);
 
     private static void AddDirectCharacterRuntimeProviderOptions(
         IReadOnlyCollection<PckResourceIndex> indexes,
@@ -5787,10 +6353,11 @@ internal sealed partial class SkinCatalog : IDisposable
             var path = NormalizeTakeoverPath(file.Path);
             var baselineFile = baseline.Files.FirstOrDefault(candidate =>
                 NormalizeTakeoverPath(candidate.Path).Equals(path, StringComparison.OrdinalIgnoreCase));
+            // A card-art pack can supply exactly the bytes a mounted PCK already exposes.
+            // Compare payloads so the identical portrait is not registered twice.
             if (baselineFile == null ||
-                file.Archive.GetFileSize(file.Path) != baselineFile.Archive.GetFileSize(baselineFile.Path) ||
-                !file.Archive.GetFileMd5(file.Path)
-                    .SequenceEqual(baselineFile.Archive.GetFileMd5(baselineFile.Path)))
+                file.IsInline != baselineFile.IsInline ||
+                !file.HasSameContentAs(baselineFile))
             {
                 return true;
             }
@@ -6238,8 +6805,10 @@ internal sealed partial class SkinCatalog : IDisposable
                     {
                         Assets = mergedAssets,
                         IsRuntimeProvider = true,
-                        IsCharacterIconOnly = existing.IsCharacterIconOnly &&
-                                              mappedAssets.Keys.All(IsCharacterIconSourcePath)
+                        IsCharacterIconOnly = CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+                            existing.IsCharacterIconOnly &&
+                            mappedAssets.Keys.All(IsCharacterIconSourcePath),
+                            ReplacesCharacterVisualsAtRuntime(index.Mod))
                     };
                     continue;
                 }
@@ -6249,8 +6818,10 @@ internal sealed partial class SkinCatalog : IDisposable
                     index.Mod.Name,
                     mappedAssets,
                     IsRuntimeProvider: true,
-                    IsCharacterIconOnly: knownCharacterGroupIds.Contains(identity.Id) &&
-                                         mappedAssets.Keys.All(IsCharacterIconSourcePath)));
+                    IsCharacterIconOnly: CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+                        knownCharacterGroupIds.Contains(identity.Id) &&
+                        mappedAssets.Keys.All(IsCharacterIconSourcePath),
+                        ReplacesCharacterVisualsAtRuntime(index.Mod))));
             }
         }
     }
@@ -6268,6 +6839,22 @@ internal sealed partial class SkinCatalog : IDisposable
         index.Archive.Paths.Contains(path, StringComparer.OrdinalIgnoreCase) ||
         index.Archive.Paths.Contains(path + ".remap", StringComparer.OrdinalIgnoreCase) ||
         index.Archive.Paths.Contains(path + ".import", StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a character declared by a provider's own registration names a character of the
+    /// running game. The evidence is the game's baseline resources, so a declaration can never
+    /// invent a character group, and the check follows the same path conventions every other
+    /// character asset uses.
+    /// </summary>
+    private static bool IsGameCharacterGroup(
+        string groupId,
+        IReadOnlyCollection<PckResourceIndex> baselineIndexes) =>
+        !string.IsNullOrWhiteSpace(groupId) &&
+        baselineIndexes.Count > 0 &&
+        new[] { "CombatVisual", "CharacterSelectPortrait", "CharacterIcon" }
+            .Select(propertyName => GetFrameworkCharacterCanonicalPath(propertyName, groupId))
+            .OfType<string>()
+            .Any(path => baselineIndexes.Any(baseline => ResourceExists(baseline, path)));
 
     internal static string? GetFrameworkCharacterCanonicalPath(
         string propertyName,
@@ -6310,7 +6897,7 @@ internal sealed partial class SkinCatalog : IDisposable
         {
             foreach (var file in asset.Files.Where(file => MayContainResourceReferences(file.Path)))
             {
-                var text = Encoding.UTF8.GetString(file.Archive.ReadFile(file.Path));
+                var text = Encoding.UTF8.GetString(file.Read());
                 foreach (Match match in EmbeddedResourcePathRegex().Matches(text))
                 {
                     Include(index.Assets.GetValueOrDefault(match.Value) ??
@@ -6568,7 +7155,13 @@ internal sealed partial class SkinCatalog : IDisposable
                        TryGetCharacterMapMarkerGroup(canonicalPath) ??
                        TryGetCharacterIconSceneGroup(canonicalPath) ??
                        TryGetCharacterSupplementGroup(canonicalPath);
-        return identity == null ? null : new RuntimeProviderAsset(identity, canonicalPath);
+        // Every route into a group obeys the same anchor rule, including this runtime pass.
+        if (identity == null || !IsGroupAnchorResource(canonicalPath, identity))
+        {
+            return null;
+        }
+
+        return new RuntimeProviderAsset(identity, canonicalPath);
     }
 
     private static string CanonicalizeRuntimeProviderPath(string providerId, string sourcePath)
@@ -7288,9 +7881,6 @@ internal sealed partial class SkinCatalog : IDisposable
     [GeneratedRegex("/(?:card_portraits|[^/]*card[^/]*\\.sprites|cards?|card_art|cardart)/", RegexOptions.IgnoreCase)]
     private static partial Regex CardArtPathRegex();
 
-    [GeneratedRegex("/(?:card_portraits|[^/]*cards?\\.sprites|cards?|card_art|cardart)/([^/]+)/", RegexOptions.IgnoreCase)]
-    private static partial Regex CardArtIdentityRegex();
-
     [GeneratedRegex("^res://animations/monsters/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex MonsterPathRegex();
 
@@ -7308,6 +7898,12 @@ internal sealed partial class SkinCatalog : IDisposable
         "res://scenes/events/custom/fake_merchant(?:_button|_inventory)?\\.tscn)$",
         RegexOptions.IgnoreCase)]
     private static partial Regex FakeMerchantAppearancePathRegex();
+
+    // The hand is one part of the merchant room, not the merchant appearance itself.
+    [GeneratedRegex(
+        "^res://animations/backgrounds/(?:fake_)?merchant_room/hand/",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex MerchantHandPartPathRegex();
 
     [GeneratedRegex("^res://scenes/creature_visuals/([^/.]+)\\.tscn$", RegexOptions.IgnoreCase)]
     private static partial Regex CreatureVisualSceneRegex();
@@ -7451,9 +8047,22 @@ internal sealed record SkinProviderProbe(
     int ManagedScriptCount,
     bool HasInteractiveScenes,
     string? ManifestId = null,
-    bool HasResourceBackedCosmetics = false)
+    bool HasResourceBackedCosmetics = false,
+    int PackResourceCount = 0,
+    int ServedResourceCount = 0,
+    IReadOnlyList<string>? ServedGroupIds = null,
+    IReadOnlyList<string>? ServedSourcePaths = null,
+    int BaselinePartGroupCount = 0,
+    IReadOnlyList<string>? BaselinePartGroupIds = null)
 {
     public string ResourceNamespaceId => ManifestId ?? Id;
+
+    /// <summary>
+    /// The package presents no group of its own but overrides parts of groups the game already
+    /// ships. It is a style/UI package rather than a skin: it keeps loading through the game's own
+    /// loader, and only those parts are selectable here.
+    /// </summary>
+    public bool IsBaselinePartTakeover => VisualGroupCount == 0 && BaselinePartGroupCount > 0;
 }
 
 internal sealed record AncientLayeredImagePaths(
@@ -7477,6 +8086,11 @@ internal sealed record ManagedScriptCountCacheEntry(
     DateTime LastWriteTimeUtc,
     int Count);
 
+internal sealed record CharacterVisualPatchCacheEntry(
+    long Length,
+    DateTime LastWriteTimeUtc,
+    bool ReplacesCharacterVisuals);
+
 internal sealed class SkinGroup(string id, string displayName)
 {
     public string Id { get; } = id;
@@ -7496,7 +8110,8 @@ internal sealed record SkinOption(
     string? ProviderId = null,
     bool IsManagedMonsterRuntimeProfile = false,
     FrameworkCharacterSkinContract? FrameworkContract = null,
-    bool IsCharacterIconOnly = false)
+    bool IsCharacterIconOnly = false,
+    bool IsBaselinePartOverride = false)
 {
     public string EffectiveProviderId =>
         ProviderId ?? RuntimeMonsterVisualMode?.ProviderId ?? Id;
@@ -7510,6 +8125,12 @@ internal sealed record SkinOption(
     public ManualCharacterVariant? ManualCharacterVariant { get; init; }
 
     public bool IsComposition => CompositionSourceOptionIds.Count > 0;
+
+    /// <summary>
+    /// The package folder an option's provider ships in. A part takeover needs it at runtime to
+    /// recognize the package's own art and its own patches for that group.
+    /// </summary>
+    public string? ProviderRootPath { get; init; }
 }
 
 internal sealed record RuntimeMonsterVisualMode(
@@ -7782,9 +8403,92 @@ internal sealed class ResourceAsset(string sourcePath)
             Files.Add(new ResourceFile(archive, path));
         }
     }
+
+    // Card-art packs are plain JSON bundles rather than PCK archives, so their decoded
+    // images have no archive behind them. They join the same asset chain as an already
+    // materialised payload so every downstream consumer keeps working unchanged.
+    public void AddInlineFile(string path, byte[] bytes)
+    {
+        if (Files.All(file => !file.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+        {
+            Files.Add(new ResourceFile(path, bytes));
+        }
+    }
 }
 
-internal sealed record ResourceFile(PckArchive Archive, string Path);
+internal sealed record ResourceFile
+{
+    private readonly PckArchive? _archive;
+
+    public ResourceFile(PckArchive archive, string path)
+    {
+        _archive = archive;
+        Path = path;
+    }
+
+    public ResourceFile(string path, byte[] inlineBytes)
+    {
+        Path = path;
+        InlineBytes = inlineBytes;
+    }
+
+    public string Path { get; }
+
+    /// <summary>
+    /// Bytes carried outside any archive. Only set for inline pack payloads.
+    /// </summary>
+    public byte[]? InlineBytes { get; }
+
+    /// <summary>
+    /// The owning archive. Inline payloads have none, so callers that group files by
+    /// archive must filter on <see cref="IsInline"/> first instead of relying on null.
+    /// </summary>
+    public PckArchive Archive => _archive ??
+        throw new InvalidOperationException(
+            $"资源 {Path} 由卡图包内联提供，没有对应的 PCK 归档。");
+
+    public bool IsInline => InlineBytes != null;
+
+    public byte[] Read() => InlineBytes ?? Archive.ReadFile(Path);
+
+    /// <summary>
+    /// Content comparison across both storage kinds. A card-art pack can supply the exact
+    /// same bytes that a mounted provider PCK already exposes, so de-duplication must compare
+    /// payloads rather than storage origins.
+    /// </summary>
+    public bool HasSameContentAs(ResourceFile other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+        if (!SkinCatalog.NormalizeTakeoverPath(other.Path).Equals(
+                SkinCatalog.NormalizeTakeoverPath(Path),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (IsInline && other.IsInline)
+        {
+            return InlineBytes!.AsSpan().SequenceEqual(other.InlineBytes!);
+        }
+
+        var mine = Read();
+        var theirs = other.Read();
+        return mine.Length == theirs.Length &&
+               System.Security.Cryptography.SHA256.HashData(mine).AsSpan()
+                   .SequenceEqual(System.Security.Cryptography.SHA256.HashData(theirs));
+    }
+
+    /// <summary>
+    /// Archive identity used for de-duplication and file-size comparison. Inline pack
+    /// payloads share one synthetic identity because their bytes are held in memory.
+    /// </summary>
+    public string ArchivePath => IsInline ? InlineArchiveToken : Archive.Path;
+
+    private const string InlineArchiveToken = "<inline-card-art-pack>";
+}
 
 internal sealed partial class PckResourceIndex : IDisposable
 {

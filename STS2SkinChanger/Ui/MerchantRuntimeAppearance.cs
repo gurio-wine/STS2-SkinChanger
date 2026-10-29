@@ -329,6 +329,14 @@ internal static class MerchantRuntimeAppearance
         }
     }
 
+    /// <summary>
+    /// A style/UI package that overrides a part of this group draws the merchant's figure and hand
+    /// from its own images. Record them exactly as the game built them — before any package writes —
+    /// so the merchant selection can hand the game's own value back and restore the author's art.
+    /// </summary>
+    internal static void ScopePartTakeover(Node room) =>
+        PartTakeoverVisualScope.Capture(room, GroupId);
+
     internal static void PrepareMerchantSelectionChange()
     {
         var room = NMerchantRoom.Instance;
@@ -799,6 +807,11 @@ internal static class MerchantRuntimeAppearance
             newHandContainer = null;
             buttonSwapped = false;
             handSwapped = false;
+
+            // A hot selection change only swaps the part resources above; the merchant's figure and
+            // hand are brought in line with the new selection right here. A style/UI package keeps
+            // drawing its own shop, so its room and its screens are never touched.
+            PartTakeoverVisualScope.Reconcile(room, GroupId);
 
             return true;
         }
@@ -1273,7 +1286,67 @@ internal static class MerchantRuntimeAppearance
             ? SkinService.InstantiateRuntimeScene<NFakeMerchant>(groupId, scenePath)
             : SkinService.InstantiateRuntimeScene<NMerchantRoom>(groupId, scenePath);
         scene.SetMeta(MerchantPreviewRootMeta, true);
+        PreparePreviewNativeReferences(scene);
+        // Record the room's own merchant figure and button layout before the scene enters the tree:
+        // a package's room callback runs during _Ready and draws its own merchant over them.
+        PartTakeoverVisualScope.Capture(scene, groupId);
         return (scene, scenePath);
+    }
+
+    /// <summary>
+    /// Fills in the native references a live room sets inside its own gameplay _Ready. The catalogue
+    /// keeps the complete native scene and skips only that one method, so a package's own room
+    /// callback would otherwise look at an empty merchant button and inventory: CZN Style UI cannot
+    /// draw its merchant without the button and throws on the missing inventory. Every reference is
+    /// the same node the game itself would cache, so the preview matches the live shop.
+    /// </summary>
+    private static void PreparePreviewNativeReferences(Node scene)
+    {
+        try
+        {
+            switch (scene)
+            {
+                case NMerchantRoom room:
+                    SetPreviewReference(
+                        MerchantButtonField,
+                        room,
+                        ResolveUniqueNode<NMerchantButton>(room, "MerchantButton"));
+                    SetPreviewReference(
+                        MerchantRoomInventoryField,
+                        room,
+                        ResolveUniqueNode<NMerchantInventory>(room, "Inventory"));
+                    break;
+                case NFakeMerchant fakeMerchant:
+                    SetPreviewReference(
+                        FakeMerchantButtonField,
+                        fakeMerchant,
+                        ResolveUniqueNode<NMerchantButton>(fakeMerchant, "MerchantButton"));
+                    SetPreviewReference(
+                        FakeMerchantInventoryField,
+                        fakeMerchant,
+                        ResolveUniqueNode<NMerchantInventory>(fakeMerchant, "Inventory"));
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Warn("准备商人预览的原生引用失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    private static T? ResolveUniqueNode<T>(Node root, string uniqueName)
+        where T : Node =>
+        root.GetNodeOrNull<T>('%' + uniqueName) ??
+        root.FindChild(uniqueName, recursive: true, owned: false) as T;
+
+    private static void SetPreviewReference(FieldInfo? field, object target, Node? node)
+    {
+        if (field == null || node == null)
+        {
+            return;
+        }
+
+        field.SetValue(target, node);
     }
 
     internal static string GetMerchantScenePath(string groupId = GroupId) =>
@@ -1466,6 +1539,7 @@ internal static class MerchantRoomCreateAppearancePatch
             currentRoom == null)
         {
             ModLog.Warn("保留游戏预加载的商店房间：" + error);
+            MerchantRuntimeAppearance.ScopePartTakeover(__result);
             return;
         }
 
@@ -1473,6 +1547,7 @@ internal static class MerchantRoomCreateAppearancePatch
         __result = currentRoom;
         RoomRuntimeScopeOwnership.Record(currentRoom, __state);
         preloadCreatedRoom.Free();
+        MerchantRuntimeAppearance.ScopePartTakeover(currentRoom);
         ModLog.Info(
             "商店房间已绕过启动预加载缓存并按当前选择创建：" +
             SkinService.Config.GetSelection(MerchantRuntimeAppearance.GroupId));
@@ -1496,6 +1571,9 @@ internal static class MerchantRoomPlayerAppearancePatch
     {
         if (MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
         {
+            // The catalogue preview runs the same scene with the same packages, so the merchant's
+            // figure and the button's layout follow the selection here as well.
+            PartTakeoverVisualScope.Reconcile(__instance, MerchantRuntimeAppearance.GroupId);
             return;
         }
 
@@ -1527,6 +1605,11 @@ internal static class MerchantRoomPlayerAppearancePatch
                 group.Id);
         }
 
+        // Runs after other packages' own room callbacks: a style/UI package that overrides a part
+        // of the merchant group draws the merchant from its own images. Only the merchant's figure
+        // and hand follow this group's selection; the room and the shop interface stay as the
+        // author drew them.
+        PartTakeoverVisualScope.Reconcile(__instance, MerchantRuntimeAppearance.GroupId);
     }
 }
 
@@ -1583,6 +1666,9 @@ internal static class FakeMerchantAppearancePatch
     {
         if (MerchantRuntimeAppearance.IsMerchantPreviewRoot(__instance))
         {
+            PartTakeoverVisualScope.Reconcile(
+                __instance,
+                MerchantRuntimeAppearance.FakeMerchantGroupId);
             return;
         }
 
@@ -1648,8 +1734,13 @@ internal static class MerchantButtonProviderReadyBridgePatch
 
     [HarmonyPostfix]
     [HarmonyPriority(Priority.Last)]
-    private static void Postfix(NMerchantButton __instance, string? __state) =>
+    private static void Postfix(NMerchantButton __instance, string? __state)
+    {
+        // The game has just built the merchant's button: record the figure it draws and the layout
+        // it gave the button before any package's room callback can replace or move them.
+        PartTakeoverVisualScope.RememberMerchantFigure(__instance);
         MerchantRuntimeAppearance.CompleteSelectedMerchantNodeReady(__instance, __state);
+    }
 }
 
 [HarmonyPatch(typeof(NMerchantInventory), nameof(NMerchantInventory._Ready))]

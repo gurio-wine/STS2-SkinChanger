@@ -8,6 +8,38 @@
 
   <ItemGroup>
     <Compile Include="../../STS2SkinChanger/Core/WorkshopPagePool.cs" Link="WorkshopPagePool.cs" />
+    <!-- The quit path is deliberately engine-free: the same filesystem code the game runs is
+         exercised here, so the start-up regression cannot come back unnoticed. -->
+    <Compile Include="../../STS2SkinChanger/Core/SkinChangerStorage.cs" Link="SkinChangerStorage.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/QuitInterceptionPolicy.cs" Link="QuitInterceptionPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/QuitCleanupCoordinator.cs" Link="QuitCleanupCoordinator.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/QuitExitCleanup.cs" Link="QuitExitCleanup.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GamePackLocator.cs" Link="GamePackLocator.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GodotScriptPathRegistrationPolicy.cs"
+             Link="GodotScriptPathRegistrationPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/SkinSourceIdentity.cs" Link="SkinSourceIdentity.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/ModPrivateDependencyPolicy.cs"
+             Link="ModPrivateDependencyPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinPolicy.cs" Link="GitHubSkinPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubReleasePolicy.cs" Link="GitHubReleasePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubZipPolicy.cs" Link="GitHubZipPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubInstallPolicy.cs" Link="GitHubInstallPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubPackageLayout.cs" Link="GitHubPackageLayout.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopCatalogPolicy.cs" Link="WorkshopCatalogPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinCatalog.cs" Link="GitHubSkinCatalog.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinClient.cs" Link="GitHubSkinClient.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/SkinSourceRoutingPolicy.cs" Link="SkinSourceRoutingPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinText.cs" Link="GitHubSkinText.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubReadmePolicy.cs" Link="GitHubReadmePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubInfoPolicy.cs" Link="GitHubInfoPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubInstallLedger.cs" Link="GitHubInstallLedger.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubModsPolicy.cs" Link="GitHubModsPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubSkinFilter.cs" Link="GitHubSkinFilter.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/GitHubItemActions.cs" Link="GitHubItemActions.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopSubmissionCodec.cs" Link="WorkshopSubmissionCodec.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopSubmissionIntegrity.cs" Link="WorkshopSubmissionIntegrity.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/WorkshopSubmissionCode.cs" Link="WorkshopSubmissionCode.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/SkinSources.cs" Link="SkinSources.cs" />
     <ProjectReference Include="../../compat/ThunninoiSkinManagerCompat/ThunninoiSkinManagerCompat.csproj"
                       ReferenceOutputAssembly="false" />
     <Compile Include="../../STS2SkinChanger/Core/PromotedPackOverlayPolicy.cs"
@@ -28,6 +60,12 @@
              Link="ExternalCardProviderIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterGroupEvidencePolicy.cs"
              Link="CharacterGroupEvidencePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/BaselinePartTakeoverPolicy.cs"
+             Link="BaselinePartTakeoverPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/MerchantAppearanceScopePolicy.cs"
+             Link="MerchantAppearanceScopePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/PartTakeoverFeedbackScopePolicy.cs"
+             Link="PartTakeoverFeedbackScopePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/DirectCharacterRuntimeTargetPolicy.cs"
              Link="DirectCharacterRuntimeTargetPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/BoundedLruCache.cs"
@@ -46,6 +84,8 @@
              Link="ManagedProviderDisplayPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/ManagedCharacterAssetRegistrationPolicy.cs"
              Link="ManagedCharacterAssetRegistrationPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Core/FrameworkProviderInitializerPolicy.cs"
+             Link="FrameworkProviderInitializerPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/CharacterCombatSceneInstantiationPolicy.cs"
              Link="CharacterCombatSceneInstantiationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/FrameworkAssemblyLoadContextPolicy.cs"
@@ -72,6 +112,12 @@
              Link="ProviderInstanceIdentityPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Catalog/CardSkinOptionNamingPolicy.cs"
              Link="CardSkinOptionNamingPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/LooseCardPortraitPackPolicy.cs"
+             Link="LooseCardPortraitPackPolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/SkinProviderPatchEvidencePolicy.cs"
+             Link="SkinProviderPatchEvidencePolicy.cs" />
+    <Compile Include="../../STS2SkinChanger/Catalog/AppearanceResourceFilePolicy.cs"
+             Link="AppearanceResourceFilePolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/MultiplayerSkinSyncParticipationPolicy.cs"
              Link="MultiplayerSkinSyncParticipationPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Core/MonsterSkinPresetPolicy.cs"
@@ -102,6 +148,12 @@
              Link="CardPresentationLayoutPolicy.cs" />
     <Compile Include="../../STS2SkinChanger/Ui/ReloadingReferenceCache.cs"
              Link="ReloadingReferenceCache.cs" />
+    <Compile Include="../../STS2SkinChanger/Ui/WorkshopOptionSelectionPolicy.cs"
+             Link="WorkshopOptionSelectionPolicy.cs" />
+    <!-- Every player-facing skin list is ordered and dimmed by this one projection, so it is
+         exercised here rather than through the game's UI. -->
+    <Compile Include="../../STS2SkinChanger/Core/SkinPriorityDisplayPolicy.cs"
+             Link="SkinPriorityDisplayPolicy.cs" />
   </ItemGroup>
 
   <Target Name="CopyFrameworkCompatibilityFixture" AfterTargets="Build">

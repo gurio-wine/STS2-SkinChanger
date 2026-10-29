@@ -17,6 +17,24 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-card-art-packs")
+{
+    CardArtPackTests.Run();
+    return;
+}
+
+if (args.Length >= 3 && args[0] == "--audit-art-pack-recognition")
+{
+    CardArtPackRecognitionAudit.Run(args[1], args.Skip(2).ToArray());
+    return;
+}
+
+if (args.Length >= 5 && args[0] == "--audit-github-recognition")
+{
+    GitHubRecognitionAudit.Run(args[1], args[2], args[3], args[4], args.Skip(5).ToArray());
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-workshop-reply-sort")
 {
     WorkshopReplySortTests.Run();
@@ -72,21 +90,34 @@ if (args.Length == 1 && args[0] == "--test-multiplayer-hands")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--test-github-swap")
+{
+    GitHubFolderSwapTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-storage")
 {
     StorageLifecycleTests.Run();
-    await StorageLifecycleTests.TestQuitAndLockedFiles();
+    StorageLifecycleTests.TestQuitAndLockedFiles();
+    QuitBoundaryTests.Run();
     return;
 }
-if (args.Length == 3 && args[0] == "--storage-exit-probe")
+
+if (args.Length == 1 && args[0] == "--test-provider-script-registration")
 {
-    StorageLifecycleTests.ExitProbe(args[1], args[2]);
+    ProviderScriptRegistrationTests.Run();
     return;
 }
 
 if (args.Length == 1 && args[0] == "--test-provider-compatibility")
 {
     ProviderCompatibilityTests.Run();
+    ProviderRuntimeAuditTests.Run();
+    ModPrivateDependencyResolverTests.Run();
+    ProviderMinimumVersionPolicyTests.Run();
+    ProviderVersionTakeoverTests.Run();
+    ProviderScriptRegistrationTests.Run();
     return;
 }
 if (args.Length == 1 && args[0] == "--test-workshop-submissions")
@@ -180,6 +211,24 @@ if (args.Length == 3 && args[0] == "--audit-standalone-relics")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--audit-runtime-visual-owner")
+{
+    RuntimeVisualOwnerAudit.Run(args[1], args[2]);
+    return;
+}
+
+if (args.Length == 4 && args[0] == "--audit-loose-card-pack")
+{
+    CardArtPackRecognitionAudit.RunLoose(args[1], args[2], args[3]);
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--audit-loose-card-packs")
+{
+    CardArtPackRecognitionAudit.RunLooseSweep(args[1], args[2]);
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-appearance-revival-random-exclusion")
 {
     AppearanceRevivalTests.Run();
@@ -255,6 +304,12 @@ if (args.Length == 1 && args[0] == "--test-bundle-content-modes")
 if (args.Length == 1 && args[0] == "--test-ancient-card-priorities")
 {
     AncientCardPriorityTests.Run();
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--test-card-option-order")
+{
+    CardOptionOrderTests.Run();
     return;
 }
 
@@ -360,8 +415,29 @@ if (args.Length == 2 && args[0] == "--audit-provider-folder")
     return;
 }
 
+if (args.Length >= 3 && args[0] == "--audit-provider-serving")
+{
+    ProviderLookupTests.AuditServing(args[1], args.Skip(2).ToArray());
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--audit-provider-details")
+{
+    ProviderLookupTests.AuditDetails(args[1], args[2]);
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--audit-part-takeover")
+{
+    PartTakeoverRecognitionAudit.Run(args[1], args[2]);
+    return;
+}
+
+BaselinePartTakeoverTests.Run();
+MerchantFigureScopeTests.Run();
 StorageLifecycleTests.Run();
-await StorageLifecycleTests.TestQuitAndLockedFiles();
+StorageLifecycleTests.TestQuitAndLockedFiles();
+QuitBoundaryTests.Run();
 CreatureVisualParentTests.Run();
 ProviderToolbarTests.Run();
 ManualCharacterVariantTests.Run();
@@ -391,6 +467,10 @@ ProviderSettingsTests.Run();
 SlotVisibilityTests.Run();
 ProviderAnimationCompatibilityTests.Run();
 ProviderCompatibilityTests.Run();
+ProviderRuntimeAuditTests.Run();
+ModPrivateDependencyResolverTests.Run();
+ProviderMinimumVersionPolicyTests.Run();
+ProviderVersionTakeoverTests.Run();
 PackageCompatibilityTests.Run();
 await WorkshopSubmissionIntegrityTests.Run();
 await WorkshopSubmissionTests.Run();
@@ -405,6 +485,7 @@ CreatureVisualLifecycleTests.Run();
 BundlePresetTests.Run();
 BundleContentModeTests.Run();
 CardPresetMigrationTests.Run();
+CardOptionOrderTests.Run();
 AncientCardPriorityTests.Run();
 CharacterSkinBundleContractTests.Run();
 CharacterSkinBundleSourceTests.Run();
@@ -484,6 +565,57 @@ if (frameworkCombatPriority is not int combatPriority || combatPriority != Prior
 {
     throw new InvalidOperationException(
         "框架角色战斗场景工厂补丁必须最先执行，避免游戏先把允许为 Node2D 的框架场景强制转换成 NCreatureVisuals。");
+}
+
+// 框架内容注册表的 CharacterSceneAssetSet.VisualsPath 同样占用角色规范战斗场景路径，
+// 而框架场景允许是纯 Node2D：前置补丁必须按当前选择接管创建，不能只处理声明式 CombatVisual 契约。
+var frameworkCombatCalls = PatchProcessor.GetOriginalInstructions(frameworkCombatPrefix)
+    .Select(instruction => instruction.operand).OfType<MethodInfo>().ToArray();
+if (!frameworkCombatCalls.Any(method => method.Name == "SelectionServesCombatScene") ||
+    !frameworkCombatCalls.Any(method => method.Name == "InstantiateManagedCharacterCreatureVisuals"))
+{
+    throw new InvalidOperationException(
+        "框架注册的皮肤自己提供规范战斗场景时，必须在 CharacterModel.CreateVisuals 原方法之前接管创建并走场景工厂；" +
+        "否则纯 Node2D 场景会在战斗中被游戏强转成 NCreatureVisuals 而中断整场战斗。");
+}
+var frameworkCombatMarker = frameworkCombatPatchType
+    .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+    .SelectMany(method => PatchProcessor.GetOriginalInstructions(method))
+    .Any(instruction => instruction.operand is string text &&
+                        text == "sts2_skin_managed_combat_scene");
+if (!frameworkCombatMarker)
+{
+    throw new InvalidOperationException(
+        "场景工厂创建的角色节点必须留下归属标记；否则最终结果替换会再实例化同一份框架场景并强转失败。");
+}
+
+var skinControlsType = typeof(Entry).Assembly.GetType(
+                           "STS2SkinChanger.Ui.ContextualSkinControls") ??
+                       throw new InvalidOperationException("找不到上下文皮肤控件类型。");
+var replaceCreatedVisuals = AccessTools.Method(
+                                skinControlsType,
+                                "ReplaceCreatedVisuals",
+                                [
+                                    typeof(string),
+                                    typeof(string),
+                                    typeof(string),
+                                    typeof(NCreatureVisuals).MakeByRefType()
+                                ]) ??
+                            throw new InvalidOperationException("找不到最终结果替换入口。");
+var replaceCreatedInstructions = PatchProcessor.GetOriginalInstructions(replaceCreatedVisuals).ToArray();
+var managedSceneMarkerIndex = Array.FindIndex(
+    replaceCreatedInstructions,
+    instruction => instruction.operand is string text && text == "sts2_skin_managed_combat_scene");
+var replacementInstantiationIndex = Array.FindIndex(
+    replaceCreatedInstructions,
+    instruction => instruction.operand is MethodInfo method && method.Name == "InstantiateRuntimeScene");
+if (managedSceneMarkerIndex < 0 ||
+    replacementInstantiationIndex < 0 ||
+    managedSceneMarkerIndex > replacementInstantiationIndex)
+{
+    throw new InvalidOperationException(
+        "最终结果替换必须在实例化之前跳过已由场景工厂创建的角色节点；" +
+        "否则框架场景会再次强转失败，普通皮肤也会重复实例化整份场景。");
 }
 
 var combatRoomCreate = typeof(NCombatRoom).GetMethod(
@@ -1302,6 +1434,7 @@ CardPresentationLifecycleTests.Run();
 CardPriorityPerformanceTests.Run();
 ExportedCardSurfaceTests.Run();
 StatefulCardArtTests.CheckObservers();
+GitHubFolderSwapTests.Run();
 Console.WriteLine("Skin Changer runtime patch target tests passed.");
 RequiredLibraryVisualGuardTests.Run(args);
 WorkshopTests.Run();

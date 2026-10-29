@@ -59,7 +59,24 @@ internal sealed partial class SkinCatalog
     {
         var parts = (path ?? "").Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i + 1 < parts.Length; i++)
-            if ((parts[i] == "2868840" || parts[i] == "_workshop_formal_cache") && ulong.TryParse(parts[i + 1], out var id)) return id;
+            // Steam installs, the formal-version snapshot cache and the GitHub staging root
+            // all encode the source id in the same position, so one lookup serves every source.
+            if ((parts[i] == "2868840" || parts[i] == "_workshop_formal_cache" || parts[i] == "github") &&
+                ulong.TryParse(parts[i + 1], out var id)) return id;
         return 0;
     }
+
+    /// <summary>
+    /// Which provider Mod a source id was bound to. A scan knows only the source id it was
+    /// called with, while an installer or audit needs the provider's own id, folder and
+    /// manifest version to place the package.
+    /// </summary>
+    internal string? ProviderForSourceId(ulong sourceId) => _workshopSourceIds
+        .Where(pair => pair.Value == sourceId)
+        .Select(pair => pair.Key)
+        .FirstOrDefault(providerId =>
+            Groups.SelectMany(group => group.Options).Any(option =>
+                option.EffectiveProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase)) ||
+            CardGroups.SelectMany(group => group.Options).Any(option =>
+                (option.ProviderId ?? option.Id).Equals(providerId, StringComparison.OrdinalIgnoreCase)));
 }

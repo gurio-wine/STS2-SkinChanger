@@ -119,8 +119,8 @@ internal static partial class SkinWorkshopService
                 token.ThrowIfCancellationRequested();
                 try
                 {
-                    var mods = WorkshopSubmissionScanner.ReadDescriptors(item.Path);
-                    if (mods.Length > 0) candidates.Add(new(item.Id, string.Join(" / ", mods.Select(m => m.Name).Distinct()), item.Path));
+                    var names = WorkshopSubmissionScanner.SubmittableNames(item.Path);
+                    if (names.Length > 0) candidates.Add(new(item.Id, string.Join(" / ", names), item.Path));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException) { ModLog.Info($"投稿候选 {item.Id} 跳过：{ex.Message}"); }
             }

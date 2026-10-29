@@ -98,22 +98,26 @@ internal static class StorageLifecycleTests
     private static object? Call(object target, string name, params object[] args) =>
         target.GetType().GetMethod(name)!.Invoke(target, args);
 
-    public static async Task TestQuitAndLockedFiles()
+    // The quit path deletes the caches it can and leaves the rest behind: the mod no longer ships a
+    // helper process, so whatever a mounted resource pack kept open is picked up by the cleanup that
+    // runs at the next start. Same ordering, no second executable, and nothing platform-specific left
+    // to skip.
+    public static void TestQuitAndLockedFiles()
     {
         var gate = new TaskCompletionSource<string>();
         var order = new List<string>();
         var coordinator = new QuitCleanupCoordinator();
         var pending = coordinator.Run(() => { order.Add("clean"); return gate.Task; }, () => order.Add("quit"), _ => { });
-        await coordinator.Run(() => throw new Exception("duplicate quit"), () => order.Add("duplicate"), _ => { });
+        coordinator.Run(() => throw new Exception("duplicate quit"), () => order.Add("duplicate"), _ => { }).GetAwaiter().GetResult();
         Require(!coordinator.AllowNativeQuit && order.SequenceEqual(new[] { "clean" }), "清理结束前不可退出，重复点击不得重入。");
         gate.SetResult("done");
-        await pending;
+        pending.GetAwaiter().GetResult();
         Require(coordinator.AllowNativeQuit && order.SequenceEqual(new[] { "clean", "quit" }), "清理必须先于原版退出。");
         var failed = new QuitCleanupCoordinator();
         var quitAfterFailure = false;
-        await failed.Run(() => throw new IOException("locked"), () => quitAfterFailure = true, _ => { });
+        failed.Run(() => throw new IOException("locked"), () => quitAfterFailure = true, _ => { }).GetAwaiter().GetResult();
         Require(quitAfterFailure && failed.AllowNativeQuit, "缓存清理失败不能阻止原版保存/退出。");
-        if (!OperatingSystem.IsWindows()) return;
+
         var root = Path.Combine(Path.GetTempPath(), "sc-quit-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -123,43 +127,41 @@ internal static class StorageLifecycleTests
             Directory.CreateDirectory(user);
             Directory.CreateDirectory(temp);
             File.WriteAllText(Path.Combine(user, "other_mod.json"), "keep");
-            var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-            foreach (var arg in new[] { Assembly.GetExecutingAssembly().Location, "--storage-exit-probe", user, temp }) start.ArgumentList.Add(arg);
-            using var child = Process.Start(start)!;
-            var output = child.StandardOutput.ReadToEndAsync();
-            var errors = child.StandardError.ReadToEndAsync();
-            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-            Require(child.ExitCode == 0, "退出补清理子进程失败：" + await output + await errors);
-            var locked = Path.Combine(user, "Gurio.SkinChanger", "cache", "probe", "locked.pck");
-            var controls = Path.Combine(user, "Gurio.SkinChanger", "cleanup");
-            var deadline = Stopwatch.StartNew();
-            while (deadline.Elapsed < TimeSpan.FromSeconds(15) &&
-                   (File.Exists(locked) || Directory.Exists(controls) && Directory.EnumerateFiles(controls, "targets.json", SearchOption.AllDirectories).Any())) await Task.Delay(100);
-            Require(!File.Exists(locked), "资源仍被占用时先保留，父进程退出后必须自动删除。" + await output + await errors);
-            Require(!Directory.EnumerateDirectories(controls).Any(), "补清理清单和临时控制目录应自行删除。");
-            Require(File.ReadAllText(Path.Combine(user, "other_mod.json")) == "keep", "退出助手不能清理其它 Mod。");
-            Require(File.ReadAllText(Path.Combine(user, "Gurio.SkinChanger", "skin_changer.json")) == "settings", "退出助手不能删除配置。");
-            Console.WriteLine("Quit cleanup passed: native ordering, duplicate/failure paths and real Windows post-process locked-file cleanup.");
+            var storage = new SkinChangerStorage(user, temp, "probe");
+            try
+            {
+                storage.StartCacheSession();
+                File.WriteAllText(storage.ConfigurationFile("skin_changer.json"), "settings");
+                var path = Path.Combine(storage.CacheDirectory, "locked.pck");
+                storage.WriteCache(path, () => File.WriteAllText(path, "mounted resource"));
+                if (OperatingSystem.IsWindows())
+                {
+                    // A resource pack this process has mounted: the delete fails while the handle is
+                    // open, exactly as it does in the game.
+                    using var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    storage.StopCacheWrites();
+                    var report = storage.CleanCaches();
+                    Require(report.Files.Contains(path) && File.Exists(path),
+                        "本次游戏仍挂载的缓存文件不能删，必须留在原地并写进报告。");
+                }
+                else storage.StopCacheWrites();
+                using (var next = new SkinChangerStorage(user, temp, "next-session"))
+                {
+                    next.StartCacheSession();
+                    next.CleanCaches();
+                    Require(!File.Exists(path) && !Directory.Exists(storage.CacheDirectory),
+                        "上次没删成的缓存必须由下一次启动的清理收尾。");
+                }
+                Require(File.ReadAllText(Path.Combine(user, "other_mod.json")) == "keep" &&
+                    File.ReadAllText(storage.ConfigurationFile("skin_changer.json")) == "settings",
+                    "清理不能碰其它 Mod 或玩家设置。");
+            }
+            finally { storage.Dispose(); }
+            Console.WriteLine("Quit cleanup passed: native ordering, failure paths, and locked cache files left for the next start.");
         }
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    public static void ExitProbe(string user, string temp)
-    {
-        using var storage = new SkinChangerStorage(user, temp, "probe");
-        storage.StartCacheSession();
-        File.WriteAllText(storage.ConfigurationFile("skin_changer.json"), "settings");
-        var path = Path.Combine(storage.CacheDirectory, "locked.pck");
-        storage.WriteCache(path, () => File.WriteAllText(path, "mounted resource"));
-        using var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        storage.StopCacheWrites();
-        var report = storage.CleanCaches();
-        Require(report.Files.Contains(path), "测试必须确实遇到被占用的文件。");
-        // An injected out-of-scope target must be rejected again by the external helper.
-        report.Files.Add(storage.ConfigurationFile("skin_changer.json"));
-        using var helper = DeferredCacheCleanup.Start(report, storage.RootDirectory);
-        Require(helper != null, "必须安排一次性退出助手，不依赖下次加载 Mod。");
-    }
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

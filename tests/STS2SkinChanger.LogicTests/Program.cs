@@ -322,6 +322,110 @@ Require(
     "真正同时提供两名角色完整模型的合集必须保留两个角色选项。");
 
 Require(
+    CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: true,
+        replacesCharacterVisualsAtRuntime: false),
+    "只带角色选择图与头像、且不重画角色本体的包仍然是头像包，不能变成可切换的完整皮肤。");
+Require(
+    !CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: true,
+        replacesCharacterVisualsAtRuntime: true),
+    "自带角色本体、只顺带覆盖角色选择图的包必须按完整皮肤处理：" +
+    "套用头像包会把作者的角色模型挡在门外，选中它时画面上仍是游戏原版。");
+Require(
+    !CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: false,
+        replacesCharacterVisualsAtRuntime: false),
+    "带角色模型的普通皮肤任何时候都不能被当成头像包。");
+Require(
+    !CharacterGroupEvidencePolicy.IsIconOnlySupplement(
+        presentsOnlySupplementAssets: false,
+        replacesCharacterVisualsAtRuntime: true),
+    "自带角色本体的提供者即使已经带模型资源，也不能被降级成头像包。");
+
+Require(
+    !SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+        replacesCharacterVisualCreation: false,
+        hooksCreatureLifecycle: true,
+        patchesCharacterSelectPresentation: false),
+    "只补丁角色生命周期与房间入口的附加视觉 Mod（同伴、特效）不是皮肤：" +
+    "把它按皮肤隔离会让它整体停止工作。");
+Require(
+    SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+        replacesCharacterVisualCreation: false,
+        hooksCreatureLifecycle: true,
+        patchesCharacterSelectPresentation: true),
+    "角色生命周期入口与选角展示一起补丁的私有整角包仍然必须是皮肤提供者。");
+Require(
+    SkinProviderPatchEvidencePolicy.IsSkinEvidence(
+        replacesCharacterVisualCreation: true,
+        hooksCreatureLifecycle: false,
+        patchesCharacterSelectPresentation: false),
+    "替换角色自己的外观创建入口的包无论还补丁了什么，都必须按完整皮肤处理。");
+
+Require(
+    !SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: false),
+    "不带任何自己外观资源的纯附加视觉包不能被当成皮肤提供者。");
+Require(
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 1,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: false) &&
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: true,
+        hasAppearanceFile: false) &&
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 2,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: false) &&
+    SkinProviderPatchEvidencePolicy.BringsOwnAppearance(
+        packResourceCount: 0,
+        runtimeImageCount: 0,
+        replacesCharacterVisualCreation: false,
+        hasAppearanceFile: true),
+    "只要包里有一项自己的外观资源，或它重画角色本体，就不能因此被排除在皮肤之外。");
+
+Require(
+    AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\char_select.png") &&
+    AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\hero.atlas") &&
+    AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\voice.ogg"),
+    "外观资源判定必须认图片、骨骼图集、场景与音频，否则会把只带散装素材的皮肤当成没有资源。");
+Require(
+    !AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\Companion.dll") &&
+    !AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\Companion.json") &&
+    !AppearanceResourceFilePolicy.IsAppearanceResourceFile(@"C:\mod\README.md"),
+    "程序集、清单与说明文件不是外观资源：只带它们的包不能因为文件数被当成皮肤。");
+
+Require(
+    LooseCardPortraitPackPolicy.IsPack(imageCount: 96, matchedCards: 96),
+    "把卡面当作独立图片存放的提供者必须能按卡面接管：整包都是卡面时没有任何理由拒绝。");
+Require(
+    LooseCardPortraitPackPolicy.IsPack(imageCount: 100, matchedCards: 85),
+    "偶尔夹带一两张非卡面图片的卡面包仍然是卡面包。");
+Require(
+    !LooseCardPortraitPackPolicy.IsPack(imageCount: 24, matchedCards: 19),
+    "匹配到的卡面太少时不能当成卡面包，否则零散素材会被误当成整套卡面。");
+Require(
+    !LooseCardPortraitPackPolicy.IsPack(imageCount: 60, matchedCards: 30),
+    "大多数图片都不是卡面时，这个目录属于作者自己的素材，不能按卡面接管。");
+Require(
+    !LooseCardPortraitPackPolicy.IsPack(imageCount: 0, matchedCards: 0),
+    "空目录不能成为卡面包。");
+Require(
+    LooseCardPortraitPackPolicy.SanitizePathToken("Aeonglass Feminization") ==
+    "Aeonglass_Feminization" &&
+    LooseCardPortraitPackPolicy.SanitizePathToken("3797161358") == "_3797161358",
+    "资源路径里的提供者标记必须是安全字符；Mod ID 本身保持原样，模组列表才能照常显示已接管。");
+
+Require(
     DirectCharacterRuntimeTargetPolicy.ResolveTargets(
             [("TargetCharacterId", "REGENT")],
             ["ironclad", "silent", "regent", "defect"])
@@ -830,6 +934,32 @@ Require(
         "CznStyleUI",
         managedCharacterAssetProviders),
     "普通 UI 或玩法 Mod 的 RitsuLib 注册不能被皮肤接管策略误拦截。");
+Require(
+    FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+        hasDeclarativeCharacterAssetReplacement: true,
+        isNativeFrameworkProvider: false),
+    "框架式角色资源包的作者初始化器必须照常执行：它同时注册作者自己的设置页、持久数据与资源预载，" +
+    "整段跳过会让默认关闭的功能（例如需要手动开启的出击立绘）永远没有入口；" +
+    "会产生全局强制替换的那一次注册由拦截策略单独处理。");
+Require(
+    !FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+        hasDeclarativeCharacterAssetReplacement: true,
+        isNativeFrameworkProvider: true),
+    "由原皮肤管理器掌管生命周期的皮肤不能再执行一次初始化器，否则订阅与补丁会装两遍。");
+Require(
+    FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+        hasDeclarativeCharacterAssetReplacement: false,
+        isNativeFrameworkProvider: false),
+    "普通托管皮肤的原初始化器行为保持不变。");
+Require(
+    FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
+        hasDeclarativeCharacterAssetReplacement: true),
+    "框架式角色资源包的资源与场景创建已由本 Mod 接管，作者初始化器失败只能损失它附带的功能，" +
+    "不能让整场视觉会话回滚成没有模型的资源皮肤。");
+Require(
+    !FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
+        hasDeclarativeCharacterAssetReplacement: false),
+    "普通托管皮肤的初始化器失败仍按原样回滚，避免留下半初始化的行为补丁。");
 
 Require(
     CharacterCombatSceneInstantiationPolicy.ShouldUseManagedFactory(
@@ -866,6 +996,22 @@ Require(
         hasManagedCombatScene: false,
         hasManagedCombatDependencies: false),
     "只修改名称、头像或其它素材而没有战斗场景的皮肤不能拦截角色模型创建。");
+Require(
+    CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+        isBaseSelection: false,
+        servesCanonicalCombatScene: true),
+    "选中皮肤自己提供规范战斗场景时，必须在游戏原方法强转之前接管创建；" +
+    "框架注册的 VisualsPath 允许是纯 Node2D 场景，等到后置替换时游戏已经抛出 InvalidCastException。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+        isBaseSelection: false,
+        servesCanonicalCombatScene: false),
+    "只替换头像、骨骼等依赖而没有替换根场景的皮肤仍由游戏自己实例化规范场景，不能被提前接管。");
+Require(
+    !CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+        isBaseSelection: true,
+        servesCanonicalCombatScene: true),
+    "游戏原皮不得接管角色模型创建；没有皮肤占用规范路径时游戏原方法自己实例化即可。");
 Require(
     CharacterCombatSceneInstantiationPolicy.ShouldRestoreCanonicalOwnership(
         scopedSelection: "remote-skin",
@@ -1067,6 +1213,13 @@ Require(
     "原提供者以非公开属性保存 Target/MonsterId 时，预编译路由也必须保持兼容。");
 _ = monsterIdAccessor(scopedMonsterProfile);
 _ = isScopedMonsterSelected("CznEnemySkin", "SEWER_CLAM");
+// Warm up outside the measurement: the first executions after a fresh build still run tier-0 code
+// and promoting them to tier-1 allocates, which is not what this budget is about.
+for (var index = 0; index < 50_000; index++)
+{
+    _ = monsterIdAccessor(scopedMonsterProfile);
+    _ = isScopedMonsterSelected("CznEnemySkin", "SEWER_CLAM");
+}
 var scopedRouteAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
 for (var index = 0; index < 50_000; index++)
 {
@@ -1773,7 +1926,126 @@ Require(
     cleanupFailures[0].Exception.Message == "fixture failure",
     "分阶段清理必须保留准确的失败阶段与异常，供日志定位而不能吞掉原因。");
 
+var servablePartPaths = BaselinePartTakeoverPolicy.ResolveServablePartPaths(
+    [
+        "res://animations/backgrounds/merchant_room/hand/merchanthand.png",
+        "res://animations/backgrounds/merchant_room/top/shop_merchant_top.png",
+        "res://CznStyleUI/animations/merchant/hand.png",
+        "res://animations/backgrounds/merchant_room/hand/absent_from_baseline.png"
+    ],
+    belongsToKnownGroup: path => path.StartsWith(
+        "res://animations/backgrounds/merchant_room/",
+        StringComparison.OrdinalIgnoreCase),
+    isGroupAnchor: path => path.Contains("/top/", StringComparison.OrdinalIgnoreCase),
+    existsInBaseline: path => !path.Contains("absent_from_baseline", StringComparison.OrdinalIgnoreCase));
+Require(
+    servablePartPaths.SequenceEqual(["res://animations/backgrounds/merchant_room/hand/merchanthand.png"]),
+    "部件接管只能接管「属于已知分组、不是该分组主体、且本体同路径存在」的资源；" +
+    "分组主体、作者自己新增的私有路径和本体没有的资源都不能变成部件。");
+Require(
+    BaselinePartTakeoverPolicy.ResolveAdoptedDefault([]) == null &&
+    BaselinePartTakeoverPolicy.ResolveAdoptedDefault(["b.mod", "a.mod"]) == "a.mod",
+    "部件接管必须按稳定顺序取得分组默认选择，没有部件时不能伪造默认值。");
+
+// The merchant selection owns the merchant's own figure and its hand. The room it stands in and the
+// shop interface it opens belong to the style/UI package that drew them and are never bound to a
+// merchant skin, so a shop overhaul keeps looking like itself whatever the player picked.
+Require(
+    MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("NMerchantButton", "MerchantButton"),
+        ("Control", "SceneContainer"),
+        ("NMerchantRoom", "MerchantRoom")
+    ]) &&
+    MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("Sprite2D", "HandVisual"),
+        ("NMerchantHand", "MerchantHand"),
+        ("Node2D", "MerchantHandContainer"),
+        ("NMerchantInventory", "MerchantInventory")
+    ]),
+    "商人模型与商人的手属于接管范围：选中该部件时显示作者画的它们，换别的皮肤时交回本体画面。");
+Require(
+    !MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("SpineSprite", "SpineSprite"),
+        ("Control", "BgContainer"),
+        ("Control", "SceneContainer"),
+        ("NMerchantRoom", "MerchantRoom")
+    ]) &&
+    !MerchantAppearanceScopePolicy.IsMerchantAppearance(
+    [
+        ("Control", "ShopPanel"),
+        ("NMerchantInventory", "MerchantInventory"),
+        ("NMerchantRoom", "MerchantRoom")
+    ]) &&
+    !MerchantAppearanceScopePolicy.IsMerchantAppearance([]),
+    "商店房间与商店界面永远不进入接管范围：它们始终按作者的原样显示，切换商人皮肤不能改动它们。");
+
+// What the package's merchant says follows the same selection as its figure and hand: its own voice
+// cues and its gate on the game's native merchant lines are reactions of the merchant the player
+// picked. Everything it draws — its room _Ready, its shop interface, its refreshed slots — loads,
+// attaches or refreshes something and must stay installed, so those callbacks never enter this scope.
+foreach (var (typeName, methodName, patchTypeName, isFeedback) in
+         new (string, string, string, bool)[]
+         {
+             ("NMerchantInventory", "Open", "MerchantVisualPatches", true),
+             ("NMerchantInventory", "Close", "MerchantVisualPatches", true),
+             ("NMerchantInventory", "OnPurchaseCompleted", "MerchantVisualPatches", true),
+             ("NMerchantSlot", "OnPurchaseFailed", "MerchantVisualPatches", true),
+             ("NMerchantButton", "OnRelease", "MerchantVisualPatches", true),
+             ("NMerchantRoom", "FoulPotionThrown", "MerchantVisualPatches", true),
+             ("NMerchantInventory", "PlayVoice", "MerchantVisualPatches", true),
+             ("SfxCmd", "Play", "CznStyleUI.Merchant.MerchantVisualPatches", true),
+             ("NMerchantRoom", "_Ready", "MerchantVisualPatches", false),
+             ("NMerchantButton", "_Ready", "MerchantVisualPatches", false),
+             ("NMerchantCharacter", "_Ready", "MerchantCharacterReadyPatch", false),
+             ("NMerchantCard", "UpdateVisual", "MerchantVisualPatches", false),
+             ("NMerchantRelic", "UpdateVisual", "MerchantVisualPatches", false),
+             ("NFakeMerchant", "AfterRoomIsLoaded", "FakeMerchantRoomLoadedPatch", false),
+             ("NMerchantInventory", "MerchantShopSceneLoaded", "MerchantVisualPatches", false),
+             ("SfxCmd", "Play", "UiSounds.Patch", false),
+             ("NRestSiteCharacter", "FlipX", "SkinTransportPatches", false),
+             ("Hook", "AfterRestSiteHeal", "SkinTransportPatches", false),
+             ("CharacterModel", "CreateVisuals", "SkinTransportPatches", false)
+         })
+{
+    Require(
+        PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(typeName, methodName, patchTypeName) ==
+        isFeedback,
+        $"部件接管包对 {typeName}.{methodName}（补丁类 {patchTypeName}）的接管判定错误：" +
+        "商店语音与原生商人语音的门控跟随商人选择；房间 _Ready、商店界面、作者自带的假商人呈现、" +
+        "刷新过的商品槽以及与该商人无关的界面音效都必须留在作者包里。");
+}
+Require(
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(null, null, null) &&
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("NMerchantRoom", null, null) &&
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("NRestSiteCharacter", "FlipX", "MerchantVisualPatches") &&
+    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback("NMerchantRoom", "_Ready", "UiSounds.Patch"),
+    "商店语音接管既要该包商人模块的证据、又要回调本身是交互或音频：没有名字的回调、挂在别处的补丁和纯粹的呈现回调都不能被接管。");
+
+GitHubSourceIdentityTests.Run();
+GitHubSkinPolicyTests.Run();
+GitHubReleasePolicyTests.Run();
+GitHubReadmePolicyTests.Run();
+GitHubInfoPolicyTests.Run();
+GitHubInstallLedgerTests.Run();
+GitHubModsPolicyTests.Run();
+GitHubSkinFilterTests.Run();
+GitHubItemActionsTests.Run();
+SkinSourceTests.Run();
+GitHubInstallPolicyTests.Run();
+GitHubSkinCatalogTests.Run();
+GitHubSkinClientTests.Run();
+GitHubSourceRoutingTests.Run();
+GitHubSkinTextTests.Run();
+WorkshopOptionSelectionPolicyTests.Run();
+SkinPriorityDisplayPolicyTests.Run();
 WorkshopPagePoolTests.Run();
+GodotScriptPathRegistrationPolicyTests.Run();
+ModPrivateDependencyPolicyTests.Run();
+GamePackLocatorTests.Run();
+QuitInterceptionTests.Run();
 Console.WriteLine("Skin Changer logic policy tests passed.");
 
 internal static class DirectCharacterRuntimeFixture
@@ -1816,3 +2088,4 @@ internal sealed class CachedResourceFixture(bool IsValid, string Name)
     internal bool IsValid { get; set; } = IsValid;
     internal string Name { get; } = Name;
 }
+

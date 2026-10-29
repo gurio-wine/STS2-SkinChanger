@@ -15,10 +15,11 @@ internal static class OtherCompendiumUiTests
             [new[] { "A", "B", "SHARED", "MODDED", "A" },
                 new Dictionary<string, IEnumerable<string>> { ["act1"] = new[] { "A", "SHARED", "UNKNOWN" },
                     ["act2"] = new[] { "B", "A" }, ["empty"] = Array.Empty<string>() }, new[] { "SHARED", "MISSING" }])!;
-        Require(grouped.Keys.SequenceEqual(new[] { "act1", "act2", "__shared__", "__other__" }) &&
+        Require(grouped.Keys.SequenceEqual(new[] { "__global__", "act1", "act2", "__shared__", "__other__" }) &&
+                grouped["__global__"].SequenceEqual(new[] { "A", "B", "SHARED", "MODDED" }) &&
                 grouped["act1"].SequenceEqual(new[] { "A" }) && grouped["act2"].SequenceEqual(new[] { "B", "A" }) &&
                 grouped["__shared__"].SequenceEqual(new[] { "SHARED" }) && grouped["__other__"].SequenceEqual(new[] { "MODDED" }),
-            "按真实地区归属保留多地区事件，跨地区事件单列，不收录不可预览条目，不遗漏未知 Mod 地区事件。");
+            "最前提供收录全部可预览事件的全局分组，按真实地区归属保留多地区事件，跨地区事件单列，不收录不可预览条目，不遗漏未知 Mod 地区事件。");
         var screen = assembly.GetType("STS2SkinChanger.Ui.AncientCompendiumScreen", true)!;
         var regionRefresh = AccessTools.Method(screen, "RefreshEventRegions");
         Require(Calls(regionRefresh, typeof(MegaCrit.Sts2.Core.Models.ModelDb), "get_Acts") &&
@@ -26,8 +27,8 @@ internal static class OtherCompendiumUiTests
                 Calls(AccessTools.Method(screen, "RefreshAncients"), screen, "RefreshEventRegions"),
             "实际图鉴列表必须读取游戏地区池，并在切换分类和重开时刷新，不能只测试未接入的分组函数。");
         var translations = (IDictionary)AccessTools.Field(screen, "EventRegionNames").GetValue(null)!;
-        Require(translations.Count == 15 && translations.Values.Cast<(string Shared, string Other)>()
-            .All(t => !string.IsNullOrWhiteSpace(t.Shared) && !string.IsNullOrWhiteSpace(t.Other)), "地区补充分组须提供全部语言。");
+        Require(translations.Count == 15 && translations.Values.Cast<(string Global, string Shared, string Other)>()
+            .All(t => !string.IsNullOrWhiteSpace(t.Global) && !string.IsNullOrWhiteSpace(t.Shared) && !string.IsNullOrWhiteSpace(t.Other)), "地区补充分组（含全局）须提供全部语言。");
 
         var boundsMethod = AccessTools.Method(assembly.GetType("STS2SkinChanger.Core.EventPreviewPolicy", true), "TextBounds");
         Require(boundsMethod.GetParameters().Length == 3, "事件正文高度不能再以皮肤选择按钮的固定 Y 坐标截断。");

@@ -132,6 +132,12 @@ internal static partial class SkinService
         CharacterPreviewSelections.GetValueOrDefault(groupId) ??
         Config.GetSelection(groupId);
 
+    /// <summary>
+    /// The selection the game is currently showing for a group, including multiplayer scope and
+    /// previews. Used where a provider's own presentation has to follow the visible choice.
+    /// </summary>
+    internal static string GetDisplayedSelection(string groupId) => GetVisualSelection(groupId);
+
     private static IReadOnlyDictionary<string, string> GetVisualSelections()
     {
         return VisualSelectionOverlayPolicy.Merge(
@@ -1066,7 +1072,10 @@ internal static partial class SkinService
                 var cleaned = SkinChangerPaths.Storage.CleanCaches();
                 if (cleaned.RemovedFiles > 0) ModLog.Info($"已清理 {cleaned.RemovedFiles} 个过期皮肤缓存文件。");
                 foreach (var error in cleaned.Errors) ModLog.Warn("部分旧缓存清理失败：" + error);
-                var gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
+                var gamePckPath = GamePackLocator.Resolve(
+                    OS.GetExecutablePath(),
+                    GameCommandLine.Arguments(),
+                    message => ModLog.Warn("定位游戏主资源包：" + message));
                 ModLog.Info($"已定位游戏主资源包：{gamePckPath}");
                 var loadedMods = ManagedSkinModLoader.GetCatalogMods()
                     .Where(mod => mod.manifest is { id: not null })
@@ -1127,6 +1136,7 @@ internal static partial class SkinService
                 InitializeMonsterSkinCategoriesAfterModels();
                 InitializeEventSkinCategoriesAfterModels();
                 var entries = BuildCardCatalogEntries(ModelDb.AllCards);
+                RegisterCardArtPacks(entries);
 
                 Catalog.FinalizeCardGroups(entries);
                 _cardLookupCache = new ConditionalWeakTable<CardModel, CardLookup>();
@@ -1151,6 +1161,110 @@ internal static partial class SkinService
                 ModLog.Error("按卡牌总览分类卡牌皮肤失败：" + exception);
             }
         }
+    }
+
+    /// <summary>
+    /// Takes over pure asset card-art packs. Such a pack is a plain JSON bundle of card artwork
+    /// with no code, no PCK and no manifest, so the game's mod loader never registers it and it
+    /// would otherwise only appear through Card Art Editor's runtime manager. Reading the bundle
+    /// directly makes the artwork usable without requiring that accompanying mod.
+    ///
+    /// A provider can also keep its card art as ordinary image files beside its code. That code is
+    /// held back until the player selects it, which would leave the artwork permanently invisible,
+    /// so those folders are read here as well and offered on the same rows as a bundle.
+    /// </summary>
+    private static void RegisterCardArtPacks(IEnumerable<CardCatalogEntry> cards)
+    {
+        var catalog = Catalog;
+        if (catalog == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var cardEntries = cards as IReadOnlyList<CardCatalogEntry> ?? cards.ToArray();
+            var packs = new List<CardArtPack>();
+            var roots = CardArtPackScanRoots();
+            if (roots.Count > 0)
+            {
+                var scan = CardArtPackScanner.Scan(roots);
+                foreach (var warning in scan.Warnings)
+                {
+                    ModLog.Warn(warning);
+                }
+
+                packs.AddRange(scan.Packs);
+            }
+
+            packs.AddRange(LooseCardPortraitPackScanner.Scan(LooseCardPortraitProviders(), cardEntries));
+            if (packs.Count == 0)
+            {
+                return;
+            }
+
+            var (cardTypes, usedPacks) = catalog.AttachCardArtPacks(packs, cards);
+            if (cardTypes.Count == 0)
+            {
+                return;
+            }
+
+            // Each card renders through the layout its artwork was composed for, so an
+            // accompanying editor must yield those layers.
+            ManagedSkinModLoader.RememberArtPackProviders(usedPacks.Select(pack => pack.Id));
+            ExternalCardVisualBridge.RegisterArtPackCoverage(cardTypes);
+            ModLog.Info(
+                $"已接管 {usedPacks.Count} 个纯素材卡图包（{string.Join("、", usedPacks.Select(pack => pack.Name))}）；" +
+                $"覆盖 {cardTypes.Count} 张卡牌，无需 Card Art Editor 即可选用。");
+        }
+        catch (Exception exception)
+        {
+            // An unreadable pack must never block the normal catalog from finishing.
+            ModLog.Warn("接管纯素材卡图包失败：" + exception.GetBaseException().Message);
+        }
+    }
+
+    /// <summary>
+    /// The Workshop content folder that holds installed mods. A card-art pack has no manifest,
+    /// so it is not visible through the game's mod list and must be discovered on disk.
+    /// </summary>
+    private static IReadOnlyList<string> CardArtPackScanRoots()
+    {
+        var roots = new List<string>();
+        foreach (var mod in ManagedSkinModLoader.GetCatalogMods())
+        {
+            var directory = Path.GetDirectoryName(mod.path);
+            if (!string.IsNullOrWhiteSpace(directory) && !roots.Contains(directory, StringComparer.OrdinalIgnoreCase))
+            {
+                roots.Add(directory);
+            }
+        }
+
+        return roots;
+    }
+
+    /// <summary>
+    /// The installed providers that may keep card art beside their code. Each provider folder is
+    /// offered on its own: the scanner skips the ones that mount a package or ship a bundle, and
+    /// this Mod's own folder is never a source of card art.
+    /// </summary>
+    private static IReadOnlyList<LooseCardPortraitProvider> LooseCardPortraitProviders()
+    {
+        var providers = new List<LooseCardPortraitProvider>();
+        foreach (var mod in ManagedSkinModLoader.GetCatalogMods())
+        {
+            var id = mod.manifest?.id;
+            if (string.IsNullOrWhiteSpace(id) ||
+                string.IsNullOrWhiteSpace(mod.path) ||
+                Entry.IsSelfModId(id))
+            {
+                continue;
+            }
+
+            providers.Add(new LooseCardPortraitProvider(id, mod.manifest?.name ?? id, mod.path));
+        }
+
+        return providers;
     }
 
     private static CardCatalogEntry[] BuildCardCatalogEntries(IEnumerable<CardModel> cards)
@@ -2680,6 +2794,102 @@ internal static partial class SkinService
         }
     }
 
+    /// <summary>
+    /// The saved priority rows of the card group that supplies a card's skins, plus the same
+    /// options in that saved order. Callers use them to render the list the priority screen shows,
+    /// including which skins are ticked.
+    /// </summary>
+    public static (IReadOnlyList<CardSkinOption> Options, IReadOnlyList<SkinPriorityState> States) GetCardOptionsForDisplay(
+        CardModel card)
+    {
+        lock (Sync)
+        {
+            var lookup = GetCardLookup(card);
+            // Deliberately the single group that already supplies the options, never the Ancient
+            // fallback groups: their order belongs to a different priority list.
+            if (lookup.Group == null)
+            {
+                return (lookup.Options, []);
+            }
+
+            var states = GetCardPriorityStatesInternal(lookup.Group);
+            return (SkinPriorityDisplayPolicy.Project(lookup.Options, option => option.Id, states), states);
+        }
+    }
+
+    private static IReadOnlyList<SkinPriorityState> GetCardPriorityStatesInternal(CardSkinGroup group) =>
+        SkinPriorityDisplayPolicy.States(
+            GetCardPriorityEntriesInternal(group),
+            entry => entry.OptionId,
+            entry => entry.Enabled);
+
+    /// <summary>
+    /// The saved priority rows that govern a character, monster or event appearance group, or null
+    /// when the group has no skin-priority screen at all. Characters, companions and merchants
+    /// are chosen directly and were never part of a manual order; only bestiary regions,
+    /// event regions and the ancient category have one, so the other lists must keep the
+    /// catalogue order they are given.
+    /// </summary>
+    public static IReadOnlyList<SkinPriorityState>? GetVisualPriorityStates(string groupId)
+    {
+        lock (Sync)
+        {
+            var categoryId = Config.MonsterSkinCategoryGroups
+                .FirstOrDefault(pair => pair.Value.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                .Key;
+            if (!string.IsNullOrWhiteSpace(categoryId))
+            {
+                return SkinPriorityDisplayPolicy.States(
+                    GetMonsterPriorityEntriesInternal(categoryId),
+                    entry => entry.OptionId,
+                    entry => entry.Enabled);
+            }
+
+            var region = Config.EventSkinPriorities.RegionGroups
+                .FirstOrDefault(pair => pair.Value.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                .Key;
+            if (!string.IsNullOrWhiteSpace(region))
+            {
+                return SkinPriorityDisplayPolicy.States(
+                    GetEventPriorityEntries(region),
+                    entry => entry.OptionId,
+                    entry => entry.Enabled);
+            }
+
+            var ancient = Config.AncientSkinPriorities.RegionGroups
+                .FirstOrDefault(pair => pair.Value.Contains(
+                    groupId,
+                    StringComparer.OrdinalIgnoreCase))
+                .Key;
+            return string.IsNullOrWhiteSpace(ancient)
+                ? null
+                : SkinPriorityDisplayPolicy.States(
+                    GetAncientPriorityEntries(),
+                    entry => entry.OptionId,
+                    entry => entry.Enabled);
+        }
+    }
+
+    /// <summary>
+    /// A player-facing list of one group's skins, ready to draw: the same members in the order the
+    /// group's skin-priority screen saved, together with the priority state each row carries, so a
+    /// list cannot order itself by one snapshot and dim itself by another. A group without a
+    /// priority screen keeps the order it was given and reports no states.
+    /// </summary>
+    public static (IReadOnlyList<SkinOption> Options, IReadOnlyList<SkinPriorityState>? States) GetSkinListForDisplay(
+        string groupId,
+        IReadOnlyList<SkinOption> options)
+    {
+        var states = GetVisualPriorityStates(groupId);
+        return (states == null
+            ? options
+            : SkinPriorityDisplayPolicy.Project(options, option => option.Id, states), states);
+    }
+
     public static string? GetCardOptionName(string optionId)
     {
         lock (Sync)
@@ -3944,6 +4154,32 @@ internal static partial class SkinService
             includeProviderDependencies: true);
     }
 
+    /// <summary>
+    /// True when the effective selection for a group (multiplayer scope, preview or configuration)
+    /// serves the character's canonical combat scene path itself. The game's own creation then
+    /// instantiates the skin's scene instead of the game's, so creation has to be owned up front
+    /// and converted by the scene factory when the served scene is a framework scene.
+    /// </summary>
+    public static bool SelectionServesCombatScene(string groupId, string scenePath)
+    {
+        lock (Sync)
+        {
+            var option = FindVisualOption(groupId, GetVisualSelection(groupId));
+            return CharacterCombatSceneInstantiationPolicy.ShouldOwnCanonicalSceneInstantiation(
+                option == null || option.Id.Equals(
+                    SkinCatalog.BaseOptionId,
+                    StringComparison.OrdinalIgnoreCase),
+                option?.Assets.Keys.Any(path =>
+                    path.Equals(scenePath, StringComparison.OrdinalIgnoreCase)) == true);
+        }
+    }
+
+    private static SkinOption? FindVisualOption(string groupId, string selection) =>
+        Catalog?.Groups.FirstOrDefault(group =>
+                group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
+            .Options.FirstOrDefault(option =>
+                option.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+
     public static bool TryInstantiateSelectedCharacterCreatureVisuals(
         string groupId,
         string scenePath,
@@ -3952,12 +4188,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
-            var catalog = Catalog;
-            var selection = GetVisualSelection(groupId);
-            var option = catalog?.Groups.FirstOrDefault(group =>
-                    group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase))?
-                .Options.FirstOrDefault(candidate =>
-                    candidate.Id.Equals(selection, StringComparison.OrdinalIgnoreCase));
+            var option = FindVisualOption(groupId, GetVisualSelection(groupId));
             var hasManagedCombatScene = option?.FrameworkContract?
                                             .CharacterResources.ContainsKey("CombatVisual") == true ||
                                         option?.Assets.Keys.Any(path =>
@@ -5442,7 +5673,7 @@ internal static partial class SkinService
         // the selected overlay. Other files from a multi-group PCK must stay on the baseline.
         var selectedProviderOverlayPaths = selectedOverlay
             .Where(pair =>
-                largeProviderMountPlan.PromotedPackPaths.Contains(pair.Value.Archive.Path))
+                largeProviderMountPlan.PromotedPackPaths.Contains(pair.Value.ArchivePath))
             .Select(pair => pair.Key);
         foreach (var ownedPath in
                  PromotedPackOverlayPolicy.FindBaselinePathsShadowingSelectedRemaps(
@@ -5454,7 +5685,7 @@ internal static partial class SkinService
 
         foreach (var selectedFile in selectedOverlay)
         {
-            if (largeProviderMountPlan.PromotedPackPaths.Contains(selectedFile.Value.Archive.Path) &&
+            if (largeProviderMountPlan.PromotedPackPaths.Contains(selectedFile.Value.ArchivePath) &&
                 selectedFile.Key.Equals(
                     selectedFile.Value.Path,
                     StringComparison.OrdinalIgnoreCase) &&
@@ -6021,7 +6252,7 @@ internal static partial class SkinService
         foreach (var pair in files.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
         {
             AppendSignaturePart(hash, pair.Key);
-            AppendSignaturePart(hash, pair.Value.Archive.Path);
+            AppendSignaturePart(hash, pair.Value.ArchivePath);
             AppendSignaturePart(hash, pair.Value.Path);
         }
 
@@ -6382,22 +6613,6 @@ internal static partial class SkinService
                 pair => pair.Value,
                 StringComparer.OrdinalIgnoreCase);
 
-    private static void ReplaceCardSelections(IReadOnlyDictionary<string, string> selections)
-    {
-        foreach (var key in Config.Selections.Keys
-                     .Where(key => key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase))
-                     .ToArray())
-        {
-            Config.Selections.Remove(key);
-        }
-
-        foreach (var pair in selections.Where(pair =>
-                     pair.Key.StartsWith("cards:", StringComparison.OrdinalIgnoreCase)))
-        {
-            Config.Selections[pair.Key] = pair.Value;
-        }
-    }
-
     private static void ReplaceCardSelectionsForGroup(
         string groupId,
         IReadOnlyDictionary<string, string> selections)
@@ -6640,13 +6855,42 @@ internal static partial class SkinService
             Config.VisualSelectionDefaultsVersion = 1;
         }
 
+        // A recognized part takeover is already drawn by the author's own mounted package, so it
+        // becomes the group's default. Recognising it must never switch off what the player is
+        // looking at; turning it off stays an explicit choice in the skin list.
+        var adoptPartTakeovers = Config.BaselinePartTakeoverVersion < 1;
         foreach (var group in Catalog!.Groups)
         {
-            if (!Config.Selections.ContainsKey(group.Id))
+            var partDefault = SkinCatalog.ResolvePartTakeoverDefault(group.Options);
+            if (partDefault == null)
             {
-                Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
+                if (!Config.Selections.ContainsKey(group.Id))
+                {
+                    Config.Selections[group.Id] = SkinCatalog.BaseOptionId;
+                }
+
+                continue;
+            }
+
+            if (!Config.Selections.TryGetValue(group.Id, out var storedSelection))
+            {
+                Config.Selections[group.Id] = partDefault;
+                continue;
+            }
+
+            // Earlier versions wrote the game original for every untouched group, which is
+            // indistinguishable from a deliberate choice. Adopt the part once, then respect it.
+            if (adoptPartTakeovers &&
+                storedSelection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+            {
+                Config.Selections[group.Id] = partDefault;
+                ModLog.Info(
+                    $"已将 {group.Id} 的默认外观保留给部件接管 {partDefault}；" +
+                    "该部件原本就由作者自己的 Mod 生效，如需关闭请在皮肤列表中选择游戏原版。");
             }
         }
+
+        Config.BaselinePartTakeoverVersion = 1;
 
         SanitizeMonsterSkinPriorities();
 

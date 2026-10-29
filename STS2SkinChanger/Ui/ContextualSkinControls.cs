@@ -42,6 +42,7 @@ internal static partial class ContextualSkinControls
     private const string MonsterBaseScaleMeta = "sts2_skin_monster_base_scale";
     private const string MonsterBaseDefaultScaleMeta = "sts2_skin_monster_base_default_scale";
     private const string MonsterAppliedScaleMeta = "sts2_skin_monster_applied_scale";
+    internal const string ManagedCombatSceneMeta = "sts2_skin_managed_combat_scene";
     private static readonly Dictionary<ulong, Action> RefreshActions = [];
     private static readonly ConditionalWeakTable<NCharacterSelectScreen, CharacterBackgroundHostLayout>
         CharacterBackgroundHostLayouts = new();
@@ -645,9 +646,20 @@ internal static partial class ContextualSkinControls
             group.Options.FirstOrDefault(option => option.ManualCharacterVariant != null && !option.IsComposition &&
                 option.Id.Equals(SkinService.GetCharacterSelectionOptionId(group.Id), StringComparison.OrdinalIgnoreCase)) is { } currentVariant &&
             visualOptions.All(option => option.Id != currentVariant.Id)) visualOptions = [.. visualOptions, currentVariant];
+        // Bestiary categories order their skins by the manual skin priority; character groups have
+        // no priority screen, so this returns the list unchanged for them.
+        IReadOnlyList<SkinPriorityState>? priority = null;
+        if (group != null)
+        {
+            var display = SkinService.GetSkinListForDisplay(group.Id, visualOptions);
+            visualOptions = [.. display.Options];
+            priority = display.States;
+        }
         if (group == null)
         {
             dropdown.Clear();
+            // The previous character's dimming must not survive into the empty selector.
+            SkinChoiceDimming.Bind(dropdown, (IReadOnlyList<SkinPriorityState>?)null);
             var target = selector.GetMeta("sc_workshop_target", string.Empty).AsString();
             selector.SetMeta(GroupMeta, target);
             dropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
@@ -662,6 +674,8 @@ internal static partial class ContextualSkinControls
         selector.SetMeta(UpdatingMeta, true);
         selector.SetMeta(GroupMeta, group.Id);
         dropdown.Clear();
+        // Skins the category's priority screen switched off are shown dimmed, in the same order.
+        SkinChoiceDimming.Bind(dropdown, priority);
         var hasMonsterPriorityContext = HasMonsterPriorityContext(selector);
         if (hasMonsterPriorityContext)
         {
@@ -771,9 +785,7 @@ internal static partial class ContextualSkinControls
             var themedList = list;
             ModThemeRuntime.Bind(list, "bundle_colors", theme =>
             {
-                for (var i = 0; i < Math.Min(themedList.ItemCount, dropdown.ItemCount); i++)
-                    if (IsAccentedCharacterOption(dropdown.GetItemMetadata(i).AsString()))
-                        themedList.SetItemCustomFgColor(i, new Color(theme.AccentColor));
+                ApplyCharacterBundleRowColors(dropdown, themedList, ModThemeRuntime.Accent);
                 CharacterSkinRandomExclusionUi.Refresh(dropdown);
             });
             if (GameFont != null)
@@ -843,14 +855,17 @@ internal static partial class ContextualSkinControls
             return false;
         }
 
-        var gold = ModThemeRuntime.Accent;
+        // Read names and skin ids from the current dropdown every time; an earlier character's
+        // colored overlay must never reappear. Every row is written, not only the accented ones,
+        // so a skin the category switched off fades without losing its accent color.
         for (var index = 0; index < dropdown.ItemCount; index++)
         {
+            var optionId = dropdown.GetItemMetadata(index).AsString();
             list.AddItem(dropdown.GetItemText(index));
-            if (IsAccentedCharacterOption(dropdown.GetItemMetadata(index).AsString()))
-            {
-                list.SetItemCustomFgColor(index, gold);
-            }
+            list.SetItemCustomFgColor(index, SkinChoiceDimming.Row(
+                IsAccentedCharacterOption(optionId) ? ModThemeRuntime.Accent : ModThemeRuntime.Text,
+                dropdown,
+                optionId));
         }
         if (dropdown.Selected >= 0 && dropdown.Selected < list.ItemCount)
         {
@@ -859,6 +874,16 @@ internal static partial class ContextualSkinControls
         CharacterSkinRandomExclusionUi.Refresh(dropdown);
         list.Visible = true;
         return true;
+    }
+
+    private static void ApplyCharacterBundleRowColors(OptionButton dropdown, ItemList list, Color accent)
+    {
+        for (var index = 0; index < Math.Min(list.ItemCount, dropdown.ItemCount); index++)
+        {
+            var optionId = dropdown.GetItemMetadata(index).AsString();
+            list.SetItemCustomFgColor(index, SkinChoiceDimming.Row(
+                IsAccentedCharacterOption(optionId) ? accent : ModThemeRuntime.Text, dropdown, optionId));
+        }
     }
 
     private static void PopulateMonsterScale(HBoxContainer selector, string groupId)
@@ -2116,6 +2141,15 @@ internal static partial class ContextualSkinControls
         string visualsPath,
         ref NCreatureVisuals result)
     {
+        // Creation for this node was already owned by the combat scene entry point, which
+        // converted the served scene through the scene factory before the game could cast it.
+        // Instantiating the same scene again here would fail for a framework scene (plain Node2D)
+        // and only duplicate work for a native one.
+        if (result != null && result.HasMeta(ManagedCombatSceneMeta))
+        {
+            return;
+        }
+
         var group = FindGroup(modelId, modelTypeName);
         if (group == null || ShouldSkipExternalRuntimeRedirect(group.Id))
         {

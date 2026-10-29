@@ -73,9 +73,14 @@ internal static class CharacterSkinRandomExclusionUi
         string? Option(int index) => index >= 0 && index < Math.Min(picker.ItemCount, list.ItemCount)
             ? picker.GetItemMetadata(index).AsString() : null;
         var selected = list.GetSelectedItems();
-        ApplyInteractionColors(binding.Group(), Option(binding.Hovered),
-            Option(selected.Length == 0 ? -1 : selected[0]), ModThemeRuntime.Text, ModThemeRuntime.Accent,
-            (name, color) => list.AddThemeColorOverride(name, color));
+        var hovered = Option(binding.Hovered);
+        var current = Option(selected.Length == 0 ? -1 : selected[0]);
+        ApplyInteractionColors(binding.Group(), hovered,
+            current, ModThemeRuntime.Text, ModThemeRuntime.Accent,
+            // The hover/selected colors are list-wide overrides, so the row they belong to is
+            // resolved here and can carry the skin's own dimming.
+            (name, color) => list.AddThemeColorOverride(name,
+                SkinChoiceDimming.InteractionRow(name, color, picker, hovered, current)));
     }
 
     internal static void Refresh(OptionButton picker)
@@ -87,7 +92,9 @@ internal static class CharacterSkinRandomExclusionUi
         {
             var option = picker.GetItemMetadata(i).AsString();
             var color = SkinOptionStylePolicy.IsAccented(option) ? ModThemeRuntime.Accent : ModThemeRuntime.Text;
-            list.SetItemCustomFgColor(i, ChoiceColor(color, group != null && SkinService.IsCharacterSkinExcludedFromRandom(group, option)));
+            list.SetItemCustomFgColor(i, SkinChoiceDimming.Row(
+                ChoiceColor(color, group != null && SkinService.IsCharacterSkinExcludedFromRandom(group, option)),
+                picker, option));
         }
         RefreshInteractionColors(picker, binding);
     }

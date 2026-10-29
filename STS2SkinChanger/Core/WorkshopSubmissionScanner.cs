@@ -4,7 +4,8 @@ using STS2SkinChanger.Catalog;
 namespace STS2SkinChanger.Core;
 
 internal sealed record WorkshopLocalSubmission(ulong Id, string Name, string Directory);
-internal sealed record WorkshopScanResult(WorkshopCatalogItem? Item, string Name, string Error);
+internal sealed record WorkshopScanResult(WorkshopCatalogItem? Item, string Name, string Error,
+    string ProviderId = "", string ProviderName = "");
 internal static class WorkshopSubmissionScanner
 {
     internal static SkinModDescriptor[] ReadDescriptors(string directory)
@@ -46,6 +47,18 @@ internal static class WorkshopSubmissionScanner
         return results.DistinctBy(m => (m.Id, m.RootPath)).ToArray();
     }
 
+    /// <summary>
+    /// Names a folder can be offered under. A pure asset card-art pack ships no cosmetic
+    /// manifest, so a folder that only carries a bundle must still be nameable and submittable.
+    /// </summary>
+    internal static string[] SubmittableNames(string directory)
+    {
+        var names = ReadDescriptors(directory).Select(mod => mod.Name).ToList();
+        names.AddRange(CardArtPackScanner.Describe(directory).Select(pack => pack.Name));
+        return names.Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     internal static WorkshopScanResult Scan(WorkshopLocalSubmission local, string gamePack, CardCatalogEntry[] cards,
         string? gameVersion, IReadOnlyDictionary<string, string> dependencies, SkinModDescriptor[]? baselines = null)
     {
@@ -53,9 +66,21 @@ internal static class WorkshopSubmissionScanner
         {
             var before = WorkshopPackagePolicy.Snapshot(local.Directory);
             var mods = ReadDescriptors(local.Directory);
-            if (mods.Length == 0) return new(null, local.Name, "No cosmetic manifest.");
+            // A pack is taken over straight from its bundle, exactly as at startup, so a folder
+            // without any cosmetic manifest must be scannable through its artwork alone.
+            var packs = CardArtPackScanner.Scan([local.Directory]).Packs.ToList();
+            // A provider that keeps its card art as ordinary image files replaces card art from its
+            // own code, which stays held back until the player selects it. Without reading the
+            // folder here the item would export nothing and could never be submitted, even though
+            // its cards are already offered on the card rows.
+            packs.AddRange(LooseCardPortraitPackScanner.Scan(
+                mods.Where(mod => !string.IsNullOrWhiteSpace(mod.RootPath))
+                    .Select(mod => new LooseCardPortraitProvider(mod.Id, mod.Name, mod.RootPath!)),
+                cards));
+            if (mods.Length == 0 && packs.Count == 0) return new(null, local.Name, "No cosmetic manifest.");
             using var catalog = SkinCatalog.Build(gamePack, (baselines ?? []).Where(b => b.AffectsGameplay &&
                 !mods.Any(m => string.Equals(m.RootPath, b.RootPath, StringComparison.OrdinalIgnoreCase))).Concat(mods));
+            if (packs.Count > 0) catalog.AttachCardArtPacks(packs, cards);
             catalog.FinalizeCardGroups(cards);
             var exported = catalog.ExportWorkshopCatalog();
             // Compare the exact installed source, not manifest ID: same-ID submissions coexist.
@@ -64,7 +89,9 @@ internal static class WorkshopSubmissionScanner
             var assessment = WorkshopPackagePolicy.Assess(local.Directory, gameVersion, dependencies);
             var hot = assessment.CanInspectResources && assessment.Mods.All(m => catalog.HasCompleteWorkshopResourceCoverage(m.Id));
             if (!WorkshopPackagePolicy.Unchanged(local.Directory, before)) return new(null, local.Name, "Files changed during scanning.");
-            return new(own with { RestartRequired = !hot }, local.Name, "");
+            var providerId = catalog.ProviderForSourceId(local.Id) ?? "";
+            return new(own with { RestartRequired = !hot }, local.Name, "", providerId,
+                mods.FirstOrDefault(mod => mod.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase))?.Name ?? local.Name);
         }
         catch (Exception ex) { return new(null, local.Name, ex.GetBaseException().Message); }
     }

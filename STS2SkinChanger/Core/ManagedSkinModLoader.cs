@@ -44,6 +44,16 @@ internal static class ManagedSkinModLoader
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> ProviderManifestIds =
         new(StringComparer.OrdinalIgnoreCase);
+    // Pure asset card-art packs have no PCK and no DLL, so no probe ever sees them, yet the Mod
+    // they were installed with is content this mod took over. Keep their ids so the Mod list
+    // marks them like any other taken-over provider.
+    private static readonly HashSet<string> ArtPackProviderIds =
+        new(StringComparer.OrdinalIgnoreCase);
+    // A part takeover is announced once per session, not once per loader pass.
+    private static readonly List<ProviderPatch> SuspendedPartTakeoverFeedback = [];
+    private static bool _partTakeoverFeedbackSuspended;
+    private static readonly HashSet<string> PartTakeoverLogged =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> NegativeProviderIdentities =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, bool> SelectableCosmeticProbeResults =
@@ -111,6 +121,19 @@ internal static class ManagedSkinModLoader
     public static IReadOnlyList<Mod> SkinProvidersInLoadOrder { get; private set; } = [];
     public static IReadOnlyCollection<string> ProviderRoots => ProviderRootPaths;
 
+    /// <summary>
+    /// Roots of the style/UI packages whose parts this Mod takes over. Such a package is not a skin:
+    /// it keeps loading through the game's own loader and keeps drawing its own shop scene, merchant
+    /// model and shop interface, while only the appearance resources it overrides at a path the game
+    /// also ships become selectable here.
+    /// </summary>
+    public static IReadOnlyCollection<string> PartTakeoverRoots =>
+        [.. ProvidersByIdentity.Values
+            .Where(provider => provider.IsBaselinePartTakeover &&
+                               !string.IsNullOrWhiteSpace(provider.RootPath))
+            .Select(provider => NormalizePath(provider.RootPath!))
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
+
     public static IReadOnlyCollection<string> GetPreservedRuntimeRoots(IEnumerable<Mod> sourceMods)
     {
         var mods = sourceMods.ToArray();
@@ -135,12 +158,28 @@ internal static class ManagedSkinModLoader
         try
         {
             if (SkinWorkshopService.IsHotRegisteredResourceMod(mod)) return true;
-            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds,
-                FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id));
+            var isFunctionalHost = FrameworkCompatibilityLayer.IsKnownFrameworkHost(mod.manifest?.id);
+            return ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ProviderManifestIds, isFunctionalHost) ||
+                   ManagedProviderDisplayPolicy.IsManaged(mod.manifest?.id, ArtPackProviderIds, isFunctionalHost);
         }
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Remembers the pure asset card-art packs whose artwork this mod now serves, so their Mod
+    /// rows read as taken over. Called only for packs that actually registered cards.
+    /// </summary>
+    public static void RememberArtPackProviders(IEnumerable<string> packIds)
+    {
+        foreach (var packId in packIds)
+        {
+            if (!string.IsNullOrWhiteSpace(packId))
+            {
+                ArtPackProviderIds.Add(packId);
+            }
         }
     }
 
@@ -603,7 +642,10 @@ internal static class ManagedSkinModLoader
         string? gamePckPath = null;
         try
         {
-            gamePckPath = GamePackLocator.Resolve(OS.GetExecutablePath());
+            gamePckPath = GamePackLocator.Resolve(
+                OS.GetExecutablePath(),
+                GameCommandLine.Arguments(),
+                message => ModLog.Warn("定位游戏主资源包：" + message));
         }
         catch (Exception exception)
         {
@@ -630,11 +672,11 @@ internal static class ManagedSkinModLoader
             .Where(mod => IsManagedProvider(mod, out _))
             .ToArray();
         SkinProvidersBeforeSelf = selfIndex < 0
-            ? SkinProvidersInLoadOrder
+            ? SkinProvidersInLoadOrder.Where(IsIsolatedProvider).ToArray()
             : mods.Take(selfIndex)
                 .Where(IsProviderLoadCandidate)
                 .Where(mod => !Entry.IsSelfModId(mod.manifest?.id))
-                .Where(mod => IsManagedProvider(mod, out _))
+                .Where(IsIsolatedProvider)
                 .ToArray();
         IsBeforeAllSkinProviders = selfIndex >= 0 && SkinProvidersBeforeSelf.Count == 0;
         if (SkinProvidersBeforeSelf.Count > 0)
@@ -654,6 +696,14 @@ internal static class ManagedSkinModLoader
             "DLL 行为补丁仅在选中期间启用。");
     }
 
+    /// <summary>
+    /// Whether this provider has to be isolated by this mod, which is what makes the skin
+    /// switcher's own load position matter. A part takeover keeps loading through the game's own
+    /// loader, so it is never a load-order problem.
+    /// </summary>
+    private static bool IsIsolatedProvider(Mod mod) =>
+        IsManagedProvider(mod, out var provider) && !provider.IsBaselinePartTakeover;
+
     public static bool TryManage(Mod mod)
     {
         if (!_reflectionTargetsReady ||
@@ -661,6 +711,16 @@ internal static class ManagedSkinModLoader
             !IsProviderLoadCandidate(mod) ||
             !IsManagedProvider(mod, out var provider))
         {
+            return false;
+        }
+
+        if (provider.IsBaselinePartTakeover)
+        {
+            // The package is not a skin: it ships a whole style/UI experience and only overrides
+            // parts of presentations the game already draws. Isolating it would drop everything
+            // the author shipped, so it keeps loading through the game's own loader (its DLL and
+            // PCK behave exactly as the author intended) and only those parts are selectable here.
+            RememberPartTakeover(provider, mod.manifest?.name ?? provider.ResourceNamespaceId);
             return false;
         }
 
@@ -899,27 +959,8 @@ internal static class ManagedSkinModLoader
         }
     }
 
-    private static bool IsAlreadyRegisteredGodotScriptException(Exception exception)
-    {
-        for (var current = exception; current != null; current = current.InnerException)
-        {
-            if (current is not ArgumentException)
-            {
-                continue;
-            }
-
-            var message = current.Message;
-            if (message.Contains("same key", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("already been added", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("相同的键", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("已添加", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool IsAlreadyRegisteredGodotScriptException(Exception exception) =>
+        GodotScriptPathRegistrationPolicy.IsHarmlessDuplicate(exception);
 
     /// <summary>
     /// Removes every Harmony callback installed by a managed provider that is no longer selected.
@@ -989,27 +1030,31 @@ internal static class ManagedSkinModLoader
             EnsureProviderNodeMonitor();
             RestoreProviderNodes(assembly);
 
-            var initializerTypes = provider.HasDeclarativeCharacterAssetReplacement &&
-                                   !FrameworkRegistryCooperation.IsNativeProvider(providerId)
-                ? []
-                : GetLoadableTypes(assembly)
+            var runsAuthorInitializer = FrameworkProviderInitializerPolicy.RunsAuthorInitializer(
+                provider.HasDeclarativeCharacterAssetReplacement,
+                FrameworkRegistryCooperation.IsNativeProvider(providerId));
+            var initializerTypes = runsAuthorInitializer
+                ? GetLoadableTypes(assembly)
                     .Select(type => (Type: type, Attribute: type.GetCustomAttribute<ModInitializerAttribute>()))
                     .Where(pair => pair.Attribute != null)
-                    .ToArray();
+                    .ToArray()
+                : [];
             var skippedInitializer = false;
+            var initializerFailed = false;
+            var patchesBeforeInitializer = -1;
             if (initializerTypes.Length == 0)
             {
                 // There is no original initializer left to register managed Godot scripts (this
-                // is also the intentional path for declarative providers), so do it immediately
+                // is also the intentional path for native-managed providers), so do it immediately
                 // before PatchAll/scene use.
                 EnsureProviderGodotScripts(providerId);
                 new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
                     .PatchAll(assembly);
-                if (provider.HasDeclarativeCharacterAssetReplacement)
+                if (provider.HasDeclarativeCharacterAssetReplacement && !runsAuthorInitializer)
                 {
                     ModLog.Info(
-                        $"{provider.Name} 使用框架式角色资源注册；已由皮肤切换器直接路由资源，" +
-                        "因此未执行会产生全局强制替换的原初始化器。");
+                        $"{provider.Name} 使用框架式角色资源注册；资源已由皮肤切换器直接路由，" +
+                        "其原初始化器由原皮肤管理器执行，本 Mod 不重复执行。");
                 }
             }
             else
@@ -1039,8 +1084,31 @@ internal static class ManagedSkinModLoader
                         continue;
                     }
 
-                    method.Invoke(null, null);
-                    InvokedProviderInitializers.Add(initializerKey);
+                    patchesBeforeInitializer = CaptureProviderPatches(assembly).Count;
+                    try
+                    {
+                        method.Invoke(null, null);
+                        InvokedProviderInitializers.Add(initializerKey);
+                    }
+                    catch (Exception exception) when (
+                        FrameworkProviderInitializerPolicy.KeepsSessionWhenAuthorInitializerFails(
+                            provider.HasDeclarativeCharacterAssetReplacement))
+                    {
+                        initializerFailed = true;
+                        InvokedProviderInitializers.Add(initializerKey);
+                        ModLog.Warn(
+                            $"执行 {provider.Name} 的原初始化器失败；其资源与场景创建已由本 Mod 接管，" +
+                            "因此保留本次视觉会话并改用等价步骤：" +
+                            exception.GetBaseException().Message);
+                        break;
+                    }
+
+                    if (provider.HasDeclarativeCharacterAssetReplacement)
+                    {
+                        ModLog.Info(
+                            $"{provider.Name} 的原初始化器已执行：作者的补丁、场景脚本类型、" +
+                            "自带设置页与资源预载按原样生效；框架注册写入已由本 Mod 拦截。");
+                    }
                 }
 
                 // The first run may install Harmony patches from inside a custom initializer.
@@ -1049,7 +1117,26 @@ internal static class ManagedSkinModLoader
                 // for a second time. Restore the exact callbacks that the provider actually chose
                 // on its first activation: some providers deliberately exclude optional profiling
                 // or compatibility patch classes, which a blanket PatchAll would incorrectly enable.
-                if (skippedInitializer)
+                if (initializerFailed)
+                {
+                    // The pack's own initializer is the author's setup; its resources and scene
+                    // creation are already ours, so a failure there costs only what the initializer
+                    // would have added and must never take the skin down with it. Install what the
+                    // skip path installs, unless the initializer had already patched the assembly
+                    // before it failed - a second PatchAll would run those callbacks twice.
+                    EnsureProviderGodotScripts(providerId);
+                    if (CaptureProviderPatches(assembly).Count == patchesBeforeInitializer)
+                    {
+                        new Harmony($"{Entry.ModId}.selected.{NormalizeHarmonyId(providerId)}")
+                            .PatchAll(assembly);
+                    }
+                    else
+                    {
+                        ModLog.Info(
+                            $"{provider.Name} 的原初始化器在失败前已装入作者补丁，不再重复应用。");
+                    }
+                }
+                else if (skippedInitializer)
                 {
                     if (ProviderRuntimeBlueprints.TryGetValue(providerId, out var blueprint))
                     {
@@ -2127,6 +2214,185 @@ internal static class ManagedSkinModLoader
     }
 
     /// <summary>
+    /// Re-runs the room presentation a style/UI package installed for the merchant it draws.
+    ///
+    /// A hot merchant swap rebuilds the merchant's button and hand from the newly selected skin,
+    /// which drops the nodes the package had attached to the previous ones; the author's merchant
+    /// figure therefore disappeared while its hand (served from its own resource path) stayed. The
+    /// package's own room callback already knows how to attach that presentation, so it is invoked
+    /// again on the nodes that are actually on screen. Only the selected part is re-run, so a package
+    /// never draws its merchant over another skin.
+    /// </summary>
+    public static int ReplayPartTakeoverRoomPresentation(Node room)
+    {
+        if (!GodotObject.IsInstanceValid(room) || PartTakeoverRoots.Count == 0)
+        {
+            return 0;
+        }
+
+        var replayed = 0;
+        foreach (var target in Harmony.GetAllPatchedMethods()
+                     .Where(IsNodeReadyPresentationTarget)
+                     .ToArray())
+        {
+            if (target.DeclaringType?.IsInstanceOfType(room) != true)
+            {
+                continue;
+            }
+
+            var patchInfo = Harmony.GetPatchInfo(target);
+            if (patchInfo == null)
+            {
+                continue;
+            }
+
+            foreach (var patch in patchInfo.Postfixes)
+            {
+                if (!IsFromPartTakeoverRoot(patch.PatchMethod.Module.Assembly) ||
+                    !TryBuildNodeReadyArguments(patch.PatchMethod, target, room, out var arguments))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    patch.PatchMethod.Invoke(null, arguments);
+                    replayed++;
+                }
+                catch (Exception exception)
+                {
+                    ModLog.Warn(
+                        "重放部件接管包的商店呈现 " +
+                        $"{patch.PatchMethod.DeclaringType?.FullName}.{patch.PatchMethod.Name} 失败：" +
+                        exception.GetBaseException().Message);
+                }
+            }
+        }
+
+        return replayed;
+    }
+
+    /// <summary>
+    /// Stops the merchant reactions a style/UI package installed — its own voice cues and its gate
+    /// on the game's native merchant lines. They belong to the merchant this group selects, so while
+    /// another option is selected the game's own merchant speaks instead. Nothing the package draws
+    /// is touched.
+    /// </summary>
+    public static int SuspendPartTakeoverMerchantFeedback()
+    {
+        if (_partTakeoverFeedbackSuspended)
+        {
+            return 0;
+        }
+
+        var patches = ResolvePartTakeoverMerchantFeedback();
+        if (patches.Count == 0)
+        {
+            return 0;
+        }
+
+        UnpatchProviderCallbacks(patches);
+        SuspendedPartTakeoverFeedback.Clear();
+        SuspendedPartTakeoverFeedback.AddRange(patches);
+        _partTakeoverFeedbackSuspended = true;
+        ModLog.Info(
+            $"已停用部件接管包的 {patches.Count} 个商人语音反馈：当前选的不是它的商人部件，" +
+            "由游戏原版商人发声。");
+        return patches.Count;
+    }
+
+    /// <summary>
+    /// Hands the package's merchant reactions back to its own code once its part is selected again.
+    /// </summary>
+    public static int RestorePartTakeoverMerchantFeedback()
+    {
+        if (!_partTakeoverFeedbackSuspended)
+        {
+            return 0;
+        }
+
+        var patches = SuspendedPartTakeoverFeedback.ToArray();
+        SuspendedPartTakeoverFeedback.Clear();
+        _partTakeoverFeedbackSuspended = false;
+        if (patches.Length == 0)
+        {
+            return 0;
+        }
+
+        PatchProviderCallbacks(patches);
+        ModLog.Info(
+            $"已恢复部件接管包的 {patches.Length} 个商人语音反馈：选中的是它的商人部件，" +
+            "按作者原样发声。");
+        return patches.Length;
+    }
+
+    /// <summary>
+    /// The reaction callbacks the takeover packages installed around the shop, matched by what they
+    /// react to rather than by which package shipped them.
+    /// </summary>
+    private static IReadOnlyList<ProviderPatch> ResolvePartTakeoverMerchantFeedback()
+    {
+        if (PartTakeoverRoots.Count == 0)
+        {
+            return [];
+        }
+
+        var patches = new List<ProviderPatch>();
+        foreach (var target in Harmony.GetAllPatchedMethods().ToArray())
+        {
+            var patchInfo = Harmony.GetPatchInfo(target);
+            if (patchInfo == null)
+            {
+                continue;
+            }
+
+            var entries = patchInfo.Prefixes
+                .Select(patch => (Patch: patch, Kind: ProviderPatchKind.Prefix))
+                .Concat(patchInfo.Postfixes.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Postfix)))
+                .Concat(patchInfo.Transpilers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Transpiler)))
+                .Concat(patchInfo.Finalizers.Select(patch => (Patch: patch, Kind: ProviderPatchKind.Finalizer)));
+            foreach (var entry in entries)
+            {
+                if (!IsFromPartTakeoverRoot(entry.Patch.PatchMethod.Module.Assembly) ||
+                    !PartTakeoverFeedbackScopePolicy.IsMerchantSelectionFeedback(
+                        target.DeclaringType?.Name,
+                        target.Name,
+                        entry.Patch.PatchMethod.DeclaringType?.FullName))
+                {
+                    continue;
+                }
+
+                patches.Add(new ProviderPatch(
+                    target,
+                    entry.Patch.PatchMethod,
+                    entry.Kind,
+                    entry.Patch.priority,
+                    entry.Patch.before,
+                    entry.Patch.after,
+                    entry.Patch.debug));
+            }
+        }
+
+        return patches
+            .DistinctBy(patch => (patch.Target, patch.Callback, patch.Kind))
+            .ToArray();
+    }
+
+    private static bool IsFromPartTakeoverRoot(Assembly assembly)
+    {
+        var location = assembly.Location;
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            return false;
+        }
+
+        var assemblyPath = NormalizePath(location);
+        return PartTakeoverRoots.Any(root => assemblyPath.StartsWith(
+            root + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// Starts tracking a provider's visual changes to an already existing node. This is also
     /// used by the room lifecycle patches: a provider may have run its _Ready postfix normally
     /// before the appearance panel is opened, so cleanup must cover that first invocation too.
@@ -2975,6 +3241,7 @@ internal static class ManagedSkinModLoader
                 try
                 {
                     return !candidate.IsDynamic &&
+                           !string.IsNullOrEmpty(candidate.Location) &&
                            Path.GetFullPath(candidate.Location)
                                .Equals(provider.AssemblyPath, StringComparison.OrdinalIgnoreCase);
                 }
@@ -2998,6 +3265,9 @@ internal static class ManagedSkinModLoader
             assembly = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(candidate =>
                     !candidate.IsDynamic &&
+                    // An assembly loaded from a stream (the cross-version audit's throwaway copy)
+                    // has no location and is never the copy the game loaded from the mod folder.
+                    !string.IsNullOrEmpty(candidate.Location) &&
                     string.Equals(
                         candidate.FullName,
                         assemblyIdentity,
@@ -3520,18 +3790,62 @@ internal static class ManagedSkinModLoader
             return false;
         }
 
-        if (manifest.minGameVersion == null)
+        // The game refuses a Mod whose declared minimum game version is newer than the running game
+        // (ModManager.TryLoadMod). A cosmetic provider's declaration describes the snapshot its
+        // author built against, so it is verified instead of trusted: the DLL is compiled against
+        // the running game, and only then is the package taken over with the cross-version bridge.
+        var declaredMinimum = manifest.minGameVersion;
+        if (declaredMinimum == null)
         {
             return true;
         }
 
-        if (!SemanticVersion.TryFromString(manifest.minGameVersion, out var minimum))
+        ProviderRuntimeAudit? runtimeAudit = null;
+        bool RunsOnCurrentGame()
         {
-            return false;
+            runtimeAudit = AuditProviderAssembly(mod, declaredMinimum);
+            return runtimeAudit.CanRun;
         }
 
-        var gameVersion = GameVersionField!.GetValue(null) as SemanticVersion;
-        return gameVersion == null || gameVersion.CompareTo(minimum) >= 0;
+        var gameVersion = (GameVersionField!.GetValue(null) as SemanticVersion)?.ToString();
+        var name = manifest.name ?? manifest.id;
+        switch (ProviderMinimumVersionPolicy.Decide(declaredMinimum, gameVersion, manifest.hasDll, RunsOnCurrentGame))
+        {
+            case ProviderMinimumVersionOutcome.VerifiedTakeOver:
+                ModLog.Info(
+                    $"{name} 声明的游戏版本 {declaredMinimum} 高于当前 {gameVersion}；" +
+                    $"已按当前版本核验其皮肤资源与代码（{runtimeAudit?.Describe()}），" +
+                    "本次由本 Mod 接管并桥接跨版本接口，原清单未修改。");
+                return true;
+            case ProviderMinimumVersionOutcome.UnreadableRule:
+                ModLog.Warn(
+                    $"{name} 声明了无法解析的最低游戏版本“{declaredMinimum}”；" +
+                    "不猜测该约束，保持游戏原加载器的处理。");
+                return false;
+            case ProviderMinimumVersionOutcome.Unsupported:
+                ModLog.Warn(
+                    $"{name} 声明的最低游戏版本 {declaredMinimum} 高于当前 {gameVersion}，" +
+                    $"且其代码无法在当前版本运行（{runtimeAudit?.Describe()}）；" +
+                    "保持游戏原加载器的处理，该皮肤本次不可用。");
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    /// <summary>
+    /// Compiles the shipped provider DLL against the running game without executing it. This is the
+    /// evidence that a package may be used although its manifest declares a newer game version.
+    /// </summary>
+    private static ProviderRuntimeAudit AuditProviderAssembly(Mod mod, string declaredMinimum)
+    {
+        var manifest = mod.manifest!;
+        var path = SkinPackagePaths.Resolve(mod.path, manifest.id!, ".dll");
+        var audit = ProviderAssemblyCompatibility.AuditForCurrentGame(path);
+        ModLog.Info(
+            $"{manifest.name ?? manifest.id} 的跨版本运行时核验（清单声明最低游戏版本 {declaredMinimum}）：" +
+            audit.Describe() + "。");
+        return audit;
     }
 
     private static bool DependencyIsSatisfied(
@@ -3637,6 +3951,25 @@ internal static class ManagedSkinModLoader
         ProviderRootPaths.Add(NormalizePath(provider.RootPath));
         ProviderManifestIds.Add(provider.ResourceNamespaceId);
         NegativeProviderIdentities.Remove(identity);
+    }
+
+    /// <summary>
+    /// Records that a package keeps loading through the game's own loader while the parts it
+    /// overrides become selectable here. Logged once per package.
+    /// </summary>
+    private static void RememberPartTakeover(SkinProviderProbe provider, string displayName)
+    {
+        if (!PartTakeoverLogged.Add(provider.ResourceNamespaceId))
+        {
+            return;
+        }
+
+        ModLog.Info(
+            $"按部件接管 {displayName}：覆盖 {provider.BaselinePartGroupCount} 个外观分组的部件" +
+            (provider.BaselinePartGroupIds is { Count: > 0 } groups
+                ? $"（{string.Join("、", groups)}）"
+                : string.Empty) +
+            "；原 PCK 与 DLL 由游戏按作者原意完整加载，仅这些部件可在此选择。");
     }
 
     private static SkinModDescriptor ToDescriptor(Mod mod)
@@ -3988,9 +4321,11 @@ internal static class GodotScriptPathRegistrationCompatibilityPatch
     // Godot's ScriptManagerBridge stores script paths in a private Dictionary and uses Add rather
     // than an idempotent assignment. Complete skin providers commonly register their C# scenes
     // once from Skin Changer and once again from their own initializer; the second call otherwise
-    // aborts the provider's whole visual session with a duplicate-key exception. Only an exact
-    // same-path/same-Type repeat is ignored. A genuine path collision between different types is
-    // deliberately left to Godot so it cannot silently select the wrong script.
+    // aborts the provider's whole visual session with a duplicate-key exception. A repeat of one
+    // declaration is skipped - the identical type, or the same module reached through another copy
+    // of the pack. A genuine path collision between different scripts is deliberately left to
+    // Godot so it cannot silently select the wrong script; that one is caught by
+    // GodotScriptRegistrationSessionGuard so it still cannot end the session.
     private static bool Prepare() => FindTarget() != null;
 
     private static MethodBase TargetMethod() =>
@@ -4008,7 +4343,7 @@ internal static class GodotScriptPathRegistrationCompatibilityPatch
             return true;
         }
 
-        return existingType != scriptType;
+        return !GodotScriptPathRegistrationPolicy.IsIdempotentRepeat(existingType, scriptType);
     }
 
     private static MethodBase? FindTarget()
@@ -4024,6 +4359,51 @@ internal static class GodotScriptPathRegistrationCompatibilityPatch
             binder: null,
             types: [typeof(string), typeof(Type)],
             modifiers: null);
+    }
+}
+
+[HarmonyPatch]
+internal static class GodotScriptRegistrationSessionGuard
+{
+    // Godot aborts the entire assembly scan on the first path it already holds, and a managed skin
+    // pack calls that scan from inside its own initializer. On the reported machines that
+    // duplicate-key exception escaped the pack's initializer and Skin Changer rolled the provider's
+    // behaviour patches back, so the skin still had its resources but never its model. A repeated
+    // path therefore has to stay inside the registration call: the mapping Godot already made stays
+    // authoritative, the visual session keeps running, and the exact path is logged so the player
+    // can hand it to the pack author. Every other registration failure still propagates.
+    private static bool Prepare() => FindTarget() != null;
+
+    private static MethodBase TargetMethod() =>
+        FindTarget() ?? throw new MissingMethodException(
+            "Godot.Bridge.ScriptManagerBridge.LookupScriptsInAssembly");
+
+    private static Exception? Finalizer(Assembly __0, Exception __exception)
+    {
+        if (!GodotScriptPathRegistrationPolicy.IsHarmlessDuplicate(__exception))
+        {
+            return __exception;
+        }
+
+        var path = GodotScriptPathRegistrationPolicy.DuplicatePath(__exception);
+        ModLog.Warn(
+            $"注册 {__0.GetName().Name} 的 Godot 场景脚本时遇到重复路径" +
+            (path is null ? string.Empty : $" {path}") +
+            "：已保留先注册的映射并继续本次视觉会话；" +
+            "若该皮肤缺模型或缺交互，请把这条日志连同路径反馈给皮肤作者。");
+        return null;
+    }
+
+    private static MethodBase? FindTarget()
+    {
+        var bridgeType = typeof(GodotObject).Assembly.GetType(
+            "Godot.Bridge.ScriptManagerBridge");
+        return bridgeType?
+            .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(method =>
+                method.Name.Equals("LookupScriptsInAssembly", StringComparison.Ordinal) &&
+                method.GetParameters() is [{ ParameterType: var parameterType }] &&
+                parameterType == typeof(Assembly));
     }
 }
 

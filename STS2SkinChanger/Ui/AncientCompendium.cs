@@ -831,7 +831,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         ModThemeListHover.AddScrollList(scroll, _entryList);
         BuildEventPriorityControls();
         BuildAncientPriorityControls();
-        _sidebarDrawer = new CompendiumSidebarDrawer(sidebar, () => !_merchantInventoryOpen && !_eventPriorityOverlay.Visible);
+        _sidebarDrawer = new CompendiumSidebarDrawer(sidebar, () => !_merchantInventoryOpen && !_eventPriorityOverlay.Visible && !_ancientPriorityOverlay.Visible);
         _sidebarDrawer.KeepOpenFor(_eventRegionSelector);
 
         _compendiumBackButton = PreloadManager.Cache
@@ -1881,7 +1881,12 @@ internal partial class AncientCompendiumScreen : NSubmenu
         var baseIndex = _skinDropdown.ItemCount;
         _skinDropdown.AddItem(ModLocalization.Get(ModText.GameDefault));
         _skinDropdown.SetItemMetadata(baseIndex, SkinCatalog.BaseOptionId);
-        foreach (var option in group.Options)
+        // Event regions and the ancient category have their own skin-priority screens; the
+        // remaining groups here (merchants, companions) are chosen directly and keep the
+        // catalogue order.
+        var (options, priority) = SkinService.GetSkinListForDisplay(group.Id, group.Options);
+        SkinChoiceDimming.Bind(_skinDropdown, priority);
+        foreach (var option in options)
         {
             var index = _skinDropdown.ItemCount;
             _skinDropdown.AddItem(ModLocalization.DisplayOptionName(option.Name));
@@ -1889,6 +1894,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         SkinWorkshopEntry.Append(_skinDropdown);
+        // The dimming bound above must actually reach the screen: a native PopupMenu cannot tint
+        // single rows, so the popup draws through the shared colored list.
+        PresetChoiceColoring.Attach(_skinDropdown, SkinOptionStylePolicy.IsAccented, colorSelection: false);
         var current = isAncient
             ? SkinService.GetAncientOverrideSelection(group.Id)
             : (eventCategory ? SkinService.GetEventOverrideSelection(group.Id) : SkinService.Config.GetSelection(group.Id));
@@ -2266,11 +2274,21 @@ internal partial class AncientCompendiumScreen : NSubmenu
         }
 
         Reveal(root);
+        // A style/UI package replaces the merchant's figure with its own image and switches the
+        // game's figure off for exactly that. Clearing the transparent presentation state must not
+        // switch it back on, or the game's merchant is drawn over the author's.
+        var revealFigure = MerchantFigureScopePolicy.ShouldRevealGameFigure(
+            PartTakeoverVisualScope.SelectedPartDrawsFigure(root));
         // Do not reveal every child: MerchantSelectionReticle, HotkeyIcon, and provider helper
         // nodes are intentionally hidden until their own interaction state enables them. Only
         // the actual rendered model needs its inherited transparent state cleared.
         foreach (var name in new[] { "MerchantVisual", "Visuals", "SpineSprite" })
         {
+            if (name.Equals("MerchantVisual", StringComparison.Ordinal) && !revealFigure)
+            {
+                continue;
+            }
+
             var visual = root.FindChild(name, recursive: true, owned: false);
             if (visual != null)
             {

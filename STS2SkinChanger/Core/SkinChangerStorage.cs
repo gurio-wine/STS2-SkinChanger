@@ -3,7 +3,9 @@ namespace STS2SkinChanger.Core;
 // No engine calls here: migration/deletion is exercised against real temporary files in tests.
 internal sealed class SkinChangerStorage : IDisposable
 {
-    private static readonly string[] ConfigurationNames =
+    // The files an older version left in the game's user directory. Only migration reads this
+    // list; never use it to decide which configuration names are legal.
+    private static readonly string[] LegacyConfigurationNames =
     [
         "skin_changer.json", "skin_changer_theme.json", "skin_changer_theme_presets.json",
         "skin_changer_bundle_run_restore.json", "sts2_skin_switcher.json"
@@ -29,7 +31,7 @@ internal sealed class SkinChangerStorage : IDisposable
 
     public void MigrateConfiguration()
     {
-        foreach (var name in ConfigurationNames)
+        foreach (var name in LegacyConfigurationNames)
             if (MigrateFile(Path.Combine(UserDirectory, name), Path.Combine(RootDirectory, name)))
                 MigrateFile(Path.Combine(UserDirectory, name + ".bak"), Path.Combine(RootDirectory, name + ".bak"));
         var runs = Path.Combine(UserDirectory, "skin_changer_bundle_runs");
@@ -71,7 +73,14 @@ internal sealed class SkinChangerStorage : IDisposable
 
     public string ConfigurationFile(string name)
     {
-        if (!ConfigurationNames.Contains(name)) throw new ArgumentException("Unknown SC configuration.", nameof(name));
+        // Every configuration of this mod lives in one flat directory, and the name is the only
+        // thing choosing which file it is. Listing the known names here instead is what once made
+        // the GitHub catalog and the install ledger throw on every read and write: both files were
+        // added to the callers and never to the list, so nothing they recorded ever reached disk.
+        // A safe file name is checked instead, which no new configuration can forget to join.
+        if (Path.GetFileName(name) != name || name.Length > 64 || !name.EndsWith(".json", StringComparison.Ordinal) ||
+            !name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.'))
+            throw new ArgumentException("Unsafe SC configuration name.", nameof(name));
         var next = Path.Combine(RootDirectory, name);
         var old = Path.Combine(UserDirectory, name);
         return !File.Exists(next) && !File.Exists(next + ".bak") &&

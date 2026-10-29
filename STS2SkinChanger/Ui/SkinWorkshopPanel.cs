@@ -1,3 +1,4 @@
+using System.Reflection;
 using Godot;
 using STS2SkinChanger.Core;
 using STS2SkinChanger.Catalog;
@@ -9,7 +10,9 @@ internal partial class SkinWorkshopPanel : Control
     private const int PageSize = 8;
     private bool _suspended;
     private WorkshopSubmissionPanel? _submission;
+    private GitHubScanPanel? _scan;
     private Button _communityRefresh=null!;
+    private Button _submissionButton=null!;
     private int _communityRevision=-1;
     private static readonly string[] Kinds = ["", "character", "cards", "monster", "ancient", "merchant", "companion", "event"];
     private string _kind = "";
@@ -88,8 +91,12 @@ internal partial class SkinWorkshopPanel : Control
         heading.AddChild(Text(WorkshopText.EntryLabel, 27, true));
         var submit = Button(WorkshopCommunityText.Get(WorkshopCommunityTextKey.SubmitMod), () => { });
         submit.Pressed += () => OpenSubmission(submit); heading.AddChild(submit);
+        _submissionButton = submit;
         _communityRefresh=Button(WorkshopSubmissionText.Get(SubmissionText.Refresh),()=>_ = SkinWorkshopService.RefreshCommunity());
         heading.AddChild(_communityRefresh);
+        _githubRefresh=Button(GitHubText(GitHubSkinTextKey.Refresh), GitHubSkinService.StartRefresh);
+        _githubRefresh.Visible=false;
+        heading.AddChild(_githubRefresh);
         BuildSort(heading);
         BuildFilters(content);
         var scroll = new ScrollContainer { SizeFlagsVertical = SizeFlags.ExpandFill, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
@@ -101,6 +108,10 @@ internal partial class SkinWorkshopPanel : Control
         scroll.AddChild(_rows);
         var footer = new HBoxContainer(); content.AddChild(footer);
         footer.AddChild(Button(ModLocalization.Get(ModText.Close), Close));
+        var version = Text(PanelVersionText(), 16);
+        version.Modulate = new Color(1f, 1f, 1f, .6f);
+        version.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        footer.AddChild(version);
         footer.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
         _previous = Button(WorkshopText.Get(WorkshopTextKey.Previous), () => { _page--; scroll.ScrollVertical = 0; Rebuild(); });
         footer.AddChild(_previous);
@@ -112,6 +123,7 @@ internal partial class SkinWorkshopPanel : Control
         _origin.TreeExited += Close;
         _originConnected = true;
         _communityRevision=SkinWorkshopService.CommunityRevision;
+        _githubRevision=GitHubSkinService.Revision;
         Rebuild();
     }
 
@@ -124,7 +136,7 @@ internal partial class SkinWorkshopPanel : Control
         var generation = ++_generation;
         if (_emptyLabel == null) { _emptyLabel = Text(EmptyText); _rows.AddChild(_emptyLabel); }
         if(CodeErrors) { RebuildCodeErrors(generation, token); UpdateVisibleActions(); RecordPageBuild(started); return; }
-        _subscriptions.Refresh(SkinWorkshopService.Catalog.Select(item => item.Id), SkinWorkshopService.IsSubscribed);
+        _subscriptions.Refresh(SteamCatalogIds, SkinWorkshopService.IsSubscribed);
         var filtered = FilteredItems();
         _filteredIds = filtered.Select(item => item.Id).ToArray();
         var pages = Math.Max(1, (filtered.Length + PageSize - 1) / PageSize);
@@ -144,9 +156,16 @@ internal partial class SkinWorkshopPanel : Control
     {
         try
         {
-            var details = await SkinWorkshopService.Query(ids, token);
-            if (token.IsCancellationRequested || generation != _generation || !GodotObject.IsInstanceValid(this)) return;
+            // GitHub rows carry their own title and metric, so only the repository preview is
+            // fetched (opengraph, no API budget); Steam metadata is never queried for them.
             var covers = new List<Task>();
+            foreach (var id in ids.Where(SkinSourceIdentity.IsGitHub))
+                if (rows.TryGetValue(id, out var githubRow))
+                    covers.Add(LoadCover(GitHubSkinService.CoverUrl(id), githubRow, generation, token));
+            var steamIds = ids.Where(SkinSourceRoutingPolicy.IsSteamItem).ToArray();
+            if (steamIds.Length == 0) { await Task.WhenAll(covers); return; }
+            var details = await SkinWorkshopService.Query(steamIds, token);
+            if (token.IsCancellationRequested || generation != _generation || !GodotObject.IsInstanceValid(this)) return;
             foreach (var (id, detail) in details)
             {
                 if (!rows.TryGetValue(id, out var row) || !row.Binding.Matches(row.Ticket)) continue;
@@ -206,19 +225,72 @@ internal partial class SkinWorkshopPanel : Control
         }
         UpdateVisibleActions();
         PollFilters();
+        PollGitHub();
     }
     private void UpdateVisibleActions()
     {
         if (_closed) return;
         // The browser's CanvasLayer sits above the native UI. Yield to ALL native
         // modals, including another Mod's subscription notice, not only our own.
-        _suspended = _submission != null || MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
+        _suspended = _submission != null || _scan != null || MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer.Instance?.OpenModal != null;
         if (_suspended) ResetHover();
         _layer.Visible = !_suspended;
         foreach (var (id, label, action, cancel) in _actions)
         {
             try
             {
+                if (SkinSourceIdentity.IsGitHub(id))
+                {
+                    var entry = GitHubSkinService.Entry(id);
+                    var installState = GitHubSkinService.InstallState(id);
+                    var installing = GitHubSkinService.IsInstalling(id);
+                    var scanning = GitHubSkinService.IsScanning(id);
+                    var recognized = GitHubSkinService.IsRecognized(id);
+                    // One button, five meanings: a repository without a published sc.info code is
+                    // scanned to produce that code, an installable one is installed, an installed
+                    // one either waits for its restart, updates, or is removed.
+                    var itemAction = GitHubItemActions.Primary(recognized, installState, GitHubSkinService.IsPendingRestart(id));
+                    var awaitingRestart = itemAction == GitHubItemAction.Restart;
+                    action.Visible = true;
+                    action.Disabled = installing || scanning || _restartPending;
+                    action.Text = scanning ? GitHubText(GitHubSkinTextKey.Scanning)
+                        : installing ? GitHubText(GitHubSkinTextKey.Installing)
+                        // The waiting restart wears the very word the Steam side uses for it.
+                        : awaitingRestart ? WorkshopText.Get(WorkshopTextKey.Restart)
+                        : GitHubText(itemAction switch
+                        {
+                            GitHubItemAction.Install => GitHubSkinTextKey.Install,
+                            GitHubItemAction.Update => GitHubSkinTextKey.Update,
+                            GitHubItemAction.Scan => GitHubSkinTextKey.Scan,
+                            _ => GitHubSkinTextKey.Uninstall
+                        });
+                    action.TooltipText = scanning || installing ? action.Text
+                        : itemAction == GitHubItemAction.Scan ? GitHubText(GitHubSkinTextKey.ScanHint)
+                        : awaitingRestart ? WorkshopNoticeText.Get(WorkshopNoticeKey.KnownRestart)
+                        : entry?.Error ?? "";
+                    // The card itself opens the repository, so the second button only ever carries
+                    // the other half of the action: removing a skin whose primary button installs
+                    // an update or asks for the restart that loads it.
+                    cancel.Visible = GitHubItemActions.ShowsUninstall(itemAction);
+                    cancel.Disabled = installing || _restartPending;
+                    cancel.Text = GitHubText(GitHubSkinTextKey.Uninstall);
+                    cancel.TooltipText = cancel.Text;
+                    label.Text = scanning ? GitHubText(GitHubSkinTextKey.Scanning)
+                        : installing ? GitHubText(GitHubSkinTextKey.Installing)
+                        : GitHubStatus(entry, installState, awaitingRestart, GitHubSkinService.IsPendingRemoval(id));
+                    label.TooltipText = entry is { Error.Length: > 0 } ? entry.Error : label.Text;
+                    if (_actionErrors.TryGetValue(id, out var installError))
+                    {
+                        label.Text = GitHubText(recognized ? GitHubSkinTextKey.InstallFailed : GitHubSkinTextKey.ScanFailed);
+                        label.TooltipText = installError;
+                    }
+                    if (!action.HasMeta("sc_restart_accent") || action.GetMeta("sc_restart_accent").AsBool() != awaitingRestart)
+                    {
+                        ModThemeRuntime.TextControl(action, 20, awaitingRestart);
+                        action.SetMeta("sc_restart_accent", awaitingRestart);
+                    }
+                    continue;
+                }
                 var state = SkinWorkshopService.DownloadState(id);
                 var active = SkinWorkshopService.IsActive(id);
                 var subscribed = SkinWorkshopService.IsSubscribed(id);
@@ -251,7 +323,7 @@ internal partial class SkinWorkshopPanel : Control
     }
     private void HandleInput(InputEvent ev)
     {
-        if (_submission != null) return;
+        if (_submission != null || _scan != null) return;
         if (ev is InputEventMouse) _hoverKeyboard = false;
         else if (ev is InputEventKey { Pressed: true } or InputEventJoypadButton { Pressed: true }) _hoverKeyboard = true;
         // Do not wait for the animation timer to hide the old introduction on exit.
@@ -267,6 +339,7 @@ internal partial class SkinWorkshopPanel : Control
     {
         if (_closed) return; _closed = true;
         _submission?.Close(); _submission=null;
+        _scan?.Close(); _scan=null;
         ResetHover();
         DisconnectOrigin();
         _pageToken?.Cancel();
@@ -278,6 +351,7 @@ internal partial class SkinWorkshopPanel : Control
     {
         _closed = true;
         _submission?.Close(); _submission=null;
+        _scan?.Close(); _scan=null;
         ResetHover();
         LogHoverTiming();
         LogPageBuildTiming();
@@ -301,6 +375,18 @@ internal partial class SkinWorkshopPanel : Control
         var label = new Label { Text = text, MouseFilter = MouseFilterEnum.Ignore };
         if (ContextualSkinControls.GameFont is { } font) label.AddThemeFontOverride("font", font);
         ModThemeRuntime.TextControl(label, size, accent); return label;
+    }
+
+    // Version stamp for the footer, e.g. "1.0.18.2". Reads this assembly's own
+    // InformationalVersion and drops a "+commit" suffix so only the four-part
+    // number is shown; falls back to the four-part AssemblyVersion.
+    private static string PanelVersionText()
+    {
+        var assembly = typeof(SkinWorkshopPanel).Assembly;
+        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString() ?? "";
+        var commit = version.IndexOf('+');
+        return commit < 0 ? version : version[..commit];
     }
     private static Button Button(string text, Action pressed)
     {
