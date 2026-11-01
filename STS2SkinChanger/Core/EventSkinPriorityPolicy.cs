@@ -22,15 +22,17 @@ internal sealed class EventSkinPrioritySettings
         ManualGroups = ManualGroups.ToList(), KnownGroups = KnownGroups.ToList()
     };
 
-    public void Normalize()
+    public void Normalize(Func<string, bool>? isManagedGroup = null)
     {
+        // 先古优先级复用本设置类，但先古组 ID 没有 event: 前缀，成员资格由调用方传入。
+        isManagedGroup ??= EventSkinPolicy.IsEventGroup;
         RegionGroups = (RegionGroups ?? new()).Where(p => !string.IsNullOrWhiteSpace(p.Key)).ToDictionary(
-            p => p.Key, p => (p.Value ?? []).Where(id => !string.IsNullOrWhiteSpace(id) && EventSkinPolicy.IsEventGroup(id))
+            p => p.Key, p => (p.Value ?? []).Where(id => !string.IsNullOrWhiteSpace(id) && isManagedGroup(id))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList(), StringComparer.OrdinalIgnoreCase);
         Priorities = (Priorities ?? new()).Where(p => !string.IsNullOrWhiteSpace(p.Key)).ToDictionary(
             p => p.Key, p => EventSkinPriorityPolicy.Entries(p.Value ?? [], []), StringComparer.OrdinalIgnoreCase);
-        ManualGroups = (ManualGroups ?? []).Where(id => !string.IsNullOrWhiteSpace(id) && EventSkinPolicy.IsEventGroup(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        KnownGroups = (KnownGroups ?? []).Where(id => !string.IsNullOrWhiteSpace(id) && EventSkinPolicy.IsEventGroup(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        ManualGroups = (ManualGroups ?? []).Where(id => !string.IsNullOrWhiteSpace(id) && isManagedGroup(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        KnownGroups = (KnownGroups ?? []).Where(id => !string.IsNullOrWhiteSpace(id) && isManagedGroup(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public void Register(IReadOnlyDictionary<string, List<string>> regions, IReadOnlyDictionary<string, string> selections)

@@ -42,6 +42,19 @@ internal static class EventPriorityTests
         Require((bool)AccessTools.Method(type, "IsFollowing").Invoke(roundTrip, ["event:a"])! &&
                 !(bool)AccessTools.Method(type, "IsFollowing").Invoke(roundTrip, ["event:b"])!,
             "跟随地区和手动单选必须在重启后保留。");
+        // 先古优先级复用同一设置类，但先古组 ID 没有 event: 前缀，加载时不得按事件前缀过滤登记。
+        var ancientProperty = AccessTools.Property(configType, "AncientSkinPriorities");
+        var ancientSettings = ancientProperty.GetValue(config)!;
+        var ancientType = ancientSettings.GetType();
+        ((IDictionary)AccessTools.Property(ancientType, "RegionGroups").GetValue(ancientSettings)!)
+            .Add("all_ancients", new List<string> { "orelas", "nekros" });
+        ((IList)AccessTools.Property(ancientType, "ManualGroups").GetValue(ancientSettings)!).Add("orelas");
+        var ancientLoaded = AccessTools.Method(configType, "Deserialize").Invoke(
+            null, [JsonSerializer.Serialize(config, configType)])!;
+        var ancientRoundTrip = ancientProperty.GetValue(ancientLoaded)!;
+        Require(!(bool)AccessTools.Method(ancientType, "IsFollowing").Invoke(ancientRoundTrip, ["orelas"])! &&
+                (bool)AccessTools.Method(ancientType, "IsFollowing").Invoke(ancientRoundTrip, ["nekros"])!,
+            "先古的地区组与手动组登记必须在重启后保留，不得按 event: 前缀过滤。");
         var clone = AccessTools.Method(configType, "CloneForBundleTransaction").Invoke(config, null)!;
         var clonedSettings = settingsProperty.GetValue(clone)!;
         ((IList)AccessTools.Property(type, "ManualGroups").GetValue(clonedSettings)!).Clear();

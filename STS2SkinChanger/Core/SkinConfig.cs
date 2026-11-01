@@ -272,7 +272,9 @@ internal sealed class SkinConfig
         config.EventSkinPriorities ??= new();
         config.EventSkinPriorities.Normalize();
         config.AncientSkinPriorities ??= new();
-        config.AncientSkinPriorities.Normalize();
+        // 先古组 ID（ModelDb.AllAncients）不带 event: 前缀；按事件前缀过滤会把先古的地区组/手动组
+        // 在每次加载时清空，重启后“跟随分类优先级”被 Register 迁移悄悄改回手动固定。
+        config.AncientSkinPriorities.Normalize(_ => true);
         config.RandomCharacterSkinGroups = (config.RandomCharacterSkinGroups ?? [])
             .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
