@@ -144,6 +144,9 @@ internal sealed class SkinConfig
 
     public bool? LastKnownBeforeAllSkinMods { get; set; }
 
+    // F35：玩家手动移到本 Mod 之上并被尊重的皮肤提供者 ID；自动排序不再把它们压回，也不提醒重启。
+    public List<string> RespectedLoadOrderProviders { get; set; } = [];
+
     public bool MultiplayerSkinSyncEnabled { get; set; } = true;
 
     public bool LoadOtherPlayersCustomSkins { get; set; } = true;

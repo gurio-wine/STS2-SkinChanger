@@ -975,6 +975,32 @@ internal static partial class SkinService
         }
     }
 
+    public static IReadOnlyList<string> GetRespectedLoadOrderProviders()
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            return Config.RespectedLoadOrderProviders;
+        }
+    }
+
+    public static void SetRespectedLoadOrderProviders(IEnumerable<string> providerIds)
+    {
+        lock (Sync)
+        {
+            EnsureConfigLoaded();
+            var ids = providerIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (ids.Length == Config.RespectedLoadOrderProviders.Count &&
+                ids.SequenceEqual(Config.RespectedLoadOrderProviders, StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            Config.RespectedLoadOrderProviders = [.. ids];
+            Config.Save(ConfigPath);
+        }
+    }
+
     public static bool ShouldShowLoadOrderWarning(bool isBeforeAllSkinMods)
     {
         lock (Sync)

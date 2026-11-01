@@ -19,6 +19,7 @@ internal static class LoadOrderWarningController
     private static bool _pending;
     private static bool _shownThisSession;
     private static bool _autoReorderedThisSession;
+    private static Mod[] _actionableProviders = [];
 
     public static void Schedule()
     {
@@ -33,13 +34,32 @@ internal static class LoadOrderWarningController
             return;
         }
 
+        var providersAboveSelf = ManagedSkinModLoader.SkinProvidersBeforeSelf;
+        var (deliberate, actionable) = LoadOrderRespectPolicy.Resolve(
+            providersAboveSelf.Select(mod => mod.manifest?.id ?? string.Empty),
+            SkinService.GetRespectedLoadOrderProviders());
+        if (actionable.Count == 0)
+        {
+            // F35：这些提供者是玩家主动留在本 Mod 之上的，保持其独立加载；不重排、不再提醒重启。
+            ModLog.Info(
+                "已尊重玩家手动排序，保持以下皮肤 Mod 位于本 Mod 之前独立加载：" +
+                string.Join("、", deliberate));
+            return;
+        }
+
+        var actionableIds = actionable.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _actionableProviders = providersAboveSelf
+            .Where(mod => actionableIds.Contains(mod.manifest?.id ?? string.Empty))
+            .ToArray();
         if (!_autoReorderedThisSession)
         {
             try
             {
-                MoveSelfBeforeSkinProviders();
+                MoveSelfBeforeSkinProviders([.. actionable]);
+                SkinService.SetRespectedLoadOrderProviders(deliberate);
                 _autoReorderedThisSession = true;
-                ModLog.Info("已自动将皮肤切换器-Skin Changer 移到所有皮肤 Mod 之前；需要重启游戏后才能开始接管。");
+                ModLog.Info(
+                    "已自动将皮肤切换器-Skin Changer 移到未手动上移的皮肤 Mod 之前；需要重启游戏后才能开始接管。");
             }
             catch (Exception exception)
             {
@@ -155,7 +175,7 @@ internal static class LoadOrderWarningController
 
     private static string BuildLoadOrderMessage()
     {
-        var providers = ManagedSkinModLoader.SkinProvidersBeforeSelf
+        var providers = _actionableProviders
             .Select(mod => mod.manifest?.name ?? mod.manifest?.id ?? mod.path)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.CurrentCultureIgnoreCase)
@@ -171,12 +191,15 @@ internal static class LoadOrderWarningController
         .Replace('\r', ' ')
         .Replace('\n', ' ');
 
-    private static void MoveSelfBeforeSkinProviders()
+    private static void MoveSelfBeforeSkinProviders(string[] actionableProviderIds)
     {
         var self = ModManager.Mods.FirstOrDefault(mod => Entry.IsSelfModId(mod.manifest?.id)) ??
                    throw new InvalidOperationException("当前 Mod 列表中找不到皮肤切换器-Skin Changer。");
-        var skinProviders = ManagedSkinModLoader.SkinProvidersInLoadOrder;
-        if (skinProviders.Count == 0)
+        var actionableIds = actionableProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var skinProviders = ManagedSkinModLoader.SkinProvidersInLoadOrder
+            .Where(provider => actionableIds.Contains(provider.manifest?.id ?? string.Empty))
+            .ToArray();
+        if (skinProviders.Length == 0)
         {
             throw new InvalidOperationException("当前 Mod 列表中找不到需要调整顺序的皮肤 Mod。");
         }

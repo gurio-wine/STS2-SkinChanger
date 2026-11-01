@@ -49,13 +49,13 @@ internal static class LoadOrderSafetyTests
             settings.ModSettings = new ModSettings { ModList = missingTargetOrder };
             var savedSnapshot = "unchanged";
             _save = () => savedSnapshot = string.Join(",", settings.ModSettings.ModList.Select(entry => entry.Id));
-            ExpectFailure(() => move.Invoke(null, null), "无法在已保存的 Mod 顺序中定位皮肤 Mod");
+            ExpectFailure(() => move.Invoke(null, new object[] { new[] { "Tests.Skin" } }), "无法在已保存的 Mod 顺序中定位皮肤 Mod");
             Require(ReferenceEquals(settings.ModSettings.ModList, missingTargetOrder) &&
                     missingTargetOrder.SequenceEqual(new[] { unrelated, retained }) && savedSnapshot == "unchanged",
                 "排序找不到插入目标时必须保留原列表，不能先把 Skin Changer 从设置里移除。");
 
             settings.ModSettings = null;
-            ExpectFailure(() => move.Invoke(null, null), "无法在已保存的 Mod 顺序中定位皮肤 Mod");
+            ExpectFailure(() => move.Invoke(null, new object[] { new[] { "Tests.Skin" } }), "无法在已保存的 Mod 顺序中定位皮肤 Mod");
             Require(settings.ModSettings == null, "没有 Mod 设置时的失败不能留下半初始化设置。");
             settings.ModSettings = new ModSettings();
 
@@ -63,21 +63,44 @@ internal static class LoadOrderSafetyTests
                 { unrelated, new(library), new(skin), retained };
             settings.ModSettings.ModList = originalOrder;
             _save = () => throw new IOException("simulated settings write failure");
-            ExpectFailure(() => move.Invoke(null, null), "simulated settings write failure");
+            ExpectFailure(() => move.Invoke(null, new object[] { new[] { "Tests.Skin" } }), "simulated settings write failure");
             Require(ReferenceEquals(settings.ModSettings.ModList, originalOrder) &&
                     originalOrder.Select(entry => entry.Id).SequenceEqual(
                         new[] { "Tests.Other", "STS2-RitsuLib", "Tests.Skin", "Gurio.SkinChanger" }),
                 "保存失败时必须恢复原排序，不能把未保存的顺序误报为成功。");
 
             _save = () => savedSnapshot = string.Join(",", settings.ModSettings.ModList.Select(entry => entry.Id));
-            move.Invoke(null, null);
+            move.Invoke(null, new object[] { new[] { "Tests.Skin" } });
             Require(savedSnapshot == "Tests.Other,STS2-RitsuLib,Gurio.SkinChanger,Tests.Skin" &&
                     ReferenceEquals(settings.ModSettings.ModList[0], unrelated) &&
                     !settings.ModSettings.ModList[2].IsEnabled,
                 "仅移动自身到皮肤前，保留前置的位置、其它项目和玩家的启用状态。");
-            move.Invoke(null, null);
+            move.Invoke(null, new object[] { new[] { "Tests.Skin" } });
             Require(savedSnapshot == "Tests.Other,STS2-RitsuLib,Gurio.SkinChanger,Tests.Skin",
                 "重复自动排序不能不断移动前置或产生重复项。");
+
+            // F35：玩家手动上移过的提供者（记录在案）不再被压回，自动排序只处理其余提供者。
+            var policy = assembly.GetType("STS2SkinChanger.Ui.LoadOrderWarning.LoadOrderRespectPolicy", true)!;
+            var resolve = policy.GetMethod("Resolve", Static)!;
+            var resolved = (System.Runtime.CompilerServices.ITuple)resolve.Invoke(null,
+                [new[] { "Tests.Skin", "Tests.Skin2" }, new[] { "tests.skin2" }])!;
+            var deliberateIds = ((System.Collections.IEnumerable)resolved[0]!).Cast<object>().ToArray();
+            var actionableIds = ((System.Collections.IEnumerable)resolved[1]!).Cast<object>().ToArray();
+            Require(deliberateIds.Length == 1 && (string)deliberateIds[0]! == "Tests.Skin2" &&
+                    actionableIds.Length == 1 && (string)actionableIds[0]! == "Tests.Skin",
+                "尊重策略必须按 ID 大小写无关地区分刻意上移与需要接管的新提供者。");
+
+            var skin2 = Mod("Tests.Skin2");
+            modsField.SetValue(null, new List<Mod> { skin, skin2, self });
+            providersField.SetValue(null, new[] { skin, skin2 });
+            settings.ModSettings.ModList = new List<SettingsSaveMod>
+                { unrelated, new(skin), new(skin2), retained };
+            move.Invoke(null, new object[] { new[] { "Tests.Skin2" } });
+            Require(settings.ModSettings.ModList.Select(entry => entry.Id).SequenceEqual(
+                    new[] { "Tests.Other", "Tests.Skin", "Gurio.SkinChanger", "Tests.Skin2" }),
+                "自动排序只移动到未手动上移的皮肤 Mod 之前；刻意上移的 Tests.Skin 必须保持在本 Mod 之上。");
+            modsField.SetValue(null, new List<Mod> { skin, library, self });
+            providersField.SetValue(null, new[] { skin });
 
             self.modSource = ModSource.ModsDirectory;
             settings.ModSettings.ModList = new List<SettingsSaveMod>
@@ -87,7 +110,7 @@ internal static class LoadOrderSafetyTests
                 new() { Id = "Tests.Skin", Source = ModSource.ModsDirectory },
                 new(self)
             };
-            move.Invoke(null, null);
+            move.Invoke(null, new object[] { new[] { "Tests.Skin" } });
             Require(settings.ModSettings.ModList.Select(entry => entry.Id).SequenceEqual(
                         new[] { "Tests.Other", "Gurio.SkinChanger", "Tests.Skin" }) &&
                     settings.ModSettings.ModList[1].Source == ModSource.ModsDirectory &&
@@ -104,7 +127,7 @@ internal static class LoadOrderSafetyTests
             var nativeSort = AccessTools.Method(typeof(ModManager), "SortModList");
             harmony.Patch(nativeSort, transpiler: new HarmonyMethod(typeof(LoadOrderSafetyTests), nameof(OmitNativeLogs)));
             settings.ModSettings.ModList = new List<SettingsSaveMod> { new(skin), new(library), new(self) };
-            move.Invoke(null, null);
+            move.Invoke(null, new object[] { new[] { "Tests.Skin" } });
             nativeSort.Invoke(null, [settings.ModSettings.ModList]);
             Require(ModManager.Mods.Select(mod => mod.manifest!.id).SequenceEqual(
                     new[] { "Gurio.SkinChanger", "STS2-RitsuLib", "Tests.Skin" }),
