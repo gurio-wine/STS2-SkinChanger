@@ -608,6 +608,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private Label _headingLabel = null!;
     private HBoxContainer _skinSelector = null!;
     private OptionButton _skinDropdown = null!;
+    private CheckButton _inRunEntryToggle = null!;
     private SubViewport _previewViewport = null!;
     private SubViewportContainer _previewContainer = null!;
     private NBackButton _compendiumBackButton = null!;
@@ -815,6 +816,7 @@ internal partial class AncientCompendiumScreen : NSubmenu
         AddCategoryButton(categoryRow, OtherCategory.Events, ModText.OtherCategoryEvents);
         sidebarContent.AddChild(categoryRow);
         BuildEventRegionSelector(sidebarContent);
+        BuildInRunAppearanceEntryToggle(sidebarContent);
 
         var scroll = new ScrollContainer
         {
@@ -872,6 +874,9 @@ internal partial class AncientCompendiumScreen : NSubmenu
     private void RefreshLocalizedText()
     {
         _headingLabel.Text = ModLocalization.Get(ModText.OtherCompendium);
+        _inRunEntryToggle.Text = ModLocalization.Get(ModText.InRunAppearanceEntryToggle);
+        _inRunEntryToggle.TooltipText = ModLocalization.Get(ModText.HideAppearanceHoldHint);
+        _inRunEntryToggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
         RefreshEventRegions();
         foreach (var action in _otherActionButtons)
         {
@@ -903,6 +908,36 @@ internal partial class AncientCompendiumScreen : NSubmenu
             PopulateSkinDropdown(SkinService.Catalog?.Groups.FirstOrDefault(group =>
                 group.Id.Equals(groupId, StringComparison.OrdinalIgnoreCase)));
         }
+    }
+
+    // The pause-menu appearance entry is hidden by a right-click and only comes back through the
+    // equally hidden right-click-on-Resume gesture; players who never saw the tooltip lose in-run
+    // skin switching with no way to recover (F42). The compendium is reachable both from the main
+    // menu and in run, so this toggle is the always-available way back.
+    private void BuildInRunAppearanceEntryToggle(VBoxContainer parent)
+    {
+        _inRunEntryToggle = new CheckButton
+        {
+            CustomMinimumSize = new Vector2(0f, 36f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            MouseDefaultCursorShape = CursorShape.PointingHand
+        };
+        _inRunEntryToggle.AddThemeColorOverride("font_color", new Color("fff6e2"));
+        _inRunEntryToggle.AddThemeColorOverride("font_hover_color", Colors.White);
+        _inRunEntryToggle.AddThemeColorOverride("font_pressed_color", new Color("efc850"));
+        _inRunEntryToggle.AddThemeColorOverride("font_outline_color", new Color("332f27"));
+        _inRunEntryToggle.AddThemeConstantOverride("outline_size", 4);
+        _inRunEntryToggle.AddThemeFontSizeOverride("font_size", 18);
+        if (ContextualSkinControls.GameFont != null)
+        {
+            _inRunEntryToggle.AddThemeFontOverride("font", ContextualSkinControls.GameFont);
+        }
+
+        _inRunEntryToggle.Text = ModLocalization.Get(ModText.InRunAppearanceEntryToggle);
+        _inRunEntryToggle.TooltipText = ModLocalization.Get(ModText.HideAppearanceHoldHint);
+        _inRunEntryToggle.SetPressedNoSignal(SkinService.ShouldShowInRunAppearanceEntry());
+        _inRunEntryToggle.Toggled += SkinService.SetShowInRunAppearanceEntry;
+        parent.AddChild(_inRunEntryToggle);
     }
 
     private void RebuildOtherActionButtons(OtherCreatureDefinition? creature)

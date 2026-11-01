@@ -74,6 +74,7 @@ internal enum ModText
     LoadOtherPlayersCustomSkins,
     HideAppearanceHoldHint,
     ShowAppearanceHoldHint,
+    InRunAppearanceEntryToggle,
     CardSkinSelectorDragHint,
     RestorePlayerPosition,
     CharacterSkinMerge,
@@ -1013,6 +1014,26 @@ internal static partial class ModLocalization
             ["tur"] = "Görünüm değişikliklerini gönder"
         };
 
+    private static readonly IReadOnlyDictionary<string, string> InRunAppearanceEntryToggleTexts =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eng"] = "Show the pause-menu Appearance entry",
+            ["zhs"] = "显示局内外观入口",
+            ["zht"] = "顯示局內外觀入口",
+            ["deu"] = "Eintrag „Erscheinungsbild“ im Pausenmenü anzeigen",
+            ["esp"] = "Mostrar la entrada de aspecto en el menú de pausa",
+            ["fra"] = "Afficher l’entrée Apparence du menu pause",
+            ["ita"] = "Mostra la voce Aspetto nel menu pausa",
+            ["jpn"] = "ポーズメニューに外観ボタンを表示",
+            ["kor"] = "일시정지 메뉴에 외형 버튼 표시",
+            ["pol"] = "Pokazuj przycisk „Wygląd” w menu pauzy",
+            ["ptb"] = "Mostrar o botão de aparência no menu de pausa",
+            ["rus"] = "Показывать кнопку «Внешний вид» в меню паузы",
+            ["spa"] = "Mostrar la entrada de aspecto en el menú de pausa",
+            ["tha"] = "แสดงปุ่มรูปลักษณ์ในเมนูพัก",
+            ["tur"] = "Duraklatma menüsünde Görünüm düğmesini göster"
+        };
+
     private static readonly IReadOnlyDictionary<string, string> HideAppearanceHoldHintTexts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -1376,6 +1397,8 @@ internal static partial class ModLocalization
                 ? HideAppearanceHoldHintTexts[CurrentLanguage]
             : text == ModText.ShowAppearanceHoldHint
                 ? ShowAppearanceHoldHintTexts[CurrentLanguage]
+            : text == ModText.InRunAppearanceEntryToggle
+                ? InRunAppearanceEntryToggleTexts[CurrentLanguage]
             : text == ModText.CardSkinSelectorDragHint
                 ? CardSkinSelectorDragHintTexts[CurrentLanguage]
             : text == ModText.RestorePlayerPosition
