@@ -2106,15 +2106,39 @@ internal static partial class ContextualSkinControls
     internal static SkinGroup? FindGroup(string modelId, string? modelTypeName = null)
     {
         var tokens = BuildModelIdentityTokens(modelId, modelTypeName);
-        return SkinService.Catalog?.Groups.FirstOrDefault(group =>
+        // Exact identity first: a provider that names its directory after the monster itself
+        // must keep winning over the shared-directory fallback below.
+        var exact = SkinService.Catalog?.Groups.FirstOrDefault(group =>
             tokens.Contains(NormalizeToken(group.Id)));
+        if (exact != null)
+        {
+            return exact;
+        }
+
+        return SkinService.Catalog?.Groups.FirstOrDefault(group =>
+            GroupMatchesSharedAnimationLayout(group.Id, modelId, modelTypeName));
     }
 
     internal static bool MatchesGroupIdentity(
         string groupId,
         string modelId,
         string? modelTypeName = null) =>
-        BuildModelIdentityTokens(modelId, modelTypeName).Contains(NormalizeToken(groupId));
+        BuildModelIdentityTokens(modelId, modelTypeName).Contains(NormalizeToken(groupId)) ||
+        GroupMatchesSharedAnimationLayout(groupId, modelId, modelTypeName);
+
+    // Variant monster models (damp_cultist, decimillipede_elite, kaiser_crab_boss, ...) load
+    // their visuals from the base creature's shared animation directory, so a skin that
+    // follows the game's real layout can only live in that directory's group.  See
+    // SkinCatalog.SharedAnimationModelIds for the directory -> variant-model table.
+    private static bool GroupMatchesSharedAnimationLayout(
+        string groupId,
+        string modelId,
+        string? modelTypeName) =>
+        SkinCatalog.SharedAnimationModelIds.TryGetValue(groupId, out var variantModels) &&
+        (variantModels.Contains(modelId, StringComparer.OrdinalIgnoreCase) ||
+         (!string.IsNullOrWhiteSpace(modelTypeName) &&
+          variantModels.Any(id => NormalizeToken(id).Equals(
+              NormalizeToken(modelTypeName!), StringComparison.OrdinalIgnoreCase))));
 
     private static HashSet<string> BuildModelIdentityTokens(
         string modelId,

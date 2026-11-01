@@ -1938,6 +1938,11 @@ internal sealed partial class SkinCatalog : IDisposable
                 if (selections.TryGetValue(ownedGroupId, out var selectedId) &&
                     SelectionUsesProvider(ownedGroupId, selectedId, displacedProviderId))
                 {
+                    // 全量运行时提供者是原子选择：被接管的提供者必须在它拥有的每个分组退回，
+                    // 否则它的激活门槛（所有分组同时选中）永远满足不了。这条日志是玩家反馈
+                    // “调一个分组、另一个分组跟着还原”时的唯一线索。
+                    ModLog.Info(
+                        $"分组 {ownedGroupId} 的皮肤 {displacedProviderId} 被 {requestedProviderId} 接管，退回原版。");
                     updates[ownedGroupId] = BaseOptionId;
                 }
             }
@@ -1963,6 +1968,8 @@ internal sealed partial class SkinCatalog : IDisposable
                             StringComparison.OrdinalIgnoreCase));
                 if (ownedOption != null)
                 {
+                    ModLog.Info(
+                        $"全量运行时提供者 {requestedProviderId} 同步应用到分组 {ownedGroupId}（选择 {groupId} 时）。");
                     updates[ownedGroupId] = ownedOption.Id;
                 }
             }
@@ -7857,6 +7864,7 @@ internal sealed partial class SkinCatalog : IDisposable
         "merchant" => "商人",
         "fake_merchant_monster" => "商人？？？",
         "byrdpip" => "异鸟宝宝",
+        "cultists" => "邪教徒",
         _ => id.Replace('_', ' ').Trim().CapitalizeWords()
     };
 
@@ -7871,6 +7879,28 @@ internal sealed partial class SkinCatalog : IDisposable
         "tezcatara",
         "vakuu"
     };
+
+    // The game keeps some creatures' whole visual family in ONE shared animation directory
+    // while the monster model ids stay per-variant: both cultists load the merged skeleton
+    // animations/monsters/cultists, the decimillipede elite and its three segments share
+    // animations/monsters/decimillipede, the boss crab loads kaiser_crab, and the four bowlbug
+    // forms share bowlbug. Providers that follow the game's real layout therefore land in the
+    // shared directory group; these variant model ids must still resolve to that group or the
+    // bestiary shows no skin switch at all and the skins can never apply.
+    internal static readonly IReadOnlyDictionary<string, string[]> SharedAnimationModelIds =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["cultists"] = ["calcified_cultist", "damp_cultist"],
+            ["decimillipede"] =
+            [
+                "decimillipede_elite",
+                "decimillipede_segment_back",
+                "decimillipede_segment_front",
+                "decimillipede_segment_middle"
+            ],
+            ["kaiser_crab"] = ["kaiser_crab_boss"],
+            ["bowlbug"] = ["bowlbug_egg", "bowlbug_nectar", "bowlbug_rock", "bowlbug_silk"]
+        };
 
     [GeneratedRegex("^res://animations/(?:characters|character_select|merchant|rest_site)/([^/]+)/", RegexOptions.IgnoreCase)]
     private static partial Regex CharacterPathRegex();

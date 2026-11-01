@@ -482,6 +482,7 @@ CharacterCatalogOwnershipTests.Run();
 EventSkinTests.Run();
 DuplicateProviderLoadingTests.Run();
 CreatureVisualLifecycleTests.Run();
+SharedMonsterGroupTests.Run();
 BundlePresetTests.Run();
 BundleContentModeTests.Run();
 CardPresetMigrationTests.Run();

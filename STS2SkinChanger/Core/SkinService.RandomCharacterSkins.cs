@@ -83,8 +83,11 @@ internal static partial class SkinService
                 .Where(bundle => GetCharacterSkinBundleCharacterOption(groupId, bundle.Name) != null)
                 .Select(bundle => CharacterSkinBundlePolicy.CreateSelectionOptionId(bundle.Name)));
         // Independent cosmetic RNG: never advance the game's seeded gameplay generators.
-        var selected = RandomCharacterSkinPolicy.Draw(
-            FilterRandomCharacterSkinCandidates(groupId, visible), System.Random.Shared.Next);
+        var candidates = FilterRandomCharacterSkinCandidates(groupId, visible)
+            .Where(RandomCharacterSkinPolicy.IsCandidate)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var selected = RandomCharacterSkinPolicy.Draw(candidates, System.Random.Shared.Next);
         var isBundle = CharacterSkinBundlePolicy.TryGetSelectionBundleName(selected, out var bundleName);
         var skin = isBundle ? GetCharacterSkinBundleCharacterOption(groupId, bundleName) : selected;
         if (!ClearSelectedCharacterSkinBundle(groupId)) return;
@@ -100,7 +103,9 @@ internal static partial class SkinService
                 ModLog.Warn("随机皮肤包预设应用失败：" + LastError);
             foreach (var warning in warnings) ModLog.Warn("随机皮肤包：" + warning);
         }
-        ModLog.Info($"本局随机皮肤：{groupId} -> {selected}，实际角色来源={Config.GetSelection(groupId)}。");
+        ModLog.Info(
+            $"本局随机皮肤：{groupId} -> {selected}（候选 {candidates.Length} 个，含原皮；" +
+            "美化从未被抽中时先检查右键排除与皮肤包隐藏来源），实际角色来源={Config.GetSelection(groupId)}。");
     }
 
     private static void ResumeRandomCharacterSkin(CharacterSkinBundleRunState record)
