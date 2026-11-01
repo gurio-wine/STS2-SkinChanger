@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading.Tasks;
 using Godot;
@@ -15,6 +16,7 @@ using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
@@ -32,7 +34,7 @@ internal static class MerchantRuntimeAppearance
 {
     internal const string GroupId = "merchant";
     internal const string FakeMerchantGroupId = "fake_merchant_monster";
-    private const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
+    internal const string MerchantRoomScenePath = "res://scenes/rooms/merchant_room.tscn";
     private const string FakeMerchantScenePath = "res://scenes/events/custom/fake_merchant.tscn";
     private const string MerchantInventoryScenePath = "res://scenes/merchant/merchant_inventory.tscn";
     private const string MerchantPreviewRootMeta = "skin_changer_merchant_preview_root";
@@ -1512,6 +1514,19 @@ internal static class MerchantRuntimeAppearance
     }
 }
 
+[HarmonyPatch(typeof(NMapScreen), nameof(NMapScreen.Open))]
+internal static class MerchantRoomPrewarmPatch
+{
+    // F40: the map opens before the player picks the shop node. Prepare the selected merchant
+    // room's overlay pack here so shop entry only remounts and instantiates. Cheap no-op after
+    // the first attempt for a selection, including base selections.
+    [HarmonyPostfix]
+    private static void Postfix() =>
+        SkinService.PrewarmRuntimeSceneOverlay(
+            MerchantRuntimeAppearance.GroupId,
+            MerchantRuntimeAppearance.MerchantRoomScenePath);
+}
+
 [HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom.Create))]
 internal static class MerchantRoomCreateAppearancePatch
 {
@@ -1532,6 +1547,7 @@ internal static class MerchantRoomCreateAppearancePatch
         }
 
         RoomRuntimeScopeOwnership.Record(__result, __state);
+        var rebuildStarted = Stopwatch.GetTimestamp();
         if (!MerchantRuntimeAppearance.TryCreateCurrentMerchantRoom(
                 __result,
                 out var currentRoom,
@@ -1548,9 +1564,11 @@ internal static class MerchantRoomCreateAppearancePatch
         RoomRuntimeScopeOwnership.Record(currentRoom, __state);
         preloadCreatedRoom.Free();
         MerchantRuntimeAppearance.ScopePartTakeover(currentRoom);
+        var rebuildElapsed = Stopwatch.GetElapsedTime(rebuildStarted);
         ModLog.Info(
             "商店房间已绕过启动预加载缓存并按当前选择创建：" +
-            SkinService.Config.GetSelection(MerchantRuntimeAppearance.GroupId));
+            SkinService.Config.GetSelection(MerchantRuntimeAppearance.GroupId) +
+            $"（重建耗时={rebuildElapsed.TotalMilliseconds:F1} ms）");
     }
 }
 

@@ -1406,6 +1406,63 @@ internal static partial class SkinService
         }
     }
 
+    private static string? _lastPrewarmedRuntimeSceneKey;
+
+    /// <summary>
+    /// Prepares the per-selection overlay pack of one live-room scene before the room is entered
+    /// (F40: shop entry). Same subset of work <see cref="InstantiateRuntimeScene{T}"/> later runs;
+    /// no selection, scope or mount changes. One attempt per selection; a failure also counts as
+    /// attempted and only retries after the selection changes.
+    /// </summary>
+    public static void PrewarmRuntimeSceneOverlay(string groupId, string scenePath)
+    {
+        try
+        {
+            lock (Sync)
+            {
+                var catalog = Catalog;
+                if (catalog == null)
+                {
+                    return;
+                }
+
+                var selection = GetVisualSelection(groupId);
+                if (selection.Equals(SkinCatalog.BaseOptionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                var key = groupId + "|" + selection + "|" + scenePath;
+                if (key.Equals(_lastPrewarmedRuntimeSceneKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                _lastPrewarmedRuntimeSceneKey = key;
+                var started = Stopwatch.GetTimestamp();
+                _ = GetOrPrepareRuntimeOverlay(
+                    catalog,
+                    groupId,
+                    selection,
+                    RuntimeSceneResourcePaths(groupId, scenePath),
+                    includeProviderDependencies: true);
+                var elapsed = Stopwatch.GetElapsedTime(started);
+                if (elapsed >= TimeSpan.FromMilliseconds(30))
+                {
+                    ModLog.Info(
+                        $"已提前准备 {groupId} 的房间资源包；" +
+                        $"耗时={elapsed.TotalMilliseconds:F1} ms。");
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            ModLog.Info(
+                $"提前准备 {groupId} 房间资源未完成，进入房间时将继续按原路径加载：" +
+                exception.GetBaseException().Message);
+        }
+    }
+
     public static void FocusRuntimeProviderBehaviorsOnCharacters(IEnumerable<string> groupIds)
         => FocusRuntimeProviderBehaviorsOnGroups(
             groupIds,
@@ -3246,6 +3303,7 @@ internal static partial class SkinService
     {
         lock (Sync)
         {
+            var started = Stopwatch.GetTimestamp();
             var requests = cards
                 .Select(ResolveCardPortraitRequest)
                 .Where(request => request != null)
@@ -3283,6 +3341,16 @@ internal static partial class SkinService
                     // Keep the grid usable when one optional provider resource is malformed.
                     // The normal portrait getter retains the established per-card fallback path.
                 }
+            }
+
+            // F34 evidence: the compendium grid loads every portrait synchronously under one
+            // lock; the total and per-load slow logs locate where the time actually goes.
+            var elapsed = Stopwatch.GetElapsedTime(started);
+            if (requests.Length > 0 && elapsed >= TimeSpan.FromMilliseconds(100))
+            {
+                ModLog.Info(
+                    $"卡牌总览已同步准备 {requests.Length} 张卡图；" +
+                    $"耗时={elapsed.TotalMilliseconds:F1} ms。");
             }
         }
     }
@@ -3376,11 +3444,22 @@ internal static partial class SkinService
 
         try
         {
+            var loadStarted = Stopwatch.GetTimestamp();
             var loaded = LoadIsolatedCardPortrait(
                 request.GroupId,
                 request.Selection,
                 request.ResourcePath,
                 request.UseSelectedProvider);
+            var loadElapsed = Stopwatch.GetElapsedTime(loadStarted);
+            if (loadElapsed >= TimeSpan.FromMilliseconds(30))
+            {
+                // F34 evidence: a slow first load (often an overlay remount) shows up as a hitch
+                // when drawing or playing that card. Record which skin path paid for it.
+                ModLog.Info(
+                    $"单张卡图首次加载较慢：{request.GroupId}/{request.Selection}/" +
+                    $"{request.ResourcePath}，耗时={loadElapsed.TotalMilliseconds:F1} ms。");
+            }
+
             if (loaded == null)
             {
                 throw new InvalidOperationException("资源包未返回可用卡牌贴图。");
