@@ -25,7 +25,7 @@ internal static class FrameworkCreatureSceneFactory
         instantiated.Free();
 
         var factoryType = AppDomain.CurrentDomain.GetAssemblies()
-            .Select(assembly => assembly.GetType(FactoryTypeName, throwOnError: false))
+            .Select(assembly => FrameworkCardVisualGuard.TryGetType(assembly, FactoryTypeName))
             .FirstOrDefault(type => type != null)?
             .MakeGenericType(typeof(NCreatureVisuals)) ??
             throw new InvalidOperationException(

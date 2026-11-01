@@ -32,7 +32,7 @@ internal static class FrameworkCardVisualGuard
             _discoveryDirty = false;
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                var helper = assembly.GetType(HelperName, throwOnError: false);
+                var helper = TryGetType(assembly, HelperName);
                 if (helper == null) continue;
                 var method = AccessTools.DeclaredMethod(helper, "TryGetOwningCharacterOverrides", [typeof(CardModel)]);
                 if (method == null || !method.IsStatic || method.ReturnType.FullName !=
@@ -49,6 +49,25 @@ internal static class FrameworkCardVisualGuard
                     ModLog.Warn("安装可选框架卡面协调失败，不影响其它接管功能：" + exception.GetBaseException().Message);
                 }
             }
+        }
+    }
+
+    // Assembly.GetType(name, throwOnError: false) still throws TypeLoadException when the type
+    // is FOUND but its base chain cannot resolve — for example a framework that split its
+    // assemblies (RitsuLib now ships a separate Loader) while its dependencies have not all
+    // finished loading. Discovery runs again on the next AssemblyLoad, so a transiently
+    // broken assembly must be skipped instead of killing the caller's selection transaction.
+    internal static Type? TryGetType(Assembly assembly, string name)
+    {
+        try
+        {
+            return assembly.GetType(name, throwOnError: false);
+        }
+        catch (TypeLoadException exception)
+        {
+            ModLog.Warn(
+                $"解析 {assembly.GetName().Name} 的 {name} 失败，本轮跳过该程序集：{exception.Message}");
+            return null;
         }
     }
 

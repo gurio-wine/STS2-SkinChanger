@@ -76,7 +76,7 @@ internal static class ManagedCharacterAssetRegistrationGuard
         }
 
         foreach (var registryType in AppDomain.CurrentDomain.GetAssemblies()
-                     .Select(assembly => assembly.GetType(RegistryTypeName, throwOnError: false))
+                     .Select(assembly => FrameworkCardVisualGuard.TryGetType(assembly, RegistryTypeName))
                      .Where(type => type != null)
                      .Cast<Type>()
                      .Distinct())
@@ -161,7 +161,7 @@ internal static class ManagedCharacterAssetRegistrationGuard
         }
 
         foreach (var frameworkType in AppDomain.CurrentDomain.GetAssemblies()
-                     .Select(assembly => assembly.GetType(FrameworkTypeName, throwOnError: false))
+                     .Select(assembly => FrameworkCardVisualGuard.TryGetType(assembly, FrameworkTypeName))
                      .Where(type => type != null)
                      .Cast<Type>()
                      .Distinct())
