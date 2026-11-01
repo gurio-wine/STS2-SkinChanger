@@ -1749,6 +1749,10 @@ internal static partial class SkinService
                 return false;
             }
 
+            // F29 取证：选角界面切回基础选择时报告过整帧卡死闪退。这行入口日志让 godot.log 能分辨
+            // 卡死发生在选择事务、挂载期间还是挂载后的延迟重建（对照「开始重建外观覆盖」与「已挂载」）。
+            ModLog.Info($"开始应用皮肤选择：{groupId} → {optionId}。");
+
             var updates = Catalog.BuildVisualSelectionTransaction(
                 groupId,
                 optionId,
@@ -5711,10 +5715,36 @@ internal static partial class SkinService
         }
     }
 
+    [ThreadStatic]
+    private static int _mountOverlayDepth;
+
+    // F29 取证：同线程重入说明有框架回调在挂载过程中再次改选并同步重建覆盖，最坏是互相触发的
+    // 挂载振荡（表现为界面永久卡死后崩溃）。失败回滚经异常栈回退，深度已复位，不会误报。
     private static void MountOverlay(IReadOnlySet<string> groups)
+    {
+        var depth = ++_mountOverlayDepth;
+        try
+        {
+            if (depth > 1)
+            {
+                ModLog.Warn(
+                    $"外观覆盖重建出现同线程重入（深度={depth}）：分组={string.Join("、", groups)}。");
+            }
+
+            MountOverlayCore(groups);
+        }
+        finally
+        {
+            _mountOverlayDepth--;
+        }
+    }
+
+    private static void MountOverlayCore(IReadOnlySet<string> groups)
     {
         var totalStarted = Stopwatch.GetTimestamp();
         var catalog = Catalog ?? throw new InvalidOperationException("皮肤目录尚未初始化。");
+        // F29 取证：与结尾的「已挂载」成对，卡死时可分辨停在目录构建、写包还是挂载阶段。
+        ModLog.Info($"开始重建外观覆盖：{groups.Count} 个分组。");
         RefreshScopedMonsterSelectionSnapshot(catalog);
         var effectiveSelections = GetVisualSelections();
         FrameworkCompatibilityLayer.SynchronizeSelections(catalog, effectiveSelections);

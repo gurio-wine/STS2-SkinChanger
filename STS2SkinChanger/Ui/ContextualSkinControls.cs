@@ -1409,6 +1409,8 @@ internal static partial class ContextualSkinControls
 
     private static void RebuildCharacterDisplay(NCharacterSelectScreen screen, CharacterModel character, string groupId)
     {
+        // F29 取证：卡死复现停在选角预览重建时，godot.log 以此行与挂载日志分界。
+        ModLog.Info($"开始重建选角预览：{groupId}。");
         CharacterModelPreviewControls.Hide(screen);
         // A behavior-driven provider can replace the title/description and hide the original
         // background without changing a canonical scene. Always restore the game presentation
