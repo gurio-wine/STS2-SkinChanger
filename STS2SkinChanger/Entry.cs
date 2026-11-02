@@ -15,7 +15,7 @@ public static class Entry
     // Four-part versions are kept out of the game's manifest version field because older
     // loaders only accept three-part SemanticVersion values. This marker is embedded in the
     // assembly and printed at startup so an internal deployment can be identified unambiguously.
-    public const string InternalTestVersion = "1.0.19.10";
+    public const string InternalTestVersion = "1.0.19.11";
 
     public static bool IsSelfModId(string? modId) =>
         modId != null &&
@@ -32,28 +32,64 @@ public static class Entry
         SkinChangerPaths.Initialize();
         FrameworkCompatibilityLayer.Initialize();
         ManagedSkinModLoader.Initialize();
+        // 与框架类 Mod（RitsuLib、BaseLib 等）共存时，单个补丁类的目标类型可能因加载
+        // 竞争解析失败。PatchAll 一处失败即中断且只能整体回滚，会把单类问题放大成整个
+        // Mod 停用；改为逐类安装，失败的类跳过并单独撤销，其余补丁照常生效。
         var harmony = new Harmony(ModId);
-        try
+        var failedPatchClasses = InstallPatchClasses(harmony, GetLoadableTypes(assembly));
+        ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
+        ModLog.Info(failedPatchClasses.Count == 0
+            ? "代码补丁已加载。等待游戏资源初始化。"
+            : $"代码补丁已加载（{failedPatchClasses.Count} 个类失败被跳过：{string.Join("、", failedPatchClasses)}）。");
+    }
+
+    internal static List<string> InstallPatchClasses(Harmony harmony, IEnumerable<Type> types)
+    {
+        var failedPatchClasses = new List<string>();
+        foreach (var type in types)
         {
-            harmony.PatchAll();
-            ProviderManifestCompatibility.AcknowledgeParsedManifests(ModManager.Mods);
-            ModLog.Info("代码补丁已加载。等待游戏资源初始化。");
-        }
-        catch (Exception exception)
-        {
-            // PatchAll 不是事务操作；失败时撤掉已安装的同 ID 补丁，避免半初始化状态。
-            try
+            if (!type.IsClass || !type.IsDefined(typeof(HarmonyPatch), inherit: false))
             {
-                harmony.UnpatchAll(ModId);
-            }
-            catch (Exception rollbackException)
-            {
-                ModLog.Error("回滚已安装补丁失败：" + rollbackException.GetBaseException().Message);
+                continue;
             }
 
-            ModLog.Error(
-                "安装代码补丁失败，本 Mod 已停用本次会话的代码接管：" +
-                exception);
+            try
+            {
+                harmony.CreateClassProcessor(type).Patch();
+            }
+            catch (Exception exception)
+            {
+                try
+                {
+                    harmony.CreateClassProcessor(type).Unpatch();
+                }
+                catch
+                {
+                    // 撤销失败只会残留该类的半安装补丁，不影响其余类继续安装。
+                }
+
+                failedPatchClasses.Add(type.Name);
+                ModLog.Error(
+                    "补丁类 " + type.Name + " 安装失败，已跳过该类：" +
+                    exception.GetBaseException().Message);
+            }
+        }
+
+        return failedPatchClasses;
+    }
+
+    private static Type[] GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            // 部分类型加载失败时仍为可加载的类型安装补丁；完整异常交由补丁类日志逐类暴露。
+            ModLog.Warn(
+                $"程序集类型枚举部分失败，仅对 {exception.Types.Count(static type => type != null)} 个可加载类型继续：{exception.LoaderExceptions.Length} 个加载异常。");
+            return exception.Types.OfType<Type>().ToArray();
         }
     }
 
