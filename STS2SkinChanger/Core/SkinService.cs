@@ -5744,8 +5744,12 @@ internal static partial class SkinService
     [ThreadStatic]
     private static int _mountOverlayDepth;
 
-    // F29 取证：同线程重入说明有框架回调在挂载过程中再次改选并同步重建覆盖，最坏是互相触发的
-    // 挂载振荡（表现为界面永久卡死后崩溃）。失败回滚经异常栈回退，深度已复位，不会误报。
+    [ThreadStatic]
+    private static HashSet<string>? _pendingRemountGroups;
+
+    // F29：挂载过程中框架/资源回调可能同线程再次触发重建。递归重建会逐层同步写 overlay 包
+    //（IO 风暴，表现为选人界面长时间卡死）直至栈溢出闪退。重入请求改为合并到最外层，
+    // 外层返回后用最终状态循环补一轮，既断开递归也不丢任何分组的更新。
     private static void MountOverlay(IReadOnlySet<string> groups)
     {
         var depth = ++_mountOverlayDepth;
@@ -5753,11 +5757,39 @@ internal static partial class SkinService
         {
             if (depth > 1)
             {
+                var pending = _pendingRemountGroups ??=
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var group in groups)
+                {
+                    pending.Add(group);
+                }
+
                 ModLog.Warn(
-                    $"外观覆盖重建出现同线程重入（深度={depth}）：分组={string.Join("、", groups)}。");
+                    $"外观覆盖重建被同线程重入（深度={depth}），已合并到最外层稍后统一重建：分组={string.Join("、", groups)}。");
+                return;
             }
 
-            MountOverlayCore(groups);
+            var current = new HashSet<string>(groups, StringComparer.OrdinalIgnoreCase);
+            for (var round = 0; round < 8; round++)
+            {
+                MountOverlayCore(current);
+                var queued = _pendingRemountGroups;
+                if (queued == null || queued.Count == 0)
+                {
+                    return;
+                }
+
+                current = new HashSet<string>(queued, StringComparer.OrdinalIgnoreCase);
+                queued.Clear();
+                ModLog.Info($"合并重入请求后补一轮外观覆盖重建：{current.Count} 个分组。");
+            }
+
+            var leftover = _pendingRemountGroups;
+            if (leftover is { Count: > 0 })
+            {
+                ModLog.Warn($"重入重建连续超过 8 轮，已放弃余下请求以止住振荡：分组={string.Join("、", leftover)}。");
+                leftover.Clear();
+            }
         }
         finally
         {
