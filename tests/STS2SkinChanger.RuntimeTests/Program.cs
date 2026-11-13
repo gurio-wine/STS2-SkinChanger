@@ -17,6 +17,12 @@ using MegaCrit.Sts2.Core.Rooms;
 using STS2SkinChanger;
 using System.Reflection;
 
+if (args.Length == 1 && args[0] == "--test-game-version-compatibility")
+{
+    GameVersionCompatibilityTests.Run();
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--test-card-art-packs")
 {
     CardArtPackTests.Run();
@@ -495,6 +501,7 @@ CharacterSkinPopupContractTests.Run();
 ScrollListRebuildContractTests.Run();
 CardSkinRefreshContractTests.Run();
 CardProviderBridgeContractTests.Run();
+GameVersionCompatibilityTests.Run();
 SceneAppearanceLifecycleTests.Run();
 LoadOrderSafetyTests.Run();
 EntryPatchIsolationTests.Run();

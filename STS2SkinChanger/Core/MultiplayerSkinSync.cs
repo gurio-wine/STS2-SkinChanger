@@ -2281,11 +2281,13 @@ internal static class MultiplayerLobbyCharacterChangedPatch
 {
     // Both supported versions call this after resolving a random character, even though the
     // character-select UI intentionally skips its usual selection event on that path.
-    private static void Postfix(StartRunLobby __instance, ulong playerId, bool isRandomCharacterResolution)
+    // The beta renamed its third argument to isRotatingDread. This flag only selects
+    // our diagnostic wording; publish the final character on every change in either build.
+    private static void Postfix(StartRunLobby __instance, ulong playerId, bool __2)
     {
         try
         {
-            MultiplayerSkinSync.OnLobbyCharacterChanged(__instance, playerId, isRandomCharacterResolution);
+            MultiplayerSkinSync.OnLobbyCharacterChanged(__instance, playerId, __2);
         }
         catch (Exception exception)
         {
