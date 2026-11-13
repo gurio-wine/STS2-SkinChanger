@@ -45,8 +45,13 @@ internal static class MerchantRuntimeAppearance
     private const string ProviderRootBasePositionMeta = "skin_changer_shop_provider_root_position";
     private const string ProviderRootBaseScaleMeta = "skin_changer_shop_provider_root_scale";
 
+    internal static readonly Type StandardMerchantRoomType =
+        typeof(NMerchantRoom).Assembly.GetType("MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom") ??
+        typeof(NMerchantRoom);
+
     private static readonly FieldInfo? MerchantButtonField =
-        AccessTools.Field(typeof(NMerchantRoom), "<MerchantButton>k__BackingField");
+        AccessTools.Field(StandardMerchantRoomType, "<MerchantButton>k__BackingField") ??
+        AccessTools.Field(StandardMerchantRoomType, "_merchantButton");
     private static readonly FieldInfo? FakeMerchantButtonField =
         AccessTools.Field(typeof(NFakeMerchant), "<MerchantButton>k__BackingField");
     private static readonly MethodInfo? FakeMerchantOpenedMethod =
@@ -372,8 +377,7 @@ internal static class MerchantRuntimeAppearance
     {
         currentRoom = null;
         error = null;
-        if (MerchantRoomModelField == null ||
-            MerchantRoomPlayersField == null ||
+        if (MerchantRoomPlayersField == null ||
             MerchantRoomDialogueField == null)
         {
             error = "merchant room state fields unavailable";
@@ -406,7 +410,14 @@ internal static class MerchantRuntimeAppearance
             }
             try
             {
-                MerchantRoomModelField.SetValue(
+                if (replacement.GetType() != preloadCreatedRoom.GetType())
+                {
+                    error = "merchant room scene type does not match the current game";
+                    return false;
+                }
+
+                // The beta factory no longer stores a Room model on the visual node.
+                MerchantRoomModelField?.SetValue(
                     replacement,
                     MerchantRoomModelField.GetValue(preloadCreatedRoom));
                 MerchantRoomDialogueField.SetValue(
@@ -676,7 +687,8 @@ internal static class MerchantRuntimeAppearance
                          .OrderBy(relic => relic.Id.Entry, StringComparer.OrdinalIgnoreCase)
                          .Take(6))
             {
-                model.AddRelicEntry(new MerchantRelicEntry(relic.ToMutable(), previewPlayer));
+                ((ICollection<MerchantRelicEntry>)model.RelicEntries).Add(
+                    new MerchantRelicEntry(relic.ToMutable(), previewPlayer));
             }
 
             FakeMerchantInventoryField.SetValue(preview, inventory);
@@ -1527,9 +1539,13 @@ internal static class MerchantRoomPrewarmPatch
             MerchantRuntimeAppearance.MerchantRoomScenePath);
 }
 
-[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom.Create))]
+[HarmonyPatch]
 internal static class MerchantRoomCreateAppearancePatch
 {
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(MerchantRuntimeAppearance.StandardMerchantRoomType, "Create") ??
+        throw new MissingMethodException(MerchantRuntimeAppearance.StandardMerchantRoomType.FullName, "Create");
+
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
     private static void Prefix(out long __state) =>
@@ -1572,9 +1588,15 @@ internal static class MerchantRoomCreateAppearancePatch
     }
 }
 
-[HarmonyPatch(typeof(NMerchantRoom), nameof(NMerchantRoom._Ready))]
+[HarmonyPatch]
 internal static class MerchantRoomPlayerAppearancePatch
 {
+    // The beta initializes its merchant button after base._Ready(). Observe the concrete
+    // room only after that finishes, and suppress its entire Ready body for previews.
+    private static MethodBase TargetMethod() =>
+        AccessTools.Method(MerchantRuntimeAppearance.StandardMerchantRoomType, nameof(NMerchantRoom._Ready)) ??
+        throw new MissingMethodException(MerchantRuntimeAppearance.StandardMerchantRoomType.FullName, nameof(NMerchantRoom._Ready));
+
     [HarmonyPrefix]
     [HarmonyPriority(Priority.First)]
     private static bool Prefix(NMerchantRoom __instance) =>

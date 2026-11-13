@@ -2887,8 +2887,9 @@ internal static class CharacterSelectionSkinPatch
         ContextualSkinControls.CaptureCharacterBackgroundHostLayout(__instance);
 
     [HarmonyPriority(Priority.First)]
-    private static void Postfix(NCharacterSelectScreen __instance, CharacterModel characterModel) =>
-        ContextualSkinControls.ShowCharacter(__instance, characterModel);
+    private static void Postfix(NCharacterSelectScreen __instance, object __0) =>
+        ContextualSkinControls.ShowCharacter(__instance,
+            __0 is CharacterModel character ? character : ((NCharacterSelectButton)__0).Character);
 }
 
 [HarmonyPatch(typeof(NCharacterSelectScreen), "StartNewSingleplayerRun")]

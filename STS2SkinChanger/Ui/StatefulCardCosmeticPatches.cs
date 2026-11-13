@@ -6,7 +6,6 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.HoverTips;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
-using MegaCrit.Sts2.Core.Models.Singleton;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
@@ -117,7 +116,7 @@ internal static class StatefulDamageCosmeticPatch
 {
     private static void Postfix(AbstractModel __instance, Creature target, CardModel? cardSource)
     {
-        if (__instance is not MultiplayerScalingModel || cardSource == null) return;
+        if (!StatefulCombatModelBoundary.IsMultiplayerScalingModel(__instance) || cardSource == null) return;
         var runtime = StatefulCardArtRuntime.For(cardSource);
         if (runtime is not { Enabled: true, Simple: false }) return;
         try
@@ -134,11 +133,23 @@ internal static class StatefulDamageCosmeticPatch
     }
 }
 
+internal static class StatefulCombatModelBoundary
+{
+    // The beta moved this model out of Models.Singleton and removed SingletonModel.
+    // Match the runtime game's exact type so a release DLL has no stale TypeRef.
+    private static readonly Type? MultiplayerScalingModelType =
+        typeof(AbstractModel).Assembly.GetType("MegaCrit.Sts2.Core.Models.MultiplayerScalingModel") ??
+        typeof(AbstractModel).Assembly.GetType("MegaCrit.Sts2.Core.Models.Singleton.MultiplayerScalingModel");
+
+    internal static bool IsMultiplayerScalingModel(AbstractModel model) =>
+        MultiplayerScalingModelType?.IsInstanceOfType(model) == true;
+}
+
 [HarmonyPatch(typeof(AbstractModel), nameof(AbstractModel.AfterSideTurnStart))]
 internal static class StatefulSideTurnCosmeticPatch
 {
     private static void Postfix(AbstractModel __instance)
     {
-        if (__instance is MultiplayerScalingModel) StatefulCombatEffects.ClearCurrent();
+        if (StatefulCombatModelBoundary.IsMultiplayerScalingModel(__instance)) StatefulCombatEffects.ClearCurrent();
     }
 }
